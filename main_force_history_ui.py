@@ -5,6 +5,7 @@
 """
 
 import streamlit as st
+from ui_theme import inject_global_theme, configure_plotly_template, render_page_header
 import pandas as pd
 from datetime import datetime
 from main_force_batch_db import batch_db
@@ -12,6 +13,8 @@ from main_force_batch_db import batch_db
 
 def display_batch_history():
     """显示批量分析历史记录"""
+    inject_global_theme()
+    configure_plotly_template()
     
     # 返回按钮
     col_back, col_stats = st.columns([1, 4])
@@ -20,7 +23,7 @@ def display_batch_history():
             st.session_state.main_force_view_history = False
             st.rerun()
     
-    st.markdown("## 📚 主力选股批量分析历史记录")
+    st.markdown("## 主力选股批量分析历史记录")
     st.markdown("---")
     
     # 获取统计信息
@@ -43,22 +46,22 @@ def display_batch_history():
         st.markdown("---")
         
     except Exception as e:
-        st.warning(f"⚠️ 无法获取统计信息: {str(e)}")
+        st.warning(f"无法获取统计信息: {str(e)}")
     
     # 获取历史记录
     try:
         history_records = batch_db.get_all_history(limit=50)
         
         if not history_records:
-            st.info("📝 暂无批量分析历史记录")
+            st.info("暂无批量分析历史记录")
             return
         
-        st.markdown(f"### 📋 最近 {len(history_records)} 条记录")
+        st.markdown(f"### 最近 {len(history_records)} 条记录")
         
         # 显示每条记录
         for idx, record in enumerate(history_records):
             with st.expander(
-                f"🔍 {record['analysis_date']} | "
+                f"{record['analysis_date']} | "
                 f"共{record['batch_count']}只 | "
                 f"成功{record['success_count']}只 | "
                 f"{record['analysis_mode']} | "
@@ -78,9 +81,9 @@ def display_batch_history():
                 
                 col5, col6, col7, col8 = st.columns(4)
                 with col5:
-                    st.metric("✅ 成功", record['success_count'])
+                    st.metric("成功", record['success_count'])
                 with col6:
-                    st.metric("❌ 失败", record['failed_count'])
+                    st.metric("失败", record['failed_count'])
                 with col7:
                     success_rate = (record['success_count'] / record['batch_count'] * 100) if record['batch_count'] > 0 else 0
                     st.metric("成功率", f"{success_rate:.1f}%")
@@ -96,7 +99,7 @@ def display_batch_history():
                 failed_results = [r for r in results if not r.get('success', False)]
                 
                 if success_results:
-                    st.markdown(f"#### ✅ 成功分析的股票 ({len(success_results)} 只)")
+                    st.markdown(f"#### 成功分析的股票 ({len(success_results)} 只)")
                     
                     # 构建结果表格
                     table_data = []
@@ -130,7 +133,7 @@ def display_batch_history():
                     st.dataframe(df, width='content')
                     
                     # 显示详细分析（可展开）
-                    with st.expander("📊 查看详细分析报告"):
+                    with st.expander("查看详细分析报告"):
                         for r in success_results:
                             stock_info = r.get('stock_info', {})
                             final_decision = r.get('final_decision', {})
@@ -138,18 +141,18 @@ def display_batch_history():
                             st.markdown(f"### {r.get('symbol', 'N/A')} - {stock_info.get('name', stock_info.get('股票名称', 'N/A'))}")
                             
                             # 投资建议
-                            st.markdown("#### 💡 投资建议")
+                            st.markdown("#### 投资建议")
                             st.write(final_decision.get('operation_advice', final_decision.get('investment_advice', '无')))
                             
                             # 风险提示
-                            st.markdown("#### ⚠️ 风险提示")
+                            st.markdown("#### 风险提示")
                             st.write(final_decision.get('risk_warning', '无'))
                             
                             st.markdown("---")
                 
                 # 失败的股票
                 if failed_results:
-                    st.markdown(f"#### ❌ 分析失败的股票 ({len(failed_results)} 只)")
+                    st.markdown(f"#### 分析失败的股票 ({len(failed_results)} 只)")
                     
                     fail_data = []
                     for r in failed_results:
@@ -164,15 +167,15 @@ def display_batch_history():
                 # 操作按钮
                 col_del, col_reload = st.columns([1, 1])
                 with col_del:
-                    if st.button(f"🗑️ 删除此记录", key=f"del_{record['id']}"):
+                    if st.button(f"删除此记录", key=f"del_{record['id']}"):
                         if batch_db.delete_record(record['id']):
-                            st.success("✅ 删除成功")
+                            st.success("删除成功")
                             st.rerun()
                         else:
-                            st.error("❌ 删除失败")
+                            st.error("删除失败")
                 
                 with col_reload:
-                    if st.button(f"🔄 加载到当前结果", key=f"reload_{record['id']}"):
+                    if st.button(f"加载到当前结果", key=f"reload_{record['id']}"):
                         # 将历史记录加载到session_state
                         st.session_state.main_force_batch_results = {
                             "results": record['results'],
@@ -183,11 +186,11 @@ def display_batch_history():
                             "analysis_mode": record['analysis_mode']
                         }
                         st.session_state.main_force_view_history = False
-                        st.success("✅ 已加载到当前结果，返回主页查看")
+                        st.success("已加载到当前结果，返回主页查看")
                         st.rerun()
     
     except Exception as e:
-        st.error(f"❌ 获取历史记录失败: {str(e)}")
+        st.error(f"获取历史记录失败: {str(e)}")
         import traceback
         st.code(traceback.format_exc())
 

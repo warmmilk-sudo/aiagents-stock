@@ -5,6 +5,7 @@
 """
 
 import streamlit as st
+from ui_theme import inject_global_theme, configure_plotly_template, render_page_header
 import pandas as pd
 from datetime import datetime
 from low_price_bull_monitor import low_price_bull_monitor
@@ -13,8 +14,10 @@ from low_price_bull_service import low_price_bull_service
 
 def display_monitor_panel():
     """显示策略监控面板"""
+    inject_global_theme()
+    configure_plotly_template()
     
-    st.markdown("## 📊 策略监控中心")
+    st.markdown("## 策略监控中心")
     st.markdown("---")
     
     # 服务状态
@@ -23,7 +26,7 @@ def display_monitor_panel():
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
-        service_status = "🟢 运行中" if status['running'] else "🔴 已停止"
+        service_status = "运行中" if status['running'] else " 已停止"
         st.metric("服务状态", service_status)
     
     with col2:
@@ -41,23 +44,23 @@ def display_monitor_panel():
     col_start, col_stop, col_config = st.columns(3)
     
     with col_start:
-        if st.button("▶️ 启动监控服务", type="primary", disabled=status['running']):
+        if st.button("启动监控服务", type="primary", disabled=status['running']):
             if low_price_bull_service.start():
-                st.success("✅ 监控服务已启动")
+                st.success("监控服务已启动")
                 st.rerun()
             else:
-                st.error("❌ 启动失败")
+                st.error("启动失败")
     
     with col_stop:
-        if st.button("⏸️ 停止监控服务", type="secondary", disabled=not status['running']):
+        if st.button("停止监控服务", type="secondary", disabled=not status['running']):
             if low_price_bull_service.stop():
-                st.success("✅ 监控服务已停止")
+                st.success("监控服务已停止")
                 st.rerun()
             else:
-                st.error("❌ 停止失败")
+                st.error("停止失败")
     
     with col_config:
-        with st.popover("⚙️ 监控配置"):
+        with st.popover("监控配置"):
             st.markdown("**扫描间隔**")
             new_interval = st.number_input(
                 "扫描间隔（秒）",
@@ -70,12 +73,12 @@ def display_monitor_panel():
             
             if st.button("保存配置"):
                 low_price_bull_service.scan_interval = new_interval
-                st.success("✅ 配置已保存")
+                st.success("配置已保存")
     
     st.markdown("---")
     
     # 标签页
-    tab1, tab2, tab3 = st.tabs(["📋 监控列表", "🔔 卖出提醒", "📜 历史记录"])
+    tab1, tab2, tab3 = st.tabs(["监控列表", "卖出提醒", "历史记录"])
     
     with tab1:
         display_monitored_stocks()
@@ -96,7 +99,7 @@ def display_monitored_stocks():
         st.info("暂无监控中的股票")
         return
     
-    st.markdown(f"### 📋 监控列表（共{len(stocks)}只）")
+    st.markdown(f"### 监控列表（共{len(stocks)}只）")
     
     # 转换为DataFrame
     df = pd.DataFrame(stocks)
@@ -109,7 +112,7 @@ def display_monitored_stocks():
     
     # 批量移除
     st.markdown("---")
-    st.markdown("### 🗑️ 批量管理")
+    st.markdown("### 批量管理")
     
     selected_codes = st.multiselect(
         "选择要移除的股票",
@@ -117,7 +120,7 @@ def display_monitored_stocks():
         format_func=lambda x: x
     )
     
-    if selected_codes and st.button("🗑️ 移除选中股票", type="secondary"):
+    if selected_codes and st.button("移除选中股票", type="secondary"):
         for item in selected_codes:
             code = item.split()[0]
             success, msg = low_price_bull_monitor.remove_stock(code, "手动移除")
@@ -137,17 +140,17 @@ def display_sell_alerts():
         st.info("暂无待处理的卖出提醒")
         return
     
-    st.markdown(f"### 🔔 卖出提醒（共{len(alerts)}条）")
+    st.markdown(f"### 卖出提醒（共{len(alerts)}条）")
     
     for alert in alerts:
         with st.expander(
-            f"🔔 {alert['stock_code']} {alert['stock_name']} - {alert['alert_reason']}",
-            expanded=True
+            f"{alert['stock_code']} {alert['stock_name']} - {alert['alert_reason']}",
+            expanded=False
         ):
             col1, col2 = st.columns(2)
             
             with col1:
-                st.markdown("#### 📊 提醒信息")
+                st.markdown("#### 提醒信息")
                 st.markdown(f"**股票代码**: {alert['stock_code']}")
                 st.markdown(f"**股票名称**: {alert['stock_name']}")
                 st.markdown(f"**提醒类型**: {_get_alert_type_name(alert['alert_type'])}")
@@ -155,7 +158,7 @@ def display_sell_alerts():
                 st.markdown(f"**提醒时间**: {alert['alert_time']}")
             
             with col2:
-                st.markdown("#### 💰 市场数据")
+                st.markdown("#### 市场数据")
                 
                 # 处理当前价格（避免bytes类型错误）
                 current_price = alert.get('current_price')
@@ -194,16 +197,16 @@ def display_sell_alerts():
             col_action1, col_action2 = st.columns(2)
             
             with col_action1:
-                if st.button(f"✅ 已处理 - {alert['stock_code']}", key=f"done_{alert['id']}"):
+                if st.button(f"已处理 - {alert['stock_code']}", key=f"done_{alert['id']}"):
                     low_price_bull_monitor.mark_alert_sent(alert['id'])
                     low_price_bull_monitor.remove_stock(alert['stock_code'], "已处理提醒")
-                    st.success(f"✅ 已标记为已处理并移除 {alert['stock_code']}")
+                    st.success(f"已标记为已处理并移除 {alert['stock_code']}")
                     st.rerun()
             
             with col_action2:
-                if st.button(f"❌ 忽略 - {alert['stock_code']}", key=f"ignore_{alert['id']}"):
+                if st.button(f"忽略 - {alert['stock_code']}", key=f"ignore_{alert['id']}"):
                     low_price_bull_monitor.mark_alert_sent(alert['id'])
-                    st.success(f"✅ 已忽略提醒（股票保留在监控列表）")
+                    st.success(f"已忽略提醒（股票保留在监控列表）")
                     st.rerun()
 
 
@@ -216,7 +219,7 @@ def display_alert_history():
         st.info("暂无历史提醒记录")
         return
     
-    st.markdown("### 📜 历史提醒记录")
+    st.markdown("### 历史提醒记录")
     
     # 转换为DataFrame
     df = pd.DataFrame(alerts)
@@ -230,15 +233,15 @@ def display_alert_history():
     
     # 格式化
     display_df['提醒类型'] = display_df['提醒类型'].apply(_get_alert_type_name)
-    display_df['已发送'] = display_df['已发送'].apply(lambda x: '✅' if x == 1 else '❌')
+    display_df['已发送'] = display_df['已发送'].apply(lambda x: '' if x == 1 else '')
     
     st.dataframe(display_df, width='content', height=400)
     
     # 清理按钮
     st.markdown("---")
-    if st.button("🗑️ 清理30天前的记录"):
+    if st.button("清理30天前的记录"):
         low_price_bull_monitor.clear_old_alerts(days=30)
-        st.success("✅ 已清理旧记录")
+        st.success("已清理旧记录")
         st.rerun()
 
 
@@ -265,8 +268,8 @@ def add_stock_to_monitor_button(stock_code: str, stock_name: str, price: float =
     is_monitored = any(s['stock_code'] == stock_code for s in stocks)
     
     if is_monitored:
-        st.info(f"✅ {stock_code} 已在监控列表中")
-        if st.button(f"🗑️ 移出监控 - {stock_code}", key=f"remove_{stock_code}"):
+        st.info(f"{stock_code} 已在监控列表中")
+        if st.button(f"移出监控 - {stock_code}", key=f"remove_{stock_code}"):
             success, msg = low_price_bull_monitor.remove_stock(stock_code, "手动移除")
             if success:
                 st.success(msg)
@@ -274,7 +277,7 @@ def add_stock_to_monitor_button(stock_code: str, stock_name: str, price: float =
             else:
                 st.error(msg)
     else:
-        if st.button(f"➕ 加入策略监控 - {stock_code}", type="primary", key=f"add_{stock_code}"):
+        if st.button(f"加入策略监控 - {stock_code}", type="primary", key=f"add_{stock_code}"):
             if price is None:
                 price = 0.0  # 如果没有价格，使用0
             
@@ -287,7 +290,7 @@ def add_stock_to_monitor_button(stock_code: str, stock_name: str, price: float =
             
             if success:
                 st.success(msg)
-                st.info("💡 提示：请在左侧菜单进入'策略监控'查看监控状态")
+                st.info("提示：请在左侧菜单进入'策略监控'查看监控状态")
                 st.rerun()
             else:
                 st.error(msg)

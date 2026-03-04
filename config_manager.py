@@ -38,6 +38,12 @@ class ConfigManager:
                 "required": False,
                 "type": "password"
             },
+            "TUSHARE_URL": {
+                "value": "https://api.tushare.pro",
+                "description": "Tushare API地址",
+                "required": False,
+                "type": "text"
+            },
             "MINIQMT_ENABLED": {
                 "value": "false",
                 "description": "启用MiniQMT量化交易",
@@ -183,6 +189,7 @@ class ConfigManager:
             # Tushare配置
             lines.append("# ========== Tushare数据接口（可选）==========")
             lines.append(f'TUSHARE_TOKEN="{config.get("TUSHARE_TOKEN", "")}"')
+            lines.append(f'TUSHARE_URL="{config.get("TUSHARE_URL", "https://api.tushare.pro")}"')
             lines.append("")
             
             # MiniQMT配置

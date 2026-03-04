@@ -39,6 +39,35 @@ class SectorStrategyDataFetcher:
             handler.setFormatter(formatter)
             self.logger.addHandler(handler)
             self.logger.setLevel(logging.INFO)
+            
+        # 初始化Tushare API接口
+        self.ts_pro = self._init_tushare()
+    
+    def _init_tushare(self):
+        """初始化Tushare API"""
+        tushare_token = os.getenv('TUSHARE_TOKEN', '')
+        if not tushare_token:
+            print("    [Tushare] 未配置Token")
+            return None
+            
+        try:
+            import tushare as ts
+            ts.set_token(tushare_token)
+            tushare_url = os.getenv('TUSHARE_URL', 'https://api.tushare.pro')
+            
+            try:
+                # 尝试带 server 参数（较新版本支持）
+                pro = ts.pro_api(token=tushare_token, server=tushare_url)
+            except TypeError:
+                # 兼容不支持 server 参数的老版本
+                pro = ts.pro_api(token=tushare_token)
+                if tushare_url and hasattr(pro, '_DataApi__http_url'):
+                    pro._DataApi__http_url = tushare_url
+            print("    [Tushare] ✅ 初始化成功")
+            return pro
+        except Exception as e:
+            print(f"    [Tushare] 初始化失败: {e}")
+            return None
     
     def _safe_request(self, func, *args, **kwargs):
         """安全的请求函数，包含重试机制"""
@@ -227,37 +256,50 @@ class SectorStrategyDataFetcher:
     
     def _get_market_overview(self):
         """获取市场总体情况"""
+        overview = {}
+        
+        # 1. 获取A股市场统计 (AKShare)
         try:
-            # 获取A股市场统计
-            overview = {}
+            # 临时禁用代理，防止因代理设置不当导致的东财接口连接失败
+            original_no_proxy = os.environ.get('no_proxy', '')
+            os.environ['no_proxy'] = os.environ.get('no_proxy', '') + ',eastmoney.com,127.0.0.1,localhost'
             
             # 涨跌家数
-            try:
-                df_stat = self._safe_request(ak.stock_zh_a_spot_em)
-                if df_stat is not None and not df_stat.empty:
-                    total_count = len(df_stat)
-                    up_count = len(df_stat[df_stat['涨跌幅'] > 0])
-                    down_count = len(df_stat[df_stat['涨跌幅'] < 0])
-                    flat_count = total_count - up_count - down_count
-                    
-                    overview["total_stocks"] = total_count
-                    overview["up_count"] = up_count
-                    overview["down_count"] = down_count
-                    overview["flat_count"] = flat_count
-                    overview["up_ratio"] = round(up_count / total_count * 100, 2) if total_count > 0 else 0
-                    
-                    # 涨停跌停
-                    limit_up = len(df_stat[df_stat['涨跌幅'] >= 9.5])
-                    limit_down = len(df_stat[df_stat['涨跌幅'] <= -9.5])
-                    overview["limit_up"] = limit_up
-                    overview["limit_down"] = limit_down
-            except:
-                pass
+            df_stat = self._safe_request(ak.stock_zh_a_spot_em)
+            if df_stat is not None and not df_stat.empty:
+                total_count = len(df_stat)
+                up_count = len(df_stat[df_stat['涨跌幅'] > 0])
+                down_count = len(df_stat[df_stat['涨跌幅'] < 0])
+                flat_count = total_count - up_count - down_count
+                
+                overview["total_stocks"] = total_count
+                overview["up_count"] = up_count
+                overview["down_count"] = down_count
+                overview["flat_count"] = flat_count
+                overview["up_ratio"] = round(up_count / total_count * 100, 2) if total_count > 0 else 0
+                
+                # 涨停跌停
+                limit_up = len(df_stat[df_stat['涨跌幅'] >= 9.5])
+                limit_down = len(df_stat[df_stat['涨跌幅'] <= -9.5])
+                overview["limit_up"] = limit_up
+                overview["limit_down"] = limit_down
+                print("    [Akshare] ✅ 成功获取A股统计数据")
             
-            # 大盘指数
+            # 恢复no_proxy设置
+            os.environ['no_proxy'] = original_no_proxy
+        except Exception as e:
+            print(f"    [Akshare] 获取市场个股状态失败: {e}")
+            
+        # 2. 大盘指数 (AKShare -> Tushare fallback)
+        try:
+            # 优先尝试使用AKShare
             try:
+                # 临时禁用代理
+                original_no_proxy = os.environ.get('no_proxy', '')
+                os.environ['no_proxy'] = os.environ.get('no_proxy', '') + ',eastmoney.com,sina.com.cn,127.0.0.1,localhost'
+                
                 # 上证指数
-                df_sh = ak.stock_zh_index_spot_em(symbol="上证指数")
+                df_sh = ak.stock_zh_index_spot_em(symbol="sh000001")
                 if df_sh is not None and not df_sh.empty:
                     overview["sh_index"] = {
                         "code": "000001",
@@ -268,7 +310,7 @@ class SectorStrategyDataFetcher:
                     }
                 
                 # 深证成指
-                df_sz = self._safe_request(ak.stock_zh_index_spot_em, symbol="深证成指")
+                df_sz = ak.stock_zh_index_spot_em(symbol="sz399001")
                 if df_sz is not None and not df_sz.empty:
                     overview["sz_index"] = {
                         "code": "399001",
@@ -279,7 +321,7 @@ class SectorStrategyDataFetcher:
                     }
                 
                 # 创业板指
-                df_cyb = self._safe_request(ak.stock_zh_index_spot_em, symbol="创业板指")
+                df_cyb = ak.stock_zh_index_spot_em(symbol="sz399006")
                 if df_cyb is not None and not df_cyb.empty:
                     overview["cyb_index"] = {
                         "code": "399006",
@@ -288,47 +330,59 @@ class SectorStrategyDataFetcher:
                         "change_pct": df_cyb.iloc[0].get('涨跌幅', 0),
                         "change": df_cyb.iloc[0].get('涨跌额', 0)
                     }
-            except:
-                pass
-            
-            return overview
-            
+                print("    [Akshare] ✅ 成功获取指数数据")
+                os.environ['no_proxy'] = original_no_proxy
+            except Exception as e:
+                print(f"    [Akshare] 获取大盘指数数据失败: {e}，尝试Tushare...")
+                # AKShare失败，尝试用Tushare作为备份获取指数
+                if self.ts_pro:
+                    try:
+                        print("    [Tushare] 正在通过Tushare获取指数备份数据...")
+                        idx_map = {
+                            "000001.SH": ("上证指数", "sh_index"),
+                            "399001.SZ": ("深证成指", "sz_index"),
+                            "399006.SZ": ("创业板指", "cyb_index")
+                        }
+                        
+                        for ts_code, (name, key) in idx_map.items():
+                            if key in overview: continue # 已经有数据了就跳过
+                            
+                            df_idx = self.ts_pro.index_daily(ts_code=ts_code, limit=5)
+                            if df_idx is not None and not df_idx.empty:
+                                df_idx = df_idx.sort_values(['trade_date'], ascending=False)
+                                row = df_idx.iloc[0]
+                                overview[key] = {
+                                    "code": ts_code.split('.')[0],
+                                    "name": name,
+                                    "close": row['close'],
+                                    "change_pct": row['pct_chg'],
+                                    "change": row['change']
+                                }
+                                print(f"    [Tushare] ✅ 成功获取 {name} ({ts_code}) 备份数据")
+                            else:
+                                print(f"    [Tushare] 未获取到 {name} ({ts_code}) 数据")
+                    except Exception as ts_e:
+                        print(f"    [Tushare] 获取大盘数据失败: {ts_e}")
+                else:
+                    print("    [Tushare] 未初始化，跳过备份获取")
         except Exception as e:
-            print(f"    获取市场概况失败: {e}")
-            return {}
+            print(f"    获取指数概况过程中出现严重错误: {e}")
+            
+        return overview
     
     def _get_north_money_flow(self):
         """获取北向资金流向（优先使用Tushare，失败时使用Akshare）"""
         # 优先使用Tushare获取沪深港通资金流向
-        self.ts_pro = None
-        tushare_token = os.getenv('TUSHARE_TOKEN', '')
         try:
-            # 初始化Tushare（如果尚未初始化）
-            if not hasattr(self, '_tushare_api'):
-                TUSHARE_TOKEN = os.getenv('TUSHARE_TOKEN', '')
-                if TUSHARE_TOKEN:
-                    try:
-                        import tushare as ts
-                        ts.set_token(tushare_token)
-                        self.ts_pro = ts.pro_api()
-                        print("    [Tushare] ✅ 初始化成功")
-                    except Exception as e:
-                        print(f"    [Tushare] 初始化失败: {e}")
-                        self._tushare_api = None
-                else:
-                    print("    [Tushare] 未配置Token")
-                    self._tushare_api = None
-            
-            
             # 如果Tushare可用，获取数据
-            if hasattr(self, '_tushare_api') and self._tushare_api:
+            if self.ts_pro:
                 print("    [Tushare] 正在获取沪深港通资金流向...")
                 
                 # 获取最近30天的数据
                 end_date = datetime.now()
                 start_date = end_date - timedelta(days=20)
                 
-                df = self._tushare_api.moneyflow_hsgt(
+                df = self.ts_pro.moneyflow_hsgt(
                     start_date=start_date.strftime('%Y%m%d'),
                     end_date=end_date.strftime('%Y%m%d')
                 )

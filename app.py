@@ -22,270 +22,46 @@ from sector_strategy_ui import display_sector_strategy
 from longhubang_ui import display_longhubang
 from smart_monitor_ui import smart_monitor_ui
 from news_flow_ui import display_news_flow_monitor
+from ui_theme import inject_global_theme, configure_plotly_template, render_page_header
 
 # 页面配置
 st.set_page_config(
     page_title="复合多AI智能体股票团队分析系统",
-    page_icon="📈",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="auto"
 )
 
 # 在侧边栏显示当前模型信息（统一使用.env配置）
 def show_current_model_info():
     """显示当前使用的AI模型信息"""
     st.sidebar.markdown("---")
-    st.sidebar.subheader("🤖 AI模型")
+    st.sidebar.subheader("AI模型")
     st.sidebar.info(f"当前模型: **{config.DEFAULT_MODEL_NAME}**")
     st.sidebar.caption("可在「环境配置」中修改模型名称")
 
-# 自定义CSS样式 - 专业版
-st.markdown("""
-<style>
-    /* 全局样式 */
-    .main {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        background-attachment: fixed;
-    }
-    
-    .stApp {
-        background: transparent;
-    }
-    
-    /* 主容器 */
-    .block-container {
-        padding-top: 2rem;
-        padding-bottom: 2rem;
-        background: rgba(255, 255, 255, 0.95);
-        border-radius: 20px;
-        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
-        margin-top: 1rem;
-    }
-    
-    /* 顶部导航栏 */
-    .top-nav {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        padding: 1.5rem 2rem;
-        border-radius: 15px;
-        margin-bottom: 2rem;
-        box-shadow: 0 8px 32px rgba(102, 126, 234, 0.3);
-    }
-    
-    .nav-title {
-        font-size: 2rem;
-        font-weight: 800;
-        color: white;
-        text-align: center;
-        margin: 0;
-        text-shadow: 2px 2px 4px rgba(0,0,0,0.2);
-        letter-spacing: 1px;
-    }
-    
-    .nav-subtitle {
-        text-align: center;
-        color: rgba(255, 255, 255, 0.9);
-        font-size: 0.95rem;
-        margin-top: 0.5rem;
-        font-weight: 300;
-    }
-    
-    /* 标签页样式 */
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 2rem;
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        padding: 1rem 2rem;
-        border-radius: 15px;
-        box-shadow: 0 4px 15px rgba(102, 126, 234, 0.2);
-    }
-    
-    .stTabs [data-baseweb="tab"] {
-        height: 60px;
-        background: rgba(255, 255, 255, 0.1);
-        border-radius: 10px;
-        color: white;
-        font-weight: 600;
-        font-size: 1.1rem;
-        padding: 0 2rem;
-        border: none;
-        transition: all 0.3s ease;
-    }
-    
-    .stTabs [data-baseweb="tab"]:hover {
-        background: rgba(255, 255, 255, 0.2);
-        transform: translateY(-2px);
-    }
-    
-    .stTabs [aria-selected="true"] {
-        background: white !important;
-        color: #667eea !important;
-        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
-    }
-    
-    /* 侧边栏美化 */
-    .css-1d391kg, [data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #667eea 0%, #764ba2 100%);
-        padding-top: 2rem;
-    }
-    
-    .css-1d391kg h1, .css-1d391kg h2, .css-1d391kg h3,
-    [data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3 {
-        color: white !important;
-    }
-    
-    .css-1d391kg .stMarkdown, [data-testid="stSidebar"] .stMarkdown {
-        color: rgba(255, 255, 255, 0.95) !important;
-    }
-    
-    /* 分析师卡片 */
-    .agent-card {
-        background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
-        padding: 1.5rem;
-        border-radius: 15px;
-        margin: 1rem 0;
-        border-left: 5px solid #667eea;
-        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
-        transition: transform 0.3s ease;
-    }
-    
-    .agent-card:hover {
-        transform: translateX(5px);
-    }
-    
-    /* 决策卡片 */
-    .decision-card {
-        background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%);
-        padding: 2rem;
-        border-radius: 15px;
-        border: 3px solid #4caf50;
-        margin: 1.5rem 0;
-        box-shadow: 0 8px 30px rgba(76, 175, 80, 0.2);
-    }
-    
-    /* 警告卡片 */
-    .warning-card {
-        background: linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%);
-        padding: 1.5rem;
-        border-radius: 15px;
-        border-left: 5px solid #ff9800;
-        box-shadow: 0 4px 15px rgba(255, 152, 0, 0.2);
-    }
-    
-    /* 指标卡片 */
-    .metric-card {
-        background: white;
-        padding: 1.5rem;
-        border-radius: 12px;
-        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
-        text-align: center;
-        transition: transform 0.3s ease, box-shadow 0.3s ease;
-        border-top: 4px solid #667eea;
-    }
-    
-    .metric-card:hover {
-        transform: translateY(-5px);
-        box-shadow: 0 8px 30px rgba(0, 0, 0, 0.15);
-    }
-    
-    /* 按钮美化 */
-    .stButton>button {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white;
-        border: none;
-        border-radius: 10px;
-        padding: 0.75rem 2rem;
-        font-weight: 600;
-        font-size: 1rem;
-        transition: all 0.3s ease;
-        box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
-    }
-    
-    .stButton>button:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 6px 25px rgba(102, 126, 234, 0.4);
-    }
-    
-    /* 输入框美化 */
-    .stTextInput>div>div>input {
-        border-radius: 10px;
-        border: 2px solid #e0e0e0;
-        padding: 0.75rem;
-        font-size: 1rem;
-        transition: border-color 0.3s ease;
-    }
-    
-    .stTextInput>div>div>input:focus {
-        border-color: #667eea;
-        box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
-    }
-    
-    /* 进度条美化 */
-    .stProgress > div > div > div > div {
-        background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
-    }
-    
-    /* 成功/错误/警告/信息消息框 */
-    .stSuccess, .stError, .stWarning, .stInfo {
-        border-radius: 10px;
-        padding: 1rem;
-        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-    }
-    
-    /* 图表容器 */
-    .js-plotly-plot {
-        border-radius: 15px;
-        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
-    }
-    
-    /* Expander美化 */
-    .streamlit-expanderHeader {
-        background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
-        border-radius: 10px;
-        font-weight: 600;
-    }
-    
-    /* 数据框美化 */
-    .dataframe {
-        border-radius: 10px;
-        overflow: hidden;
-        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-    }
-    
-    /* 隐藏Streamlit默认元素 */
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-    
-    /* 响应式设计 */
-    @media (max-width: 768px) {
-        .nav-title {
-            font-size: 1.5rem;
-        }
-        .stTabs [data-baseweb="tab"] {
-            font-size: 0.9rem;
-            padding: 0 1rem;
-        }
-    }
-</style>
-""", unsafe_allow_html=True)
+# 全局主题
+inject_global_theme()
+configure_plotly_template()
 
 def main():
     # 顶部标题栏
-    st.markdown("""
-    <div class="top-nav">
-        <h1 class="nav-title">📈 复合多AI智能体股票团队分析系统</h1>
-        <p class="nav-subtitle">基于DeepSeek的专业量化投资分析平台 | Multi-Agent Stock Analysis System</p>
-    </div>
-    """, unsafe_allow_html=True)
+    render_page_header(
+        "复合多AI智能体股票团队分析系统",
+        "基于DeepSeek的专业量化投资分析平台 | Multi-Agent Stock Analysis System",
+    )
 
     # 学习资源展示
-    st.info("📺 **新手必看干货**：为了在股市长久生存，建议您观看 👉 [股票知识讲解合集](https://www.bilibili.com/video/BV1Y2FGzzEeS/) 和 [投资认知提升合集](https://www.bilibili.com/video/BV1ugBMBAEbW) 👈，相信会对您有很大帮助！")
+    with st.expander("新手学习资源", expanded=False):
+        st.markdown("[股票知识讲解合集](https://www.bilibili.com/video/BV1Y2FGzzEeS/)")
+        st.markdown("[投资认知提升合集](https://www.bilibili.com/video/BV1ugBMBAEbW)")
 
     # 侧边栏
     with st.sidebar:
         # 快捷导航 - 移到顶部
-        st.markdown("### 🔍 功能导航")
+        st.markdown("### 功能导航")
 
-        # 🏠 单股分析（首页）
-        if st.button("🏠 股票分析", width='stretch', key="nav_home", help="返回首页，进行单只股票的深度分析"):
+        #  单股分析（首页）
+        if st.button("股票分析", width='stretch', key="nav_home", help="返回首页，进行单只股票的深度分析"):
             # 清除所有功能页面标志
             for key in ['show_history', 'show_monitor', 'show_config', 'show_main_force',
                        'show_sector_strategy', 'show_longhubang', 'show_portfolio', 'show_low_price_bull', 'show_news_flow', 'show_macro_cycle', 'show_value_stock']:
@@ -294,96 +70,96 @@ def main():
 
         st.markdown("---")
 
-        # 🎯 选股板块
-        with st.expander("🎯 选股板块", expanded=True):
+        #  选股板块
+        with st.expander("选股板块", expanded=False):
             st.markdown("**根据不同策略筛选优质股票**")
 
-            if st.button("💰 主力选股", width='stretch', key="nav_main_force", help="基于主力资金流向的选股策略"):
+            if st.button("主力选股", width='stretch', key="nav_main_force", help="基于主力资金流向的选股策略"):
                 st.session_state.show_main_force = True
                 for key in ['show_history', 'show_monitor', 'show_config', 'show_sector_strategy',
                            'show_longhubang', 'show_portfolio', 'show_low_price_bull', 'show_news_flow']:
                     if key in st.session_state:
                         del st.session_state[key]
             
-            if st.button("🐂 低价擒牛", width='stretch', key="nav_low_price_bull", help="低价高成长股票筛选策略"):
+            if st.button("低价擒牛", width='stretch', key="nav_low_price_bull", help="低价高成长股票筛选策略"):
                 st.session_state.show_low_price_bull = True
                 for key in ['show_history', 'show_monitor', 'show_config', 'show_sector_strategy',
                            'show_longhubang', 'show_portfolio', 'show_main_force', 'show_small_cap', 'show_profit_growth', 'show_news_flow']:
                     if key in st.session_state:
                         del st.session_state[key]
             
-            if st.button("📊 小市值策略", width='stretch', key="nav_small_cap", help="小盘高成长股票筛选策略"):
+            if st.button("小市值策略", width='stretch', key="nav_small_cap", help="小盘高成长股票筛选策略"):
                 st.session_state.show_small_cap = True
                 for key in ['show_history', 'show_monitor', 'show_config', 'show_sector_strategy',
                            'show_longhubang', 'show_portfolio', 'show_main_force', 'show_low_price_bull', 'show_profit_growth', 'show_news_flow']:
                     if key in st.session_state:
                         del st.session_state[key]
             
-            if st.button("📈 净利增长", width='stretch', key="nav_profit_growth", help="净利润增长稳健股票筛选策略"):
+            if st.button("净利增长", width='stretch', key="nav_profit_growth", help="净利润增长稳健股票筛选策略"):
                 st.session_state.show_profit_growth = True
                 for key in ['show_history', 'show_monitor', 'show_config', 'show_sector_strategy',
                            'show_longhubang', 'show_portfolio', 'show_main_force', 'show_low_price_bull', 'show_small_cap', 'show_news_flow', 'show_value_stock']:
                     if key in st.session_state:
                         del st.session_state[key]
 
-            if st.button("💎 低估值策略", width='stretch', key="nav_value_stock", help="低PE+低PB+高股息+低负债 价值投资筛选"):
+            if st.button("低估值策略", width='stretch', key="nav_value_stock", help="低PE+低PB+高股息+低负债 价值投资筛选"):
                 st.session_state.show_value_stock = True
                 for key in ['show_history', 'show_monitor', 'show_config', 'show_sector_strategy',
                            'show_longhubang', 'show_portfolio', 'show_main_force', 'show_low_price_bull', 'show_small_cap', 'show_profit_growth', 'show_news_flow', 'show_macro_cycle']:
                     if key in st.session_state:
                         del st.session_state[key]
 
-        # 📊 策略分析
-        with st.expander("📊 策略分析", expanded=True):
+        #  策略分析
+        with st.expander("策略分析", expanded=False):
             st.markdown("**AI驱动的板块和龙虎榜策略**")
 
-            if st.button("🎯 智策板块", width='stretch', key="nav_sector_strategy", help="AI板块策略分析"):
+            if st.button("智策板块", width='stretch', key="nav_sector_strategy", help="AI板块策略分析"):
                 st.session_state.show_sector_strategy = True
                 for key in ['show_history', 'show_monitor', 'show_config', 'show_main_force',
                            'show_longhubang', 'show_portfolio', 'show_smart_monitor', 'show_low_price_bull', 'show_news_flow']:
                     if key in st.session_state:
                         del st.session_state[key]
 
-            if st.button("🐉 智瞰龙虎", width='stretch', key="nav_longhubang", help="龙虎榜深度分析"):
+            if st.button("智瞰龙虎", width='stretch', key="nav_longhubang", help="龙虎榜深度分析"):
                 st.session_state.show_longhubang = True
                 for key in ['show_history', 'show_monitor', 'show_config', 'show_main_force',
                            'show_sector_strategy', 'show_portfolio', 'show_smart_monitor', 'show_low_price_bull', 'show_news_flow']:
                     if key in st.session_state:
                         del st.session_state[key]
             
-            if st.button("📰 新闻流量", width='stretch', key="nav_news_flow", help="新闻流量监测与短线指导"):
+            if st.button("新闻流量", width='stretch', key="nav_news_flow", help="新闻流量监测与短线指导"):
                 st.session_state.show_news_flow = True
                 for key in ['show_history', 'show_monitor', 'show_config', 'show_main_force',
                            'show_sector_strategy', 'show_portfolio', 'show_smart_monitor', 'show_low_price_bull', 'show_longhubang', 'show_macro_cycle']:
                     if key in st.session_state:
                         del st.session_state[key]
 
-            if st.button("🧭 宏观周期", width='stretch', key="nav_macro_cycle", help="康波周期 × 美林投资时钟 × 政策分析"):
+            if st.button("宏观周期", width='stretch', key="nav_macro_cycle", help="康波周期 × 美林投资时钟 × 政策分析"):
                 st.session_state.show_macro_cycle = True
                 for key in ['show_history', 'show_monitor', 'show_config', 'show_main_force',
                            'show_sector_strategy', 'show_portfolio', 'show_smart_monitor', 'show_low_price_bull', 'show_longhubang', 'show_news_flow']:
                     if key in st.session_state:
                         del st.session_state[key]
 
-        # 💼 投资管理
-        with st.expander("💼 投资管理", expanded=True):
+        #  投资管理
+        with st.expander("投资管理", expanded=False):
             st.markdown("**持仓跟踪与实时监测**")
 
-            if st.button("📊 持仓分析", width='stretch', key="nav_portfolio", help="投资组合分析与定时跟踪"):
+            if st.button("持仓分析", width='stretch', key="nav_portfolio", help="投资组合分析与定时跟踪"):
                 st.session_state.show_portfolio = True
                 for key in ['show_history', 'show_monitor', 'show_config', 'show_main_force',
                            'show_sector_strategy', 'show_longhubang', 'show_smart_monitor', 'show_low_price_bull', 'show_news_flow']:
                     if key in st.session_state:
                         del st.session_state[key]
 
-            if st.button("🤖 AI盯盘", width='stretch', key="nav_smart_monitor", help="DeepSeek AI自动盯盘决策交易（支持A股T+1）"):
+            if st.button("AI盯盘", width='stretch', key="nav_smart_monitor", help="DeepSeek AI自动盯盘决策交易（支持A股T+1）"):
                 st.session_state.show_smart_monitor = True
                 for key in ['show_history', 'show_monitor', 'show_config', 'show_main_force',
                            'show_sector_strategy', 'show_longhubang', 'show_portfolio', 'show_low_price_bull', 'show_news_flow']:
                     if key in st.session_state:
                         del st.session_state[key]
 
-            if st.button("📡 实时监测", width='stretch', key="nav_monitor", help="价格监控与预警提醒"):
+            if st.button("实时监测", width='stretch', key="nav_monitor", help="价格监控与预警提醒"):
                 st.session_state.show_monitor = True
                 for key in ['show_history', 'show_main_force', 'show_longhubang', 'show_portfolio',
                            'show_config', 'show_sector_strategy', 'show_smart_monitor', 'show_low_price_bull', 'show_news_flow']:
@@ -392,16 +168,16 @@ def main():
 
         st.markdown("---")
 
-        # 📖 历史记录
-        if st.button("📖 历史记录", width='stretch', key="nav_history", help="查看历史分析记录"):
+        #  历史记录
+        if st.button("历史记录", width='stretch', key="nav_history", help="查看历史分析记录"):
             st.session_state.show_history = True
             for key in ['show_monitor', 'show_longhubang', 'show_portfolio', 'show_config',
                        'show_main_force', 'show_sector_strategy', 'show_low_price_bull', 'show_news_flow']:
                 if key in st.session_state:
                     del st.session_state[key]
 
-        # ⚙️ 环境配置
-        if st.button("⚙️ 环境配置", width='stretch', key="nav_config", help="系统设置与API配置"):
+        #  环境配置
+        if st.button("环境配置", width='stretch', key="nav_config", help="系统设置与API配置"):
             st.session_state.show_config = True
             for key in ['show_history', 'show_monitor', 'show_main_force', 'show_sector_strategy',
                        'show_longhubang', 'show_portfolio', 'show_low_price_bull', 'show_news_flow']:
@@ -411,14 +187,14 @@ def main():
         st.markdown("---")
 
         # 系统配置
-        st.markdown("### ⚙️ 系统配置")
+        st.markdown("### 系统配置")
 
         # API密钥检查
         api_key_status = check_api_key()
         if api_key_status:
-            st.success("✅ API已连接")
+            st.success("API已连接")
         else:
-            st.error("❌ API未配置")
+            st.error("API未配置")
             st.caption("请在.env中配置API密钥")
 
         st.markdown("---")
@@ -430,9 +206,9 @@ def main():
         st.markdown("---")
 
         # 系统状态面板
-        st.markdown("### 📊 系统状态")
+        st.markdown("### 系统状态")
 
-        monitor_status = "🟢 运行中" if monitor_service.running else "🔴 已停止"
+        monitor_status = "运行中" if monitor_service.running else "已停止"
         st.markdown(f"**监测服务**: {monitor_status}")
 
         try:
@@ -450,7 +226,7 @@ def main():
         st.markdown("---")
 
         # 分析参数设置
-        st.markdown("### 📊 分析参数")
+        st.markdown("### 分析参数")
         period = st.selectbox(
             "数据周期",
             ["1y", "6mo", "3mo", "1mo"],
@@ -461,12 +237,12 @@ def main():
         st.markdown("---")
 
         # 帮助信息
-        with st.expander("💡 使用帮助"):
+        with st.expander("使用帮助"):
             st.markdown("""
             **股票代码格式**
-            - 🇨🇳 A股：6位数字（如600519）
-            - 🇭🇰 港股：1-5位数字（如700、00700）或HK前缀（如HK00700）
-            - 🇺🇸 美股：字母代码（如AAPL）
+            - A股：6位数字（如600519）
+            - 港股：1-5位数字（如700、00700）或HK前缀（如HK00700）
+            - 美股：字母代码（如AAPL）
             
             **功能说明**
             - **股票分析**：AI团队深度分析个股
@@ -483,14 +259,14 @@ def main():
             """)
             
         # 学习资源
-        with st.expander("📺 学习视频合集"):
+        with st.expander("学习视频合集"):
             st.markdown("""
-            **📢 B站干货合集**
+            ** B站干货合集**
             
             如果你希望能在股市中长久生存下去，建议你能把下面的合集看完，会对你有很大帮助的！
             
-            - 📚 [股票知识讲解合集](https://www.bilibili.com/video/BV1Y2FGzzEeS/)
-            - 🧠 [投资认知提升合集](https://www.bilibili.com/video/BV1ugBMBAEbW)
+            - [股票知识讲解合集](https://www.bilibili.com/video/BV1Y2FGzzEeS/)
+            - [投资认知提升合集](https://www.bilibili.com/video/BV1ugBMBAEbW)
             """)
 
     # 检查是否显示历史记录
@@ -598,23 +374,23 @@ def main():
 
         with col1:
             stock_input = st.text_input(
-                "🔍 请输入股票代码或名称",
+                "请输入股票代码或名称",
                 placeholder="例如: AAPL, 000001, 00700",
                 help="支持A股(如000001)、港股(如00700)和美股(如AAPL)"
             )
 
         with col2:
-            analyze_button = st.button("🚀 开始分析", type="primary", width='stretch')
+            analyze_button = st.button("开始分析", type="primary", width='stretch')
 
         with col3:
-            if st.button("🔄 清除缓存", width='stretch'):
+            if st.button("清除缓存", width='stretch'):
                 st.cache_data.clear()
                 st.success("缓存已清除")
 
     else:
         # 批量股票分析界面
         stock_input = st.text_area(
-            "🔍 请输入多个股票代码（每行一个或用逗号分隔）",
+            "请输入多个股票代码（每行一个或用逗号分隔）",
             placeholder="例如:\n000001\n600036\n00700\n\n或者: 000001, 600036, 00700, AAPL",
             height=120,
             help="支持多种格式：每行一个代码或用逗号分隔。支持A股、港股、美股"
@@ -622,39 +398,39 @@ def main():
 
         col1, col2, col3 = st.columns(3)
         with col1:
-            analyze_button = st.button("🚀 开始批量分析", type="primary", width='stretch')
+            analyze_button = st.button("开始批量分析", type="primary", width='stretch')
         with col2:
-            if st.button("🔄 清除缓存", width='stretch'):
+            if st.button("清除缓存", width='stretch'):
                 st.cache_data.clear()
                 st.success("缓存已清除")
         with col3:
-            if st.button("🗑️ 清除结果", width='stretch'):
+            if st.button("清除结果", width='stretch'):
                 if 'batch_analysis_results' in st.session_state:
                     del st.session_state.batch_analysis_results
                 st.success("已清除批量分析结果")
 
     # 分析师团队选择
     st.markdown("---")
-    st.subheader("👥 选择分析师团队")
+    st.subheader("选择分析师团队")
 
     col1, col2, col3 = st.columns(3)
 
     with col1:
-        enable_technical = st.checkbox("📊 技术分析师", value=True,
+        enable_technical = st.checkbox("技术分析师", value=True,
                                        help="负责技术指标分析、图表形态识别、趋势判断")
-        enable_fundamental = st.checkbox("💼 基本面分析师", value=True,
+        enable_fundamental = st.checkbox("基本面分析师", value=True,
                                         help="负责公司财务分析、行业研究、估值分析")
 
     with col2:
-        enable_fund_flow = st.checkbox("💰 资金面分析师", value=True,
+        enable_fund_flow = st.checkbox("资金面分析师", value=True,
                                       help="负责资金流向分析、主力行为研究")
-        enable_risk = st.checkbox("⚠️ 风险管理师", value=True,
+        enable_risk = st.checkbox("风险管理师", value=True,
                                  help="负责风险识别、风险评估、风险控制策略制定")
 
     with col3:
-        enable_sentiment = st.checkbox("📈 市场情绪分析师", value=True,
+        enable_sentiment = st.checkbox("市场情绪分析师", value=True,
                                       help="负责市场情绪研究、ARBR指标分析（仅A股）")
-        enable_news = st.checkbox("📰 新闻分析师", value=True,
+        enable_news = st.checkbox("新闻分析师", value=True,
                                  help="负责新闻事件分析、舆情研究（仅A股，qstock数据源）")
 
     # 显示已选择的分析师
@@ -673,9 +449,9 @@ def main():
         selected_analysts.append("新闻分析师")
 
     if selected_analysts:
-        st.info(f"✅ 已选择 {len(selected_analysts)} 位分析师: {', '.join(selected_analysts)}")
+        st.info(f"已选择 {len(selected_analysts)} 位分析师: {', '.join(selected_analysts)}")
     else:
-        st.warning("⚠️ 请至少选择一位分析师")
+        st.warning("请至少选择一位分析师")
 
     # 保存选择到session_state
     st.session_state.enable_technical = enable_technical
@@ -689,12 +465,12 @@ def main():
 
     if analyze_button and stock_input:
         if not api_key_status:
-            st.error("❌ 请先配置 DeepSeek API Key")
+            st.error("请先配置 DeepSeek API Key")
             return
 
         # 检查是否至少选择了一位分析师
         if not selected_analysts:
-            st.error("❌ 请至少选择一位分析师参与分析")
+            st.error("请至少选择一位分析师参与分析")
             return
 
         if analysis_mode == "单个分析":
@@ -721,13 +497,13 @@ def main():
             stock_list = parse_stock_list(stock_input)
 
             if not stock_list:
-                st.error("❌ 请输入有效的股票代码")
+                st.error("请输入有效的股票代码")
                 return
 
             if len(stock_list) > 20:
-                st.warning(f"⚠️ 检测到 {len(stock_list)} 只股票，建议一次分析不超过20只")
+                st.warning(f"检测到 {len(stock_list)} 只股票，建议一次分析不超过20只")
 
-            st.info(f"📊 准备分析 {len(stock_list)} 只股票: {', '.join(stock_list)}")
+            st.info(f"准备分析 {len(stock_list)} 只股票: {', '.join(stock_list)}")
 
             # 清除之前的分析结果（包括单个和批量）
             if 'batch_analysis_results' in st.session_state:
@@ -983,10 +759,10 @@ def analyze_single_stock_for_batch(symbol, period, enabled_analysts_config=None,
                 final_decision=final_decision
             )
             saved_to_db = True
-            print(f"✅ {symbol} 成功保存到数据库，记录ID: {record_id}")
+            print(f"{symbol} 成功保存到数据库，记录ID: {record_id}")
         except Exception as e:
             db_error = str(e)
-            print(f"❌ {symbol} 保存到数据库失败: {db_error}")
+            print(f"{symbol} 保存到数据库失败: {db_error}")
 
         return {
             "symbol": symbol,
@@ -1020,7 +796,7 @@ def run_batch_analysis(stock_list, period, batch_mode="顺序分析"):
     selected_model = st.session_state.get('selected_model', config.DEFAULT_MODEL_NAME)
 
     # 创建进度显示
-    st.subheader(f"📊 批量分析进行中 ({batch_mode})")
+    st.subheader(f"批量分析进行中 ({batch_mode})")
 
     progress_bar = st.progress(0)
     status_text = st.empty()
@@ -1031,7 +807,7 @@ def run_batch_analysis(stock_list, period, batch_mode="顺序分析"):
 
     if batch_mode == "多线程并行":
         # 多线程并行分析
-        status_text.text(f"🚀 使用多线程并行分析 {total} 只股票...")
+        status_text.text(f"使用多线程并行分析 {total} 只股票...")
 
         # 创建线程锁用于更新进度
         lock = threading.Lock()
@@ -1069,25 +845,25 @@ def run_batch_analysis(stock_list, period, batch_mode="顺序分析"):
                     progress_bar.progress(progress)
 
                     if result['success']:
-                        status_text.text(f"✅ [{len(results)}/{total}] {symbol} 分析完成")
+                        status_text.text(f"[{len(results)}/{total}] {symbol} 分析完成")
                     else:
-                        status_text.text(f"❌ [{len(results)}/{total}] {symbol} 分析失败: {result.get('error', '未知错误')}")
+                        status_text.text(f"[{len(results)}/{total}] {symbol} 分析失败: {result.get('error', '未知错误')}")
 
                 except concurrent.futures.TimeoutError:
                     results.append({"symbol": symbol, "error": "分析超时（5分钟）", "success": False})
                     progress_bar.progress(len(results) / total)
-                    status_text.text(f"⏱️ [{len(results)}/{total}] {symbol} 分析超时")
+                    status_text.text(f"计时 [{len(results)}/{total}] {symbol} 分析超时")
                 except Exception as e:
                     results.append({"symbol": symbol, "error": str(e), "success": False})
                     progress_bar.progress(len(results) / total)
-                    status_text.text(f"❌ [{len(results)}/{total}] {symbol} 出现错误")
+                    status_text.text(f"[{len(results)}/{total}] {symbol} 出现错误")
 
     else:
         # 顺序分析
-        status_text.text(f"📝 按顺序分析 {total} 只股票...")
+        status_text.text(f"按顺序分析 {total} 只股票...")
 
         for i, symbol in enumerate(stock_list, 1):
-            status_text.text(f"🔍 [{i}/{total}] 正在分析 {symbol}...")
+            status_text.text(f"[{i}/{total}] 正在分析 {symbol}...")
 
             try:
                 result = analyze_single_stock_for_batch(symbol, period, enabled_analysts_config, selected_model)
@@ -1101,9 +877,9 @@ def run_batch_analysis(stock_list, period, batch_mode="顺序分析"):
             progress_bar.progress(progress)
 
             if result['success']:
-                status_text.text(f"✅ [{i}/{total}] {symbol} 分析完成")
+                status_text.text(f"[{i}/{total}] {symbol} 分析完成")
             else:
-                status_text.text(f"❌ [{i}/{total}] {symbol} 分析失败: {result.get('error', '未知错误')}")
+                status_text.text(f"[{i}/{total}] {symbol} 分析失败: {result.get('error', '未知错误')}")
 
     # 完成
     progress_bar.progress(1.0)
@@ -1115,14 +891,14 @@ def run_batch_analysis(stock_list, period, batch_mode="顺序分析"):
 
     # 显示完成信息
     if success_count > 0:
-        status_text.success(f"✅ 批量分析完成！成功 {success_count} 只，失败 {failed_count} 只，已保存 {saved_count} 只到历史记录")
+        status_text.success(f"批量分析完成！成功 {success_count} 只，失败 {failed_count} 只，已保存 {saved_count} 只到历史记录")
 
         # 显示保存失败的股票
         save_failed = [r['symbol'] for r in results if r.get('success') and not r.get('saved_to_db', False)]
         if save_failed:
-            st.warning(f"⚠️ 以下股票分析成功但保存失败: {', '.join(save_failed)}")
+            st.warning(f"以下股票分析成功但保存失败: {', '.join(save_failed)}")
     else:
-        status_text.error(f"❌ 批量分析完成，但所有股票都分析失败")
+        status_text.error(f"批量分析完成，但所有股票都分析失败")
 
     # 保存结果到session_state
     st.session_state.batch_analysis_results = results
@@ -1143,17 +919,17 @@ def run_stock_analysis(symbol, period):
 
     try:
         # 1. 获取股票数据
-        status_text.text("📈 正在获取股票数据...")
+        status_text.text("正在获取股票数据...")
         progress_bar.progress(10)
 
         stock_info, stock_data, indicators = get_stock_data(symbol, period)
 
         if "error" in stock_info:
-            st.error(f"❌ {stock_info['error']}")
+            st.error(f"{stock_info['error']}")
             return
 
         if stock_data is None:
-            st.error("❌ 无法获取股票历史数据")
+            st.error("无法获取股票历史数据")
             return
 
         # 显示股票基本信息
@@ -1165,7 +941,7 @@ def run_stock_analysis(symbol, period):
         progress_bar.progress(30)
 
         # 2. 获取财务数据
-        status_text.text("📊 正在获取财务数据...")
+        status_text.text("正在获取财务数据...")
         fetcher = StockDataFetcher()  # 创建fetcher实例
         financial_data = fetcher.get_financial_data(symbol)
         progress_bar.progress(35)
@@ -1174,7 +950,7 @@ def run_stock_analysis(symbol, period):
         enable_fundamental = st.session_state.get('enable_fundamental', True)
         quarterly_data = None
         if enable_fundamental and fetcher._is_chinese_stock(symbol):
-            status_text.text("📊 正在获取季报数据（akshare数据源）...")
+            status_text.text("正在获取季报数据（akshare数据源）...")
             try:
                 from quarterly_report_data import QuarterlyReportDataFetcher
                 quarterly_fetcher = QuarterlyReportDataFetcher()
@@ -1183,14 +959,14 @@ def run_stock_analysis(symbol, period):
                     income_count = quarterly_data.get('income_statement', {}).get('periods', 0) if quarterly_data.get('income_statement') else 0
                     balance_count = quarterly_data.get('balance_sheet', {}).get('periods', 0) if quarterly_data.get('balance_sheet') else 0
                     cash_flow_count = quarterly_data.get('cash_flow', {}).get('periods', 0) if quarterly_data.get('cash_flow') else 0
-                    st.info(f"✅ 成功获取季报数据：利润表{income_count}期，资产负债表{balance_count}期，现金流量表{cash_flow_count}期")
+                    st.info(f"成功获取季报数据：利润表{income_count}期，资产负债表{balance_count}期，现金流量表{cash_flow_count}期")
                 else:
-                    st.warning("⚠️ 未能获取季报数据，将基于基本财务数据分析")
+                    st.warning("未能获取季报数据，将基于基本财务数据分析")
             except Exception as e:
-                st.warning(f"⚠️ 获取季报数据时出错: {str(e)}")
+                st.warning(f"获取季报数据时出错: {str(e)}")
                 quarterly_data = None
         elif enable_fundamental and not fetcher._is_chinese_stock(symbol):
-            st.info("ℹ️ 美股暂不支持季报数据")
+            st.info("ℹ 美股暂不支持季报数据")
         progress_bar.progress(37)
 
         # 获取分析师选择状态
@@ -1201,67 +977,67 @@ def run_stock_analysis(symbol, period):
         # 3. 获取资金流向数据（仅在选择了资金面分析师时，使用akshare数据源）
         fund_flow_data = None
         if enable_fund_flow and fetcher._is_chinese_stock(symbol):
-            status_text.text("💰 正在获取资金流向数据（akshare数据源）...")
+            status_text.text("正在获取资金流向数据（akshare数据源）...")
             try:
                 from fund_flow_akshare import FundFlowAkshareDataFetcher
                 fund_flow_fetcher = FundFlowAkshareDataFetcher()
                 fund_flow_data = fund_flow_fetcher.get_fund_flow_data(symbol)
                 if fund_flow_data and fund_flow_data.get('data_success'):
                     days = fund_flow_data.get('fund_flow_data', {}).get('days', 0) if fund_flow_data.get('fund_flow_data') else 0
-                    st.info(f"✅ 成功获取 {days} 个交易日的资金流向数据")
+                    st.info(f"成功获取 {days} 个交易日的资金流向数据")
                 else:
-                    st.warning("⚠️ 未能获取资金流向数据，将基于技术指标进行资金面分析")
+                    st.warning("未能获取资金流向数据，将基于技术指标进行资金面分析")
             except Exception as e:
-                st.warning(f"⚠️ 获取资金流向数据时出错: {str(e)}")
+                st.warning(f"获取资金流向数据时出错: {str(e)}")
                 fund_flow_data = None
         elif enable_fund_flow and not fetcher._is_chinese_stock(symbol):
-            st.info("ℹ️ 美股暂不支持资金流向数据")
+            st.info("ℹ 美股暂不支持资金流向数据")
         progress_bar.progress(40)
 
         # 4. 获取市场情绪数据（仅在选择了市场情绪分析师时）
         sentiment_data = None
         if enable_sentiment and fetcher._is_chinese_stock(symbol):
-            status_text.text("📊 正在获取市场情绪数据（ARBR等指标）...")
+            status_text.text("正在获取市场情绪数据（ARBR等指标）...")
             try:
                 from market_sentiment_data import MarketSentimentDataFetcher
                 sentiment_fetcher = MarketSentimentDataFetcher()
                 sentiment_data = sentiment_fetcher.get_market_sentiment_data(symbol, stock_data)
                 if sentiment_data and sentiment_data.get('data_success'):
-                    st.info("✅ 成功获取市场情绪数据（ARBR、换手率、涨跌停等）")
+                    st.info("成功获取市场情绪数据（ARBR、换手率、涨跌停等）")
                 else:
-                    st.warning("⚠️ 未能获取完整的市场情绪数据，将基于基本信息进行分析")
+                    st.warning("未能获取完整的市场情绪数据，将基于基本信息进行分析")
             except Exception as e:
-                st.warning(f"⚠️ 获取市场情绪数据时出错: {str(e)}")
+                st.warning(f"获取市场情绪数据时出错: {str(e)}")
                 sentiment_data = None
         elif enable_sentiment and not fetcher._is_chinese_stock(symbol):
-            st.info("ℹ️ 美股暂不支持市场情绪数据（ARBR等指标）")
+            st.info("ℹ 美股暂不支持市场情绪数据（ARBR等指标）")
         progress_bar.progress(45)
 
         # 5. 获取新闻数据（仅在选择了新闻分析师时，使用qstock数据源）
         news_data = None
         if enable_news and fetcher._is_chinese_stock(symbol):
-            status_text.text("📰 正在获取新闻数据...")
+            status_text.text("正在获取新闻数据...")
             try:
                 from qstock_news_data import QStockNewsDataFetcher
                 news_fetcher = QStockNewsDataFetcher()
                 news_data = news_fetcher.get_stock_news(symbol)
                 if news_data and news_data.get('data_success'):
                     news_count = news_data.get('news_data', {}).get('count', 0) if news_data.get('news_data') else 0
-                    st.info(f"✅ 成功从东方财富获取个股 {news_count} 条新闻")
+                    st.info(f"成功从东方财富获取个股 {news_count} 条新闻")
                 else:
-                    st.warning("⚠️ 未能获取新闻数据，将基于基本信息进行分析")
+                    st.warning("未能获取新闻数据，将基于基本信息进行分析")
             except Exception as e:
-                st.warning(f"⚠️ 获取新闻数据时出错: {str(e)}")
+                st.warning(f"获取新闻数据时出错: {str(e)}")
                 news_data = None
         elif enable_news and not fetcher._is_chinese_stock(symbol):
-            st.info("ℹ️ 美股暂不支持新闻数据")
+            st.info("ℹ 美股暂不支持新闻数据")
         progress_bar.progress(45)
 
         # 5.5 获取风险数据（仅在选择了风险管理师时，使用问财数据源）
         enable_risk = st.session_state.get('enable_risk', True)
         risk_data = None
         if enable_risk and fetcher._is_chinese_stock(symbol):
-            status_text.text("⚠️ 正在获取风险数据（限售解禁、大股东减持、重要事件）...")
+            status_text.text("正在获取风险数据（限售解禁、大股东减持、重要事件）...")
             try:
                 risk_data = fetcher.get_risk_data(symbol)
                 if risk_data and risk_data.get('data_success'):
@@ -1275,20 +1051,20 @@ def run_stock_analysis(symbol, period):
                         risk_types.append("重要事件")
 
                     if risk_types:
-                        st.info(f"✅ 成功获取风险数据：{', '.join(risk_types)}")
+                        st.info(f"成功获取风险数据：{', '.join(risk_types)}")
                     else:
-                        st.info("ℹ️ 暂无风险相关数据")
+                        st.info("ℹ 暂无风险相关数据")
                 else:
-                    st.info("ℹ️ 暂无风险相关数据，将基于基本信息进行风险分析")
+                    st.info("ℹ 暂无风险相关数据，将基于基本信息进行风险分析")
             except Exception as e:
-                st.warning(f"⚠️ 获取风险数据时出错: {str(e)}")
+                st.warning(f"获取风险数据时出错: {str(e)}")
                 risk_data = None
         elif enable_risk and not fetcher._is_chinese_stock(symbol):
-            st.info("ℹ️ 美股暂不支持风险数据（限售解禁、大股东减持等）")
+            st.info("ℹ 美股暂不支持风险数据（限售解禁、大股东减持等）")
         progress_bar.progress(50)
 
         # 6. 初始化AI分析系统
-        status_text.text("🤖 正在初始化AI分析系统...")
+        status_text.text("正在初始化AI分析系统...")
         # 使用选择的模型
         selected_model = st.session_state.get('selected_model', config.DEFAULT_MODEL_NAME)
         agents = StockAnalysisAgents(model=selected_model)
@@ -1310,7 +1086,7 @@ def run_stock_analysis(symbol, period):
         }
 
         # 7. 运行多智能体分析（传入所有数据和分析师选择）
-        status_text.text("🔍 AI分析师团队正在分析,请耐心等待几分钟...")
+        status_text.text("AI分析师团队正在分析,请耐心等待几分钟...")
         agents_results = agents.run_multi_agent_analysis(
             stock_info, stock_data, indicators, financial_data,
             fund_flow_data, sentiment_data, news_data, quarterly_data, risk_data,
@@ -1322,7 +1098,7 @@ def run_stock_analysis(symbol, period):
         display_agents_analysis(agents_results)
 
         # 8. 团队讨论
-        status_text.text("🤝 分析团队正在讨论...")
+        status_text.text("分析团队正在讨论...")
         discussion_result = agents.conduct_team_discussion(agents_results, stock_info)
         progress_bar.progress(88)
 
@@ -1330,7 +1106,7 @@ def run_stock_analysis(symbol, period):
         display_team_discussion(discussion_result)
 
         # 9. 最终决策
-        status_text.text("📋 正在制定最终投资决策...")
+        status_text.text("正在制定最终投资决策...")
         final_decision = agents.make_final_decision(discussion_result, stock_info, indicators)
         progress_bar.progress(100)
 
@@ -1356,23 +1132,23 @@ def run_stock_analysis(symbol, period):
                 discussion_result=discussion_result,
                 final_decision=final_decision
             )
-            st.success("✅ 分析记录已保存到数据库")
+            st.success("分析记录已保存到数据库")
         except Exception as e:
-            st.warning(f"⚠️ 保存到数据库时出现错误: {str(e)}")
+            st.warning(f"保存到数据库时出现错误: {str(e)}")
 
-        status_text.text("✅ 分析完成！")
+        status_text.text("分析完成！")
         time.sleep(1)
         status_text.empty()
         progress_bar.empty()
 
     except Exception as e:
-        st.error(f"❌ 分析过程中出现错误: {str(e)}")
+        st.error(f"分析过程中出现错误: {str(e)}")
         progress_bar.empty()
         status_text.empty()
 
 def display_stock_info(stock_info, indicators):
     """显示股票基本信息"""
-    st.subheader(f"📊 {stock_info.get('name', 'N/A')} ({stock_info.get('symbol', 'N/A')})")
+    st.subheader(f"{stock_info.get('name', 'N/A')} ({stock_info.get('symbol', 'N/A')})")
 
     # 基本信息卡片
     col1, col2, col3, col4, col5 = st.columns(5)
@@ -1406,7 +1182,7 @@ def display_stock_info(stock_info, indicators):
 
     # 技术指标
     if indicators and not isinstance(indicators, dict) or "error" not in indicators:
-        st.subheader("📈 关键技术指标")
+        st.subheader("关键技术指标")
 
         col1, col2, col3, col4 = st.columns(4)
 
@@ -1445,7 +1221,7 @@ def display_stock_info(stock_info, indicators):
 
 def display_stock_chart(stock_data, stock_info):
     """显示股票图表"""
-    st.subheader("📈 股价走势图")
+    st.subheader("股价走势图")
 
     # 创建蜡烛图
     fig = go.Figure()
@@ -1537,7 +1313,7 @@ def display_stock_chart(stock_data, stock_info):
 
 def display_agents_analysis(agents_results):
     """显示各分析师报告"""
-    st.subheader("🤖 AI分析师团队报告")
+    st.subheader("AI分析师团队报告")
 
     # 创建标签页
     tab_names = []
@@ -1557,7 +1333,7 @@ def display_agents_analysis(agents_results):
             # 分析师信息
             st.markdown(f"""
             <div class="agent-card">
-                <h4>👨‍💼 {agent_result.get('agent_name', '未知')}</h4>
+                <h4>‍ {agent_result.get('agent_name', '未知')}</h4>
                 <p><strong>职责：</strong>{agent_result.get('agent_role', '未知')}</p>
                 <p><strong>关注领域：</strong>{', '.join(agent_result.get('focus_areas', []))}</p>
                 <p><strong>分析时间：</strong>{agent_result.get('timestamp', '未知')}</p>
@@ -1565,16 +1341,16 @@ def display_agents_analysis(agents_results):
             """, unsafe_allow_html=True)
 
             # 分析报告
-            st.markdown("**📄 分析报告:**")
+            st.markdown("**分析报告:**")
             st.write(agent_result.get('analysis', '暂无分析'))
 
 def display_team_discussion(discussion_result):
     """显示团队讨论"""
-    st.subheader("🤝 分析团队讨论")
+    st.subheader("分析团队讨论")
 
     st.markdown("""
     <div class="agent-card">
-        <h4>💭 团队综合讨论</h4>
+        <h4> 团队综合讨论</h4>
         <p>各位分析师正在就该股票进行深入讨论，整合不同维度的分析观点...</p>
     </div>
     """, unsafe_allow_html=True)
@@ -1583,7 +1359,7 @@ def display_team_discussion(discussion_result):
 
 def display_final_decision(final_decision, stock_info, agents_results=None, discussion_result=None):
     """显示最终投资决策"""
-    st.subheader("📋 最终投资决策")
+    st.subheader("最终投资决策")
 
     if isinstance(final_decision, dict) and "decision_text" not in final_decision:
         # JSON格式的决策
@@ -1592,11 +1368,10 @@ def display_final_decision(final_decision, stock_info, agents_results=None, disc
         with col1:
             # 投资评级
             rating = final_decision.get('rating', '未知')
-            rating_color = {"买入": "🟢", "持有": "🟡", "卖出": "🔴"}.get(rating, "⚪")
 
             st.markdown(f"""
             <div class="decision-card">
-                <h3 style="text-align: center;">{rating_color} {rating}</h3>
+                <h3 style="text-align: center;">{rating}</h3>
                 <h4 style="text-align: center;">投资评级</h4>
             </div>
             """, unsafe_allow_html=True)
@@ -1613,10 +1388,10 @@ def display_final_decision(final_decision, stock_info, agents_results=None, disc
 
         with col2:
             # 详细建议
-            st.markdown("**🎯 操作建议:**")
+            st.markdown("**操作建议:**")
             st.write(final_decision.get('operation_advice', '暂无建议'))
 
-            st.markdown("**📍 关键位置:**")
+            st.markdown("**关键位置:**")
             col2_1, col2_2 = st.columns(2)
 
             with col2_1:
@@ -1632,7 +1407,7 @@ def display_final_decision(final_decision, stock_info, agents_results=None, disc
         if risk_warning:
             st.markdown(f"""
             <div class="warning-card">
-                <h4>⚠️ 风险提示</h4>
+                <h4> 风险提示</h4>
                 <p>{risk_warning}</p>
             </div>
             """, unsafe_allow_html=True)
@@ -1647,23 +1422,23 @@ def display_final_decision(final_decision, stock_info, agents_results=None, disc
     if agents_results and discussion_result:
         display_pdf_export_section(stock_info, agents_results, discussion_result, final_decision)
     else:
-        st.warning("⚠️ PDF导出功能需要完整的分析数据")
+        st.warning("PDF导出功能需要完整的分析数据")
 
 def show_example_interface():
     """显示示例界面"""
-    st.subheader("💡 使用说明")
+    st.subheader("使用说明")
 
     col1, col2 = st.columns(2)
 
     with col1:
         st.markdown("""
-        ### 🚀 如何使用
+        ### 如何使用
         1. **输入股票代码**：支持A股(如000001)、港股(如00700)和美股(如AAPL)
         2. **点击开始分析**：系统将启动AI分析师团队
         3. **查看分析报告**：多位专业分析师将从不同角度分析
         4. **获得投资建议**：获得最终的投资评级和操作建议
         
-        ### 📊 分析维度
+        ### 分析维度
         - **技术面**：趋势、指标、支撑阻力
         - **基本面**：财务、估值、行业分析
         - **资金面**：资金流向、主力行为
@@ -1673,7 +1448,7 @@ def show_example_interface():
 
     with col2:
         st.markdown("""
-        ### 📈 示例股票代码
+        ### 示例股票代码
         
         **A股热门**
         - 000001 (平安银行)
@@ -1691,40 +1466,40 @@ def show_example_interface():
         - NVDA (英伟达)
         """)
 
-    st.info("💡 提示：首次运行需要配置DeepSeek API Key，请在.env中设置DEEPSEEK_API_KEY")
+    st.info("提示：首次运行需要配置DeepSeek API Key，请在.env中设置DEEPSEEK_API_KEY")
 
     st.markdown("---")
     st.markdown("""
-    ### 🌏 市场支持说明
+    ### 市场支持说明
     - **A股**：完整支持（技术分析、财务数据、资金流向、市场情绪、新闻数据qstock）
-    - **港股**：部分支持（技术分析、21项财务指标）⭐️ 
+    - **港股**：部分支持（技术分析、21项财务指标） 
     - **美股**：完整支持（技术分析、财务数据）
     
-    ### 📊 港股支持的财务指标
+    ### 港股支持的财务指标
     盈利能力（6项）、营运能力（3项）、偿债能力（2项）、市场表现（4项）、分红指标（3项）、股本结构（3项）
     """)
 
 def display_history_records():
     """显示历史分析记录"""
-    st.subheader("📚 历史分析记录")
+    st.subheader("历史分析记录")
 
     # 获取所有记录
     records = db.get_all_records()
 
     if not records:
-        st.info("📭 暂无历史分析记录")
+        st.info("暂无历史分析记录")
         return
 
-    st.write(f"📊 共找到 {len(records)} 条分析记录")
+    st.write(f"共找到 {len(records)} 条分析记录")
 
     # 搜索和筛选
     col1, col2 = st.columns([3, 1])
     with col1:
-        search_term = st.text_input("🔍 搜索股票代码或名称", placeholder="输入股票代码或名称进行搜索")
+        search_term = st.text_input("搜索股票代码或名称", placeholder="输入股票代码或名称进行搜索")
     with col2:
         st.write("")
         st.write("")
-        if st.button("🔄 刷新列表"):
+        if st.button("刷新列表"):
             st.rerun()
 
     # 筛选记录
@@ -1737,22 +1512,15 @@ def display_history_records():
         ]
 
     if not filtered_records:
-        st.warning("🔍 未找到匹配的记录")
+        st.warning("未找到匹配的记录")
         return
 
     # 显示记录列表
     for record in filtered_records:
-        # 根据评级设置颜色和图标
+        # 根据评级展示记录
         rating = record.get('rating', '未知')
-        rating_color = {
-            "买入": "🟢",
-            "持有": "🟡",
-            "卖出": "🔴",
-            "强烈买入": "🟢",
-            "强烈卖出": "🔴"
-        }.get(rating, "⚪")
 
-        with st.expander(f"{rating_color} {record['stock_name']} ({record['symbol']}) - {record['analysis_date']}"):
+        with st.expander(f"{record['stock_name']} ({record['symbol']}) - {record['analysis_date']} | {rating}"):
             col1, col2, col3, col4 = st.columns([2, 2, 1, 1])
 
             with col1:
@@ -1765,23 +1533,23 @@ def display_history_records():
                 st.write(f"**投资评级:** **{rating}**")
 
             with col3:
-                if st.button("👀 查看详情", key=f"view_{record['id']}"):
+                if st.button("查看详情", key=f"view_{record['id']}"):
                     st.session_state.viewing_record_id = record['id']
 
             with col4:
-                if st.button("➕ 监测", key=f"add_monitor_{record['id']}"):
+                if st.button("监测", key=f"add_monitor_{record['id']}"):
                     st.session_state.add_to_monitor_id = record['id']
                     st.session_state.viewing_record_id = record['id']
 
             # 删除按钮（新增一行）
             col5, _, _, _ = st.columns(4)
             with col5:
-                if st.button("🗑️ 删除", key=f"delete_{record['id']}"):
+                if st.button("删除", key=f"delete_{record['id']}"):
                     if db.delete_record(record['id']):
-                        st.success("✅ 记录已删除")
+                        st.success("记录已删除")
                         st.rerun()
                     else:
-                        st.error("❌ 删除失败")
+                        st.error("删除失败")
 
     # 查看详细记录
     if 'viewing_record_id' in st.session_state:
@@ -1790,7 +1558,7 @@ def display_history_records():
 def display_add_to_monitor_dialog(record):
     """显示加入监测的对话框"""
     st.markdown("---")
-    st.subheader("➕ 加入监测")
+    st.subheader("加入监测")
 
     final_decision = record['final_decision']
 
@@ -1870,7 +1638,7 @@ def display_add_to_monitor_dialog(record):
         is_duplicate = any(stock['symbol'] == record['symbol'] for stock in existing_stocks)
 
         if is_duplicate:
-            st.warning(f"⚠️ {record['symbol']} 已经在监测列表中。继续添加将创建重复监测项。")
+            st.warning(f"{record['symbol']} 已经在监测列表中。继续添加将创建重复监测项。")
 
         st.info(f"""
         **从分析结果中提取的数据：**
@@ -1887,14 +1655,14 @@ def display_add_to_monitor_dialog(record):
             col1, col2 = st.columns([1, 1])
 
             with col1:
-                st.subheader("🎯 关键位置")
+                st.subheader("关键位置")
                 new_entry_min = st.number_input("进场区间最低价", value=float(entry_min), step=0.01, format="%.2f")
                 new_entry_max = st.number_input("进场区间最高价", value=float(entry_max), step=0.01, format="%.2f")
                 new_take_profit = st.number_input("止盈价位", value=float(take_profit), step=0.01, format="%.2f")
                 new_stop_loss = st.number_input("止损价位", value=float(stop_loss), step=0.01, format="%.2f")
 
             with col2:
-                st.subheader("⚙️ 监测设置")
+                st.subheader("监测设置")
                 check_interval = st.slider("监测间隔(分钟)", 5, 120, 30)
                 notification_enabled = st.checkbox("启用通知", value=True)
                 new_rating = st.selectbox("投资评级", ["买入", "持有", "卖出"],
@@ -1903,10 +1671,10 @@ def display_add_to_monitor_dialog(record):
             col_a, col_b, col_c = st.columns(3)
 
             with col_a:
-                submit = st.form_submit_button("✅ 确认加入监测", type="primary", width='stretch')
+                submit = st.form_submit_button("确认加入监测", type="primary", width='stretch')
 
             with col_b:
-                cancel = st.form_submit_button("❌ 取消", width='stretch')
+                cancel = st.form_submit_button("取消", width='stretch')
 
             if submit:
                 if new_entry_min > 0 and new_entry_max > 0 and new_entry_max > new_entry_min:
@@ -1925,7 +1693,7 @@ def display_add_to_monitor_dialog(record):
                             notification_enabled=notification_enabled
                         )
 
-                        st.success(f"✅ 已成功将 {record['symbol']} 加入监测列表！")
+                        st.success(f"已成功将 {record['symbol']} 加入监测列表！")
                         st.balloons()
 
                         # 立即更新一次价格
@@ -1948,17 +1716,17 @@ def display_add_to_monitor_dialog(record):
                         st.rerun()
 
                     except Exception as e:
-                        st.error(f"❌ 加入监测失败: {str(e)}")
+                        st.error(f"加入监测失败: {str(e)}")
                 else:
-                    st.error("❌ 请输入有效的进场区间（最低价应小于最高价，且都大于0）")
+                    st.error("请输入有效的进场区间（最低价应小于最高价，且都大于0）")
 
             if cancel:
                 if 'add_to_monitor_id' in st.session_state:
                     del st.session_state.add_to_monitor_id
                 st.rerun()
     else:
-        st.warning("⚠️ 无法从分析结果中提取关键数据")
-        if st.button("❌ 取消"):
+        st.warning("无法从分析结果中提取关键数据")
+        if st.button("取消"):
             if 'add_to_monitor_id' in st.session_state:
                 del st.session_state.add_to_monitor_id
             st.rerun()
@@ -1966,11 +1734,11 @@ def display_add_to_monitor_dialog(record):
 def display_record_detail(record_id):
     """显示单条记录的详细信息"""
     st.markdown("---")
-    st.subheader("📋 详细分析记录")
+    st.subheader("详细分析记录")
 
     record = db.get_record_by_id(record_id)
     if not record:
-        st.error("❌ 记录不存在")
+        st.error("记录不存在")
         return
 
     # 基本信息
@@ -1983,7 +1751,7 @@ def display_record_detail(record_id):
         st.metric("分析时间", record['analysis_date'])
 
     # 股票基本信息
-    st.subheader("📊 股票基本信息")
+    st.subheader("股票基本信息")
     stock_info = record['stock_info']
     if stock_info:
         col1, col2, col3, col4, col5 = st.columns(5)
@@ -2016,7 +1784,7 @@ def display_record_detail(record_id):
                 st.metric("市值", f"{market_cap}")
 
     # 各分析师报告
-    st.subheader("🤖 AI分析师团队报告")
+    st.subheader("AI分析师团队报告")
     agents_results = record['agents_results']
     if agents_results:
         tab_names = []
@@ -2035,28 +1803,28 @@ def display_record_detail(record_id):
 
                 st.markdown(f"""
                 <div class="agent-card">
-                    <h4>👨‍💼 {agent_result.get('agent_name', '未知')}</h4>
+                    <h4>‍ {agent_result.get('agent_name', '未知')}</h4>
                     <p><strong>职责：</strong>{agent_result.get('agent_role', '未知')}</p>
                     <p><strong>关注领域：</strong>{', '.join(agent_result.get('focus_areas', []))}</p>
                 </div>
                 """, unsafe_allow_html=True)
 
-                st.markdown("**📄 分析报告:**")
+                st.markdown("**分析报告:**")
                 st.write(agent_result.get('analysis', '暂无分析'))
 
     # 团队讨论
-    st.subheader("🤝 分析团队讨论")
+    st.subheader("分析团队讨论")
     discussion_result = record['discussion_result']
     if discussion_result:
         st.markdown("""
         <div class="agent-card">
-            <h4>💭 团队综合讨论</h4>
+            <h4> 团队综合讨论</h4>
         </div>
         """, unsafe_allow_html=True)
         st.write(discussion_result)
 
     # 最终决策
-    st.subheader("📋 最终投资决策")
+    st.subheader("最终投资决策")
     final_decision = record['final_decision']
     if final_decision:
         if isinstance(final_decision, dict) and "decision_text" not in final_decision:
@@ -2064,11 +1832,10 @@ def display_record_detail(record_id):
 
             with col1:
                 rating = final_decision.get('rating', '未知')
-                rating_color = {"买入": "🟢", "持有": "🟡", "卖出": "🔴"}.get(rating, "⚪")
 
                 st.markdown(f"""
                 <div class="decision-card">
-                    <h3 style="text-align: center;">{rating_color} {rating}</h3>
+                    <h3 style="text-align: center;">{rating}</h3>
                     <h4 style="text-align: center;">投资评级</h4>
                 </div>
                 """, unsafe_allow_html=True)
@@ -2083,10 +1850,10 @@ def display_record_detail(record_id):
                 st.metric("建议仓位", f"{position_size}")
 
             with col2:
-                st.markdown("**🎯 操作建议:**")
+                st.markdown("**操作建议:**")
                 st.write(final_decision.get('operation_advice', '暂无建议'))
 
-                st.markdown("**📍 关键位置:**")
+                st.markdown("**关键位置:**")
                 col2_1, col2_2 = st.columns(2)
 
                 with col2_1:
@@ -2102,7 +1869,7 @@ def display_record_detail(record_id):
 
     # 加入监测功能
     st.markdown("---")
-    st.subheader("🎯 操作")
+    st.subheader("操作")
 
     # 检查是否需要显示加入监测的对话框
     if 'add_to_monitor_id' in st.session_state and st.session_state.add_to_monitor_id == record_id:
@@ -2112,13 +1879,13 @@ def display_record_detail(record_id):
         col1, col2 = st.columns([1, 3])
 
         with col1:
-            if st.button("➕ 加入监测", type="primary", width='stretch'):
+            if st.button("加入监测", type="primary", width='stretch'):
                 st.session_state.add_to_monitor_id = record_id
                 st.rerun()
 
     # 返回按钮
     st.markdown("---")
-    if st.button("⬅️ 返回历史记录列表"):
+    if st.button("返回 返回历史记录列表"):
         if 'viewing_record_id' in st.session_state:
             del st.session_state.viewing_record_id
         if 'add_to_monitor_id' in st.session_state:
@@ -2127,7 +1894,7 @@ def display_record_detail(record_id):
 
 def display_config_manager():
     """显示环境配置管理界面"""
-    st.subheader("⚙️ 环境配置管理")
+    st.subheader("环境配置管理")
 
     st.markdown("""
     <div class="agent-card">
@@ -2140,7 +1907,7 @@ def display_config_manager():
     config_info = config_manager.get_config_info()
 
     # 创建标签页
-    tab1, tab2, tab3, tab4 = st.tabs(["📝 基本配置", "📊 数据源配置", "🤖 量化交易配置", "📢 通知配置"])
+    tab1, tab2, tab3, tab4 = st.tabs(["基本配置", "数据源配置", "量化交易配置", "通知配置"])
 
     # 使用session_state保存临时配置
     if 'temp_config' not in st.session_state:
@@ -2159,7 +1926,7 @@ def display_config_manager():
         current_api_key = st.session_state.temp_config.get("DEEPSEEK_API_KEY", "")
 
         new_api_key = st.text_input(
-            f"🔑 {api_key_info['description']} {'*' if api_key_info['required'] else ''}",
+            f"{api_key_info['description']} {'*' if api_key_info['required'] else ''}",
             value=current_api_key,
             type="password",
             help="从 https://platform.deepseek.com 获取API密钥",
@@ -2170,9 +1937,9 @@ def display_config_manager():
         # 显示当前状态
         if new_api_key:
             masked_key = new_api_key[:8] + "*" * (len(new_api_key) - 12) + new_api_key[-4:] if len(new_api_key) > 12 else "***"
-            st.success(f"✅ API密钥已设置: {masked_key}")
+            st.success(f"API密钥已设置: {masked_key}")
         else:
-            st.warning("⚠️ 未设置API密钥，系统无法使用AI分析功能")
+            st.warning("未设置API密钥，系统无法使用AI分析功能")
 
         st.markdown("---")
 
@@ -2181,7 +1948,7 @@ def display_config_manager():
         current_base_url = st.session_state.temp_config.get("DEEPSEEK_BASE_URL", "")
 
         new_base_url = st.text_input(
-            f"🌐 {base_url_info['description']}",
+            f"{base_url_info['description']}",
             value=current_base_url,
             help="一般无需修改，保持默认即可",
             key="input_deepseek_base_url"
@@ -2195,7 +1962,7 @@ def display_config_manager():
         current_model_name = st.session_state.temp_config.get("DEFAULT_MODEL_NAME", "deepseek-chat")
 
         new_model_name = st.text_input(
-            f"🤖 {model_name_info['description']}",
+            f"{model_name_info['description']}",
             value=current_model_name,
             help="输入OpenAI兼容的模型名称，修改后重启生效",
             key="input_default_model_name"
@@ -2203,9 +1970,9 @@ def display_config_manager():
         st.session_state.temp_config["DEFAULT_MODEL_NAME"] = new_model_name
 
         if new_model_name:
-            st.success(f"✅ 当前模型: **{new_model_name}**")
+            st.success(f"当前模型: **{new_model_name}**")
         else:
-            st.warning("⚠️ 未设置模型名称，将使用默认值 deepseek-chat")
+            st.warning("未设置模型名称，将使用默认值 deepseek-chat")
 
         st.markdown("""
         **常用模型名称参考：**
@@ -2216,10 +1983,10 @@ def display_config_manager():
         - `gpt-4o` — OpenAI GPT-4o
         - `gpt-4o-mini` — OpenAI GPT-4o Mini
         
-        > 💡 使用非 DeepSeek 模型时，请同时修改上方的 API地址 和 API密钥
+        >  使用非 DeepSeek 模型时，请同时修改上方的 API地址 和 API密钥
         """)
 
-        st.info("💡 如何获取DeepSeek API密钥？\n\n1. 访问 https://platform.deepseek.com\n2. 注册/登录账号\n3. 进入API密钥管理页面\n4. 创建新的API密钥\n5. 复制密钥并粘贴到上方输入框")
+        st.info("如何获取DeepSeek API密钥？\n\n1. 访问 https://platform.deepseek.com\n2. 注册/登录账号\n3. 进入API密钥管理页面\n4. 创建新的API密钥\n5. 复制密钥并粘贴到上方输入框")
 
     with tab2:
         st.markdown("### Tushare数据接口（可选）")
@@ -2229,7 +1996,7 @@ def display_config_manager():
         current_tushare = st.session_state.temp_config.get("TUSHARE_TOKEN", "")
 
         new_tushare = st.text_input(
-            f"🎫 {tushare_info['description']}",
+            f"{tushare_info['description']}",
             value=current_tushare,
             type="password",
             help="从 https://tushare.pro 获取Token",
@@ -2238,11 +2005,11 @@ def display_config_manager():
         st.session_state.temp_config["TUSHARE_TOKEN"] = new_tushare
 
         if new_tushare:
-            st.success("✅ Tushare Token已设置")
+            st.success("Tushare Token已设置")
         else:
-            st.info("ℹ️ 未设置Tushare Token，系统将使用其他数据源")
+            st.info("ℹ 未设置Tushare Token，系统将使用其他数据源")
 
-        st.info("💡 如何获取Tushare Token？\n\n1. 访问 https://tushare.pro\n2. 注册账号\n3. 进入个人中心\n4. 获取Token\n5. 复制并粘贴到上方输入框")
+        st.info("如何获取Tushare Token？\n\n1. 访问 https://tushare.pro\n2. 注册账号\n3. 进入个人中心\n4. 获取Token\n5. 复制并粘贴到上方输入框")
 
     with tab3:
         st.markdown("### MiniQMT量化交易配置（可选）")
@@ -2279,7 +2046,7 @@ def display_config_manager():
             current_host = st.session_state.temp_config.get("MINIQMT_HOST", "")
 
             new_host = st.text_input(
-                f"🖥️ {host_info['description']}",
+                f"{host_info['description']}",
                 value=current_host,
                 disabled=not new_enabled,
                 key="input_miniqmt_host"
@@ -2291,7 +2058,7 @@ def display_config_manager():
             current_port = st.session_state.temp_config.get("MINIQMT_PORT", "")
 
             new_port = st.text_input(
-                f"🔌 {port_info['description']}",
+                f"{port_info['description']}",
                 value=current_port,
                 disabled=not new_enabled,
                 key="input_miniqmt_port"
@@ -2299,11 +2066,11 @@ def display_config_manager():
             st.session_state.temp_config["MINIQMT_PORT"] = new_port
 
         if new_enabled:
-            st.success("✅ MiniQMT已启用")
+            st.success("MiniQMT已启用")
         else:
-            st.info("ℹ️ MiniQMT未启用")
+            st.info("ℹ MiniQMT未启用")
 
-        st.warning("⚠️ 警告：量化交易涉及真实资金操作，请谨慎配置和使用！")
+        st.warning("警告：量化交易涉及真实资金操作，请谨慎配置和使用！")
 
     with tab4:
         st.markdown("### 通知配置")
@@ -2313,7 +2080,7 @@ def display_config_manager():
         col_email, col_webhook = st.columns(2)
 
         with col_email:
-            st.markdown("#### 📧 邮件通知")
+            st.markdown("#### 邮件通知")
 
             # 邮件启用开关
             email_enabled_info = config_info.get("EMAIL_ENABLED", {"value": "false"})
@@ -2332,7 +2099,7 @@ def display_config_manager():
             current_smtp_server = st.session_state.temp_config.get("SMTP_SERVER", "")
 
             new_smtp_server = st.text_input(
-                f"📮 {smtp_server_info['description']}",
+                f"{smtp_server_info['description']}",
                 value=current_smtp_server,
                 disabled=not new_email_enabled,
                 placeholder="smtp.qq.com",
@@ -2345,7 +2112,7 @@ def display_config_manager():
             current_smtp_port = st.session_state.temp_config.get("SMTP_PORT", "587")
 
             new_smtp_port = st.text_input(
-                f"🔌 {smtp_port_info['description']}",
+                f"{smtp_port_info['description']}",
                 value=current_smtp_port,
                 disabled=not new_email_enabled,
                 placeholder="587 (TLS) 或 465 (SSL)",
@@ -2358,7 +2125,7 @@ def display_config_manager():
             current_email_from = st.session_state.temp_config.get("EMAIL_FROM", "")
 
             new_email_from = st.text_input(
-                f"📤 {email_from_info['description']}",
+                f"{email_from_info['description']}",
                 value=current_email_from,
                 disabled=not new_email_enabled,
                 placeholder="your-email@qq.com",
@@ -2371,7 +2138,7 @@ def display_config_manager():
             current_email_password = st.session_state.temp_config.get("EMAIL_PASSWORD", "")
 
             new_email_password = st.text_input(
-                f"🔐 {email_password_info['description']}",
+                f"{email_password_info['description']}",
                 value=current_email_password,
                 type="password",
                 disabled=not new_email_enabled,
@@ -2385,7 +2152,7 @@ def display_config_manager():
             current_email_to = st.session_state.temp_config.get("EMAIL_TO", "")
 
             new_email_to = st.text_input(
-                f"📥 {email_to_info['description']}",
+                f"{email_to_info['description']}",
                 value=current_email_to,
                 disabled=not new_email_enabled,
                 placeholder="receiver@qq.com",
@@ -2394,16 +2161,16 @@ def display_config_manager():
             st.session_state.temp_config["EMAIL_TO"] = new_email_to
 
             if new_email_enabled and all([new_smtp_server, new_email_from, new_email_password, new_email_to]):
-                st.success("✅ 邮件配置完整")
+                st.success("邮件配置完整")
             elif new_email_enabled:
-                st.warning("⚠️ 邮件配置不完整")
+                st.warning("邮件配置不完整")
             else:
-                st.info("ℹ️ 邮件通知未启用")
+                st.info("ℹ 邮件通知未启用")
 
-            st.caption("💡 QQ邮箱授权码获取：设置 → 账户 → POP3/IMAP/SMTP → 生成授权码")
+            st.caption("QQ邮箱授权码获取：设置 → 账户 → POP3/IMAP/SMTP → 生成授权码")
 
         with col_webhook:
-            st.markdown("#### 📱 Webhook通知")
+            st.markdown("#### Webhook通知")
 
             # Webhook启用开关
             webhook_enabled_info = config_info.get("WEBHOOK_ENABLED", {"value": "false"})
@@ -2422,7 +2189,7 @@ def display_config_manager():
             current_webhook_type = st.session_state.temp_config.get("WEBHOOK_TYPE", "dingtalk")
 
             new_webhook_type = st.selectbox(
-                f"📲 {webhook_type_info['description']}",
+                f"{webhook_type_info['description']}",
                 options=webhook_type_info.get('options', ["dingtalk", "feishu"]),
                 index=0 if current_webhook_type == "dingtalk" else 1,
                 disabled=not new_webhook_enabled,
@@ -2435,7 +2202,7 @@ def display_config_manager():
             current_webhook_url = st.session_state.temp_config.get("WEBHOOK_URL", "")
 
             new_webhook_url = st.text_input(
-                f"🔗 {webhook_url_info['description']}",
+                f"{webhook_url_info['description']}",
                 value=current_webhook_url,
                 disabled=not new_webhook_enabled,
                 placeholder="https://oapi.dingtalk.com/robot/send?access_token=...",
@@ -2448,7 +2215,7 @@ def display_config_manager():
             current_webhook_keyword = st.session_state.temp_config.get("WEBHOOK_KEYWORD", "aiagents通知")
 
             new_webhook_keyword = st.text_input(
-                f"🔑 {webhook_keyword_info['description']}",
+                f"{webhook_keyword_info['description']}",
                 value=current_webhook_keyword,
                 disabled=not new_webhook_enabled or new_webhook_type != "dingtalk",
                 placeholder="aiagents通知",
@@ -2459,7 +2226,7 @@ def display_config_manager():
 
             # 测试连通按钮
             if new_webhook_enabled and new_webhook_url:
-                if st.button("🧪 测试Webhook连通", width='stretch', key="test_webhook_btn"):
+                if st.button("测试Webhook连通", width='stretch', key="test_webhook_btn"):
                     with st.spinner("正在发送测试消息..."):
                         # 临时更新配置
                         temp_env_backup = {}
@@ -2474,11 +2241,11 @@ def display_config_manager():
                             success, message = temp_notification_service.send_test_webhook()
 
                             if success:
-                                st.success(f"✅ {message}")
+                                st.success(f"{message}")
                             else:
-                                st.error(f"❌ {message}")
+                                st.error(f"{message}")
                         except Exception as e:
-                            st.error(f"❌ 测试失败: {str(e)}")
+                            st.error(f"测试失败: {str(e)}")
                         finally:
                             # 恢复环境变量
                             for key, value in temp_env_backup.items():
@@ -2488,59 +2255,59 @@ def display_config_manager():
                                     del os.environ[key]
 
             if new_webhook_enabled and new_webhook_url:
-                st.success(f"✅ Webhook配置完整 ({new_webhook_type})")
+                st.success(f"Webhook配置完整 ({new_webhook_type})")
             elif new_webhook_enabled:
-                st.warning("⚠️ 请配置Webhook URL")
+                st.warning("请配置Webhook URL")
             else:
-                st.info("ℹ️ Webhook通知未启用")
+                st.info("ℹ Webhook通知未启用")
 
             # 显示帮助信息
             if new_webhook_type == "dingtalk":
-                st.caption("💡 钉钉机器人配置：\n1. 进入钉钉群 → 设置 → 智能群助手\n2. 添加机器人 → 自定义\n3. 复制Webhook地址\n4. 安全设置选择【自定义关键词】，填写上方的关键词")
+                st.caption("钉钉机器人配置：\n1. 进入钉钉群 → 设置 → 智能群助手\n2. 添加机器人 → 自定义\n3. 复制Webhook地址\n4. 安全设置选择【自定义关键词】，填写上方的关键词")
             else:
-                st.caption("💡 飞书机器人配置：\n1. 进入飞书群 → 设置 → 群机器人\n2. 添加机器人 → 自定义机器人\n3. 复制Webhook地址")
+                st.caption("飞书机器人配置：\n1. 进入飞书群 → 设置 → 群机器人\n2. 添加机器人 → 自定义机器人\n3. 复制Webhook地址")
 
         st.markdown("---")
-        st.info("💡 **使用说明**：\n- 可以同时启用邮件和Webhook通知\n- 实时监测和智策定时分析都会使用配置的通知方式\n- 配置后建议使用各功能中的测试按钮验证通知是否正常")
+        st.info("**使用说明**：\n- 可以同时启用邮件和Webhook通知\n- 实时监测和智策定时分析都会使用配置的通知方式\n- 配置后建议使用各功能中的测试按钮验证通知是否正常")
 
     # 操作按钮
     st.markdown("---")
     col1, col2, col3, col4 = st.columns([1, 1, 1, 2])
 
     with col1:
-        if st.button("💾 保存配置", type="primary", width='stretch'):
+        if st.button("保存配置", type="primary", width='stretch'):
             # 验证配置
             is_valid, message = config_manager.validate_config(st.session_state.temp_config)
 
             if is_valid:
                 # 保存配置
                 if config_manager.write_env(st.session_state.temp_config):
-                    st.success("✅ 配置已保存到 .env 文件")
-                    st.info("ℹ️ 请重启应用使配置生效")
+                    st.success("配置已保存到 .env 文件")
+                    st.info("ℹ 请重启应用使配置生效")
 
                     # 尝试重新加载配置
                     try:
                         config_manager.reload_config()
-                        st.success("✅ 配置已重新加载")
+                        st.success("配置已重新加载")
                     except Exception as e:
-                        st.warning(f"⚠️ 配置重新加载失败: {e}")
+                        st.warning(f"配置重新加载失败: {e}")
 
                     time.sleep(2)
                     st.rerun()
                 else:
-                    st.error("❌ 保存配置失败")
+                    st.error("保存配置失败")
             else:
-                st.error(f"❌ 配置验证失败: {message}")
+                st.error(f"配置验证失败: {message}")
 
     with col2:
-        if st.button("🔄 重置", width='stretch'):
+        if st.button("重置", width='stretch'):
             # 重置为当前文件中的值
             st.session_state.temp_config = {key: info["value"] for key, info in config_info.items()}
-            st.success("✅ 已重置为当前配置")
+            st.success("已重置为当前配置")
             st.rerun()
 
     with col3:
-        if st.button("⬅️ 返回", width='stretch'):
+        if st.button("返回 返回", width='stretch'):
             if 'show_config' in st.session_state:
                 del st.session_state.show_config
             if 'temp_config' in st.session_state:
@@ -2549,7 +2316,7 @@ def display_config_manager():
 
     # 显示当前.env文件内容
     st.markdown("---")
-    with st.expander("📄 查看当前 .env 文件内容"):
+    with st.expander("查看当前 .env 文件内容"):
         current_config = config_manager.read_env()
 
         st.code(f"""# AI股票分析系统环境配置
@@ -2586,7 +2353,7 @@ WEBHOOK_KEYWORD="{current_config.get('WEBHOOK_KEYWORD', 'aiagents通知')}"
 def display_batch_analysis_results(results, period):
     """显示批量分析结果（对比视图）"""
 
-    st.subheader("📊 批量分析结果对比")
+    st.subheader("批量分析结果对比")
 
     # 统计信息
     total = len(results)
@@ -2607,27 +2374,27 @@ def display_batch_analysis_results(results, period):
 
     # 提示信息
     if saved_count > 0:
-        st.info(f"💾 已有 {saved_count} 只股票的分析结果保存到历史记录，可在侧边栏点击「📖 历史记录」查看")
+        st.info(f"已有 {saved_count} 只股票的分析结果保存到历史记录，可在侧边栏点击「 历史记录」查看")
 
     st.markdown("---")
 
     # 失败的股票列表
     if failed_results:
-        with st.expander(f"❌ 查看失败的 {len(failed_results)} 只股票", expanded=False):
+        with st.expander(f"查看失败的 {len(failed_results)} 只股票", expanded=False):
             for result in failed_results:
                 st.error(f"**{result['symbol']}**: {result.get('error', '未知错误')}")
 
     # 保存失败的股票列表
     save_failed_results = [r for r in success_results if not r.get('saved_to_db', False)]
     if save_failed_results:
-        with st.expander(f"⚠️ 查看分析成功但保存失败的 {len(save_failed_results)} 只股票", expanded=False):
+        with st.expander(f"查看分析成功但保存失败的 {len(save_failed_results)} 只股票", expanded=False):
             for result in save_failed_results:
                 db_error = result.get('db_error', '未知错误')
                 st.warning(f"**{result['symbol']} - {result['stock_info'].get('name', 'N/A')}**: {db_error}")
 
     # 成功的股票分析结果
     if not success_results:
-        st.warning("⚠️ 没有成功分析的股票")
+        st.warning("没有成功分析的股票")
         return
 
     # 创建对比视图选项
@@ -2649,7 +2416,7 @@ def display_comparison_table(results):
     """显示对比表格"""
     import pandas as pd
 
-    st.subheader("📋 股票对比表格")
+    st.subheader("股票对比表格")
 
     # 构建对比数据
     comparison_data = []
@@ -2699,11 +2466,11 @@ def display_comparison_table(results):
     )
 
     # 添加评级说明
-    st.caption("💡 投资评级说明：强烈买入 > 买入 > 持有 > 卖出 > 强烈卖出")
+    st.caption("投资评级说明：强烈买入 > 买入 > 持有 > 卖出 > 强烈卖出")
 
     # 添加筛选功能
     st.markdown("---")
-    st.subheader("🔍 快速筛选")
+    st.subheader("快速筛选")
 
     col1, col2 = st.columns(2)
     with col1:
@@ -2741,7 +2508,7 @@ def display_comparison_table(results):
 def display_detailed_cards(results, period):
     """显示详细卡片视图"""
 
-    st.subheader("📇 详细分析卡片")
+    st.subheader("详细分析卡片")
 
     # 选择要查看的股票
     stock_options = [f"{r['stock_info']['symbol']} - {r['stock_info']['name']}" for r in results]

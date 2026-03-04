@@ -13,6 +13,7 @@ DEFAULT_MODEL_NAME = os.getenv("DEFAULT_MODEL_NAME", "deepseek-chat")
 
 # 其他配置
 TUSHARE_TOKEN = os.getenv("TUSHARE_TOKEN", "")
+TUSHARE_URL = os.getenv("TUSHARE_URL", "https://api.tushare.pro")
 
 # 股票数据源配置
 DEFAULT_PERIOD = "1y"  # 默认获取1年数据

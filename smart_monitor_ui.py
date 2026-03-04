@@ -4,6 +4,7 @@
 """
 
 import streamlit as st
+from ui_theme import inject_global_theme, configure_plotly_template, render_page_header
 import pandas as pd
 from datetime import datetime
 import logging
@@ -22,17 +23,19 @@ load_dotenv()
 
 def smart_monitor_ui():
     """AI盯盘主界面"""
+    inject_global_theme()
+    configure_plotly_template()
     
-    st.title("🤖 AI盯盘 - AI决策交易系统")
+    st.title("AI盯盘 - AI决策交易系统")
     st.caption("参照AlphaArena项目，基于DeepSeek AI的A股自动化交易系统")
     
     # 使用说明
-    with st.expander("📖 快速使用指南", expanded=False):
+    with st.expander("快速使用指南", expanded=False):
         st.markdown("""
-        ### 🚀 快速开始
+        ### 快速开始
         
         **第一步：环境配置**
-        1. 点击左侧菜单"⚙️ 环境配置"
+        1. 点击左侧菜单" 环境配置"
         2. 填写 DeepSeek API Key（必需）
         3. 配置 miniQMT 账户（可选，用于实盘交易）
         4. 配置通知方式（可选，邮件/Webhook）
@@ -44,38 +47,38 @@ def smart_monitor_ui():
         
         ---
         
-        ### 💡 核心功能
+        ### 核心功能
         
         | 功能 | 说明 |
         |------|------|
-        | 📊 **实时分析** | 输入股票代码，AI分析市场数据并给出买入/卖出/持有建议 |
-        | 🎯 **监控任务** | 定时自动分析目标股票，可设置自动交易 |
-        | 📈 **持仓管理** | 记录持仓成本，实时显示盈亏，AI决策考虑持仓情况 |
-        | 📜 **历史记录** | 查看所有AI决策历史、交易记录和通知记录 |
-        | ⚙️ **系统设置** | 配置API、交易方式（实盘/模拟）、通知等 |
+        |  **实时分析** | 输入股票代码，AI分析市场数据并给出买入/卖出/持有建议 |
+        |  **监控任务** | 定时自动分析目标股票，可设置自动交易 |
+        |  **持仓管理** | 记录持仓成本，实时显示盈亏，AI决策考虑持仓情况 |
+        |  **历史记录** | 查看所有AI决策历史、交易记录和通知记录 |
+        |  **系统设置** | 配置API、交易方式（实盘/模拟）、通知等 |
         
         ---
         
-        ### 🎯 AI决策逻辑
+        ### AI决策逻辑
         
         **买入信号**（至少满足3个）：
-        1. ✅ 趋势向上：价格 > MA5 > MA20 > MA60（多头排列）
-        2. ✅ 量价配合：成交量 > 5日均量的120%（放量上涨）
-        3. ✅ MACD金叉：MACD > 0 且DIF上穿DEA
-        4. ✅ RSI健康：RSI在50-70区间（不超买不超卖）
-        5. ✅ 突破关键位：突破前期高点或重要阻力位
-        6. ✅ 布林带位置：价格接近布林中轨上方，有上行空间
+        1.  趋势向上：价格 > MA5 > MA20 > MA60（多头排列）
+        2.  量价配合：成交量 > 5日均量的120%（放量上涨）
+        3.  MACD金叉：MACD > 0 且DIF上穿DEA
+        4.  RSI健康：RSI在50-70区间（不超买不超卖）
+        5.  突破关键位：突破前期高点或重要阻力位
+        6.  布林带位置：价格接近布林中轨上方，有上行空间
         
         **卖出信号**（满足任一立即卖出）：
-        1. 🔴 止损触发：亏损 ≥ -5%（明天开盘立即卖出）
-        2. 🟢 止盈触发：盈利 ≥ +10%（锁定收益）
-        3. 🔴 趋势转弱：跌破MA20/MA60，MACD死叉
-        4. 🔴 放量下跌：成交量放大但价格下跌
-        5. 🔴 技术破位：跌破重要支撑位
+        1.  止损触发：亏损 ≥ -5%（明天开盘立即卖出）
+        2.  止盈触发：盈利 ≥ +10%（锁定收益）
+        3.  趋势转弱：跌破MA20/MA60，MACD死叉
+        4.  放量下跌：成交量放大但价格下跌
+        5.  技术破位：跌破重要支撑位
         
         ---
         
-        ### ⚠️ A股T+1规则
+        ### A股T+1规则
         
         **关键限制**：
         - 今天买入的股票，**今天不能卖出**
@@ -90,7 +93,7 @@ def smart_monitor_ui():
         
         ---
         
-        ### 🔧 使用技巧
+        ### 使用技巧
         
         **新手建议**：
         1. 先使用"模拟交易"模式测试
@@ -105,7 +108,7 @@ def smart_monitor_ui():
         
         ---
         
-        ### 📞 常见问题
+        ### 常见问题
         
         **Q: 提示"DeepSeek API调用失败"？**
         - 检查API Key是否正确
@@ -125,7 +128,7 @@ def smart_monitor_ui():
         
         ---
         
-        ### ⚠️ 风险提示
+        ### 风险提示
         
         1. **股市有风险，投资需谨慎**
         2. AI决策仅供参考，不构成投资建议
@@ -135,7 +138,7 @@ def smart_monitor_ui():
         
         ---
         
-        **🎉 祝您交易顺利！如有问题，请查看详细文档或联系技术支持。**
+        ** 祝您交易顺利！如有问题，请查看详细文档或联系技术支持。**
         """)
     
     st.markdown("---")
@@ -153,11 +156,11 @@ def smart_monitor_ui():
     
     # 创建标签页
     tabs = st.tabs([
-        "📊 实时分析", 
-        "🎯 监控任务", 
-        "📈 持仓管理", 
-        "📜 历史记录",
-        "⚙️ 系统设置"
+        "实时分析", 
+        "监控任务", 
+        "持仓管理", 
+        "历史记录",
+        "系统设置"
     ])
     
     # 标签页1: 实时分析
@@ -184,7 +187,7 @@ def smart_monitor_ui():
 def render_realtime_analysis():
     """实时分析界面"""
     
-    st.header("📊 实时分析")
+    st.header("实时分析")
     
     col1, col2 = st.columns([2, 1])
     
@@ -199,7 +202,7 @@ def render_realtime_analysis():
         auto_trade = st.checkbox("自动交易", value=False, 
                                 help="开启后AI会自动执行交易决策")
     
-    if st.button("🔍 开始分析", type="primary"):
+    if st.button("开始分析", type="primary"):
         if not stock_code:
             st.error("请输入股票代码")
             return
@@ -233,20 +236,18 @@ def display_analysis_result(result: dict):
     market_data = result['market_data']
     session_info = result['session_info']
     
-    st.success(f"✅ 分析完成: {stock_code} {stock_name}")
+    st.success(f"分析完成: {stock_code} {stock_name}")
     
     # 交易时段信息
-    st.info(f"⏰ 当前时段: {session_info['session']} - {session_info['recommendation']}")
+    st.info(f"当前时段: {session_info['session']} - {session_info['recommendation']}")
     
     # AI决策
-    st.markdown("### 🤖 AI决策")
+    st.markdown("### AI决策")
     
     col1, col2, col3, col4 = st.columns(4)
     
     # 决策动作
     action = decision['action']
-    action_emoji = {"BUY": "📈", "SELL": "📉", "HOLD": "⏸️"}
-    action_color = {"BUY": "green", "SELL": "red", "HOLD": "gray"}
     
     col1.metric("决策", action, delta=None)
     col2.metric("信心度", f"{decision['confidence']}%")
@@ -258,7 +259,7 @@ def display_analysis_result(result: dict):
     st.text_area("决策理由", decision['reasoning'], height=150, disabled=True, label_visibility="hidden")
     
     # 市场数据
-    st.markdown("### 📊 市场数据")
+    st.markdown("### 市场数据")
     
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("当前价", f"¥{market_data.get('current_price', 0):.2f}")
@@ -267,7 +268,7 @@ def display_analysis_result(result: dict):
     col4.metric("换手率", f"{market_data.get('turnover_rate', 0):.2f}%")
     
     # 技术指标
-    st.markdown("### 📈 技术指标")
+    st.markdown("### 技术指标")
     
     tech_col1, tech_col2, tech_col3 = st.columns(3)
     
@@ -292,7 +293,7 @@ def display_analysis_result(result: dict):
     
     # 主力资金（已禁用 - 接口不稳定）
     # if 'main_force' in market_data:
-    #     st.markdown("### 💰 主力资金")
+    #     st.markdown("### 主力资金")
     #     mf = market_data['main_force']
     #     
     #     mf_col1, mf_col2, mf_col3 = st.columns(3)
@@ -306,24 +307,24 @@ def display_analysis_result(result: dict):
     # 执行结果（如果有）
     if result.get('execution_result'):
         exec_result = result['execution_result']
-        st.markdown("### ⚡ 执行结果")
+        st.markdown("### 执行结果")
         
         if exec_result.get('success'):
-            st.success(f"✅ {exec_result.get('message', '执行成功')}")
+            st.success(f"{exec_result.get('message', '执行成功')}")
         else:
-            st.error(f"❌ {exec_result.get('error', '执行失败')}")
+            st.error(f"{exec_result.get('error', '执行失败')}")
 
 
 def render_monitor_tasks():
     """监控任务界面"""
     
-    st.header("🎯 监控任务管理")
+    st.header("监控任务管理")
     
     db = st.session_state.db
     engine = st.session_state.engine
     
     # 添加新任务
-    with st.expander("➕ 添加新监控任务", expanded=True):
+    with st.expander("添加新监控任务", expanded=False):
         # 改回使用form，确保值正确提交
         with st.form("add_monitor_task_form", clear_on_submit=False):
             col1, col2 = st.columns(2)
@@ -335,7 +336,7 @@ def render_monitor_tasks():
                 
                 # 持仓信息
                 st.markdown("---")
-                st.markdown("**📊 持仓信息**")
+                st.markdown("**持仓信息**")
                 has_position = st.checkbox("已持仓该股票", value=False,
                                           help="勾选后可填写持仓成本和数量，AI会考虑持仓情况")
                 
@@ -359,12 +360,12 @@ def render_monitor_tasks():
                 notify_email = st.text_input("通知邮箱（可选）")
             
             # 添加任务按钮（表单提交按钮）
-            submitted = st.form_submit_button("➕ 添加任务", type="primary", width='stretch')
+            submitted = st.form_submit_button("添加任务", type="primary", width='stretch')
         
         if submitted:
             # 验证必填项（form中直接使用局部变量）
             if not task_name or not stock_code:
-                st.error("❌ 请填写必填项：任务名称和股票代码")
+                st.error("请填写必填项：任务名称和股票代码")
             else:
                 
                 try:
@@ -373,9 +374,9 @@ def render_monitor_tasks():
                     existing_task = next((t for t in existing_tasks if t['stock_code'] == stock_code), None)
                     
                     if existing_task:
-                        st.error(f"❌ 股票代码 {stock_code} 已存在监控任务！")
+                        st.error(f"股票代码 {stock_code} 已存在监控任务！")
                         st.warning(f"任务名称: {existing_task['task_name']}")
-                        st.info("💡 请在下方任务列表中找到该任务，点击启动或删除后重新添加")
+                        st.info("请在下方任务列表中找到该任务，点击启动或删除后重新添加")
                     else:
                         # 创建任务（初始状态为禁用，需要用户手动启动）
                         task_data = {
@@ -395,22 +396,22 @@ def render_monitor_tasks():
                         
                         task_id = db.add_monitor_task(task_data)
                         
-                        st.success(f"✅ 任务创建成功! ID: {task_id}")
+                        st.success(f"任务创建成功! ID: {task_id}")
                         if has_position:
-                            st.info(f"📊 已记录持仓: {position_quantity}股 @ {position_cost:.2f}元")
-                        st.info("💡 任务已创建但未启动，请在下方任务列表中点击'▶️ 启动'按钮开始监控")
+                            st.info(f"已记录持仓: {position_quantity}股 @ {position_cost:.2f}元")
+                        st.info("任务已创建但未启动，请在下方任务列表中点击'启动'按钮开始监控")
                         
                         st.rerun()
                 except Exception as e:
                     error_msg = str(e)
                     if "UNIQUE constraint failed" in error_msg:
-                        st.error(f"❌ 股票代码 {stock_code} 已存在监控任务！")
-                        st.info("💡 请在下方任务列表中找到该任务")
+                        st.error(f"股票代码 {stock_code} 已存在监控任务！")
+                        st.info("请在下方任务列表中找到该任务")
                     else:
                         st.error(f"创建失败: {error_msg}")
     
     # 显示任务列表
-    st.markdown("### 📋 监控任务列表")
+    st.markdown("### 监控任务列表")
     
     tasks = db.get_monitor_tasks(enabled_only=False)
     
@@ -454,35 +455,35 @@ def render_monitor_tasks():
                 st.caption(f"{task['stock_code']} - 间隔{task['check_interval']}秒")
             
             with col2:
-                status = "✅ 已启用" if task['enabled'] else "⏸️ 已禁用"
-                auto_trade_status = "🤖 自动交易" if task['auto_trade'] else "👀 仅监控"
-                trading_mode = "🕒 仅交易时段" if task.get('trading_hours_only', 1) else "🌐 全时段"
+                status = "已启用" if task['enabled'] else "已禁用"
+                auto_trade_status = "自动交易" if task['auto_trade'] else "仅监控"
+                trading_mode = "仅交易时段" if task.get('trading_hours_only', 1) else "全时段"
                 st.write(status)
                 st.caption(f"{auto_trade_status} | {trading_mode}")
                 
                 # 显示持仓状态
                 if has_position:
-                    st.caption(f"📊 持仓: {position_quantity}股 @ {position_cost:.2f}元")
+                    st.caption(f"持仓: {position_quantity}股 @ {position_cost:.2f}元")
             
             with col3:
                 is_running = task['stock_code'] in engine.monitoring_threads
                 if is_running:
-                    st.success("▶️ 运行中")
+                    st.success("运行中")
                 else:
-                    st.info("⏸️ 未运行")
+                    st.info("未运行")
                 
                 # 显示盈亏
                 if has_position and current_price > 0:
                     if profit_loss > 0:
-                        st.success(f"💰 +{profit_loss:.2f}元 ({profit_loss_pct:+.2f}%)")
+                        st.success(f"+{profit_loss:.2f}元 ({profit_loss_pct:+.2f}%)")
                     elif profit_loss < 0:
-                        st.error(f"📉 {profit_loss:.2f}元 ({profit_loss_pct:+.2f}%)")
+                        st.error(f"{profit_loss:.2f}元 ({profit_loss_pct:+.2f}%)")
                     else:
                         st.info("持平")
             
             with col4:
                 if is_running:
-                    if st.button("⏹️ 停止", key=f"stop_{task['id']}"):
+                    if st.button("停止", key=f"stop_{task['id']}"):
                         engine.stop_monitor(task['stock_code'])
                         # 停止时更新数据库状态为禁用
                         db.update_monitor_task(task['stock_code'], {'enabled': 0})
@@ -490,7 +491,7 @@ def render_monitor_tasks():
                         st.rerun()
                 else:
                     # 启动按钮始终可点击（只要任务未运行）
-                    if st.button("▶️ 启动", key=f"start_{task['id']}"):
+                    if st.button("启动", key=f"start_{task['id']}"):
                         # 启动监控
                         engine.start_monitor(
                             stock_code=task['stock_code'],
@@ -508,7 +509,7 @@ def render_monitor_tasks():
                         st.rerun()
             
             with col5:
-                if st.button("🗑️ 删除", key=f"del_{task['id']}"):
+                if st.button("删除", key=f"del_{task['id']}"):
                     # 如果正在运行，先停止
                     if task['stock_code'] in engine.monitoring_threads:
                         engine.stop_monitor(task['stock_code'])
@@ -518,7 +519,7 @@ def render_monitor_tasks():
                     st.rerun()
             
             # K线图和AI决策详情（可展开）
-            with st.expander(f"📊 K线图 & AI决策 - {task['task_name']}", expanded=False):
+            with st.expander(f"K线图 & AI决策 - {task['task_name']}", expanded=False):
                 _render_task_kline_and_decisions(task, db, engine)
             
             st.markdown("---")
@@ -527,7 +528,7 @@ def render_monitor_tasks():
 def render_position_management():
     """持仓管理界面"""
     
-    st.header("📈 持仓管理")
+    st.header("持仓管理")
     
     engine = st.session_state.engine
     qmt = engine.qmt
@@ -535,7 +536,7 @@ def render_position_management():
     # 获取账户信息
     account_info = qmt.get_account_info()
     
-    st.markdown("### 💰 账户概览")
+    st.markdown("### 账户概览")
     
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("总资产", f"¥{account_info['total_value']:,.2f}")
@@ -550,7 +551,7 @@ def render_position_management():
         st.info("当前无持仓")
         return
     
-    st.markdown("### 📊 持仓列表")
+    st.markdown("### 持仓列表")
     
     # 转换为DataFrame
     df = pd.DataFrame(positions)
@@ -576,7 +577,7 @@ def render_position_management():
     )
     
     # 单只股票操作
-    st.markdown("### ⚡ 快速操作")
+    st.markdown("### 快速操作")
     
     selected_stock = st.selectbox(
         "选择股票",
@@ -586,7 +587,7 @@ def render_position_management():
     col1, col2 = st.columns(2)
     
     with col1:
-        if st.button("🔍 AI分析", type="secondary"):
+        if st.button("AI分析", type="secondary"):
             stock_code = selected_stock.split()[0]
             with st.spinner("分析中..."):
                 result = engine.analyze_stock(stock_code, auto_trade=False)
@@ -594,7 +595,7 @@ def render_position_management():
                     st.success("分析完成，查看'实时分析'标签页")
     
     with col2:
-        if st.button("📤 卖出", type="primary"):
+        if st.button("卖出", type="primary"):
             stock_code = selected_stock.split()[0]
             # 这里可以添加卖出确认对话框
             st.warning("请在'实时分析'中使用AI决策后卖出")
@@ -603,7 +604,7 @@ def render_position_management():
 def render_history():
     """历史记录界面"""
     
-    st.header("📜 历史记录")
+    st.header("历史记录")
     
     db = st.session_state.db
     
@@ -611,7 +612,7 @@ def render_history():
     
     # AI决策历史
     with tab1:
-        st.subheader("🤖 AI决策历史")
+        st.subheader("AI决策历史")
         
         decisions = db.get_ai_decisions(limit=50)
         
@@ -636,7 +637,7 @@ def render_history():
     
     # 交易记录
     with tab2:
-        st.subheader("💱 交易记录")
+        st.subheader("交易记录")
         
         trades = db.get_trade_records(limit=50)
         
@@ -665,71 +666,71 @@ def render_history():
     
     # 通知记录
     with tab3:
-        st.subheader("📬 通知记录")
+        st.subheader("通知记录")
         st.info("通知记录功能开发中...")
 
 
 def render_settings():
     """系统设置界面（跳转到主程序的环境配置）"""
     
-    st.header("⚙️ 系统设置")
+    st.header("系统设置")
     
     st.info("""
-    ### 📌 配置说明
+    ### 配置说明
     
     智能盯盘使用主程序的统一配置系统，包括：
-    - 🤖 **DeepSeek API** - AI决策引擎
-    - 🔌 **MiniQMT** - 量化交易接口
-    - 📧 **邮件通知** - SMTP配置
-    - 🔔 **Webhook** - 钉钉/飞书通知
+    - **DeepSeek API** - AI决策引擎
+    - **MiniQMT** - 量化交易接口
+    - **邮件通知** - SMTP配置
+    - **Webhook** - 钉钉/飞书通知
     
-    请前往主程序的 **"环境配置"** 页面进行统一配置。
+    请前往主程序的 **"环境配置"**页面进行统一配置。
     """)
     
     # 显示当前配置状态
-    st.markdown("### 📊 当前配置状态")
+    st.markdown("### 当前配置状态")
     
     config = config_manager.read_env()
     
     col1, col2 = st.columns(2)
     
     with col1:
-        st.markdown("**🤖 DeepSeek API**")
+        st.markdown("**DeepSeek API**")
         api_key = config.get('DEEPSEEK_API_KEY', '')
         if api_key:
-            st.success(f"✅ 已配置（{api_key[:8]}...）")
+            st.success(f"已配置（{api_key[:8]}...）")
         else:
-            st.error("❌ 未配置")
+            st.error("未配置")
         
-        st.markdown("**🔌 MiniQMT**")
+        st.markdown("**MiniQMT**")
         miniqmt_enabled = config.get('MINIQMT_ENABLED', 'false').lower() == 'true'
         if miniqmt_enabled:
             account_id = config.get('MINIQMT_ACCOUNT_ID', '')
-            st.success(f"✅ 已启用（账户：{account_id or '未设置'}）")
+            st.success(f"已启用（账户：{account_id or '未设置'}）")
         else:
-            st.warning("⚠️ 未启用（使用模拟交易）")
+            st.warning("未启用（使用模拟交易）")
     
     with col2:
-        st.markdown("**📧 邮件通知**")
+        st.markdown("**邮件通知**")
         email_enabled = config.get('EMAIL_ENABLED', 'false').lower() == 'true'
         if email_enabled:
             email_to = config.get('EMAIL_TO', '')
-            st.success(f"✅ 已启用（{email_to}）")
+            st.success(f"已启用（{email_to}）")
         else:
-            st.warning("⚠️ 未启用")
+            st.warning("未启用")
         
-        st.markdown("**🔔 Webhook通知**")
+        st.markdown("**Webhook通知**")
         webhook_enabled = config.get('WEBHOOK_ENABLED', 'false').lower() == 'true'
         if webhook_enabled:
             webhook_type = config.get('WEBHOOK_TYPE', 'dingtalk')
-            st.success(f"✅ 已启用（{webhook_type}）")
+            st.success(f"已启用（{webhook_type}）")
         else:
-            st.warning("⚠️ 未启用")
+            st.warning("未启用")
     
     st.markdown("---")
     
     # 快速跳转按钮
-    st.markdown("### 🔧 配置管理")
+    st.markdown("### 配置管理")
     
     st.info("""
     **配置步骤：**
@@ -740,10 +741,10 @@ def render_settings():
     5. 刷新页面使配置生效
     """)
     
-    if st.button("🔄 重新加载配置", type="primary"):
+    if st.button("重新加载配置", type="primary"):
         config_manager.reload_config()
-        st.success("✅ 配置已重新加载")
-        st.info("💡 如果修改了配置，请刷新页面（Ctrl+R）")
+        st.success("配置已重新加载")
+        st.info("如果修改了配置，请刷新页面（Ctrl+R）")
         st.rerun()
 
 
@@ -766,10 +767,10 @@ def _render_task_kline_and_decisions(task: Dict, db: SmartMonitorDB, engine):
     col_chart, col_decisions = st.columns([2, 1])
     
     with col_chart:
-        st.markdown("#### 📈 K线图")
+        st.markdown("#### K线图")
         
         # 添加刷新按钮
-        if st.button("🔄 刷新K线", key=f"refresh_kline_{task['id']}"):
+        if st.button("刷新K线", key=f"refresh_kline_{task['id']}"):
             st.rerun()
         
         # 获取K线数据
@@ -811,20 +812,20 @@ def _render_task_kline_and_decisions(task: Dict, db: SmartMonitorDB, engine):
                 # 显示图表
                 st.plotly_chart(fig, use_container_width=True, config={'responsive': True})
                 
-                st.caption(f"📅 数据时间范围：{kline_data['日期'].min()} ~ {kline_data['日期'].max()}")
+                st.caption(f"数据时间范围：{kline_data['日期'].min()} ~ {kline_data['日期'].max()}")
             else:
-                st.error(f"❌ 无法获取 {stock_code} 的K线数据")
+                st.error(f"无法获取 {stock_code} 的K线数据")
                 
         except Exception as e:
-            st.error(f"❌ K线图加载失败: {str(e)}")
+            st.error(f"K线图加载失败: {str(e)}")
             import traceback
             st.text(traceback.format_exc())
     
     with col_decisions:
-        st.markdown("#### 🤖 AI决策历史")
+        st.markdown("#### AI决策历史")
         
         # 添加刷新按钮
-        if st.button("🔄 刷新决策", key=f"refresh_decisions_{task['id']}"):
+        if st.button("刷新决策", key=f"refresh_decisions_{task['id']}"):
             st.rerun()
         
         # 获取最近的AI决策（最近5条）
@@ -843,13 +844,6 @@ def _render_task_kline_and_decisions(task: Dict, db: SmartMonitorDB, engine):
                     executed = decision.get('executed', 0)
                     
                     # 决策类型图标和颜色
-                    action_icons = {
-                        'buy': '🔺',
-                        'sell': '🔻',
-                        'add_position': '⬆️',
-                        'reduce_position': '⬇️',
-                        'hold': '⏸️'
-                    }
                     
                     action_colors = {
                         'buy': '#ef5350',
@@ -867,7 +861,6 @@ def _render_task_kline_and_decisions(task: Dict, db: SmartMonitorDB, engine):
                         'hold': '持有'
                     }
                     
-                    icon = action_icons.get(action, '❓')
                     color = action_colors.get(action, '#000000')
                     action_name = action_names.get(action, action)
                     
@@ -876,8 +869,8 @@ def _render_task_kline_and_decisions(task: Dict, db: SmartMonitorDB, engine):
                         st.markdown(f"""
                         <div style="border-left: 4px solid {color}; padding-left: 10px; margin-bottom: 10px;">
                             <p style="margin: 0;">
-                                <strong>{icon} {action_name}</strong>
-                                {'✅' if executed else '⏳'}
+                                <strong>{action_name}</strong>
+                                {'' if executed else '处理中'}
                             </p>
                             <p style="margin: 5px 0; font-size: 0.85em; color: gray;">
                                 {decision_time}
@@ -893,11 +886,11 @@ def _render_task_kline_and_decisions(task: Dict, db: SmartMonitorDB, engine):
                         
                         st.markdown("---")
             else:
-                st.info("📭 暂无AI决策记录")
+                st.info("暂无AI决策记录")
                 st.caption("启动监控后，AI会定期分析并记录决策")
                 
         except Exception as e:
-            st.error(f"❌ 加载决策历史失败: {str(e)}")
+            st.error(f"加载决策历史失败: {str(e)}")
 
 
 if __name__ == '__main__':

@@ -54,7 +54,15 @@ class SmartMonitorDataFetcher:
             try:
                 import tushare as ts
                 ts.set_token(tushare_token)
-                self.ts_pro = ts.pro_api()
+                tushare_url = os.getenv('TUSHARE_URL', 'https://api.tushare.pro')
+                try:
+                    # 尝试带 server 参数（较新版本支持）
+                    self.ts_pro = ts.pro_api(token=tushare_token, server=tushare_url)
+                except TypeError:
+                    # 兼容不支持 server 参数的老版本
+                    self.ts_pro = ts.pro_api(token=tushare_token)
+                    if tushare_url and hasattr(self.ts_pro, '_DataApi__http_url'):
+                        self.ts_pro._DataApi__http_url = tushare_url
                 self.logger.info("Tushare备用数据源初始化成功")
             except Exception as e:
                 self.logger.warning(f"Tushare初始化失败: {e}")
@@ -86,7 +94,17 @@ class SmartMonitorDataFetcher:
             except Exception as e:
                 self.logger.warning(f"TDX获取异常 {stock_code}: {e}，尝试降级到AKShare")
         
-        # 方法2: 组合使用AKShare分钟行情 + 基本信息
+        # 方法2: 降级到Tushare
+        if self.ts_pro:
+            try:
+                self.logger.info(f"优先使用Tushare获取 {stock_code} 实时行情...")
+                quote = self._get_realtime_quote_from_tushare(stock_code)
+                if quote:
+                    return quote
+            except Exception as e:
+                self.logger.warning(f"Tushare获取失败 {stock_code}: {e}，继续尝试AKShare")
+        
+        # 方法3: 组合使用AKShare分钟行情 + 基本信息
         for attempt in range(retry):
             try:
                 # 1.1 获取股票基本信息（名称）
@@ -165,15 +183,9 @@ class SmartMonitorDataFetcher:
                     self.logger.warning(f"AKShare获取失败 {stock_code}，第{attempt+1}次重试... 错误: {type(e).__name__}: {str(e)[:50]}")
                     time.sleep(2)  # 等待2秒后重试
                 else:
-                    self.logger.warning(f"AKShare获取失败 {stock_code}（已重试{retry}次），尝试降级")
+                    self.logger.error(f"AKShare获取失败 {stock_code}（已重试{retry}次）")
         
-        # 降级到Tushare
-        if self.ts_pro:
-            self.logger.info(f"降级到Tushare获取 {stock_code}...")
-            return self._get_realtime_quote_from_tushare(stock_code)
-        else:
-            self.logger.error(f"AKShare失败且未配置Tushare，无法获取 {stock_code} 行情")
-            return None
+        return None
     
     def get_technical_indicators(self, stock_code: str, period: str = 'daily', retry: int = 1) -> Optional[Dict]:
         """
@@ -201,7 +213,17 @@ class SmartMonitorDataFetcher:
             except Exception as e:
                 self.logger.warning(f"TDX计算技术指标异常 {stock_code}: {e}，尝试降级到AKShare")
         
-        # 方法2: 尝试使用AKShare
+        # 方法2: 尝试使用Tushare
+        if self.ts_pro:
+            try:
+                self.logger.info(f"优先使用Tushare获取 {stock_code} 历史数据...")
+                indicators = self._get_technical_indicators_from_tushare(stock_code, period)
+                if indicators:
+                    return indicators
+            except Exception as e:
+                self.logger.warning(f"Tushare技术指标计算失败 {stock_code}: {e}，继续尝试AKShare")
+        
+        # 方法3: 尝试使用AKShare
         for attempt in range(retry):
             try:
                 # 获取历史数据（最近200个交易日，用于计算指标）
@@ -223,7 +245,6 @@ class SmartMonitorDataFetcher:
                         time.sleep(1)
                         continue
                     else:
-                        self.logger.warning(f"AKShare历史数据不足 {stock_code}，尝试降级")
                         break
                 
                 # 数据充足，计算技术指标
@@ -234,16 +255,10 @@ class SmartMonitorDataFetcher:
                     self.logger.warning(f"AKShare获取历史数据失败 {stock_code}，第{attempt+1}次重试... 错误: {type(e).__name__}: {str(e)[:50]}")
                     time.sleep(1)
                 else:
-                    self.logger.warning(f"AKShare获取历史数据失败 {stock_code}（已重试{retry}次），尝试降级到Tushare")
+                    self.logger.error(f"AKShare获取历史数据失败 {stock_code}（已重试{retry}次）")
                     break
         
-        # 方法3: 降级到Tushare
-        if self.ts_pro:
-            self.logger.info(f"降级到Tushare获取 {stock_code} 历史数据...")
-            return self._get_technical_indicators_from_tushare(stock_code, period)
-        else:
-            self.logger.error(f"AKShare失败且未配置Tushare，无法获取 {stock_code} 技术指标")
-            return None
+        return None
     
     def _calculate_all_indicators(self, df: pd.DataFrame, stock_code: str) -> Optional[Dict]:
         """
@@ -439,6 +454,16 @@ class SmartMonitorDataFetcher:
         """
         import time
         
+        # 优先使用Tushare
+        if self.ts_pro:
+            try:
+                self.logger.info(f"优先使用Tushare获取 {stock_code} 资金流向...")
+                flow = self._get_main_force_from_tushare(stock_code)
+                if flow:
+                    return flow
+            except Exception as e:
+                self.logger.warning(f"Tushare资金流向获取失败 {stock_code}: {e}，继续尝试AKShare")
+        
         for attempt in range(retry):
             try:
                 # 获取个股资金流（新版AKShare API参数调整）
@@ -492,15 +517,10 @@ class SmartMonitorDataFetcher:
                     self.logger.warning(f"AKShare获取资金流向失败 {stock_code}，第{attempt+1}次重试... 错误: {type(e).__name__}")
                     time.sleep(1)  # 等待1秒后重试
                 else:
-                    self.logger.warning(f"AKShare获取资金流向失败 {stock_code}（已重试{retry}次），尝试降级到Tushare")
+                    self.logger.error(f"AKShare获取资金流向失败 {stock_code}（已重试{retry}次）")
                     break
         
-        # 降级到Tushare
-        if self.ts_pro:
-            return self._get_main_force_from_tushare(stock_code)
-        else:
-            self.logger.error(f"AKShare失败且未配置Tushare，无法获取 {stock_code} 资金流向")
-            return None
+        return None
     
     def get_comprehensive_data(self, stock_code: str) -> Dict:
         """

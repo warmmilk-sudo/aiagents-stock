@@ -4,6 +4,7 @@
 包含：仪表盘、实时监测、预警中心、趋势分析、历史记录、设置
 """
 import streamlit as st
+from ui_theme import inject_global_theme, configure_plotly_template, render_page_header
 import plotly.graph_objects as go
 import plotly.express as px
 import pandas as pd
@@ -13,10 +14,12 @@ import time
 
 def display_news_flow_monitor():
     """显示新闻流量监测主界面"""
-    st.title("📰 新闻流量监测")
+    inject_global_theme()
+    configure_plotly_template()
+    st.title("新闻流量监测")
     
     # 功能说明
-    with st.expander("💡 功能说明 - 流量为王理念", expanded=False):
+    with st.expander("功能说明 - 流量为王理念", expanded=False):
         st.markdown("""
         ### 核心公式
         **接盘总量 = 流量 × 转化率 × 客单价**
@@ -40,12 +43,12 @@ def display_news_flow_monitor():
     
     # 标签页
     tabs = st.tabs([
-        "📊 仪表盘",
-        "🔥 实时监测", 
-        "⚠️ 预警中心",
-        "📈 趋势分析",
-        "📚 历史记录",
-        "⚙️ 设置"
+        "仪表盘",
+        "实时监测", 
+        "预警中心",
+        "趋势分析",
+        "历史记录",
+        "设置"
     ])
     
     with tabs[0]:
@@ -69,7 +72,7 @@ def display_news_flow_monitor():
 
 def display_dashboard():
     """显示仪表盘"""
-    st.subheader("📊 流量仪表盘")
+    st.subheader("流量仪表盘")
     
     try:
         from news_flow_engine import news_flow_engine
@@ -149,8 +152,7 @@ def display_dashboard():
         if alerts:
             for alert in alerts[:5]:
                 level = alert.get('alert_level', 'info')
-                icon = {'danger': '🔴', 'warning': '🟠', 'info': '🔵'}.get(level, '⚪')
-                st.markdown(f"{icon} **{alert.get('title', '')[:20]}...**")
+                st.markdown(f"**{alert.get('title', '')[:20]}...**")
                 st.caption(alert.get('created_at', '')[:16])
         else:
             st.info("暂无预警")
@@ -165,7 +167,7 @@ def display_dashboard():
     # 调度器状态
     scheduler = dashboard_data.get('scheduler_status', {})
     if scheduler:
-        st.markdown("#### ⏰ 定时任务状态")
+        st.markdown("#### 定时任务状态")
         cols = st.columns(4)
         cols[0].metric("运行状态", "运行中" if scheduler.get('running') else "已停止")
         
@@ -203,7 +205,7 @@ def display_wordcloud_and_top_news():
     col1, col2 = st.columns([1, 1])
     
     with col1:
-        st.markdown("#### ☁️ 热点词云")
+        st.markdown("#### 热点词云")
         
         if hot_topics:
             # 使用Plotly生成词云效果（气泡图模拟）
@@ -254,7 +256,7 @@ def display_wordcloud_and_top_news():
             st.info("暂无热点词云数据")
     
     with col2:
-        st.markdown("#### 📊 热点话题TOP20")
+        st.markdown("#### 热点话题TOP20")
         
         if hot_topics:
             for i, topic in enumerate(hot_topics[:20], 1):
@@ -272,7 +274,7 @@ def display_wordcloud_and_top_news():
     st.divider()
     
     # 跨平台热点新闻TOP100
-    st.markdown("#### 📰 跨平台热点新闻TOP100")
+    st.markdown("#### 跨平台热点新闻TOP100")
     
     try:
         # 获取所有平台新闻
@@ -346,7 +348,7 @@ def display_wordcloud_and_top_news():
 
 def display_realtime_monitor():
     """显示实时监测"""
-    st.subheader("🔥 实时监测")
+    st.subheader("实时监测")
     
     # 监测参数
     col1, col2, col3 = st.columns([1, 1, 1])
@@ -369,7 +371,7 @@ def display_realtime_monitor():
     with col2:
         st.write("")
         st.write("")
-        run_btn = st.button("🚀 开始AI智能分析", type="primary", width='stretch')
+        run_btn = st.button("开始AI智能分析", type="primary", width='stretch')
     
     with col3:
         st.write("")
@@ -377,7 +379,7 @@ def display_realtime_monitor():
         # 空占位
     
     if run_btn:
-        with st.spinner("🤖 AI正在分析全网热点新闻..."):
+        with st.spinner("AI正在分析全网热点新闻..."):
             try:
                 from news_flow_engine import news_flow_engine
                 
@@ -387,7 +389,7 @@ def display_realtime_monitor():
                 progress_bar = st.progress(0)
                 status_text = st.empty()
                 
-                status_text.text("📊 获取多平台新闻数据...")
+                status_text.text("获取多平台新闻数据...")
                 progress_bar.progress(10)
                 
                 result = news_flow_engine.run_full_analysis(category=cat, include_ai=True)
@@ -401,12 +403,12 @@ def display_realtime_monitor():
                     # 清除之前的PDF缓存
                     if 'news_flow_pdf_data' in st.session_state:
                         del st.session_state['news_flow_pdf_data']
-                    st.success(f"✅ AI分析完成！耗时 {result.get('duration', 0):.1f} 秒")
+                    st.success(f"AI分析完成！耗时 {result.get('duration', 0):.1f} 秒")
                 else:
-                    st.error(f"❌ 分析失败: {result.get('error')}")
+                    st.error(f"分析失败: {result.get('error')}")
                     
             except Exception as e:
-                st.error(f"❌ 分析异常: {e}")
+                st.error(f"分析异常: {e}")
     
     # 显示结果
     if 'news_flow_result' in st.session_state:
@@ -424,14 +426,14 @@ def display_analysis_results(result: dict):
     trading_signals = result.get('trading_signals', {})
     
     # 核心指标
-    st.markdown("### 📊 核心指标")
+    st.markdown("### 核心指标")
     
     cols = st.columns(5)
     
     with cols[0]:
         score = flow_data.get('total_score', 0)
         level = flow_data.get('level', '中')
-        level_color = {'极高': '🔴', '高': '🟠', '中': '🟡', '低': '🔵'}.get(level, '⚪')
+        level_color = {'极高': '', '高': '', '中': '', '低': ''}.get(level, '')
         st.metric("流量得分", f"{score}", delta=f"{level_color} {level}")
     
     with cols[1]:
@@ -454,18 +456,18 @@ def display_analysis_results(result: dict):
     with cols[4]:
         signal = trading_signals.get('overall_signal', '观望')
         conf = trading_signals.get('confidence', 50)
-        signal_color = {'卖出': '🔴', '观望': '🟡', '买入': '🟢', '关注': '🔵'}.get(signal, '⚪')
+        signal_color = {'卖出': '', '观望': '', '买入': '', '关注': ''}.get(signal, '')
         st.metric("交易信号", f"{signal_color} {signal}", delta=f"置信度:{conf}%")
     
     # 关键提示
     key_msg = trading_signals.get('key_message', '')
     if key_msg:
         if '危险' in key_msg or '逃命' in key_msg:
-            st.error(f"⚠️ {key_msg}")
+            st.error(f"{key_msg}")
         elif '加速' in key_msg or '买入' in key_msg:
-            st.success(f"💡 {key_msg}")
+            st.success(f"{key_msg}")
         else:
-            st.info(f"💡 {key_msg}")
+            st.info(f"{key_msg}")
     
     st.divider()
     
@@ -474,7 +476,7 @@ def display_analysis_results(result: dict):
     
     with left_col:
         # 流量模型
-        st.markdown("#### 🔬 流量模型分析")
+        st.markdown("#### 流量模型分析")
         
         if model_data:
             # 潜力计算
@@ -494,7 +496,7 @@ def display_analysis_results(result: dict):
                 st.caption(f"时间窗口: {flow_type.get('time_window', 'N/A')}")
         
         # 情绪分析
-        st.markdown("#### 💭 情绪分析")
+        st.markdown("#### 情绪分析")
         
         if sentiment_data:
             sentiment = sentiment_data.get('sentiment', {})
@@ -513,28 +515,26 @@ def display_analysis_results(result: dict):
     with right_col:
         # AI分析（如果有）
         if ai_analysis:
-            st.markdown("#### 🤖 AI智能分析")
+            st.markdown("#### AI智能分析")
             
             # 投资建议
             advice = ai_analysis.get('investment_advice', {})
             if advice:
-                advice_emoji = {'买入': '🟢', '持有': '🔵', '观望': '🟡', '回避': '🔴'}.get(advice.get('advice', '观望'), '⚪')
-                st.markdown(f"**{advice_emoji} AI建议**: {advice.get('advice', '观望')} (置信度: {advice.get('confidence', 50)}%)")
+                st.markdown(f"**AI建议**: {advice.get('advice', '观望')} (置信度: {advice.get('confidence', 50)}%)")
                 
                 key_msg = advice.get('key_message', '')
                 if key_msg:
-                    st.info(f"💡 {key_msg}")
+                    st.info(f"{key_msg}")
                 
                 if advice.get('action_plan'):
-                    with st.expander("📋 行动计划"):
+                    with st.expander("行动计划"):
                         for i, plan in enumerate(advice.get('action_plan', [])[:5], 1):
                             st.write(f"{i}. {plan}")
             
             # 风险评估
             risk = ai_analysis.get('risk_assess', {})
             if risk:
-                risk_color = {'低': '🟢', '中': '🟡', '高': '🔴'}.get(risk.get('risk_level', '中'), '🟡')
-                st.markdown(f"**{risk_color} 风险等级**: {risk.get('risk_level', '未知')} (分数: {risk.get('risk_score', 50)}/100)")
+                st.markdown(f"**风险等级**: {risk.get('risk_level', '未知')} (分数: {risk.get('risk_score', 50)}/100)")
                 
         else:
             st.info("未运行AI分析。选择'完整分析（含AI）'模式获取AI智能分析。")
@@ -543,21 +543,20 @@ def display_analysis_results(result: dict):
     
     # AI详细分析区域（如果有AI分析）
     if ai_analysis:
-        st.markdown("### 📊 AI深度分析报告")
+        st.markdown("### AI深度分析报告")
         
         # 热门题材
         sector_analysis = ai_analysis.get('sector_analysis', {})
         hot_themes = sector_analysis.get('hot_themes', [])
         
         if hot_themes:
-            st.markdown("#### 🔥 今日热门题材")
+            st.markdown("#### 今日热门题材")
             theme_cols = st.columns(min(len(hot_themes), 4))
             for i, theme in enumerate(hot_themes[:4]):
                 with theme_cols[i]:
-                    heat_emoji = {'极高': '🔴', '高': '🟠', '中': '🟡'}.get(theme.get('heat_level', '中'), '🟡')
                     st.metric(
                         theme.get('theme', '未知'),
-                        f"{heat_emoji} {theme.get('heat_level', '中')}",
+                        theme.get('heat_level', '中'),
                         delta=theme.get('sustainability', '')
                     )
             st.caption(f"题材来源: {', '.join([t.get('source', '')[:15] for t in hot_themes[:3]])}")
@@ -565,7 +564,7 @@ def display_analysis_results(result: dict):
         # 受益板块详细分析
         benefited_sectors = sector_analysis.get('benefited_sectors', [])
         if benefited_sectors:
-            st.markdown("#### 📈 受益板块分析")
+            st.markdown("#### 受益板块分析")
             for sector in benefited_sectors[:5]:
                 with st.expander(f"**{sector.get('name', '')}** - 置信度 {sector.get('confidence', 0)}%"):
                     st.write(f"**分析**: {sector.get('reason', '')}")
@@ -579,24 +578,17 @@ def display_analysis_results(result: dict):
         sector_analyses = multi_sector.get('sector_analyses', [])
         
         if sector_analyses:
-            st.markdown("#### 🎯 板块深度分析（多Agent分析）")
+            st.markdown("#### 板块深度分析（多Agent分析）")
             st.caption(f"共分析 {len(sector_analyses)} 个热门板块，耗时 {multi_sector.get('analysis_time', 0)} 秒")
             
             # 板块核心指标卡片
             sector_cols = st.columns(min(len(sector_analyses), 4))
             for i, sector in enumerate(sector_analyses[:4]):
                 with sector_cols[i]:
-                    heat_emoji = {'极高': '🔴', '高': '🟠', '中': '🟡', '低': '🔵'}.get(
-                        sector.get('heat_level', '中'), '🟡'
-                    )
-                    outlook_emoji = {'看涨': '📈', '震荡': '📊', '看跌': '📉'}.get(
-                        sector.get('short_term_outlook', '震荡'), '📊'
-                    )
-                    
                     st.metric(
                         sector.get('sector_name', '未知'),
-                        f"{heat_emoji} 热度{sector.get('heat_score', 50)}",
-                        delta=f"{outlook_emoji} {sector.get('short_term_outlook', '震荡')}"
+                        f"热度{sector.get('heat_score', 50)}",
+                        delta=sector.get('short_term_outlook', '震荡')
                     )
                     
                     # 显示关键指标
@@ -607,14 +599,13 @@ def display_analysis_results(result: dict):
             
             # 详细分析展开
             for sector in sector_analyses:
-                with st.expander(f"📊 {sector.get('sector_name', '')} - 详细分析"):
+                with st.expander(f"{sector.get('sector_name', '')} - 详细分析"):
                     # 驱动因素
                     drivers = sector.get('drivers', [])
                     if drivers:
                         st.markdown("**驱动因素**:")
                         for driver in drivers[:3]:
-                            impact_emoji = '✅' if driver.get('impact') == '正面' else '❌'
-                            st.write(f"- {impact_emoji} [{driver.get('type', '')}] {driver.get('content', '')}")
+                            st.write(f"- [{driver.get('type', '')}] {driver.get('content', '')}")
                     
                     # 预判理由
                     st.markdown(f"**短期预判**: {sector.get('short_term_outlook', '震荡')} - {sector.get('outlook_reason', '')}")
@@ -635,16 +626,16 @@ def display_analysis_results(result: dict):
                             st.dataframe(pd.DataFrame(leader_data), width='stretch', hide_index=True)
                     
                     # 投资建议
-                    st.info(f"💡 {sector.get('investment_advice', '')}")
-                    st.warning(f"⚠️ {sector.get('risk_warning', '')}")
+                    st.info(f"{sector.get('investment_advice', '')}")
+                    st.warning(f"{sector.get('risk_warning', '')}")
         
         # 股票推荐
         stock_recommend = ai_analysis.get('stock_recommend', {})
         recommended_stocks = stock_recommend.get('recommended_stocks', [])
         
         if recommended_stocks:
-            st.markdown("#### 💰 AI选股推荐")
-            st.warning("⚠️ 以下为AI分析结果，仅供参考，不构成投资建议。股市有风险，投资需谨慎！")
+            st.markdown("#### AI选股推荐")
+            st.warning("以下为AI分析结果，仅供参考，不构成投资建议。股市有风险，投资需谨慎！")
             
             # 用表格展示推荐股票
             stock_data = []
@@ -663,7 +654,7 @@ def display_analysis_results(result: dict):
                 st.dataframe(df_stocks, width='stretch', hide_index=True)
             
             # 展开查看详情
-            with st.expander("📋 查看详细推荐理由"):
+            with st.expander("查看详细推荐理由"):
                 for stock in recommended_stocks[:8]:
                     st.markdown(f"**{stock.get('code', '')} {stock.get('name', '')}**")
                     st.write(f"- 板块: {stock.get('sector', '')}")
@@ -676,21 +667,21 @@ def display_analysis_results(result: dict):
             
             # 整体策略
             if stock_recommend.get('overall_strategy'):
-                st.info(f"📊 **整体策略**: {stock_recommend.get('overall_strategy', '')}")
+                st.info(f"**整体策略**: {stock_recommend.get('overall_strategy', '')}")
             if stock_recommend.get('timing_advice'):
-                st.caption(f"⏰ 时机建议: {stock_recommend.get('timing_advice', '')}")
+                st.caption(f"时机建议: {stock_recommend.get('timing_advice', '')}")
             if stock_recommend.get('risk_warning'):
-                st.error(f"⚠️ {stock_recommend.get('risk_warning', '')}")
+                st.error(f"{stock_recommend.get('risk_warning', '')}")
         
         # 机会评估
         opportunity = sector_analysis.get('opportunity_assessment', '')
         trading_suggestion = sector_analysis.get('trading_suggestion', '')
         if opportunity or trading_suggestion:
-            st.markdown("#### 💡 综合评估")
+            st.markdown("#### 综合评估")
             if opportunity:
                 st.write(opportunity)
             if trading_suggestion:
-                st.success(f"📌 {trading_suggestion}")
+                st.success(f"{trading_suggestion}")
         
         st.divider()
     
@@ -698,7 +689,7 @@ def display_analysis_results(result: dict):
     col1, col2 = st.columns(2)
     
     with col1:
-        st.markdown("#### 🔥 热门话题TOP10")
+        st.markdown("#### 热门话题TOP10")
         hot_topics = result.get('hot_topics', [])[:10]
         
         if hot_topics:
@@ -714,7 +705,7 @@ def display_analysis_results(result: dict):
             st.plotly_chart(fig, width='stretch')
     
     with col2:
-        st.markdown("#### 📰 股票相关新闻TOP5")
+        st.markdown("#### 股票相关新闻TOP5")
         stock_news = result.get('stock_news', [])[:5]
         
         if stock_news:
@@ -731,7 +722,7 @@ def display_analysis_results(result: dict):
 def display_pdf_export_section(result: dict):
     """显示PDF导出区域"""
     st.divider()
-    st.markdown("### 📄 导出报告")
+    st.markdown("### 导出报告")
     
     col1, col2, col3 = st.columns([3, 1, 1])
     
@@ -739,7 +730,7 @@ def display_pdf_export_section(result: dict):
         st.write("将分析报告导出为PDF文件，方便保存和分享")
     
     with col2:
-        if st.button("📥 生成PDF报告", type="primary", key="gen_pdf_btn"):
+        if st.button("生成PDF报告", type="primary", key="gen_pdf_btn"):
             with st.spinner("正在生成PDF报告..."):
                 try:
                     from news_flow_pdf import NewsFlowPDFGenerator
@@ -754,18 +745,18 @@ def display_pdf_export_section(result: dict):
                         st.session_state.news_flow_pdf_data = pdf_bytes
                         st.session_state.news_flow_pdf_filename = f"新闻流量分析报告_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
                         
-                        st.success("✅ PDF报告生成成功！")
+                        st.success("PDF报告生成成功！")
                         st.rerun()
                     else:
-                        st.error("❌ PDF生成失败")
+                        st.error("PDF生成失败")
                 except Exception as e:
-                    st.error(f"❌ PDF生成失败: {str(e)}")
+                    st.error(f"PDF生成失败: {str(e)}")
     
     with col3:
         # 如果已经生成了PDF，显示下载按钮
         if 'news_flow_pdf_data' in st.session_state:
             st.download_button(
-                label="💾 下载PDF",
+                label="下载PDF",
                 data=st.session_state.news_flow_pdf_data,
                 file_name=st.session_state.news_flow_pdf_filename,
                 mime="application/pdf",
@@ -775,7 +766,7 @@ def display_pdf_export_section(result: dict):
 
 def display_alert_center():
     """显示预警中心"""
-    st.subheader("⚠️ 预警中心")
+    st.subheader("预警中心")
     
     try:
         from news_flow_alert import news_flow_alert_system
@@ -817,10 +808,9 @@ def display_alert_center():
         if alerts:
             for alert in alerts[:20]:
                 level = alert.get('alert_level', 'info')
-                icon = {'danger': '🔴', 'warning': '🟠', 'info': '🔵'}.get(level, '⚪')
                 level_name = {'danger': '危险', 'warning': '警告', 'info': '提示'}.get(level, '未知')
-                
-                with st.expander(f"{icon} [{level_name}] {alert.get('title', '')[:40]}..."):
+
+                with st.expander(f"[{level_name}] {alert.get('title', '')[:40]}..."):
                     st.markdown(alert.get('content', ''))
                     st.caption(f"时间: {alert.get('created_at', '')} | 类型: {alert.get('alert_type', '')}")
         else:
@@ -829,7 +819,7 @@ def display_alert_center():
     st.divider()
     
     # 预警配置
-    st.markdown("#### ⚙️ 预警阈值配置")
+    st.markdown("#### 预警阈值配置")
     
     config = news_flow_alert_system.get_threshold_config()
     
@@ -862,7 +852,7 @@ def display_alert_center():
 
 def display_trend_analysis():
     """显示趋势分析"""
-    st.subheader("📈 趋势分析")
+    st.subheader("趋势分析")
     
     try:
         from news_flow_engine import news_flow_engine
@@ -996,7 +986,7 @@ def display_trend_analysis():
 
 def display_history_records():
     """显示历史记录"""
-    st.subheader("📚 历史记录")
+    st.subheader("历史记录")
     
     try:
         from news_flow_db import news_flow_db
@@ -1017,9 +1007,7 @@ def display_history_records():
     for snapshot in snapshots[:20]:
         score = snapshot.get('total_score', 0)
         level = snapshot.get('flow_level', '中')
-        level_icon = {'极高': '🔴', '高': '🟠', '中': '🟡', '低': '🔵'}.get(level, '⚪')
-        
-        with st.expander(f"{level_icon} {snapshot.get('fetch_time', '')} - 流量得分: {score} ({level})"):
+        with st.expander(f"{snapshot.get('fetch_time', '')} - 流量得分: {score} ({level})"):
             # 获取详情
             detail = news_flow_db.get_snapshot_detail(snapshot['id'])
             
@@ -1083,10 +1071,10 @@ def display_history_records():
 
 def display_settings():
     """显示设置"""
-    st.subheader("⚙️ 设置")
+    st.subheader("设置")
     
     # 平台配置
-    st.markdown("#### 📡 支持的平台")
+    st.markdown("#### 支持的平台")
     
     try:
         from news_flow_data import NewsFlowDataFetcher
@@ -1120,7 +1108,7 @@ def display_settings():
     st.divider()
     
     # 定时任务配置
-    st.markdown("#### ⏰ 定时任务管理")
+    st.markdown("#### 定时任务管理")
     
     try:
         from news_flow_scheduler import news_flow_scheduler
@@ -1130,7 +1118,7 @@ def display_settings():
         col1, col2 = st.columns([1, 2])
         
         with col1:
-            st.markdown(f"**运行状态**: {'✅ 运行中' if status.get('running') else '⏸️ 已停止'}")
+            st.markdown(f"**运行状态**: {'运行中' if status.get('running') else '已停止'}")
             
             if status.get('running'):
                 if st.button("停止调度器", key="stop_scheduler"):
@@ -1203,7 +1191,7 @@ def display_settings():
     st.divider()
     
     # 使用建议
-    st.markdown("#### 💡 使用建议")
+    st.markdown("#### 使用建议")
     st.markdown("""
     1. **盘前分析** (09:00前)
        - 运行快速分析，了解当日热点

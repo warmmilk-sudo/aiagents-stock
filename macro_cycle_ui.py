@@ -4,6 +4,7 @@
 """
 
 import streamlit as st
+from ui_theme import inject_global_theme, configure_plotly_template, render_page_header
 import time
 from datetime import datetime
 from macro_cycle_engine import MacroCycleEngine
@@ -12,21 +13,15 @@ from macro_cycle_pdf import MacroCyclePDFGenerator, generate_macro_cycle_markdow
 
 def display_macro_cycle():
     """显示宏观周期分析主界面"""
-    st.markdown("""
-    <div style="background: linear-gradient(135deg, #0f0c29 0%, #302b63 50%, #24243e 100%); 
-                padding: 2rem; border-radius: 15px; margin-bottom: 1.5rem;
-                box-shadow: 0 8px 32px rgba(0,0,0,0.3);">
-        <h1 style="color: #fff; margin: 0; font-size: 2rem;">
-            🧭 宏观周期分析
-        </h1>
-        <p style="color: rgba(255,255,255,0.8); margin: 0.5rem 0 0 0; font-size: 1.1rem;">
-            康波周期 × 美林投资时钟 × 中国政策分析 — AI驱动的宏观经济周期研判
-        </p>
-    </div>
-    """, unsafe_allow_html=True)
+    inject_global_theme()
+    configure_plotly_template()
+    render_page_header(
+        "宏观周期分析",
+        "康波周期 × 美林投资时钟 × 中国政策分析 — AI驱动的宏观经济周期研判",
+    )
 
     # 标签页
-    tab1, tab2 = st.tabs(["📊 周期分析", "📚 理论介绍"])
+    tab1, tab2 = st.tabs(["周期分析", "理论介绍"])
 
     with tab1:
         display_analysis_tab()
@@ -44,11 +39,11 @@ def display_analysis_tab():
     """)
 
     st.markdown("""
-    **🤖 AI分析师团队：**
-    - 🌊 **康波周期分析师** — 60年长周期战略定位（回升→繁荣→衰退→萧条）
-    - ⏰ **美林时钟分析师** — 3-5年中短周期战术定位（复苏→过热→滞胀→衰退）
-    - 🏛️ **中国政策分析师** — 政策第三维度（货币/财政/产业/房地产）
-    - 👔 **首席宏观策略师** — 三维综合研判，最终资产配置建议
+    ** AI分析师团队：**
+    - **康波周期分析师** — 60年长周期战略定位（回升→繁荣→衰退→萧条）
+    - **美林时钟分析师** — 3-5年中短周期战术定位（复苏→过热→滞胀→衰退）
+    - **中国政策分析师** — 政策第三维度（货币/财政/产业/房地产）
+    - **首席宏观策略师** — 三维综合研判，最终资产配置建议
     """)
 
     st.markdown("---")
@@ -57,10 +52,10 @@ def display_analysis_tab():
     col1, col2 = st.columns([2, 2])
 
     with col1:
-        analyze_button = st.button("🚀 开始宏观周期分析", type="primary", key="macro_analyze")
+        analyze_button = st.button("开始宏观周期分析", type="primary", key="macro_analyze")
 
     with col2:
-        if st.button("🔄 清除结果", key="macro_clear"):
+        if st.button("清除结果", key="macro_clear"):
             if 'macro_cycle_result' in st.session_state:
                 del st.session_state.macro_cycle_result
             st.success("已清除分析结果")
@@ -81,7 +76,7 @@ def display_analysis_tab():
         if result.get("success"):
             display_analysis_results(result)
         else:
-            st.error(f"❌ 分析失败: {result.get('error', '未知错误')}")
+            st.error(f"分析失败: {result.get('error', '未知错误')}")
 
 
 def run_macro_cycle_analysis():
@@ -107,10 +102,10 @@ def run_macro_cycle_analysis():
             progress_bar.empty()
             st.rerun()
         else:
-            st.error(f"❌ 分析失败: {result.get('error', '未知错误')}")
+            st.error(f"分析失败: {result.get('error', '未知错误')}")
 
     except Exception as e:
-        st.error(f"❌ 分析过程出错: {str(e)}")
+        st.error(f"分析过程出错: {str(e)}")
         import traceback
         st.code(traceback.format_exc())
     finally:
@@ -123,21 +118,21 @@ def display_analysis_results(result):
     agents = result.get("agents_analysis", {})
     timestamp = result.get("timestamp", "")
 
-    st.success(f"✅ 分析完成于 {timestamp}")
+    st.success(f"分析完成于 {timestamp}")
 
     # 数据采集状态
     data_errors = result.get("data_errors", [])
     if data_errors:
-        with st.expander("⚠️ 部分数据采集失败（不影响分析）"):
+        with st.expander("部分数据采集失败（不影响分析）"):
             for err in data_errors:
                 st.warning(f"• {err}")
 
     # 四个分析师报告
     report_tabs = st.tabs([
-        "👔 综合策略",
-        "🌊 康波周期",
-        "⏰ 美林时钟",
-        "🏛️ 政策分析"
+        "综合策略",
+        "康波周期",
+        "美林时钟",
+        "政策分析"
     ])
 
     # Tab 1: 首席宏观策略师（综合）
@@ -145,13 +140,9 @@ def display_analysis_results(result):
         chief = agents.get("chief", {})
         if chief:
             st.markdown("""
-            <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
-                        padding: 1.2rem; border-radius: 12px; margin-bottom: 1rem;
-                        color: white;">
-                <h3 style="margin: 0; color: white;">👔 首席宏观策略师 — 综合研判</h3>
-                <p style="margin: 0.3rem 0 0 0; opacity: 0.9; font-size: 0.95rem;">
-                    整合康波周期 + 美林投资时钟 + 中国政策三维分析，给出最终投资策略
-                </p>
+            <div class="decision-card">
+                <h3>首席宏观策略师 — 综合研判</h3>
+                <p>整合康波周期 + 美林投资时钟 + 中国政策三维分析，给出最终投资策略</p>
             </div>
             """, unsafe_allow_html=True)
             st.markdown(chief.get("analysis", "暂无分析结果"))
@@ -163,13 +154,9 @@ def display_analysis_results(result):
         kondratieff = agents.get("kondratieff", {})
         if kondratieff:
             st.markdown("""
-            <div style="background: linear-gradient(135deg, #0575E6 0%, #021B79 100%); 
-                        padding: 1.2rem; border-radius: 12px; margin-bottom: 1rem;
-                        color: white;">
-                <h3 style="margin: 0; color: white;">🌊 康波周期分析师 — 60年长周期定位</h3>
-                <p style="margin: 0.3rem 0 0 0; opacity: 0.9; font-size: 0.95rem;">
-                    基于康德拉季耶夫长波理论，判断当前处于第五轮信息技术康波的哪个阶段
-                </p>
+            <div class="agent-card">
+                <h3>康波周期分析师 — 60年长周期定位</h3>
+                <p>基于康德拉季耶夫长波理论，判断当前处于第五轮信息技术康波的哪个阶段</p>
             </div>
             """, unsafe_allow_html=True)
             st.markdown(kondratieff.get("analysis", "暂无分析结果"))
@@ -181,13 +168,9 @@ def display_analysis_results(result):
         merrill = agents.get("merrill", {})
         if merrill:
             st.markdown("""
-            <div style="background: linear-gradient(135deg, #f5af19 0%, #f12711 100%); 
-                        padding: 1.2rem; border-radius: 12px; margin-bottom: 1rem;
-                        color: white;">
-                <h3 style="margin: 0; color: white;">⏰ 美林投资时钟分析师 — 中短周期定位</h3>
-                <p style="margin: 0.3rem 0 0 0; opacity: 0.9; font-size: 0.95rem;">
-                    基于经济增长+通胀+政策三维度，判断当前处于美林时钟的哪个象限
-                </p>
+            <div class="agent-card">
+                <h3>美林投资时钟分析师 — 中短周期定位</h3>
+                <p>基于经济增长+通胀+政策三维度，判断当前处于美林时钟的哪个象限</p>
             </div>
             """, unsafe_allow_html=True)
             st.markdown(merrill.get("analysis", "暂无分析结果"))
@@ -199,13 +182,9 @@ def display_analysis_results(result):
         policy = agents.get("policy", {})
         if policy:
             st.markdown("""
-            <div style="background: linear-gradient(135deg, #e53935 0%, #b71c1c 100%); 
-                        padding: 1.2rem; border-radius: 12px; margin-bottom: 1rem;
-                        color: white;">
-                <h3 style="margin: 0; color: white;">🏛️ 中国政策分析师 — 政策第三维度</h3>
-                <p style="margin: 0.3rem 0 0 0; opacity: 0.9; font-size: 0.95rem;">
-                    深度分析货币政策、财政政策、产业政策、房地产政策对周期和投资的影响
-                </p>
+            <div class="warning-card">
+                <h3>中国政策分析师 — 政策第三维度</h3>
+                <p>深度分析货币政策、财政政策、产业政策、房地产政策对周期和投资的影响</p>
             </div>
             """, unsafe_allow_html=True)
             st.markdown(policy.get("analysis", "暂无分析结果"))
@@ -219,7 +198,7 @@ def display_analysis_results(result):
 
 def display_pdf_export_section(result):
     """显示PDF/Markdown导出部分"""
-    st.subheader("📄 导出报告")
+    st.subheader("导出报告")
 
     col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
 
@@ -227,7 +206,7 @@ def display_pdf_export_section(result):
         st.write("将宏观周期分析报告导出为PDF或Markdown文件，方便保存和分享")
 
     with col2:
-        if st.button("📥 生成PDF报告", type="primary", width='content', key="macro_pdf_gen"):
+        if st.button("生成PDF报告", type="primary", width='content', key="macro_pdf_gen"):
             with st.spinner("正在生成PDF报告..."):
                 try:
                     generator = MacroCyclePDFGenerator()
@@ -240,14 +219,14 @@ def display_pdf_export_section(result):
                     ts = result.get('timestamp', datetime.now().strftime('%Y%m%d_%H%M%S')).replace(':', '').replace(' ', '_')
                     st.session_state.macro_pdf_filename = f"宏观周期报告_{ts}.pdf"
 
-                    st.success("✅ PDF报告生成成功！")
+                    st.success("PDF报告生成成功！")
                     st.rerun()
 
                 except Exception as e:
-                    st.error(f"❌ PDF生成失败: {str(e)}")
+                    st.error(f"PDF生成失败: {str(e)}")
 
     with col3:
-        if st.button("📝 生成Markdown", type="secondary", width='content', key="macro_md_gen"):
+        if st.button("生成Markdown", type="secondary", width='content', key="macro_md_gen"):
             with st.spinner("正在生成Markdown报告..."):
                 try:
                     markdown_content = generate_macro_cycle_markdown(result)
@@ -256,16 +235,16 @@ def display_pdf_export_section(result):
                     ts = result.get('timestamp', datetime.now().strftime('%Y%m%d_%H%M%S')).replace(':', '').replace(' ', '_')
                     st.session_state.macro_md_filename = f"宏观周期报告_{ts}.md"
 
-                    st.success("✅ Markdown报告生成成功！")
+                    st.success("Markdown报告生成成功！")
                     st.rerun()
 
                 except Exception as e:
-                    st.error(f"❌ Markdown生成失败: {str(e)}")
+                    st.error(f"Markdown生成失败: {str(e)}")
 
     with col4:
         if 'macro_pdf_data' in st.session_state:
             st.download_button(
-                label="💾 下载PDF",
+                label="下载PDF",
                 data=st.session_state.macro_pdf_data,
                 file_name=st.session_state.macro_pdf_filename,
                 mime="application/pdf",
@@ -275,7 +254,7 @@ def display_pdf_export_section(result):
 
         if 'macro_md_data' in st.session_state:
             st.download_button(
-                label="💾 下载Markdown",
+                label="下载Markdown",
                 data=st.session_state.macro_md_data,
                 file_name=st.session_state.macro_md_filename,
                 mime="text/markdown",
@@ -286,11 +265,11 @@ def display_pdf_export_section(result):
 def display_theory_tab():
     """显示理论介绍标签页"""
     st.markdown("""
-    ## 📖 两大周期理论简介
+    ## 两大周期理论简介
 
     ---
 
-    ### 🌊 康德拉季耶夫长波（康波周期）
+    ### 康德拉季耶夫长波（康波周期）
 
     **创始人**：苏联经济学家尼古拉·康德拉季耶夫（1920s）  
     **中国推广者**：周金涛（"周期天王"，中信建投首席经济学家）
@@ -301,10 +280,10 @@ def display_theory_tab():
 
     | 阶段 | 持续时间 | 特征 | 最优资产 |
     |------|---------|------|---------|
-    | 🌱 **回升期** | ~15年 | 新技术商业化，经济从底部爬起 | 股票、新兴产业 |
-    | ☀️ **繁荣期** | ~15年 | 技术全面铺开，高速增长 | 几乎所有资产 |
-    | 🍂 **衰退期** | ~10年 | 泡沫破裂，增速放缓 | 大宗商品→现金 |
-    | ❄️ **萧条期** | ~10年 | 全面收缩，资产便宜 | 现金→布局未来 |
+    |  **回升期** | ~15年 | 新技术商业化，经济从底部爬起 | 股票、新兴产业 |
+    |  **繁荣期** | ~15年 | 技术全面铺开，高速增长 | 几乎所有资产 |
+    |  **衰退期** | ~10年 | 泡沫破裂，增速放缓 | 大宗商品→现金 |
+    |  **萧条期** | ~10年 | 全面收缩，资产便宜 | 现金→布局未来 |
 
     **历史五轮康波**：
     1. **1780s-1840s**：蒸汽机革命
@@ -317,7 +296,7 @@ def display_theory_tab():
 
     ---
 
-    ### ⏰ 美林投资时钟
+    ### 美林投资时钟
 
     **创始人**：美林证券分析师（2004年）  
     **核心指标**：经济增长 × 通货膨胀
@@ -326,10 +305,10 @@ def display_theory_tab():
 
     | 象限 | 经济 | 通胀 | 最优资产 | 典型特征 |
     |------|------|------|---------|---------|
-    | 🟢 **复苏期** | ↑ | ↓ | **股票** | 盈利改善，利率低 |
-    | 🔴 **过热期** | ↑ | ↑ | **大宗商品** | 需求旺盛，加息 |
-    | 🟡 **滞胀期** | ↓ | ↑ | **现金** | 成本上升，利润缩水 |
-    | 🔵 **衰退期** | ↓ | ↓ | **债券** | 降息，避险需求 |
+    |  **复苏期** | ↑ | ↓ | **股票** | 盈利改善，利率低 |
+    |  **过热期** | ↑ | ↑ | **大宗商品** | 需求旺盛，加息 |
+    |  **滞胀期** | ↓ | ↑ | **现金** | 成本上升，利润缩水 |
+    |  **衰退期** | ↓ | ↓ | **债券** | 降息，避险需求 |
 
     **中国化改造**：
     - 增加 **政策方向** 作为第三维度
@@ -339,14 +318,14 @@ def display_theory_tab():
 
     ---
 
-    ### 🤝 两大理论的结合使用
+    ### 两大理论的结合使用
 
     | 维度 | 康波周期 | 美林时钟 |
     |------|---------|---------|
     | **时间尺度** | 50-60年 | 3-5年 |
     | **驱动力** | 技术革命（供给侧） | 增长+通胀（需求侧） |
     | **用途** | 人生战略决策 | 投资组合调整 |
-    | **比喻** | 🔭 望远镜 | 🔬 显微镜 |
+    | **比喻** |  望远镜 |  显微镜 |
     | **角色** | 罗盘（大方向） | 航海图（风浪变化） |
 
     **结合方法**：
@@ -358,7 +337,7 @@ def display_theory_tab():
 
     ---
 
-    ### ⚠️ 免责声明
+    ### 免责声明
 
     本分析仅供学习研究参考，不构成任何投资建议。周期理论是认知框架而非精确预测工具。
     投资有风险，入市需谨慎。
