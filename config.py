@@ -20,6 +20,7 @@ ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
 
 # ICP 备案号
 ICP_NUMBER = os.getenv("ICP_NUMBER", "京ICP备2026007346号")
+ICP_LINK = os.getenv("ICP_LINK", "https://beian.miit.gov.cn/")
 
 # 股票数据源配置
 DEFAULT_PERIOD = "1y"  # 默认获取1年数据

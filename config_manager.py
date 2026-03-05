@@ -44,6 +44,12 @@ class ConfigManager:
                 "required": False,
                 "type": "text"
             },
+            "ICP_LINK": {
+                "value": "https://beian.miit.gov.cn/",
+                "description": "备案号跳转地址（留空则仅显示文本）",
+                "required": False,
+                "type": "text"
+            },
             "TUSHARE_TOKEN": {
                 "value": "",
                 "description": "Tushare数据接口Token（可选）",
@@ -199,6 +205,7 @@ class ConfigManager:
             lines.append(f'DEFAULT_MODEL_NAME="{config.get("DEFAULT_MODEL_NAME", "deepseek-chat")}"')
             lines.append(f'ADMIN_PASSWORD="{config.get("ADMIN_PASSWORD", "")}"')
             lines.append(f'ICP_NUMBER="{config.get("ICP_NUMBER", "京ICP备2026007346号")}"')
+            lines.append(f'ICP_LINK="{config.get("ICP_LINK", "https://beian.miit.gov.cn/")}"')
             lines.append("")
             
             # Tushare配置

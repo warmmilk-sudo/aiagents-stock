@@ -89,6 +89,40 @@ def display_config_manager():
         else:
             st.warning("未设置模型名称，将使用默认值 deepseek-chat")
 
+        st.markdown("---")
+        st.markdown("### 网站备案配置")
+
+        icp_number_info = config_info["ICP_NUMBER"]
+        current_icp_number = st.session_state.temp_config.get("ICP_NUMBER", "")
+        new_icp_number = st.text_input(
+            f"{icp_number_info['description']}",
+            value=current_icp_number,
+            placeholder="例如：京ICP备12345678号",
+            key="input_icp_number"
+        )
+        st.session_state.temp_config["ICP_NUMBER"] = new_icp_number.strip()
+
+        icp_link_info = config_info.get(
+            "ICP_LINK",
+            {"description": "备案号跳转地址（留空则仅显示文本）"}
+        )
+        current_icp_link = st.session_state.temp_config.get(
+            "ICP_LINK",
+            "https://beian.miit.gov.cn/"
+        )
+        new_icp_link = st.text_input(
+            f"{icp_link_info['description']}",
+            value=current_icp_link,
+            placeholder="https://beian.miit.gov.cn/",
+            key="input_icp_link"
+        )
+        st.session_state.temp_config["ICP_LINK"] = new_icp_link.strip()
+
+        if st.session_state.temp_config["ICP_NUMBER"]:
+            st.success("备案号将显示在页面底部")
+        else:
+            st.info("备案号为空时将不显示")
+
         st.markdown("""
         **常用模型名称参考：**
         - `deepseek-chat` — DeepSeek Chat（默认）
@@ -440,6 +474,9 @@ def display_config_manager():
 # ========== DeepSeek API配置 ==========
 DEEPSEEK_API_KEY="{current_config.get('DEEPSEEK_API_KEY', '')}"
 DEEPSEEK_BASE_URL="{current_config.get('DEEPSEEK_BASE_URL', '')}"
+ADMIN_PASSWORD="{current_config.get('ADMIN_PASSWORD', '')}"
+ICP_NUMBER="{current_config.get('ICP_NUMBER', '')}"
+ICP_LINK="{current_config.get('ICP_LINK', 'https://beian.miit.gov.cn/')}"
 
 # ========== Tushare数据接口（可选）==========
 TUSHARE_TOKEN="{current_config.get('TUSHARE_TOKEN', '')}"

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import streamlit as st
 import plotly.graph_objects as go
 import plotly.io as pio
@@ -61,7 +62,7 @@ html, body, [class*="css"] {{
 .block-container {{
     max-width: 1320px;
     padding-top: 1.2rem;
-    padding-bottom: 2rem;
+    padding-bottom: 3.5rem;
     animation: fadeInUp 240ms ease-out;
 }}
 
@@ -223,15 +224,29 @@ footer {{
     visibility: hidden;
 }}
 
-footer:after {{
-    content: "{config.ICP_NUMBER}";
-    visibility: {"visible" if config.ICP_NUMBER else "hidden"};
-    display: block;
-    position: relative;
-    top: 2px;
-    color: var(--tra-muted);
+.site-filing {{
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 1000;
+    padding: 0.5rem 0.75rem;
+    background: rgba(11, 18, 32, 0.85);
+    border-top: 1px solid var(--tra-border);
     text-align: center;
-    font-size: 0.85rem;
+    font-size: 0.82rem;
+    color: var(--tra-muted);
+    backdrop-filter: blur(6px);
+}}
+
+.site-filing a {{
+    color: var(--tra-muted);
+    text-decoration: none;
+}}
+
+.site-filing a:hover {{
+    color: var(--tra-text);
+    text-decoration: underline;
 }}
 
 @media (max-width: 768px) {{
@@ -356,3 +371,24 @@ def render_page_header(title: str, subtitle: str | None = None) -> None:
         """,
         unsafe_allow_html=True,
     )
+
+
+def render_site_filing() -> None:
+    """Render ICP filing info at the bottom of the page."""
+    icp_number = (config.ICP_NUMBER or "").strip()
+    if not icp_number:
+        return
+
+    icp_link = (getattr(config, "ICP_LINK", "") or "").strip()
+    safe_icp_number = html.escape(icp_number)
+
+    if icp_link:
+        safe_icp_link = html.escape(icp_link, quote=True)
+        content = (
+            f'<a href="{safe_icp_link}" target="_blank" '
+            f'rel="noopener noreferrer">{safe_icp_number}</a>'
+        )
+    else:
+        content = f"<span>{safe_icp_number}</span>"
+
+    st.markdown(f'<div class="site-filing">{content}</div>', unsafe_allow_html=True)

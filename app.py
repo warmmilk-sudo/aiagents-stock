@@ -22,7 +22,12 @@ from sector_strategy_ui import display_sector_strategy
 from longhubang_ui import display_longhubang
 from smart_monitor_ui import smart_monitor_ui
 from news_flow_ui import display_news_flow_monitor
-from ui_theme import inject_global_theme, configure_plotly_template, render_page_header
+from ui_theme import (
+    inject_global_theme,
+    configure_plotly_template,
+    render_page_header,
+    render_site_filing,
+)
 
 # 页面配置
 st.set_page_config(
@@ -2157,5 +2162,7 @@ if __name__ == "__main__":
     if config.ADMIN_PASSWORD:
         if not st.session_state.get("authenticated", False):
             _show_login_page()
+            render_site_filing()
             st.stop()
     main()
+    render_site_filing()
