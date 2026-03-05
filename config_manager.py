@@ -38,6 +38,30 @@ class ConfigManager:
                 "required": False,
                 "type": "password"
             },
+            "ADMIN_PASSWORD_HASH": {
+                "value": "",
+                "description": "管理员密码哈希（推荐，优先于明文密码）",
+                "required": False,
+                "type": "password"
+            },
+            "LOGIN_MAX_ATTEMPTS": {
+                "value": "5",
+                "description": "登录最大失败次数",
+                "required": False,
+                "type": "text"
+            },
+            "LOGIN_LOCKOUT_SECONDS": {
+                "value": "300",
+                "description": "登录锁定时长（秒）",
+                "required": False,
+                "type": "text"
+            },
+            "ADMIN_SESSION_TTL_SECONDS": {
+                "value": "28800",
+                "description": "管理员会话有效期（秒）",
+                "required": False,
+                "type": "text"
+            },
             "ICP_NUMBER": {
                 "value": "京ICP备2026007346号",
                 "description": "网站备案号（为空则不显示）",
@@ -204,6 +228,10 @@ class ConfigManager:
             lines.append(f'DEEPSEEK_BASE_URL="{config.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")}"')
             lines.append(f'DEFAULT_MODEL_NAME="{config.get("DEFAULT_MODEL_NAME", "deepseek-chat")}"')
             lines.append(f'ADMIN_PASSWORD="{config.get("ADMIN_PASSWORD", "")}"')
+            lines.append(f'ADMIN_PASSWORD_HASH="{config.get("ADMIN_PASSWORD_HASH", "")}"')
+            lines.append(f'LOGIN_MAX_ATTEMPTS="{config.get("LOGIN_MAX_ATTEMPTS", "5")}"')
+            lines.append(f'LOGIN_LOCKOUT_SECONDS="{config.get("LOGIN_LOCKOUT_SECONDS", "300")}"')
+            lines.append(f'ADMIN_SESSION_TTL_SECONDS="{config.get("ADMIN_SESSION_TTL_SECONDS", "28800")}"')
             lines.append(f'ICP_NUMBER="{config.get("ICP_NUMBER", "京ICP备2026007346号")}"')
             lines.append(f'ICP_LINK="{config.get("ICP_LINK", "https://beian.miit.gov.cn/")}"')
             lines.append("")

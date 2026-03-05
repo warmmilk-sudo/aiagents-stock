@@ -7,6 +7,16 @@ import os
 import time
 from config_manager import config_manager
 
+
+def _mask_secret(value: str) -> str:
+    """Mask sensitive values for preview display."""
+    if not value:
+        return ""
+    if len(value) <= 8:
+        return "*" * len(value)
+    return value[:4] + "*" * (len(value) - 8) + value[-4:]
+
+
 def display_config_manager():
     """显示环境配置管理界面"""
     st.subheader("环境配置管理")
@@ -123,6 +133,55 @@ def display_config_manager():
         else:
             st.info("备案号为空时将不显示")
 
+        st.markdown("---")
+        st.markdown("### 管理员登录配置")
+
+        admin_password_info = config_info["ADMIN_PASSWORD"]
+        current_admin_password = st.session_state.temp_config.get("ADMIN_PASSWORD", "")
+        new_admin_password = st.text_input(
+            f"{admin_password_info['description']}",
+            value=current_admin_password,
+            type="password",
+            key="input_admin_password"
+        )
+        st.session_state.temp_config["ADMIN_PASSWORD"] = new_admin_password
+
+        admin_password_hash_info = config_info.get(
+            "ADMIN_PASSWORD_HASH",
+            {"description": "管理员密码哈希（推荐，优先于明文密码）"}
+        )
+        current_admin_password_hash = st.session_state.temp_config.get("ADMIN_PASSWORD_HASH", "")
+        new_admin_password_hash = st.text_input(
+            f"{admin_password_hash_info['description']}",
+            value=current_admin_password_hash,
+            type="password",
+            placeholder="pbkdf2_sha256$迭代次数$salt_hex$hash_hex",
+            key="input_admin_password_hash"
+        )
+        st.session_state.temp_config["ADMIN_PASSWORD_HASH"] = new_admin_password_hash.strip()
+        st.caption("设置哈希后将优先使用哈希校验，建议同时清空明文管理员密码。")
+
+        login_max_attempts = st.text_input(
+            "登录最大失败次数",
+            value=st.session_state.temp_config.get("LOGIN_MAX_ATTEMPTS", "5"),
+            key="input_login_max_attempts"
+        )
+        st.session_state.temp_config["LOGIN_MAX_ATTEMPTS"] = login_max_attempts.strip()
+
+        login_lockout_seconds = st.text_input(
+            "登录锁定时长（秒）",
+            value=st.session_state.temp_config.get("LOGIN_LOCKOUT_SECONDS", "300"),
+            key="input_login_lockout_seconds"
+        )
+        st.session_state.temp_config["LOGIN_LOCKOUT_SECONDS"] = login_lockout_seconds.strip()
+
+        admin_session_ttl_seconds = st.text_input(
+            "管理员会话有效期（秒）",
+            value=st.session_state.temp_config.get("ADMIN_SESSION_TTL_SECONDS", "28800"),
+            key="input_admin_session_ttl_seconds"
+        )
+        st.session_state.temp_config["ADMIN_SESSION_TTL_SECONDS"] = admin_session_ttl_seconds.strip()
+
         st.markdown("""
         **常用模型名称参考：**
         - `deepseek-chat` — DeepSeek Chat（默认）
@@ -135,7 +194,7 @@ def display_config_manager():
         >  使用非 DeepSeek 模型时，请同时修改上方的 API地址 和 API密钥
         """)
 
-        st.info("如何获取DeepSeek API密钥？\n\n1. 访问 https://platform.deepseek.com\n2. 注册/登录账号\n3. 进入API密钥管理页面\n4. 创建新的API密钥\n5. 复制密钥并粘贴到上方输入框")
+        st.caption("API密钥获取：https://platform.deepseek.com")
 
     with tab2:
         st.markdown("### Tushare数据接口（可选）")
@@ -158,7 +217,7 @@ def display_config_manager():
         else:
             st.info("ℹ 未设置Tushare Token，系统将使用其他数据源")
 
-        st.info("如何获取Tushare Token？\n\n1. 访问 https://tushare.pro\n2. 注册账号\n3. 进入个人中心\n4. 获取Token\n5. 复制并粘贴到上方输入框")
+        st.caption("Token获取：https://tushare.pro")
 
     with tab3:
         st.markdown("### MiniQMT量化交易配置（可选）")
@@ -410,14 +469,8 @@ def display_config_manager():
             else:
                 st.info("ℹ Webhook通知未启用")
 
-            # 显示帮助信息
-            if new_webhook_type == "dingtalk":
-                st.caption("钉钉机器人配置：\n1. 进入钉钉群 → 设置 → 智能群助手\n2. 添加机器人 → 自定义\n3. 复制Webhook地址\n4. 安全设置选择【自定义关键词】，填写上方的关键词")
-            else:
-                st.caption("飞书机器人配置：\n1. 进入飞书群 → 设置 → 群机器人\n2. 添加机器人 → 自定义机器人\n3. 复制Webhook地址")
-
         st.markdown("---")
-        st.info("**使用说明**：\n- 可以同时启用邮件和Webhook通知\n- 实时监测和智策定时分析都会使用配置的通知方式\n- 配置后建议使用各功能中的测试按钮验证通知是否正常")
+        st.caption("通知支持邮件与Webhook并行启用，建议保存后使用测试按钮验证连通性。")
 
     # 操作按钮
     st.markdown("---")
@@ -472,9 +525,13 @@ def display_config_manager():
 # 由系统自动生成和管理
 
 # ========== DeepSeek API配置 ==========
-DEEPSEEK_API_KEY="{current_config.get('DEEPSEEK_API_KEY', '')}"
+DEEPSEEK_API_KEY="{_mask_secret(current_config.get('DEEPSEEK_API_KEY', ''))}"
 DEEPSEEK_BASE_URL="{current_config.get('DEEPSEEK_BASE_URL', '')}"
-ADMIN_PASSWORD="{current_config.get('ADMIN_PASSWORD', '')}"
+ADMIN_PASSWORD="{_mask_secret(current_config.get('ADMIN_PASSWORD', ''))}"
+ADMIN_PASSWORD_HASH="{_mask_secret(current_config.get('ADMIN_PASSWORD_HASH', ''))}"
+LOGIN_MAX_ATTEMPTS="{current_config.get('LOGIN_MAX_ATTEMPTS', '5')}"
+LOGIN_LOCKOUT_SECONDS="{current_config.get('LOGIN_LOCKOUT_SECONDS', '300')}"
+ADMIN_SESSION_TTL_SECONDS="{current_config.get('ADMIN_SESSION_TTL_SECONDS', '28800')}"
 ICP_NUMBER="{current_config.get('ICP_NUMBER', '')}"
 ICP_LINK="{current_config.get('ICP_LINK', 'https://beian.miit.gov.cn/')}"
 
@@ -492,7 +549,7 @@ EMAIL_ENABLED="{current_config.get('EMAIL_ENABLED', 'false')}"
 SMTP_SERVER="{current_config.get('SMTP_SERVER', '')}"
 SMTP_PORT="{current_config.get('SMTP_PORT', '587')}"
 EMAIL_FROM="{current_config.get('EMAIL_FROM', '')}"
-EMAIL_PASSWORD="{current_config.get('EMAIL_PASSWORD', '')}"
+EMAIL_PASSWORD="{_mask_secret(current_config.get('EMAIL_PASSWORD', ''))}"
 EMAIL_TO="{current_config.get('EMAIL_TO', '')}"
 
 # ========== Webhook通知配置（可选）==========

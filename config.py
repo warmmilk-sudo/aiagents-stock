@@ -17,6 +17,21 @@ TUSHARE_URL = os.getenv("TUSHARE_URL", "https://api.tushare.pro")
 
 # 管理员密码（为空则不需要密码即可访问）
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
+ADMIN_PASSWORD_HASH = os.getenv("ADMIN_PASSWORD_HASH", "")
+
+
+def _safe_int_env(key: str, default: int) -> int:
+    """Read int env safely; fallback to default on invalid values."""
+    try:
+        return int(os.getenv(key, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+# 登录安全配置
+LOGIN_MAX_ATTEMPTS = _safe_int_env("LOGIN_MAX_ATTEMPTS", 5)
+LOGIN_LOCKOUT_SECONDS = _safe_int_env("LOGIN_LOCKOUT_SECONDS", 300)
+ADMIN_SESSION_TTL_SECONDS = _safe_int_env("ADMIN_SESSION_TTL_SECONDS", 28800)
 
 # ICP 备案号
 ICP_NUMBER = os.getenv("ICP_NUMBER", "京ICP备2026007346号")

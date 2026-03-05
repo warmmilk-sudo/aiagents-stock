@@ -7,6 +7,8 @@ from datetime import datetime
 import time
 import base64
 import os
+import hmac
+import hashlib
 import config
 
 from stock_data import StockDataFetcher
@@ -54,11 +56,6 @@ def main():
         "复合多AI智能体股票团队分析系统",
         "基于DeepSeek的专业量化投资分析平台 | Multi-Agent Stock Analysis System",
     )
-
-    # 学习资源展示
-    with st.expander("新手学习资源", expanded=False):
-        st.markdown("[股票知识讲解合集](https://www.bilibili.com/video/BV1Y2FGzzEeS/)")
-        st.markdown("[投资认知提升合集](https://www.bilibili.com/video/BV1ugBMBAEbW)")
 
     # 侧边栏
     with st.sidebar:
@@ -208,6 +205,13 @@ def main():
         show_current_model_info()
         st.session_state.selected_model = config.DEFAULT_MODEL_NAME
 
+        if config.ADMIN_PASSWORD or getattr(config, "ADMIN_PASSWORD_HASH", ""):
+            if st.button("退出登录", width='stretch', key="nav_logout"):
+                st.session_state.authenticated = False
+                st.session_state.pop("authenticated_at", None)
+                st.session_state.pop("login_password_input", None)
+                st.rerun()
+
         st.markdown("---")
 
         # 系统状态面板
@@ -263,17 +267,6 @@ def main():
             7. AI分析 → 8. 团队讨论 → 9. 决策
             """)
             
-        # 学习资源
-        with st.expander("学习视频合集"):
-            st.markdown("""
-            ** B站干货合集**
-            
-            如果你希望能在股市中长久生存下去，建议你能把下面的合集看完，会对你有很大帮助的！
-            
-            - [股票知识讲解合集](https://www.bilibili.com/video/BV1Y2FGzzEeS/)
-            - [投资认知提升合集](https://www.bilibili.com/video/BV1ugBMBAEbW)
-            """)
-
     # 检查是否显示历史记录
     if 'show_history' in st.session_state and st.session_state.show_history:
         display_history_records()
@@ -1434,58 +1427,17 @@ def display_final_decision(final_decision, stock_info, agents_results=None, disc
 
 def show_example_interface():
     """显示示例界面"""
-    st.subheader("使用说明")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.markdown("""
-        ### 如何使用
-        1. **输入股票代码**：支持A股(如000001)、港股(如00700)和美股(如AAPL)
-        2. **点击开始分析**：系统将启动AI分析师团队
-        3. **查看分析报告**：多位专业分析师将从不同角度分析
-        4. **获得投资建议**：获得最终的投资评级和操作建议
-        
-        ### 分析维度
-        - **技术面**：趋势、指标、支撑阻力
-        - **基本面**：财务、估值、行业分析
-        - **资金面**：资金流向、主力行为
-        - **风险管理**：风险识别与控制
-        - **市场情绪**：情绪指标、热点分析
-        """)
-
-    with col2:
-        st.markdown("""
-        ### 示例股票代码
-        
-        **A股热门**
-        - 000001 (平安银行)
-        - 600036 (招商银行)
-        - 600519 (贵州茅台)
-        
-        **港股热门**
-        - 00700 或 700 (腾讯控股)
-        - 09988 或 9988 (阿里巴巴-SW)
-        - 01810 或 1810 (小米集团-W)
-        
-        **美股热门**
-        - AAPL (苹果)
-        - MSFT (微软)
-        - NVDA (英伟达)
-        """)
-
-    st.info("提示：首次运行需要配置DeepSeek API Key，请在.env中设置DEEPSEEK_API_KEY")
-
-    st.markdown("---")
-    st.markdown("""
-    ### 市场支持说明
-    - **A股**：完整支持（技术分析、财务数据、资金流向、市场情绪、新闻数据）
-    - **港股**：部分支持（技术分析、21项财务指标） 
-    - **美股**：完整支持（技术分析、财务数据）
-    
-    ### 港股支持的财务指标
-    盈利能力（6项）、营运能力（3项）、偿债能力（2项）、市场表现（4项）、分红指标（3项）、股本结构（3项）
-    """)
+    st.subheader("快速开始")
+    st.caption("输入股票代码后点击“开始分析”。")
+    st.markdown(
+        """
+        **代码格式**
+        - A股：`000001`
+        - 港股：`00700` / `700` / `HK00700`
+        - 美股：`AAPL`
+        """
+    )
+    st.caption("首次运行请先在 `.env` 配置 `DEEPSEEK_API_KEY`。投资有风险，结论仅供参考。")
 
 def display_history_records():
     """显示历史分析记录"""
@@ -2141,25 +2093,69 @@ def _show_login_page():
         st.markdown('<p class="login-title">🔐 系统登录</p>', unsafe_allow_html=True)
         st.markdown('<p class="login-subtitle">复合多AI智能体股票团队分析系统</p>', unsafe_allow_html=True)
 
+        now_ts = int(time.time())
+        lock_until = int(st.session_state.get("login_lock_until", 0))
+        is_locked = now_ts < lock_until
+        if is_locked:
+            remain = lock_until - now_ts
+            st.error(f"尝试次数过多，请 {remain} 秒后重试")
+
         password = st.text_input(
             "管理员密码",
             type="password",
             placeholder="请输入管理员密码",
             key="login_password_input",
+            disabled=is_locked,
         )
 
-        if st.button("登 录", type="primary", use_container_width=True):
-            if password == config.ADMIN_PASSWORD:
+        if st.button("登 录", type="primary", use_container_width=True, disabled=is_locked):
+            if _verify_admin_password(password):
                 st.session_state.authenticated = True
+                st.session_state.authenticated_at = int(time.time())
+                st.session_state.login_fail_count = 0
+                st.session_state.login_lock_until = 0
                 st.rerun()
             else:
+                fail_count = int(st.session_state.get("login_fail_count", 0)) + 1
+                st.session_state.login_fail_count = fail_count
+                if fail_count >= max(config.LOGIN_MAX_ATTEMPTS, 1):
+                    st.session_state.login_lock_until = int(time.time()) + max(config.LOGIN_LOCKOUT_SECONDS, 1)
+                    st.session_state.login_fail_count = 0
                 st.error("密码错误，请重试")
 
         st.markdown('</div>', unsafe_allow_html=True)
 
+
+def _verify_admin_password(input_password: str) -> bool:
+    """Verify admin password using hash (preferred) or plain text (compatible)."""
+    pwd = input_password or ""
+    hash_value = (getattr(config, "ADMIN_PASSWORD_HASH", "") or "").strip()
+    if hash_value:
+        # Format: pbkdf2_sha256$<iterations>$<salt_hex>$<hash_hex>
+        try:
+            algo, iter_text, salt_hex, digest_hex = hash_value.split("$", 3)
+            if algo != "pbkdf2_sha256":
+                return False
+            iterations = int(iter_text)
+            salt = bytes.fromhex(salt_hex)
+            expected = bytes.fromhex(digest_hex)
+            computed = hashlib.pbkdf2_hmac("sha256", pwd.encode("utf-8"), salt, iterations)
+            return hmac.compare_digest(computed, expected)
+        except Exception:
+            return False
+
+    plain = (config.ADMIN_PASSWORD or "").strip()
+    return bool(plain) and hmac.compare_digest(pwd, plain)
+
 if __name__ == "__main__":
     # 管理员密码门控
-    if config.ADMIN_PASSWORD:
+    if config.ADMIN_PASSWORD or getattr(config, "ADMIN_PASSWORD_HASH", ""):
+        if st.session_state.get("authenticated", False):
+            authed_at = int(st.session_state.get("authenticated_at", 0))
+            ttl = max(getattr(config, "ADMIN_SESSION_TTL_SECONDS", 28800), 60)
+            if authed_at <= 0 or int(time.time()) - authed_at > ttl:
+                st.session_state.authenticated = False
+                st.session_state.pop("authenticated_at", None)
         if not st.session_state.get("authenticated", False):
             _show_login_page()
             render_site_filing()
