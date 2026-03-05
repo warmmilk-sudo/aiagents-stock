@@ -2098,5 +2098,64 @@ def display_detailed_cards(results, period):
     except Exception as e:
         st.error(f"显示详细信息时出错: {str(e)}")
 
+
+def _show_login_page():
+    """管理员密码登录页面"""
+    st.markdown("""
+    <style>
+    .login-container {
+        max-width: 420px;
+        margin: 8vh auto;
+        padding: 2.5rem 2rem;
+        background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+        border-radius: 16px;
+        border: 1px solid rgba(255,255,255,0.08);
+        box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+    }
+    .login-title {
+        text-align: center;
+        font-size: 1.6rem;
+        font-weight: 700;
+        background: linear-gradient(135deg, #667eea, #764ba2);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        margin-bottom: 0.5rem;
+    }
+    .login-subtitle {
+        text-align: center;
+        color: #8892b0;
+        font-size: 0.85rem;
+        margin-bottom: 1.5rem;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+    col1, col2, col3 = st.columns([1, 1.2, 1])
+    with col2:
+        st.markdown('<div class="login-container">', unsafe_allow_html=True)
+        st.markdown('<p class="login-title">🔐 系统登录</p>', unsafe_allow_html=True)
+        st.markdown('<p class="login-subtitle">复合多AI智能体股票团队分析系统</p>', unsafe_allow_html=True)
+
+        password = st.text_input(
+            "管理员密码",
+            type="password",
+            placeholder="请输入管理员密码",
+            key="login_password_input",
+        )
+
+        if st.button("登 录", type="primary", use_container_width=True):
+            if password == config.ADMIN_PASSWORD:
+                st.session_state.authenticated = True
+                st.rerun()
+            else:
+                st.error("密码错误，请重试")
+
+        st.markdown('</div>', unsafe_allow_html=True)
+
 if __name__ == "__main__":
+    # 管理员密码门控
+    if config.ADMIN_PASSWORD:
+        if not st.session_state.get("authenticated", False):
+            _show_login_page()
+            st.stop()
     main()

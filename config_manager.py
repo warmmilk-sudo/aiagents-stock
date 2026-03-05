@@ -32,6 +32,18 @@ class ConfigManager:
                 "required": False,
                 "type": "text"
             },
+            "ADMIN_PASSWORD": {
+                "value": "",
+                "description": "管理员密码（为空则不需密码）",
+                "required": False,
+                "type": "password"
+            },
+            "ICP_NUMBER": {
+                "value": "京ICP备2026007346号",
+                "description": "网站备案号（为空则不显示）",
+                "required": False,
+                "type": "text"
+            },
             "TUSHARE_TOKEN": {
                 "value": "",
                 "description": "Tushare数据接口Token（可选）",
@@ -184,6 +196,9 @@ class ConfigManager:
             lines.append("# ========== DeepSeek API配置 ==========")
             lines.append(f'DEEPSEEK_API_KEY="{config.get("DEEPSEEK_API_KEY", "")}"')
             lines.append(f'DEEPSEEK_BASE_URL="{config.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")}"')
+            lines.append(f'DEFAULT_MODEL_NAME="{config.get("DEFAULT_MODEL_NAME", "deepseek-chat")}"')
+            lines.append(f'ADMIN_PASSWORD="{config.get("ADMIN_PASSWORD", "")}"')
+            lines.append(f'ICP_NUMBER="{config.get("ICP_NUMBER", "京ICP备2026007346号")}"')
             lines.append("")
             
             # Tushare配置

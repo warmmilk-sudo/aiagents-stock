@@ -3,6 +3,7 @@ from __future__ import annotations
 import streamlit as st
 import plotly.graph_objects as go
 import plotly.io as pio
+import config
 
 BG_COLOR = "#0B1220"
 CARD_COLOR = "#111827"
@@ -25,10 +26,6 @@ PLOTLY_TEMPLATE_NAME = "tra_dark_minimal"
 
 def inject_global_theme() -> None:
     """Inject a shared Streamlit theme for all pages."""
-    if st.session_state.get("_tra_theme_injected"):
-        return
-
-    st.session_state["_tra_theme_injected"] = True
 
     st.markdown(
         f"""
@@ -218,8 +215,23 @@ div[data-baseweb="select"] > div,
     gap: 0.8rem;
 }}
 
-#MainMenu, footer {{
+#MainMenu {{
     visibility: hidden;
+}}
+
+footer {{
+    visibility: hidden;
+}}
+
+footer:after {{
+    content: "{config.ICP_NUMBER}";
+    visibility: {"visible" if config.ICP_NUMBER else "hidden"};
+    display: block;
+    position: relative;
+    top: 2px;
+    color: var(--tra-muted);
+    text-align: center;
+    font-size: 0.85rem;
 }}
 
 @media (max-width: 768px) {{

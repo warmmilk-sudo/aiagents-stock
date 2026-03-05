@@ -15,6 +15,12 @@ DEFAULT_MODEL_NAME = os.getenv("DEFAULT_MODEL_NAME", "deepseek-chat")
 TUSHARE_TOKEN = os.getenv("TUSHARE_TOKEN", "")
 TUSHARE_URL = os.getenv("TUSHARE_URL", "https://api.tushare.pro")
 
+# 管理员密码（为空则不需要密码即可访问）
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
+
+# ICP 备案号
+ICP_NUMBER = os.getenv("ICP_NUMBER", "京ICP备2026007346号")
+
 # 股票数据源配置
 DEFAULT_PERIOD = "1y"  # 默认获取1年数据
 DEFAULT_INTERVAL = "1d"  # 默认日线数据
