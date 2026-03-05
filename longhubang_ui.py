@@ -1566,7 +1566,7 @@ def add_to_monitor_from_longhubang(code: str, name: str, final_decision: dict):
                 parts = entry_range.split("-")
                 entry_min = float(parts[0].strip())
                 entry_max = float(parts[1].strip())
-            except:
+            except Exception:
                 pass
         
         # 解析止盈止损
@@ -1576,7 +1576,7 @@ def add_to_monitor_from_longhubang(code: str, name: str, final_decision: dict):
                 numbers = re.findall(r'\d+\.?\d*', str(take_profit_str))
                 if numbers:
                     take_profit = float(numbers[0])
-            except:
+            except Exception:
                 pass
         
         if stop_loss_str:
@@ -1584,7 +1584,7 @@ def add_to_monitor_from_longhubang(code: str, name: str, final_decision: dict):
                 numbers = re.findall(r'\d+\.?\d*', str(stop_loss_str))
                 if numbers:
                     stop_loss = float(numbers[0])
-            except:
+            except Exception:
                 pass
         
         # 验证必需参数

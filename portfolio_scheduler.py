@@ -297,7 +297,7 @@ class PortfolioScheduler:
                         parts = entry_range.split("-")
                         entry_min = float(parts[0].strip())
                         entry_max = float(parts[1].strip())
-                    except:
+                    except Exception:
                         pass
                 
                 # 解析止盈止损（提取数字）
@@ -308,7 +308,7 @@ class PortfolioScheduler:
                         numbers = re.findall(r'\d+\.?\d*', str(take_profit_str))
                         if numbers:
                             take_profit = float(numbers[0])
-                    except:
+                    except Exception:
                         pass
                 
                 if stop_loss_str:
@@ -316,7 +316,7 @@ class PortfolioScheduler:
                         numbers = re.findall(r'\d+\.?\d*', str(stop_loss_str))
                         if numbers:
                             stop_loss = float(numbers[0])
-                    except:
+                    except Exception:
                         pass
                 
                 # 检查参数有效性

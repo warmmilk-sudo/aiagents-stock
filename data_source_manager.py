@@ -6,45 +6,27 @@
 import os
 import pandas as pd
 from datetime import datetime, timedelta
-from dotenv import load_dotenv
-
-# 加载环境变量
-load_dotenv()
-
-
+from data_source_policy import policy
 class DataSourceManager:
     """数据源管理器 - 实现akshare与tushare自动切换"""
     
     def __init__(self):
-        self.tushare_token = os.getenv('TUSHARE_TOKEN', '')
-        self.tushare_available = False
-        self.tushare_api = None
-        
-        # 初始化tushare
+        self.tushare_token = policy.tushare_token
+        self.tushare_available = policy.tushare_available
+        self.tushare_api = policy.tushare_api
+        self.prefer_tushare = policy.prefer_tushare
+
         if self.tushare_token:
-            try:
-                import tushare as ts
-                ts.set_token(self.tushare_token)
-                tushare_url = os.getenv('TUSHARE_URL', 'https://api.tushare.pro')
-                try:
-                    # 尝试带 server 参数（较新版本支持）
-                    self.tushare_api = ts.pro_api(token=self.tushare_token, server=tushare_url)
-                except TypeError:
-                    # 兼容不支持 server 参数的老版本
-                    self.tushare_api = ts.pro_api(token=self.tushare_token)
-                    if tushare_url and hasattr(self.tushare_api, '_DataApi__http_url'):
-                        self.tushare_api._DataApi__http_url = tushare_url
-                self.tushare_available = True
-                print("✅ Tushare数据源初始化成功")
-            except Exception as e:
-                print(f"⚠️ Tushare数据源初始化失败: {e}")
-                self.tushare_available = False
+            if self.tushare_available:
+                print("[INFO] Tushare data source initialized")
+            else:
+                print(f"[WARN] Tushare init failed: {policy.tushare_init_error}")
         else:
-            print("ℹ️ 未配置Tushare Token，将仅使用Akshare数据源")
+            print("[INFO] TUSHARE_TOKEN not configured, using AkShare-only mode")
     
     def get_stock_hist_data(self, symbol, start_date=None, end_date=None, adjust='qfq'):
         """
-        获取股票历史数据（优先akshare，失败时使用tushare）
+        获取股票历史数据（优先tushare，失败时使用akshare）
         
         Args:
             symbol: 股票代码（6位数字）
@@ -98,10 +80,10 @@ class DataSourceManager:
                     # 转换成交额单位（tushare单位是千元，转换为元）
                     df['amount'] = df['amount'] * 1000
                     
-                    print(f"[Tushare] ✅ 成功获取 {len(df)} 条数据")
+                    print(f"[Tushare] OK fetched {len(df)} rows")
                     return df
             except Exception as e:
-                print(f"[Tushare] ❌ 获取失败: {e}")
+                print(f"[Tushare] failed: {e}")
         
         # tushare失败，尝试akshare
         try:
@@ -132,18 +114,18 @@ class DataSourceManager:
                     '换手率': 'turnover'
                 })
                 df['date'] = pd.to_datetime(df['date'])
-                print(f"[Akshare] ✅ 成功获取 {len(df)} 条数据")
+                print(f"[Akshare] OK fetched {len(df)} rows")
                 return df
         except Exception as e:
-            print(f"[Akshare] ❌ 获取失败: {e}")
+            print(f"[Akshare] failed: {e}")
         
         # 两个数据源都失败
-        print("❌ 所有数据源均获取失败")
+        print("[ERROR] All data sources failed")
         return None
     
     def get_stock_basic_info(self, symbol):
         """
-        获取股票基本信息（优先akshare，失败时使用tushare）
+        获取股票基本信息（优先tushare，失败时使用akshare）
         
         Args:
             symbol: 股票代码
@@ -175,10 +157,10 @@ class DataSourceManager:
                     info['market'] = df.iloc[0]['market']
                     info['list_date'] = df.iloc[0]['list_date']
                     
-                    print(f"[Tushare] ✅ 成功获取基本信息")
+                    print("[Tushare] OK fetched basic info")
                     return info
             except Exception as e:
-                print(f"[Tushare] ❌ 获取失败: {e}")
+                print(f"[Tushare] failed: {e}")
         
         # tushare失败，尝试akshare
         try:
@@ -202,16 +184,16 @@ class DataSourceManager:
                     elif key == '流通市值':
                         info['circulating_market_cap'] = value
                 
-                print(f"[Akshare] ✅ 成功获取基本信息")
+                print("[Akshare] OK fetched basic info")
                 return info
         except Exception as e:
-            print(f"[Akshare] ❌ 获取失败: {e}")
+            print(f"[Akshare] failed: {e}")
         
         return info
     
     def get_realtime_quotes(self, symbol):
         """
-        获取实时行情数据（优先akshare，失败时使用tushare）
+        获取实时行情数据（优先tushare，失败时使用akshare）
         
         Args:
             symbol: 股票代码
@@ -246,10 +228,10 @@ class DataSourceManager:
                         'open': row['open'],
                         'pre_close': row['pre_close']
                     }
-                    print(f"[Tushare] ✅ 成功获取实时行情")
+                    print("[Tushare] OK fetched realtime quote")
                     return quotes
             except Exception as e:
-                print(f"[Tushare] ❌ 获取失败: {e}")
+                print(f"[Tushare] failed: {e}")
         
         # tushare失败，尝试akshare
         try:
@@ -274,16 +256,16 @@ class DataSourceManager:
                     'open': row['今开'],
                     'pre_close': row['昨收']
                 }
-                print(f"[Akshare] ✅ 成功获取实时行情")
+                print("[Akshare] OK fetched realtime quote")
                 return quotes
         except Exception as e:
-            print(f"[Akshare] ❌ 获取失败: {e}")
+            print(f"[Akshare] failed: {e}")
         
         return quotes
     
     def get_financial_data(self, symbol, report_type='income'):
         """
-        获取财务数据（优先akshare，失败时使用tushare）
+        获取财务数据（优先tushare，失败时使用akshare）
         
         Args:
             symbol: 股票代码
@@ -309,10 +291,10 @@ class DataSourceManager:
                     df = None
                 
                 if df is not None and not df.empty:
-                    print(f"[Tushare] ✅ 成功获取财务数据")
+                    print("[Tushare] OK fetched financial data")
                     return df
             except Exception as e:
-                print(f"[Tushare] ❌ 获取失败: {e}")
+                print(f"[Tushare] failed: {e}")
         
         # tushare失败，尝试akshare
         try:
@@ -329,10 +311,10 @@ class DataSourceManager:
                 df = None
             
             if df is not None and not df.empty:
-                print(f"[Akshare] ✅ 成功获取财务数据")
+                print("[Akshare] OK fetched financial data")
                 return df
         except Exception as e:
-            print(f"[Akshare] ❌ 获取失败: {e}")
+            print(f"[Akshare] failed: {e}")
         
         return None
     

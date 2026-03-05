@@ -3,7 +3,7 @@
 专注于龙虎榜数据的多维度分析
 """
 
-from deepseek_client import DeepSeekClient
+from llm_client import LLMClient
 from typing import Dict, Any, List
 import time
 import config
@@ -14,7 +14,7 @@ class LonghubangAgents:
     
     def __init__(self, model=None):
         self.model = model or config.DEFAULT_MODEL_NAME
-        self.deepseek_client = DeepSeekClient(model=self.model)
+        self.deepseek_client = LLMClient(model=self.model)
         print(f"[智瞰龙虎] AI分析师系统初始化 (模型: {self.model})")
     
     def youzi_behavior_analyst(self, longhubang_data: str, summary: Dict) -> Dict[str, Any]:

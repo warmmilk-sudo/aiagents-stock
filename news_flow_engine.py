@@ -375,7 +375,7 @@ class NewsFlowEngine:
             try:
                 from news_flow_scheduler import news_flow_scheduler
                 data['scheduler_status'] = news_flow_scheduler.get_status()
-            except:
+            except Exception:
                 data['scheduler_status'] = None
             
             return data

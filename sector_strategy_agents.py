@@ -3,7 +3,7 @@
 包含四个专业分析师智能体
 """
 
-from deepseek_client import DeepSeekClient
+from llm_client import LLMClient
 from typing import Dict, Any
 import time
 import config
@@ -14,7 +14,7 @@ class SectorStrategyAgents:
     
     def __init__(self, model=None):
         self.model = model or config.DEFAULT_MODEL_NAME
-        self.deepseek_client = DeepSeekClient(model=self.model)
+        self.deepseek_client = LLMClient(model=self.model)
         print(f"[智策] AI智能体系统初始化 (模型: {self.model})")
     
     def macro_strategist_agent(self, market_data: Dict, news_data: list) -> Dict[str, Any]:

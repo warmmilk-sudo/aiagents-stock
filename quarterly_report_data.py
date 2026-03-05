@@ -1,6 +1,6 @@
 """
 季报数据获取模块
-使用akshare获取个股最近8期季度财务报告
+Tushare优先获取个股最近8期季度财务报告，AkShare兜底
 """
 
 import pandas as pd
@@ -9,6 +9,8 @@ import io
 import warnings
 from datetime import datetime
 import akshare as ak
+from data_source_manager import data_source_manager
+from data_source_policy import policy
 
 warnings.filterwarnings('ignore')
 
@@ -24,20 +26,28 @@ def _setup_stdout_encoding():
         except ImportError:
             # 不在streamlit环境，可以安全修改
             try:
-                sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='ignore')
-            except:
+                original_stdout = sys.stdout
+                wrapped = io.TextIOWrapper(original_stdout.buffer, encoding='utf-8', errors='ignore')
+                setattr(wrapped, '_original_stream', original_stdout)
+                sys.stdout = wrapped
+            except Exception:
                 pass
 
 _setup_stdout_encoding()
 
 
 class QuarterlyReportDataFetcher:
-    """季报数据获取类（使用akshare数据源）"""
+    """季报数据获取类（Tushare优先，AkShare兜底）"""
     
     def __init__(self):
         self.periods = 8  # 获取最近8期季报
         self.available = True
-        print("✓ 季报数据获取器初始化成功（akshare数据源）")
+        self.ts_pro = data_source_manager.tushare_api if data_source_manager.tushare_available else None
+        self.prefer_tushare = policy.prefer_tushare and bool(self.ts_pro)
+        self._section_sources = {}
+        self._section_errors = {}
+        source_text = "tushare-first" if self.prefer_tushare else "akshare-only/fallback"
+        print(f"[OK] 季报数据获取器初始化成功（{source_text}）")
     
     def get_quarterly_reports(self, symbol):
         """
@@ -56,7 +66,9 @@ class QuarterlyReportDataFetcher:
             "cash_flow": None,             # 现金流量表
             "financial_indicators": None,   # 财务指标
             "data_success": False,
-            "source": "akshare"
+            "source": "unknown",
+            "source_chain": [],
+            "error_detail": {}
         }
         
         # 只支持中国股票
@@ -65,41 +77,57 @@ class QuarterlyReportDataFetcher:
             return data
         
         try:
-            print(f"📊 正在获取 {symbol} 的季报数据...")
+            print(f"[INFO] 正在获取 {symbol} 的季报数据...")
+            self._section_sources = {}
+            self._section_errors = {}
             
             # 获取利润表
             income_data = self._get_income_statement(symbol)
             if income_data:
                 data["income_statement"] = income_data
-                print(f"   ✓ 成功获取 {len(income_data.get('data', []))} 期利润表数据")
+                print(f"   [OK] 成功获取 {len(income_data.get('data', []))} 期利润表数据")
             
             # 获取资产负债表
             balance_data = self._get_balance_sheet(symbol)
             if balance_data:
                 data["balance_sheet"] = balance_data
-                print(f"   ✓ 成功获取 {len(balance_data.get('data', []))} 期资产负债表数据")
+                print(f"   [OK] 成功获取 {len(balance_data.get('data', []))} 期资产负债表数据")
             
             # 获取现金流量表
             cash_flow_data = self._get_cash_flow(symbol)
             if cash_flow_data:
                 data["cash_flow"] = cash_flow_data
-                print(f"   ✓ 成功获取 {len(cash_flow_data.get('data', []))} 期现金流量表数据")
+                print(f"   [OK] 成功获取 {len(cash_flow_data.get('data', []))} 期现金流量表数据")
             
             # 获取财务指标
             indicators_data = self._get_financial_indicators(symbol)
             if indicators_data:
                 data["financial_indicators"] = indicators_data
-                print(f"   ✓ 成功获取 {len(indicators_data.get('data', []))} 期财务指标数据")
+                print(f"   [OK] 成功获取 {len(indicators_data.get('data', []))} 期财务指标数据")
             
             # 如果至少有一个成功，则标记为成功
             if income_data or balance_data or cash_flow_data or indicators_data:
                 data["data_success"] = True
-                print("✅ 季报数据获取完成")
+                source_chain = []
+                for section in ["income", "balance", "cashflow", "indicator"]:
+                    src = self._section_sources.get(section)
+                    if src and src not in source_chain:
+                        source_chain.append(src)
+                if len(source_chain) > 1:
+                    data["source"] = "mixed"
+                elif len(source_chain) == 1:
+                    data["source"] = source_chain[0]
+                else:
+                    data["source"] = "unknown"
+                data["source_chain"] = source_chain
+                data["error_detail"] = self._section_errors
+                print("[OK] 季报数据获取完成")
             else:
-                print("⚠️ 未能获取到季报数据")
+                data["error_detail"] = self._section_errors
+                print("[WARN]️ 未能获取到季报数据")
                 
         except Exception as e:
-            print(f"❌ 获取季报数据失败: {e}")
+            print(f"[ERR] 获取季报数据失败: {e}")
             data["error"] = str(e)
         
         return data
@@ -107,182 +135,229 @@ class QuarterlyReportDataFetcher:
     def _is_chinese_stock(self, symbol):
         """判断是否为中国股票"""
         return symbol.isdigit() and len(symbol) == 6
+
+    def _convert_df_to_records(self, df, source):
+        """DataFrame转标准结构"""
+        if df is None or df.empty:
+            return None
+
+        data_list = []
+        for _, row in df.iterrows():
+            item = {}
+            for col in df.columns:
+                value = row.get(col)
+                if value is None or (isinstance(value, float) and pd.isna(value)):
+                    continue
+                try:
+                    item[col] = str(value)
+                except Exception:
+                    item[col] = "N/A"
+            if item:
+                data_list.append(item)
+
+        return {
+            "data": data_list,
+            "periods": len(data_list),
+            "columns": df.columns.tolist(),
+            "query_time": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            "source": source
+        }
     
     def _get_income_statement(self, symbol):
         """获取利润表数据"""
+        errors = []
+        ts_code = data_source_manager._convert_to_ts_code(symbol)
+
+        if self.prefer_tushare:
+            try:
+                df = self.ts_pro.income(ts_code=ts_code)
+                if df is not None and not df.empty:
+                    if 'end_date' in df.columns:
+                        df = df.sort_values('end_date', ascending=False)
+                    result = self._convert_df_to_records(df.head(self.periods), "tushare")
+                    if result:
+                        self._section_sources["income"] = "tushare"
+                        return result
+                errors.append("tushare: empty")
+            except Exception as e:
+                errors.append(f"tushare: {e}")
+
         try:
-            # stock_financial_report_sina - 新浪财经季度利润表
             df = ak.stock_financial_report_sina(stock=symbol, symbol="利润表")
-            
-            if df is None or df.empty:
-                print(f"   未找到利润表数据")
-                return None
-            
-            # 获取最近8期
-            df = df.head(self.periods)
-            
-            # 转换为字典列表
-            data_list = []
-            for idx, row in df.iterrows():
-                item = {}
-                for col in df.columns:
-                    value = row.get(col)
-                    if value is None or (isinstance(value, float) and pd.isna(value)):
-                        continue
-                    try:
-                        item[col] = str(value)
-                    except:
-                        item[col] = "N/A"
-                if item:
-                    data_list.append(item)
-            
-            return {
-                "data": data_list,
-                "periods": len(data_list),
-                "columns": df.columns.tolist(),
-                "query_time": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            }
-            
+            if df is not None and not df.empty:
+                result = self._convert_df_to_records(df.head(self.periods), "akshare")
+                if result:
+                    self._section_sources["income"] = "akshare"
+                    return result
+            errors.append("akshare: empty")
         except Exception as e:
-            print(f"   获取利润表异常: {e}")
-            return None
+            errors.append(f"akshare: {e}")
+
+        self._section_errors["income"] = "; ".join(errors) if errors else "unknown error"
+        print(f"   未找到利润表数据")
+        return None
     
     def _get_balance_sheet(self, symbol):
         """获取资产负债表数据"""
+        errors = []
+        ts_code = data_source_manager._convert_to_ts_code(symbol)
+
+        if self.prefer_tushare:
+            try:
+                df = self.ts_pro.balancesheet(ts_code=ts_code)
+                if df is not None and not df.empty:
+                    if 'end_date' in df.columns:
+                        df = df.sort_values('end_date', ascending=False)
+                    result = self._convert_df_to_records(df.head(self.periods), "tushare")
+                    if result:
+                        self._section_sources["balance"] = "tushare"
+                        return result
+                errors.append("tushare: empty")
+            except Exception as e:
+                errors.append(f"tushare: {e}")
+
         try:
-            # stock_financial_report_sina - 新浪财经季度资产负债表
             df = ak.stock_financial_report_sina(stock=symbol, symbol="资产负债表")
-            
-            if df is None or df.empty:
-                print(f"   未找到资产负债表数据")
-                return None
-            
-            # 获取最近8期
-            df = df.head(self.periods)
-            
-            # 转换为字典列表
-            data_list = []
-            for idx, row in df.iterrows():
-                item = {}
-                for col in df.columns:
-                    value = row.get(col)
-                    if value is None or (isinstance(value, float) and pd.isna(value)):
-                        continue
-                    try:
-                        item[col] = str(value)
-                    except:
-                        item[col] = "N/A"
-                if item:
-                    data_list.append(item)
-            
-            return {
-                "data": data_list,
-                "periods": len(data_list),
-                "columns": df.columns.tolist(),
-                "query_time": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            }
-            
+            if df is not None and not df.empty:
+                result = self._convert_df_to_records(df.head(self.periods), "akshare")
+                if result:
+                    self._section_sources["balance"] = "akshare"
+                    return result
+            errors.append("akshare: empty")
         except Exception as e:
-            print(f"   获取资产负债表异常: {e}")
-            return None
+            errors.append(f"akshare: {e}")
+
+        self._section_errors["balance"] = "; ".join(errors) if errors else "unknown error"
+        print(f"   未找到资产负债表数据")
+        return None
     
     def _get_cash_flow(self, symbol):
         """获取现金流量表数据"""
+        errors = []
+        ts_code = data_source_manager._convert_to_ts_code(symbol)
+
+        if self.prefer_tushare:
+            try:
+                df = self.ts_pro.cashflow(ts_code=ts_code)
+                if df is not None and not df.empty:
+                    if 'end_date' in df.columns:
+                        df = df.sort_values('end_date', ascending=False)
+                    result = self._convert_df_to_records(df.head(self.periods), "tushare")
+                    if result:
+                        self._section_sources["cashflow"] = "tushare"
+                        return result
+                errors.append("tushare: empty")
+            except Exception as e:
+                errors.append(f"tushare: {e}")
+
         try:
-            # stock_financial_report_sina - 新浪财经季度现金流量表
             df = ak.stock_financial_report_sina(stock=symbol, symbol="现金流量表")
-            
-            if df is None or df.empty:
-                print(f"   未找到现金流量表数据")
-                return None
-            
-            # 获取最近8期
-            df = df.head(self.periods)
-            
-            # 转换为字典列表
-            data_list = []
-            for idx, row in df.iterrows():
-                item = {}
-                for col in df.columns:
-                    value = row.get(col)
-                    if value is None or (isinstance(value, float) and pd.isna(value)):
-                        continue
-                    try:
-                        item[col] = str(value)
-                    except:
-                        item[col] = "N/A"
-                if item:
-                    data_list.append(item)
-            
-            return {
-                "data": data_list,
-                "periods": len(data_list),
-                "columns": df.columns.tolist(),
-                "query_time": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            }
-            
+            if df is not None and not df.empty:
+                result = self._convert_df_to_records(df.head(self.periods), "akshare")
+                if result:
+                    self._section_sources["cashflow"] = "akshare"
+                    return result
+            errors.append("akshare: empty")
         except Exception as e:
-            print(f"   获取现金流量表异常: {e}")
-            return None
+            errors.append(f"akshare: {e}")
+
+        self._section_errors["cashflow"] = "; ".join(errors) if errors else "unknown error"
+        print(f"   未找到现金流量表数据")
+        return None
     
     def _get_financial_indicators(self, symbol):
         """获取财务指标数据"""
+        errors = []
+        ts_code = data_source_manager._convert_to_ts_code(symbol)
+
+        if self.prefer_tushare:
+            try:
+                df = self.ts_pro.fina_indicator(ts_code=ts_code)
+                if df is not None and not df.empty:
+                    if 'end_date' in df.columns:
+                        df = df.sort_values('end_date', ascending=False)
+                    df = df.head(self.periods)
+
+                    field_map = [
+                        ('净资产收益率(ROE)', 'roe'),
+                        ('总资产报酬率(ROA)', 'roa'),
+                        ('销售净利率', 'netprofit_margin'),
+                        ('销售毛利率', 'grossprofit_margin'),
+                        ('资产负债率', 'debt_to_assets'),
+                        ('流动比率', 'current_ratio'),
+                        ('速动比率', 'quick_ratio'),
+                        ('应收账款周转率', 'ar_turn'),
+                        ('存货周转率', 'inv_turn'),
+                        ('总资产周转率', 'assets_turn'),
+                        ('基本每股收益', 'eps'),
+                        ('每股净资产', 'bps'),
+                        ('每股现金流', 'ocfps')
+                    ]
+                    data_list = []
+                    for _, row in df.iterrows():
+                        item = {'报告期': str(row.get('end_date', 'N/A'))}
+                        for cn_name, en_name in field_map:
+                            value = row.get(en_name, 'N/A')
+                            if value is None or (isinstance(value, float) and pd.isna(value)):
+                                item[cn_name] = "N/A"
+                            else:
+                                item[cn_name] = str(value)
+                        data_list.append(item)
+
+                    self._section_sources["indicator"] = "tushare"
+                    return {
+                        "data": data_list,
+                        "periods": len(data_list),
+                        "columns": ['报告期'] + [item[0] for item in field_map],
+                        "query_time": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                        "source": "tushare"
+                    }
+                errors.append("tushare: empty")
+            except Exception as e:
+                errors.append(f"tushare: {e}")
+
         try:
-            # 使用stock_financial_abstract替代已失效的stock_financial_analysis_indicator
             df = ak.stock_financial_abstract(symbol=symbol)
-            
             if df is None or df.empty:
-                print(f"   未找到财务指标数据")
-                return None
-            
-            # 获取最近8期
-            df = df.head(self.periods * 2)  # 取更多数据以确保有足够的季度数据
-            
-            # 提取关键财务指标
-            key_indicators = [
-                '净资产收益率(ROE)', '总资产报酬率(ROA)', '销售净利率', '销售毛利率',
-                '资产负债率', '流动比率', '速动比率', '应收账款周转率', '存货周转率',
-                '总资产周转率', '基本每股收益', '每股净资产', '每股现金流'
-            ]
-            
-            # 筛选出包含关键指标的行
-            indicator_rows = df[df['指标'].isin(key_indicators)]
-            
-            if indicator_rows.empty:
-                print(f"   未找到关键财务指标数据")
-                return None
-            
-            # 获取日期列（排除'选项'和'指标'列）
-            date_columns = [col for col in df.columns if col not in ['选项', '指标']]
-            
-            # 转换为字典列表，每个字典代表一个时期的财务指标
-            data_list = []
-            for date_col in date_columns[:self.periods]:  # 只取最近的periods期
-                item = {'报告期': date_col}
-                for _, row in indicator_rows.iterrows():
-                    indicator_name = row['指标']
-                    value = row.get(date_col)
-                    if value is not None and not (isinstance(value, float) and pd.isna(value)):
-                        try:
-                            # 尝试转换为字符串
-                            item[indicator_name] = str(value)
-                        except:
-                            item[indicator_name] = "N/A"
-                    else:
-                        item[indicator_name] = "N/A"
-                data_list.append(item)
-            
-            return {
-                "data": data_list,
-                "periods": len(data_list),
-                "columns": ['报告期'] + key_indicators,
-                "query_time": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            }
-            
+                errors.append("akshare: empty")
+            else:
+                df = df.head(self.periods * 2)
+                key_indicators = [
+                    '净资产收益率(ROE)', '总资产报酬率(ROA)', '销售净利率', '销售毛利率',
+                    '资产负债率', '流动比率', '速动比率', '应收账款周转率', '存货周转率',
+                    '总资产周转率', '基本每股收益', '每股净资产', '每股现金流'
+                ]
+                indicator_rows = df[df['指标'].isin(key_indicators)]
+                date_columns = [col for col in df.columns if col not in ['选项', '指标']]
+                if not indicator_rows.empty and date_columns:
+                    data_list = []
+                    for date_col in date_columns[:self.periods]:
+                        item = {'报告期': date_col}
+                        for _, row in indicator_rows.iterrows():
+                            indicator_name = row['指标']
+                            value = row.get(date_col)
+                            if value is not None and not (isinstance(value, float) and pd.isna(value)):
+                                item[indicator_name] = str(value)
+                            else:
+                                item[indicator_name] = "N/A"
+                        data_list.append(item)
+
+                    self._section_sources["indicator"] = "akshare"
+                    return {
+                        "data": data_list,
+                        "periods": len(data_list),
+                        "columns": ['报告期'] + key_indicators,
+                        "query_time": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                        "source": "akshare"
+                    }
+                errors.append("akshare: key indicators empty")
         except Exception as e:
-            print(f"   获取财务指标异常: {e}")
-            return None
-    
+            errors.append(f"akshare: {e}")
+
+        self._section_errors["indicator"] = "; ".join(errors) if errors else "unknown error"
+        print(f"   未找到财务指标数据")
+        return None
+
     def format_quarterly_reports_for_ai(self, data):
         """
         将季报数据格式化为适合AI阅读的文本
@@ -291,8 +366,9 @@ class QuarterlyReportDataFetcher:
             return "未能获取季报数据"
         
         text_parts = []
+        source = data.get('source', 'unknown')
         text_parts.append(f"""
-【季度财务报告数据 - akshare数据源】
+【季度财务报告数据 - {source}】
 股票代码：{data.get('symbol', 'N/A')}
 数据期数：最近{self.periods}期季报
 
@@ -303,7 +379,7 @@ class QuarterlyReportDataFetcher:
             income_data = data["income_statement"]
             text_parts.append(f"""
 ═══════════════════════════════════════
-📊 利润表（最近{income_data.get('periods', 0)}期）
+[INFO] 利润表（最近{income_data.get('periods', 0)}期）
 ═══════════════════════════════════════
 """)
             
@@ -330,7 +406,7 @@ class QuarterlyReportDataFetcher:
             text_parts.append(f"""
 
 ═══════════════════════════════════════
-📊 资产负债表（最近{balance_data.get('periods', 0)}期）
+[INFO] 资产负债表（最近{balance_data.get('periods', 0)}期）
 ═══════════════════════════════════════
 """)
             
@@ -351,7 +427,7 @@ class QuarterlyReportDataFetcher:
             text_parts.append(f"""
 
 ═══════════════════════════════════════
-📊 现金流量表（最近{cash_flow_data.get('periods', 0)}期）
+[INFO] 现金流量表（最近{cash_flow_data.get('periods', 0)}期）
 ═══════════════════════════════════════
 """)
             
@@ -372,7 +448,7 @@ class QuarterlyReportDataFetcher:
             text_parts.append(f"""
 
 ═══════════════════════════════════════
-📊 关键财务指标（最近{indicators_data.get('periods', 0)}期）
+[INFO] 关键财务指标（最近{indicators_data.get('periods', 0)}期）
 ═══════════════════════════════════════
 """)
             
@@ -393,13 +469,13 @@ class QuarterlyReportDataFetcher:
 
 # 测试函数
 if __name__ == "__main__":
-    print("测试季报数据获取（akshare数据源）...")
+    print("测试季报数据获取（Tushare优先 + AkShare兜底）...")
     print("="*60)
     
     fetcher = QuarterlyReportDataFetcher()
     
     if not fetcher.available:
-        print("❌ 季报数据获取器不可用")
+        print("[ERR] 季报数据获取器不可用")
         sys.exit(1)
     
     # 测试股票
@@ -423,4 +499,5 @@ if __name__ == "__main__":
             print(f"\n获取失败: {data.get('error', '未知错误')}")
         
         print("\n")
+
 

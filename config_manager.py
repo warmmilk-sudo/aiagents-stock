@@ -260,11 +260,7 @@ class ConfigManager:
     
     def reload_config(self):
         """重新加载配置（重新加载.env文件）"""
-        from dotenv import load_dotenv
         # 强制覆盖已存在的环境变量
-        load_dotenv(override=True)
-
-
 # 全局配置管理器实例
 config_manager = ConfigManager()
 

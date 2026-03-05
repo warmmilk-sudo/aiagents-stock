@@ -1102,7 +1102,7 @@ def display_settings():
                 st.markdown(f"**{cat_names.get(cat, cat)}** ({len(items)}个)")
                 for p in items:
                     st.caption(f"- {p['name']} (权重:{p['weight']})")
-    except:
+    except Exception:
         st.warning("无法加载平台列表")
     
     st.divider()

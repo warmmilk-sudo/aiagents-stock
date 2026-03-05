@@ -41,7 +41,7 @@ def display_monitor_panel():
                 st.success("定时已启用")
             else:
                 st.info("定时未启用")
-        except:
+        except Exception:
             st.info("定时未配置")
     
     # 显示通知

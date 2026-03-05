@@ -226,7 +226,7 @@ class SectorStrategyScheduler:
 请检查系统日志获取详细信息。
 """
             self._send_email_direct(subject, body)
-        except:
+        except Exception:
             pass
     
     def _send_webhook_direct(self, predictions, timestamp):
@@ -592,7 +592,7 @@ class SectorStrategyScheduler:
                 next_run = jobs[0].next_run
                 if next_run:
                     return next_run.strftime('%Y-%m-%d %H:%M:%S')
-        except:
+        except Exception:
             pass
         
         return None

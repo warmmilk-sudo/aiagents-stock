@@ -551,12 +551,22 @@ class SectorStrategyDatabase:
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 data_date,
-                str(row.get('板块代码', row.get('sector_code', ''))),
-                str(row.get('板块名称', row.get('sector_name', ''))),
+                str(
+                    row.get('板块代码')
+                    or row.get('sector_code')
+                    or row.get('板块名称')
+                    or row.get('sector_name')
+                    or ''
+                ),
+                str(row.get('板块名称', row.get('sector_name', row.get('板块代码', row.get('sector_code', ''))))),
                 float(row.get('最新价', row.get('price', 0))) if pd.notna(row.get('最新价', row.get('price', 0))) else 0,
                 float(row.get('涨跌幅', row.get('change_pct', 0))) if pd.notna(row.get('涨跌幅', row.get('change_pct', 0))) else 0,
                 float(row.get('成交量', row.get('volume', 0))) if pd.notna(row.get('成交量', row.get('volume', 0))) else 0,
-                float(row.get('成交额', row.get('turnover', 0))) if pd.notna(row.get('成交额', row.get('turnover', 0))) else 0,
+                float(
+                    row.get('turnover')
+                    if (pd.notna(row.get('turnover')) and float(row.get('turnover', 0) or 0) != 0)
+                    else row.get('成交额', 0)
+                ) if pd.notna(row.get('turnover')) or pd.notna(row.get('成交额', 0)) else 0,
                 float(row.get('总市值', row.get('market_cap', 0))) if pd.notna(row.get('总市值', row.get('market_cap', 0))) else 0,
                 float(row.get('市盈率', row.get('pe_ratio', 0))) if pd.notna(row.get('市盈率', row.get('pe_ratio', 0))) else 0,
                 float(row.get('市净率', row.get('pb_ratio', 0))) if pd.notna(row.get('市净率', row.get('pb_ratio', 0))) else 0,
@@ -582,7 +592,7 @@ class SectorStrategyDatabase:
                 float(row.get('超大单净流入-净占比', 0)) if pd.notna(row.get('超大单净流入-净占比', 0)) else 0,
                 float(row.get('大单净流入-净额', 0)) if pd.notna(row.get('大单净流入-净额', 0)) else 0,
                 float(row.get('大单净流入-净占比', 0)) if pd.notna(row.get('大单净流入-净占比', 0)) else 0,
-                0,
+                float(row.get('今日涨跌幅', row.get('change_pct', 0))) if pd.notna(row.get('今日涨跌幅', row.get('change_pct', 0))) else 0,
                 version
             ))
     
@@ -817,16 +827,24 @@ class SectorStrategyDatabase:
             if key in ['sectors', 'concepts']:
                 result = {}
                 for _, row in raw_df.iterrows():
-                    name = str(row.get('sector_name', ''))
+                    name = str(row.get('sector_name', '') or row.get('sector_code', ''))
+                    if not name:
+                        continue
                     result[name] = {
+                        'sector_code': str(row.get('sector_code', '') or name),
                         'name': name,
                         'change_pct': float(row.get('change_pct', 0) or 0),
                         'price': float(row.get('price', 0) or 0),
                         'volume': float(row.get('volume', 0) or 0),
                         'turnover': float(row.get('turnover', 0) or 0),
                         'market_cap': float(row.get('market_cap', 0) or 0),
+                        'total_market_cap': float(row.get('market_cap', 0) or 0),
                         'pe_ratio': float(row.get('pe_ratio', 0) or 0),
                         'pb_ratio': float(row.get('pb_ratio', 0) or 0),
+                        'top_stock': '',
+                        'top_stock_change': 0,
+                        'up_count': 0,
+                        'down_count': 0
                     }
                 return {
                     'data_date': data_date,
@@ -845,6 +863,7 @@ class SectorStrategyDatabase:
                         'super_large_net_inflow_pct': float(row.get('turnover', 0) or 0),
                         'large_net_inflow': float(row.get('market_cap', 0) or 0),
                         'large_net_inflow_pct': float(row.get('pe_ratio', 0) or 0),
+                        'change_pct': float(row.get('pb_ratio', 0) or 0),
                         'medium_net_inflow': 0,
                         'small_net_inflow': 0
                     })
@@ -860,8 +879,11 @@ class SectorStrategyDatabase:
                 for _, row in raw_df.iterrows():
                     name = str(row.get('sector_name', ''))
                     entry = {
-                        'price': float(row.get('price', 0) or 0),
+                        'code': str(row.get('sector_code', '')),
+                        'name': name,
+                        'close': float(row.get('price', 0) or 0),
                         'change_pct': float(row.get('change_pct', 0) or 0),
+                        'change': 0.0,
                         'turnover': float(row.get('turnover', 0) or 0),
                         'volume': float(row.get('volume', 0) or 0)
                     }
@@ -878,13 +900,26 @@ class SectorStrategyDatabase:
                 }
 
             if key == 'north_flow':
-                # 北向资金结构差异较大，返回最简结构用于提示
-                total_value = float(raw_df['turnover'].sum()) if not raw_df.empty else 0
+                latest_df = raw_df[raw_df['sector_code'] == 'NORTH']
+                latest = latest_df.iloc[0] if not latest_df.empty else raw_df.iloc[0]
+                history_df = raw_df[raw_df['sector_code'].astype(str).str.startswith('HIST_')].copy()
+                history = []
+                if not history_df.empty:
+                    history_df = history_df.sort_values('sector_code', ascending=False).head(20)
+                    for _, row in history_df.iterrows():
+                        history.append({
+                            'date': str(row.get('sector_name', '')),
+                            'net_inflow': float(row.get('price', 0) or 0)
+                        })
                 return {
                     'data_date': data_date,
                     'data_content': {
-                        'north_total_amount': total_value,
-                        'history': []
+                        'date': str(data_date),
+                        'north_net_inflow': float(latest.get('price', 0) or 0),
+                        'hgt_net_inflow': float(latest.get('volume', 0) or 0),
+                        'sgt_net_inflow': float(latest.get('market_cap', 0) or 0),
+                        'north_total_amount': float(latest.get('turnover', 0) or 0),
+                        'history': history
                     }
                 }
 

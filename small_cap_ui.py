@@ -12,6 +12,7 @@ from small_cap_selector import small_cap_selector
 from notification_service import notification_service
 from low_price_bull_monitor import low_price_bull_monitor
 from low_price_bull_service import low_price_bull_service
+from wencai_field_resolver import get_row_value
 
 
 def display_small_cap():
@@ -140,13 +141,13 @@ def display_stock_detail(row: pd.Series):
     
     # 获取所有可能的字段
     financial_fields = [
-        ('总市值', row.get('总市值', row.get('总市值[20241211]', None))),
-        ('营收增长率', row.get('营收增长率', row.get('营业收入增长率', None))),
-        ('净利润增长率', row.get('净利润增长率', row.get('净利润同比增长率', None))),
-        ('股价', row.get('股价', row.get('最新价', None))),
-        ('市盈率', row.get('市盈率', row.get('市盈率TTM', None))),
-        ('市净率', row.get('市净率', row.get('市净率PB', None))),
-        ('所属行业', row.get('所属行业', row.get('所属同花顺行业', None))),
+        ('总市值', get_row_value(row, ['总市值', '总市值(元)'], None)),
+        ('营收增长率', get_row_value(row, ['营收增长率', '营业收入增长率', '营业总收入同比增长率'], None)),
+        ('净利润增长率', get_row_value(row, ['净利润增长率', '净利润同比增长率'], None)),
+        ('股价', get_row_value(row, ['股价', '最新价', '收盘价'], None)),
+        ('市盈率', get_row_value(row, ['市盈率', '市盈率TTM', '市盈率(pe)'], None)),
+        ('市净率', get_row_value(row, ['市净率', '市净率PB', '市净率(pb)'], None)),
+        ('所属行业', get_row_value(row, ['所属行业', '所属同花顺行业'], None)),
     ]
     
     # 检查是否有任何有效数据
@@ -191,7 +192,7 @@ def display_stock_detail(row: pd.Series):
     # 转换价格
     try:
         price_float = float(price) if price and not pd.isna(price) else None
-    except:
+    except Exception:
         price_float = None
     
     if stock_code and stock_name:

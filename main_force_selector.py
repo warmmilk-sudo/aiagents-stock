@@ -5,12 +5,12 @@
 使用pywencai获取主力资金净流入前100名股票，并进行智能筛选
 """
 
-from numpy.ma import minimum_fill_value
 import pandas as pd
 import pywencai
 from datetime import datetime, timedelta
 from typing import Dict, List, Tuple
 import time
+from wencai_field_resolver import get_row_value
 
 class MainForceStockSelector:
     """主力选股类"""
@@ -297,16 +297,16 @@ class MainForceStockSelector:
         
         for idx, row in df.iterrows():
             stock_data = {
-                'symbol': row.get('股票代码', 'N/A'),
-                'name': row.get('股票简称', 'N/A'),
-                'industry': row.get('所属同花顺行业', row.get('所属行业', 'N/A')),
-                'market_cap': row.get('总市值[20241209]', row.get('总市值', 'N/A')),
+                'symbol': get_row_value(row, ['股票代码', '代码'], 'N/A'),
+                'name': get_row_value(row, ['股票简称', '名称'], 'N/A'),
+                'industry': get_row_value(row, ['所属同花顺行业', '所属行业'], 'N/A'),
+                'market_cap': get_row_value(row, ['总市值', '总市值(元)'], 'N/A'),
                 'range_change': None,
                 'main_fund_inflow': None,
-                'pe_ratio': row.get('市盈率', 'N/A'),
-                'pb_ratio': row.get('市净率', 'N/A'),
-                'revenue': row.get('营业收入', row.get('营收', 'N/A')),
-                'net_profit': row.get('净利润', 'N/A'),
+                'pe_ratio': get_row_value(row, ['市盈率', '市盈率TTM', '市盈率(pe)'], 'N/A'),
+                'pb_ratio': get_row_value(row, ['市净率', '市净率PB', '市净率(pb)'], 'N/A'),
+                'revenue': get_row_value(row, ['营业收入', '营收', '营业总收入'], 'N/A'),
+                'net_profit': get_row_value(row, ['净利润', '归属母公司股东的净利润'], 'N/A'),
                 'scores': {},
                 'raw_data': row.to_dict()
             }

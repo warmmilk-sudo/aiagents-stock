@@ -83,7 +83,7 @@ class MainForceBatchDatabase:
             else:
                 try:
                     return str(value)
-                except:
+                except Exception:
                     return "无法序列化"
         
         cleaned = []
@@ -173,7 +173,7 @@ class MainForceBatchDatabase:
         for row in rows:
             try:
                 results = json.loads(row[7])
-            except:
+            except Exception:
                 results = []
             
             history.append({
@@ -218,7 +218,7 @@ class MainForceBatchDatabase:
         
         try:
             results = json.loads(row[7])
-        except:
+        except Exception:
             results = []
         
         return {

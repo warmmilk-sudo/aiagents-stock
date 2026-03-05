@@ -166,7 +166,7 @@ class SmartMonitorQMT:
                         try:
                             open_date = datetime.strptime(str(pos.open_date), '%Y%m%d')
                             holding_days = (datetime.now() - open_date).days
-                        except:
+                        except Exception:
                             pass
                     
                     return {
@@ -212,7 +212,7 @@ class SmartMonitorQMT:
                     try:
                         open_date = datetime.strptime(str(pos.open_date), '%Y%m%d')
                         holding_days = (datetime.now() - open_date).days
-                    except:
+                    except Exception:
                         pass
                 
                 result.append({

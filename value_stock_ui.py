@@ -164,7 +164,7 @@ def display_stock_results(stocks_df: pd.DataFrame, selector):
                 if v is not None and not pd.isna(v):
                     try:
                         pe_val = f"PE:{float(v):.1f}"
-                    except:
+                    except Exception:
                         pass
                 break
 
@@ -175,7 +175,7 @@ def display_stock_results(stocks_df: pd.DataFrame, selector):
             if v is not None and not pd.isna(v):
                 try:
                     pb_val = f"PB:{float(v):.2f}"
-                except:
+                except Exception:
                     pass
 
         with st.expander(
@@ -236,7 +236,7 @@ def display_stock_detail(row: pd.Series, df: pd.DataFrame):
             return "-"
         try:
             return f"{float(value):.2f}{suffix}"
-        except:
+        except Exception:
             return str(value) + suffix
 
     # 基本估值数据
@@ -329,7 +329,7 @@ def run_strategy_simulation(stocks_df: pd.DataFrame):
             if m:
                 try:
                     price = float(row.get(m[0], 0))
-                except:
+                except Exception:
                     pass
                 if price > 0:
                     break

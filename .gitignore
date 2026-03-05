@@ -10,3 +10,11 @@
 /.cursor
 /openspec
 TradEnv/
+# 数据库文件
+*.db
+# 调试输出
+risk_data_debug_output.txt
+# Streamlit配置
+.streamlit/
+# 日志目录
+logs/

@@ -1094,9 +1094,6 @@ def check_email_config():
     st.markdown("**邮件配置检查**")
     
     import os
-    from dotenv import load_dotenv
-    load_dotenv()
-    
     email_enabled = os.getenv('EMAIL_ENABLED', 'false').lower() == 'true'
     smtp_server = os.getenv('SMTP_SERVER', '')
     email_from = os.getenv('EMAIL_FROM', '')

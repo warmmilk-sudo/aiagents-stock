@@ -13,6 +13,7 @@ from low_price_bull_strategy import LowPriceBullStrategy
 from notification_service import notification_service
 from low_price_bull_monitor import low_price_bull_monitor
 from low_price_bull_service import low_price_bull_service
+from wencai_field_resolver import get_row_value
 
 
 def display_low_price_bull():
@@ -175,7 +176,7 @@ def display_stock_results(stocks_df: pd.DataFrame, selector):
             try:
                 price_float = float(price)
                 price_str = f"| 价格: {price_float:.2f}元"
-            except:
+            except Exception:
                 pass
         
         with st.expander(
@@ -262,12 +263,12 @@ def display_stock_detail(row: pd.Series):
     # 先检查是否有任何财务数据
     has_any_data = False
     financial_fields = [
-        ('所属行业', row.get('所属行业', row.get('所属同花顺行业', None))),
-        ('总市值', row.get('总市值', row.get('总市值[20241211]', None))),
-        ('市盈率', row.get('市盈率', row.get('市盈率pe', None))),
-        ('市净率', row.get('市净率', row.get('市净率pb', None))),
-        ('流通市值', row.get('流通市值', row.get('流通市值[20241211]', None))),
-        ('换手率', row.get('换手率', row.get('换手率[%]', None)))
+        ('所属行业', get_row_value(row, ['所属行业', '所属同花顺行业'], None)),
+        ('总市值', get_row_value(row, ['总市值', '总市值(元)'], None)),
+        ('市盈率', get_row_value(row, ['市盈率', '市盈率pe', '市盈率(pe)'], None)),
+        ('市净率', get_row_value(row, ['市净率', '市净率pb', '市净率(pb)'], None)),
+        ('流通市值', get_row_value(row, ['流通市值'], None)),
+        ('换手率', get_row_value(row, ['换手率', '换手率[%]'], None))
     ]
     
     for _, value in financial_fields:
@@ -326,7 +327,7 @@ def display_stock_detail(row: pd.Series):
                 st.markdown(f"**所属行业**: {industry}")
             
             # 总市值
-            market_cap = row.get('总市值', row.get('总市值[20241211]', None))
+            market_cap = get_row_value(row, ['总市值', '总市值(元)'], None)
             if is_valid_value(market_cap):
                 st.markdown(f"**总市值**: {format_value(market_cap, '元')}")
             
@@ -341,7 +342,7 @@ def display_stock_detail(row: pd.Series):
                 st.markdown(f"**市净率**: {format_value(pb, '')}")
             
             # 流通市值
-            float_cap = row.get('流通市值', row.get('流通市值[20241211]', None))
+            float_cap = get_row_value(row, ['流通市值'], None)
             if is_valid_value(float_cap):
                 st.markdown(f"**流通市值**: {format_value(float_cap, '元')}")
             
@@ -367,7 +368,7 @@ def display_stock_detail(row: pd.Series):
     # 转换价格
     try:
         price_float = float(price) if price and not pd.isna(price) else None
-    except:
+    except Exception:
         price_float = None
     
     if stock_code and stock_name:
@@ -521,7 +522,7 @@ def send_dingtalk_notification(stocks_df: pd.DataFrame, top_n: int):
                 try:
                     price_float = float(price)
                     message_text += f"- 股价: {price_float:.2f}元\n"
-                except:
+                except Exception:
                     pass
             
             # 净利润增长率
@@ -530,7 +531,7 @@ def send_dingtalk_notification(stocks_df: pd.DataFrame, top_n: int):
                 try:
                     growth_float = float(growth)
                     message_text += f"- 净利增长: {growth_float:.2f}%\n"
-                except:
+                except Exception:
                     pass
             
             # 成交额
@@ -544,7 +545,7 @@ def send_dingtalk_notification(stocks_df: pd.DataFrame, top_n: int):
                         message_text += f"- 成交额: {turnover_float/10000:.2f}万元\n"
                     else:
                         message_text += f"- 成交额: {turnover_float:.2f}元\n"
-                except:
+                except Exception:
                     pass
             
             # 所属行业

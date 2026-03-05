@@ -39,7 +39,7 @@ class LonghubangPDFGenerator:
                         self.chinese_font = 'ChineseFont'
                         print(f"[PDF] 成功加载字体: {font_path}")
                         return
-                    except:
+                    except Exception:
                         continue
             
             # 如果都失败，使用默认字体

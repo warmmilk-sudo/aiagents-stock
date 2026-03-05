@@ -10,17 +10,9 @@ from datetime import datetime
 import logging
 import os
 from typing import Dict
-from dotenv import load_dotenv
-
 from smart_monitor_engine import SmartMonitorEngine
 from smart_monitor_db import SmartMonitorDB
 from config_manager import config_manager  # 使用主程序的配置管理器
-
-
-# 加载环境变量
-load_dotenv()
-
-
 def smart_monitor_ui():
     """AI盯盘主界面"""
     inject_global_theme()

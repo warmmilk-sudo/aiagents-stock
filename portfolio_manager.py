@@ -445,7 +445,7 @@ class PortfolioManager:
                     numbers = re.findall(r'\d+\.?\d*', str(target_price_str))
                     if numbers:
                         target_price = float(numbers[0])
-                except:
+                except Exception:
                     pass
             
             # 解析进场区间
@@ -455,7 +455,7 @@ class PortfolioManager:
                     parts = entry_range.split("-")
                     entry_min = float(parts[0].strip())
                     entry_max = float(parts[1].strip())
-                except:
+                except Exception:
                     pass
             
             # 解析止盈止损
@@ -465,7 +465,7 @@ class PortfolioManager:
                     numbers = re.findall(r'\d+\.?\d*', str(take_profit_str))
                     if numbers:
                         take_profit = float(numbers[0])
-                except:
+                except Exception:
                     pass
             
             if stop_loss_str:
@@ -473,7 +473,7 @@ class PortfolioManager:
                     numbers = re.findall(r'\d+\.?\d*', str(stop_loss_str))
                     if numbers:
                         stop_loss = float(numbers[0])
-                except:
+                except Exception:
                     pass
             
             # 生成摘要（使用advice或summary字段）

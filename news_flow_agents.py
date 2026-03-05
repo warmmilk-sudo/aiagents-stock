@@ -31,8 +31,8 @@ class NewsFlowAgents:
     def _init_client(self):
         """初始化DeepSeek客户端"""
         try:
-            from deepseek_client import DeepSeekClient
-            self.deepseek_client = DeepSeekClient(model=self.model)
+            from llm_client import LLMClient
+            self.deepseek_client = LLMClient(model=self.model)
             logger.info(f"✅ DeepSeek客户端初始化成功，模型: {self.model}")
         except Exception as e:
             logger.error(f"❌ DeepSeek客户端初始化失败: {e}")

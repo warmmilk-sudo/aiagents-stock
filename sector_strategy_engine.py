@@ -5,7 +5,7 @@
 
 from sector_strategy_agents import SectorStrategyAgents
 from sector_strategy_db import SectorStrategyDatabase
-from deepseek_client import DeepSeekClient
+from llm_client import LLMClient
 from typing import Dict, Any
 import time
 import json
@@ -20,7 +20,7 @@ class SectorStrategyEngine:
     def __init__(self, model=None):
         self.model = model or config.DEFAULT_MODEL_NAME
         self.agents = SectorStrategyAgents(model=self.model)
-        self.deepseek_client = DeepSeekClient(model=self.model)
+        self.deepseek_client = LLMClient(model=self.model)
         self.database = SectorStrategyDatabase()
         self.logger = logging.getLogger(__name__)
         if not self.logger.handlers:
@@ -510,7 +510,7 @@ class SectorStrategyEngine:
                 return f"市场趋势: {market_trend}，识别{hot_sectors_count}个热门板块机会"
             else:
                 return "智策板块分析报告"
-        except:
+        except Exception:
             return "智策板块分析报告"
     
     def _extract_confidence_score(self, results: Dict) -> float:
@@ -520,7 +520,7 @@ class SectorStrategyEngine:
             if isinstance(predictions, dict):
                 return predictions.get("confidence_score", 0.75)
             return 0.75
-        except:
+        except Exception:
             return 0.75
     
     def _extract_risk_level(self, results: Dict) -> str:
@@ -530,7 +530,7 @@ class SectorStrategyEngine:
             if isinstance(predictions, dict):
                 return predictions.get("risk_level", "中等")
             return "中等"
-        except:
+        except Exception:
             return "中等"
     
     def _extract_investment_horizon(self, results: Dict) -> str:
@@ -540,7 +540,7 @@ class SectorStrategyEngine:
             if isinstance(predictions, dict):
                 return predictions.get("investment_horizon", "短期")
             return "短期"
-        except:
+        except Exception:
             return "短期"
     
     def _extract_market_outlook(self, results: Dict) -> str:
@@ -550,7 +550,7 @@ class SectorStrategyEngine:
             if isinstance(predictions, dict):
                 return predictions.get("market_outlook", "谨慎乐观")
             return "谨慎乐观"
-        except:
+        except Exception:
             return "谨慎乐观"
     
     def get_historical_reports(self, limit=10):
