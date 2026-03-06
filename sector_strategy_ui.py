@@ -113,18 +113,13 @@ def display_analysis_tab():
     
     st.markdown("---")
     
-    # 操作按钮
-    col1, col2 = st.columns([2, 2])
-    
-    with col1:
-        analyze_button = st.button("开始智策分析", type="primary", width='content')
-    
-    with col2:
-        if st.button("清除结果", width='content'):
-            if 'sector_strategy_result' in st.session_state:
-                del st.session_state.sector_strategy_result
-            st.success("已清除分析结果")
-            st.rerun()
+    # 操作按钮（移动端优先：主按钮置顶）
+    analyze_button = st.button("开始智策分析", type="primary", width='stretch')
+    if st.button("清除结果", width='stretch'):
+        if 'sector_strategy_result' in st.session_state:
+            del st.session_state.sector_strategy_result
+        st.success("已清除分析结果")
+        st.rerun()
     
     st.markdown("---")
     
@@ -181,22 +176,37 @@ def display_history_tab():
             market_outlook = report['market_outlook'] if 'market_outlook' in report else '谨慎乐观'
 
             with st.container():
-                st.markdown(f"**报告 #{report_id}**")
-                st.caption(f"生成时间: {created_at} | 数据区间: {data_date_range}")
+                summary_text = summary or "智策板块分析报告"
+                primary_summary = summary_text.split("，看多板块:")[0] if "，看多板块:" in summary_text else summary_text
+                bullish_info = ""
+                if "，看多板块:" in summary_text:
+                    parts = summary_text.split("，看多板块:")
+                    bullish_info = parts[1] if len(parts) > 1 else ""
 
-                col1, col2, col3 = st.columns([1, 1, 1])
-                with col1:
-                    st.metric("置信度", f"{confidence_score:.1%}")
-                with col2:
-                    st.metric("风险等级", risk_level)
-                with col3:
-                    st.metric("市场展望", market_outlook)
+                st.markdown(
+                    f"""
+                    <div class="agent-card">
+                        <h4>报告 #{report_id}</h4>
+                        <p><strong>生成时间:</strong> {created_at}</p>
+                        <p><strong>数据区间:</strong> {data_date_range}</p>
+                        <p><strong>置信度:</strong> {confidence_score:.1%}</p>
+                        <p><strong>风险等级:</strong> {risk_level}</p>
+                        <p><strong>市场展望:</strong> {market_outlook}</p>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
 
-                # 操作区：加载到分析视图 / 删除
+                st.markdown(f"**核心结论**: {primary_summary}")
+                if bullish_info:
+                    st.markdown(f"**看多板块**: :green[{bullish_info}]")
+                if len(summary_text) > 120:
+                    with st.expander("查看完整摘要", expanded=False):
+                        st.write(summary_text)
+
                 op1, op2 = st.columns([1, 1])
                 with op1:
-                    if st.button("加载到分析视图", key=f"load_{report_id}"):
-                        # 获取报告详情并写入session以展示到分析视图
+                    if st.button("加载到分析视图", key=f"load_{report_id}", width='stretch'):
                         detail = engine.get_report_detail(report_id)
                         if detail and isinstance(detail.get('analysis_content_parsed'), dict):
                             st.session_state.sector_strategy_result = detail['analysis_content_parsed']
@@ -208,36 +218,14 @@ def display_history_tab():
                         else:
                             st.error("加载失败：报告内容缺失")
                 with op2:
-                    if st.button(f"删除", key=f"delete_{report_id}"):
+                    if st.button("删除", key=f"delete_{report_id}", width='stretch'):
                         if engine.delete_report(report_id):
                             st.success("报告已删除")
                             st.rerun()
                         else:
                             st.error("删除失败")
 
-                # 改进的摘要展示逻辑，突出看多板块信息
-                st.markdown("**报告摘要**")
-                summary_text = summary or "智策板块分析报告"
-                
-                # 解析摘要中的看多板块信息
-                if "看多板块:" in summary_text:
-                    parts = summary_text.split("，看多板块:")
-                    main_summary = parts[0]
-                    bullish_info = parts[1] if len(parts) > 1 else ""
-                    
-                    # 显示主要摘要信息
-                    st.markdown(f"{main_summary}")
-                    
-                    # 特别突出显示看多板块
-                    if bullish_info:
-                        st.markdown(f"**看多板块**: :green[{bullish_info}]")
-                else:
-                    # 原有的简单展示方式
-                    short = summary_text if len(summary_text) <= 120 else (summary_text[:120] + "...")
-                    with st.expander(f"{short}", expanded=False):
-                        st.write(summary_text)
-
-                st.markdown("-")
+                st.markdown("---")
     
     except Exception as e:
         st.error(f"加载历史报告失败: {e}")
@@ -754,7 +742,9 @@ def display_visualizations(predictions):
                      title='板块多空信心度对比')
         
         fig.update_layout(height=400)
-    st.plotly_chart(fig, use_container_width=True, config={'responsive': True}, key="sector_confidence")
+        st.plotly_chart(fig, use_container_width=True, config={'responsive': True}, key="sector_confidence")
+    else:
+        st.info("暂无多空信心度数据")
     
     st.markdown("---")
     
@@ -791,7 +781,9 @@ def display_visualizations(predictions):
                         title='板块热度分布图')
         
         fig.update_layout(height=400)
-    st.plotly_chart(fig, use_container_width=True, config={'responsive': True}, key="sector_heat")
+        st.plotly_chart(fig, use_container_width=True, config={'responsive': True}, key="sector_heat")
+    else:
+        st.info("暂无板块热度分布数据")
 
 
 def display_pdf_export_section(result):
@@ -804,7 +796,7 @@ def display_pdf_export_section(result):
         st.write("将分析报告导出为PDF或Markdown文件，方便保存和分享")
     
     with col2:
-        if st.button("生成PDF报告", type="primary", width='content'):
+        if st.button("生成PDF报告", type="primary", width='stretch'):
             with st.spinner("正在生成PDF报告..."):
                 try:
                     # 生成PDF
@@ -826,7 +818,7 @@ def display_pdf_export_section(result):
                     st.error(f"PDF生成失败: {str(e)}")
     
     with col3:
-        if st.button("生成Markdown", type="secondary", width='content'):
+        if st.button("生成Markdown", type="secondary", width='stretch'):
             with st.spinner("正在生成Markdown报告..."):
                 try:
                     # 生成Markdown内容
@@ -850,7 +842,7 @@ def display_pdf_export_section(result):
                         data=st.session_state.sector_pdf_data,
                         file_name=st.session_state.sector_pdf_filename,
                         mime="application/pdf",
-                        width='content'
+                        width='stretch'
                     )
         
         # 如果已经生成了Markdown，显示下载按钮
@@ -860,7 +852,7 @@ def display_pdf_export_section(result):
                         data=st.session_state.sector_markdown_data,
                         file_name=st.session_state.sector_markdown_filename,
                         mime="text/markdown",
-                        width='content'
+                        width='stretch'
                     )
 
 
@@ -1090,7 +1082,7 @@ def display_scheduler_settings():
             
             with col_a:
                 if not status['running']:
-                    if st.button("启动", width='content', type="primary"):
+                    if st.button("启动", width='stretch', type="primary"):
                         if sector_strategy_scheduler.start(schedule_time_str):
                             st.success(f"定时任务已启动！每天 {schedule_time_str} 运行")
                             time.sleep(1)
@@ -1098,7 +1090,7 @@ def display_scheduler_settings():
                         else:
                             st.error("启动失败")
                 else:
-                    if st.button("停止", width='content'):
+                    if st.button("停止", width='stretch'):
                         if sector_strategy_scheduler.stop():
                             st.success("定时任务已停止")
                             time.sleep(1)
@@ -1107,13 +1099,13 @@ def display_scheduler_settings():
                             st.error("停止失败")
             
             with col_b:
-                if st.button("立即运行", width='content'):
+                if st.button("立即运行", width='stretch'):
                     with st.spinner("正在运行分析..."):
                         sector_strategy_scheduler.manual_run()
                     st.success("手动分析完成！")
             
             with col_c:
-                if st.button("测试邮件", width='content'):
+                if st.button("测试邮件", width='stretch'):
                     test_email_notification()
         
         # 邮件配置检查

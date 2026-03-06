@@ -6,6 +6,7 @@ import streamlit as st
 import os
 import time
 from config_manager import config_manager
+from navigation import navigate_to
 
 
 def _mask_secret(value: str) -> str:
@@ -543,10 +544,9 @@ def display_config_manager():
 
     with col3:
         if st.button("返回 返回", width='stretch'):
-            if 'show_config' in st.session_state:
-                del st.session_state.show_config
             if 'temp_config' in st.session_state:
                 del st.session_state.temp_config
+            navigate_to("home")
             st.rerun()
 
     # 显示当前.env文件内容

@@ -16,7 +16,10 @@ def display_news_flow_monitor():
     """显示新闻流量监测主界面"""
     inject_global_theme()
     configure_plotly_template()
-    st.title("新闻流量监测")
+    render_page_header(
+        "新闻流量监测",
+        "短线流量热度、情绪阶段与交易建议一体化看板",
+    )
     
     # 功能说明
     with st.expander("功能说明 - 流量为王理念", expanded=False):

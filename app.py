@@ -10,6 +10,7 @@ import os
 import hmac
 import hashlib
 import config
+from navigation import navigate_to, resolve_current_page
 
 from stock_data import StockDataFetcher
 from ai_agents import StockAnalysisAgents
@@ -46,6 +47,43 @@ def show_current_model_info():
     st.sidebar.info(f"当前模型: **{config.DEFAULT_MODEL_NAME}**")
     st.sidebar.caption("可在「环境配置」中修改模型名称")
 
+
+def render_mobile_bottom_nav(current_page: str) -> None:
+    """Render mobile-first fixed bottom navigation."""
+    nav_items = [
+        ("home", "首页", "🏠"),
+        ("main_force", "选股", "📈"),
+        ("sector_strategy", "智策", "🧠"),
+        ("news_flow", "新闻", "📰"),
+        ("smart_monitor", "盯盘", "👀"),
+    ]
+
+    if current_page in {"low_price_bull", "small_cap", "profit_growth", "value_stock"}:
+        active_page = "main_force"
+    elif current_page in {"longhubang", "macro_cycle"}:
+        active_page = "sector_strategy"
+    elif current_page in {"monitor", "portfolio"}:
+        active_page = "smart_monitor"
+    else:
+        active_page = current_page
+
+    links = []
+    for page_key, label, icon in nav_items:
+        classes = "mobile-nav-item"
+        if active_page == page_key:
+            classes += " active"
+        links.append(
+            f'<a class="{classes}" href="?page={page_key}">'
+            f'<span class="mobile-nav-icon">{icon}</span>'
+            f'<span class="mobile-nav-label">{label}</span>'
+            "</a>"
+        )
+
+    st.markdown(
+        f'<nav class="mobile-bottom-nav">{"".join(links)}</nav>',
+        unsafe_allow_html=True,
+    )
+
 # 全局主题
 inject_global_theme()
 configure_plotly_template()
@@ -56,135 +94,69 @@ def main():
         "复合多AI智能体股票团队分析系统",
         "基于AI模型的专业量化投资分析平台 | Multi-Agent Stock Analysis System",
     )
+    current_page = resolve_current_page()
 
     # 侧边栏
     with st.sidebar:
-        # 快捷导航 - 移到顶部
         st.markdown("### 功能导航")
 
-        #  单股分析（首页）
         if st.button("股票分析", width='stretch', key="nav_home", help="返回首页，进行单只股票的深度分析"):
-            # 清除所有功能页面标志
-            for key in ['show_history', 'show_monitor', 'show_config', 'show_main_force',
-                       'show_sector_strategy', 'show_longhubang', 'show_portfolio', 'show_low_price_bull', 'show_news_flow', 'show_macro_cycle', 'show_value_stock']:
-                if key in st.session_state:
-                    del st.session_state[key]
+            current_page = navigate_to("home")
 
         st.markdown("---")
 
-        #  选股板块
-        with st.expander("选股板块", expanded=False):
+        with st.expander("选股板块", expanded=current_page in {"main_force", "low_price_bull", "small_cap", "profit_growth", "value_stock"}):
             st.markdown("**根据不同策略筛选优质股票**")
 
             if st.button("主力选股", width='stretch', key="nav_main_force", help="基于主力资金流向的选股策略"):
-                st.session_state.show_main_force = True
-                for key in ['show_history', 'show_monitor', 'show_config', 'show_sector_strategy',
-                           'show_longhubang', 'show_portfolio', 'show_low_price_bull', 'show_news_flow']:
-                    if key in st.session_state:
-                        del st.session_state[key]
-            
+                current_page = navigate_to("main_force")
+
             if st.button("低价擒牛", width='stretch', key="nav_low_price_bull", help="低价高成长股票筛选策略"):
-                st.session_state.show_low_price_bull = True
-                for key in ['show_history', 'show_monitor', 'show_config', 'show_sector_strategy',
-                           'show_longhubang', 'show_portfolio', 'show_main_force', 'show_small_cap', 'show_profit_growth', 'show_news_flow']:
-                    if key in st.session_state:
-                        del st.session_state[key]
-            
+                current_page = navigate_to("low_price_bull")
+
             if st.button("小市值策略", width='stretch', key="nav_small_cap", help="小盘高成长股票筛选策略"):
-                st.session_state.show_small_cap = True
-                for key in ['show_history', 'show_monitor', 'show_config', 'show_sector_strategy',
-                           'show_longhubang', 'show_portfolio', 'show_main_force', 'show_low_price_bull', 'show_profit_growth', 'show_news_flow']:
-                    if key in st.session_state:
-                        del st.session_state[key]
-            
+                current_page = navigate_to("small_cap")
+
             if st.button("净利增长", width='stretch', key="nav_profit_growth", help="净利润增长稳健股票筛选策略"):
-                st.session_state.show_profit_growth = True
-                for key in ['show_history', 'show_monitor', 'show_config', 'show_sector_strategy',
-                           'show_longhubang', 'show_portfolio', 'show_main_force', 'show_low_price_bull', 'show_small_cap', 'show_news_flow', 'show_value_stock']:
-                    if key in st.session_state:
-                        del st.session_state[key]
+                current_page = navigate_to("profit_growth")
 
             if st.button("低估值策略", width='stretch', key="nav_value_stock", help="低PE+低PB+高股息+低负债 价值投资筛选"):
-                st.session_state.show_value_stock = True
-                for key in ['show_history', 'show_monitor', 'show_config', 'show_sector_strategy',
-                           'show_longhubang', 'show_portfolio', 'show_main_force', 'show_low_price_bull', 'show_small_cap', 'show_profit_growth', 'show_news_flow', 'show_macro_cycle']:
-                    if key in st.session_state:
-                        del st.session_state[key]
+                current_page = navigate_to("value_stock")
 
-        #  策略分析
-        with st.expander("策略分析", expanded=False):
+        with st.expander("策略分析", expanded=current_page in {"sector_strategy", "longhubang", "news_flow", "macro_cycle"}):
             st.markdown("**AI驱动的板块和龙虎榜策略**")
 
             if st.button("智策板块", width='stretch', key="nav_sector_strategy", help="AI板块策略分析"):
-                st.session_state.show_sector_strategy = True
-                for key in ['show_history', 'show_monitor', 'show_config', 'show_main_force',
-                           'show_longhubang', 'show_portfolio', 'show_smart_monitor', 'show_low_price_bull', 'show_news_flow']:
-                    if key in st.session_state:
-                        del st.session_state[key]
+                current_page = navigate_to("sector_strategy")
 
             if st.button("智瞰龙虎", width='stretch', key="nav_longhubang", help="龙虎榜深度分析"):
-                st.session_state.show_longhubang = True
-                for key in ['show_history', 'show_monitor', 'show_config', 'show_main_force',
-                           'show_sector_strategy', 'show_portfolio', 'show_smart_monitor', 'show_low_price_bull', 'show_news_flow']:
-                    if key in st.session_state:
-                        del st.session_state[key]
-            
+                current_page = navigate_to("longhubang")
+
             if st.button("新闻流量", width='stretch', key="nav_news_flow", help="新闻流量监测与短线指导"):
-                st.session_state.show_news_flow = True
-                for key in ['show_history', 'show_monitor', 'show_config', 'show_main_force',
-                           'show_sector_strategy', 'show_portfolio', 'show_smart_monitor', 'show_low_price_bull', 'show_longhubang', 'show_macro_cycle']:
-                    if key in st.session_state:
-                        del st.session_state[key]
+                current_page = navigate_to("news_flow")
 
             if st.button("宏观周期", width='stretch', key="nav_macro_cycle", help="康波周期 × 美林投资时钟 × 政策分析"):
-                st.session_state.show_macro_cycle = True
-                for key in ['show_history', 'show_monitor', 'show_config', 'show_main_force',
-                           'show_sector_strategy', 'show_portfolio', 'show_smart_monitor', 'show_low_price_bull', 'show_longhubang', 'show_news_flow']:
-                    if key in st.session_state:
-                        del st.session_state[key]
+                current_page = navigate_to("macro_cycle")
 
-        #  投资管理
-        with st.expander("投资管理", expanded=False):
+        with st.expander("投资管理", expanded=current_page in {"portfolio", "smart_monitor", "monitor"}):
             st.markdown("**持仓跟踪与实时监测**")
 
             if st.button("持仓分析", width='stretch', key="nav_portfolio", help="投资组合分析与定时跟踪"):
-                st.session_state.show_portfolio = True
-                for key in ['show_history', 'show_monitor', 'show_config', 'show_main_force',
-                           'show_sector_strategy', 'show_longhubang', 'show_smart_monitor', 'show_low_price_bull', 'show_news_flow']:
-                    if key in st.session_state:
-                        del st.session_state[key]
+                current_page = navigate_to("portfolio")
 
             if st.button("AI盯盘", width='stretch', key="nav_smart_monitor", help="AI模型自动盯盘决策交易（支持A股T+1）"):
-                st.session_state.show_smart_monitor = True
-                for key in ['show_history', 'show_monitor', 'show_config', 'show_main_force',
-                           'show_sector_strategy', 'show_longhubang', 'show_portfolio', 'show_low_price_bull', 'show_news_flow']:
-                    if key in st.session_state:
-                        del st.session_state[key]
+                current_page = navigate_to("smart_monitor")
 
             if st.button("实时监测", width='stretch', key="nav_monitor", help="价格监控与预警提醒"):
-                st.session_state.show_monitor = True
-                for key in ['show_history', 'show_main_force', 'show_longhubang', 'show_portfolio',
-                           'show_config', 'show_sector_strategy', 'show_smart_monitor', 'show_low_price_bull', 'show_news_flow']:
-                    if key in st.session_state:
-                        del st.session_state[key]
+                current_page = navigate_to("monitor")
 
         st.markdown("---")
 
-        #  历史记录
         if st.button("历史记录", width='stretch', key="nav_history", help="查看历史分析记录"):
-            st.session_state.show_history = True
-            for key in ['show_monitor', 'show_longhubang', 'show_portfolio', 'show_config',
-                       'show_main_force', 'show_sector_strategy', 'show_low_price_bull', 'show_news_flow']:
-                if key in st.session_state:
-                    del st.session_state[key]
+            current_page = navigate_to("history")
 
-        #  环境配置
         if st.button("环境配置", width='stretch', key="nav_config", help="系统设置与API配置"):
-            st.session_state.show_config = True
-            for key in ['show_history', 'show_monitor', 'show_main_force', 'show_sector_strategy',
-                       'show_longhubang', 'show_portfolio', 'show_low_price_bull', 'show_news_flow']:
-                if key in st.session_state:
-                    del st.session_state[key]
+            current_page = navigate_to("config")
 
         st.markdown("---")
 
@@ -266,85 +238,72 @@ def main():
             5. 情绪数据(ARBR) → 6. 新闻(实际来源)
             7. AI分析 → 8. 团队讨论 → 9. 决策
             """)
-            
-    # 检查是否显示历史记录
-    if 'show_history' in st.session_state and st.session_state.show_history:
+
+    render_mobile_bottom_nav(current_page)
+
+    if current_page == "history":
         display_history_records()
         return
 
-    # 检查是否显示监测面板
-    if 'show_monitor' in st.session_state and st.session_state.show_monitor:
+    if current_page == "monitor":
         display_monitor_manager()
         return
 
-    # 检查是否显示主力选股
-    if 'show_main_force' in st.session_state and st.session_state.show_main_force:
+    if current_page == "main_force":
         display_main_force_selector()
         return
-    
-    # 检查是否显示低价擒牛
-    if 'show_low_price_bull' in st.session_state and st.session_state.show_low_price_bull:
+
+    if current_page == "low_price_bull":
         from low_price_bull_ui import display_low_price_bull
         display_low_price_bull()
         return
-    
-    # 检查是否显示小市值策略
-    if 'show_small_cap' in st.session_state and st.session_state.show_small_cap:
+
+    if current_page == "small_cap":
         from small_cap_ui import display_small_cap
         display_small_cap()
         return
-    
-    # 检查是否显示净利增长策略
-    if 'show_profit_growth' in st.session_state and st.session_state.show_profit_growth:
+
+    if current_page == "profit_growth":
         from profit_growth_ui import display_profit_growth
         display_profit_growth()
         return
 
-    # 检查是否显示低估值策略
-    if 'show_value_stock' in st.session_state and st.session_state.show_value_stock:
+    if current_page == "value_stock":
         from value_stock_ui import display_value_stock
         display_value_stock()
         return
 
-    # 检查是否显示智策板块
-    if 'show_sector_strategy' in st.session_state and st.session_state.show_sector_strategy:
+    if current_page == "sector_strategy":
         display_sector_strategy()
         return
 
-    # 检查是否显示智瞰龙虎
-    if 'show_longhubang' in st.session_state and st.session_state.show_longhubang:
+    if current_page == "longhubang":
         display_longhubang()
         return
 
-    # 检查是否显示AI盯盘
-    if 'show_smart_monitor' in st.session_state and st.session_state.show_smart_monitor:
+    if current_page == "smart_monitor":
         smart_monitor_ui()
         return
 
-    # 检查是否显示持仓分析
-    if 'show_portfolio' in st.session_state and st.session_state.show_portfolio:
+    if current_page == "portfolio":
         from portfolio_ui import display_portfolio_manager
         display_portfolio_manager()
         return
 
-    # 检查是否显示新闻流量监测
-    if 'show_news_flow' in st.session_state and st.session_state.show_news_flow:
+    if current_page == "news_flow":
         display_news_flow_monitor()
         return
 
-    # 检查是否显示宏观周期分析
-    if 'show_macro_cycle' in st.session_state and st.session_state.show_macro_cycle:
+    if current_page == "macro_cycle":
         from macro_cycle_ui import display_macro_cycle
         display_macro_cycle()
         return
-    
-    # 检查是否显示环境配置
-    if 'show_config' in st.session_state and st.session_state.show_config:
+
+    if current_page == "config":
         display_config_manager()
         return
 
     # 主界面
-    # 添加单个/批量分析切换
     col_mode1, col_mode2 = st.columns([1, 3])
     with col_mode1:
         analysis_mode = st.radio(
@@ -1665,11 +1624,8 @@ def display_add_to_monitor_dialog(record):
                             del st.session_state.add_to_monitor_id
                         if 'viewing_record_id' in st.session_state:
                             del st.session_state.viewing_record_id
-                        if 'show_history' in st.session_state:
-                            del st.session_state.show_history
-
                         # 设置跳转到监测页面
-                        st.session_state.show_monitor = True
+                        navigate_to("monitor")
                         st.session_state.monitor_jump_highlight = record['symbol']  # 标记要高亮显示的股票
 
                         time.sleep(1.5)

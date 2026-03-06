@@ -239,6 +239,14 @@ footer {{
     backdrop-filter: blur(6px);
 }}
 
+.mobile-bottom-nav {{
+    display: none;
+}}
+
+.mobile-nav-item {{
+    text-decoration: none;
+}}
+
 .site-filing a {{
     color: var(--tra-muted);
     text-decoration: none;
@@ -254,7 +262,7 @@ footer {{
         padding-top: 0.8rem;
         padding-left: 0.7rem;
         padding-right: 0.7rem;
-        padding-bottom: 1.4rem;
+        padding-bottom: calc(8.4rem + env(safe-area-inset-bottom));
     }}
 
     .nav-title {{
@@ -284,6 +292,74 @@ footer {{
     .stDateInput,
     .stNumberInput {{
         width: 100% !important;
+    }}
+
+    .stButton > button,
+    .stDownloadButton > button {{
+        min-height: 44px;
+        border-radius: 12px;
+    }}
+
+    [data-testid="stExpander"] summary {{
+        min-height: 44px;
+        display: flex;
+        align-items: center;
+    }}
+
+    .mobile-bottom-nav {{
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        z-index: 1101;
+        display: flex;
+        justify-content: space-around;
+        align-items: center;
+        gap: 0.25rem;
+        padding: 0.35rem 0.4rem calc(0.35rem + env(safe-area-inset-bottom));
+        background: rgba(11, 18, 32, 0.98);
+        border-top: 1px solid var(--tra-border);
+        backdrop-filter: blur(10px);
+    }}
+
+    .mobile-nav-item {{
+        flex: 1 1 0;
+        min-height: 48px;
+        border: 1px solid transparent;
+        border-radius: 10px;
+        padding: 0.32rem 0.25rem;
+        text-align: center;
+        color: var(--tra-muted);
+        background: transparent;
+        transition: all 160ms ease;
+    }}
+
+    .mobile-nav-item.active {{
+        color: var(--tra-text);
+        border-color: rgba(34, 211, 238, 0.5);
+        background: rgba(34, 211, 238, 0.12);
+    }}
+
+    .mobile-nav-item:active {{
+        transform: translateY(1px);
+    }}
+
+    .mobile-nav-icon {{
+        display: block;
+        line-height: 1.05;
+        font-size: 0.95rem;
+    }}
+
+    .mobile-nav-label {{
+        display: block;
+        margin-top: 0.1rem;
+        font-size: 0.72rem;
+        line-height: 1.05;
+    }}
+
+    .site-filing {{
+        bottom: calc(3.85rem + env(safe-area-inset-bottom));
+        z-index: 1100;
     }}
 
     .stTabs [data-baseweb="tab-list"] {{

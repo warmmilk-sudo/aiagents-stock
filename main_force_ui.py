@@ -33,7 +33,7 @@ def display_main_force_selector():
         st.markdown("## 主力选股 - 智能筛选优质标的")
     with col_history:
         st.write("")  # 占位
-        if st.button("批量分析历史", width='content'):
+        if st.button("批量分析历史", width='stretch'):
             st.session_state.main_force_view_history = True
             st.rerun()
 
@@ -133,7 +133,7 @@ def display_main_force_selector():
     st.markdown("---")
 
     # 开始分析按钮（使用.env中配置的默认模型）
-    if st.button("开始主力选股", type="primary", width='content'):
+    if st.button("开始主力选股", type="primary", width='stretch'):
 
         with st.spinner("正在获取数据并分析，这可能需要几分钟..."):
 
@@ -276,7 +276,7 @@ def display_analysis_results(result: dict, analyzer):
 
         # 显示DataFrame
         display_df = analyzer.raw_stocks[final_cols].copy()
-        st.dataframe(display_df, width='content', height=400)
+        st.dataframe(display_df, width='stretch', height=400)
 
         # 显示统计
         st.caption(f"共 {len(display_df)} 只候选股票，显示 {len(final_cols)} 个字段")
@@ -308,7 +308,7 @@ def display_analysis_results(result: dict, analyzer):
 
         with col_batch3:
             st.write("")  # 占位
-            if st.button("开始批量分析", type="primary", width='content'):
+            if st.button("开始批量分析", type="primary", width='stretch'):
                 # 准备数据：按主力资金净流入排序
                 df_sorted = analyzer.raw_stocks.copy()
 
@@ -496,7 +496,7 @@ def run_main_force_batch_analysis():
         # 返回按钮
         col_back, col_clear = st.columns(2)
         with col_back:
-            if st.button("返回主力选股", width='content'):
+            if st.button("返回主力选股", width='stretch'):
                 # 清除所有批量分析相关状态
                 if 'main_force_batch_trigger' in st.session_state:
                     del st.session_state.main_force_batch_trigger
@@ -507,7 +507,7 @@ def run_main_force_batch_analysis():
                 st.rerun()
 
         with col_clear:
-            if st.button("重新分析", width='content'):
+            if st.button("重新分析", width='stretch'):
                 # 清除结果，保留触发标志和代码
                 if 'main_force_batch_results' in st.session_state:
                     del st.session_state.main_force_batch_results
@@ -568,11 +568,11 @@ def run_main_force_batch_analysis():
 
     start_analysis = False
     with col_confirm:
-        if st.button("确认开始分析", type="primary", width='content'):
+        if st.button("确认开始分析", type="primary", width='stretch'):
             start_analysis = True
 
     with col_cancel:
-        if st.button("取消", type="secondary", width='content'):
+        if st.button("取消", type="secondary", width='stretch'):
             # 清除所有批量分析相关状态
             if 'main_force_batch_trigger' in st.session_state:
                 del st.session_state.main_force_batch_trigger
@@ -862,7 +862,7 @@ def display_main_force_batch_results(batch_results):
             if col in df_display.columns:
                 df_display[col] = df_display[col].astype(str)
 
-        st.dataframe(df_display, width='content', height=400)
+        st.dataframe(df_display, width='stretch', height=400)
 
         # 详细分析结果（可展开）
         st.markdown("---")
@@ -974,5 +974,5 @@ def display_main_force_batch_results(batch_results):
             })
 
         df_failed = pd.DataFrame(failed_data)
-        st.dataframe(df_failed, width='content')
+        st.dataframe(df_failed, width='stretch')
 
