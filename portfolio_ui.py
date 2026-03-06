@@ -15,6 +15,14 @@ from portfolio_manager import portfolio_manager
 from portfolio_scheduler import portfolio_scheduler
 
 
+def format_price(value) -> str:
+    """统一价格显示精度为三位小数。"""
+    try:
+        return f"¥{float(value):.3f}"
+    except (TypeError, ValueError):
+        return str(value)
+
+
 def display_portfolio_manager(lightweight_model=None, reasoning_model=None):
     """显示持仓管理主界面"""
     
@@ -103,7 +111,7 @@ def display_stock_card(stock: Dict):
         
         with col2:
             if cost_price and quantity:
-                st.write(f"成本: ¥{cost_price:.2f}")
+                st.write(f"成本: {format_price(cost_price)}")
                 st.caption(f"数量: {quantity}股")
             else:
                 st.caption("未设置持仓")
@@ -138,7 +146,8 @@ def display_stock_card(stock: Dict):
                         "成本价", 
                         value=cost_price if cost_price else 0.0, 
                         min_value=0.0, 
-                        step=0.01
+                        step=0.001,
+                        format="%.3f"
                     )
                     new_quantity = st.number_input(
                         "持仓数量", 
@@ -183,20 +192,17 @@ def display_add_stock_form():
         with col1:
             code = st.text_input(
                 "股票代码*", 
-                placeholder="例如: 600519.SH 或 000001.SZ",
-                help="必填，格式：代码.市场（SH/SZ/HK/US）"
+                placeholder="例如: 600519、000001.SZ、00700.HK、AAPL",
+                help="必填，支持自动识别股票名称，兼容 SH/SZ/HK/US 后缀格式"
             )
-            name = st.text_input(
-                "股票名称", 
-                placeholder="例如: 贵州茅台",
-                help="可选，留空将自动获取"
-            )
+            st.caption("股票名称会在保存时根据股票代码自动识别。")
         
         with col2:
             cost_price = st.number_input(
                 "成本价", 
                 min_value=0.0, 
-                step=0.01,
+                step=0.001,
+                format="%.3f",
                 help="可选，用于计算收益"
             )
             quantity = st.number_input(
@@ -214,15 +220,18 @@ def display_add_stock_form():
                 st.error("请输入股票代码")
             else:
                 try:
-                    portfolio_manager.add_stock(
+                    success, msg, _ = portfolio_manager.add_stock(
                         code=code.strip().upper(),
-                        name=name.strip() if name else None,
+                        name=None,
                         cost_price=cost_price if cost_price > 0 else None,
                         quantity=quantity if quantity > 0 else None,
                         note=note.strip() if note else None,
                         auto_monitor=auto_monitor
                     )
-                    st.success(f"✅ 已添加 {code} 到持仓列表")
+                    if not success:
+                        st.error(msg)
+                        return
+                    st.success(msg)
                     time.sleep(0.5)
                     st.rerun()
                 except Exception as e:
@@ -750,21 +759,21 @@ def display_history_record(record: Dict):
         with col1:
             st.markdown("**价格信息**")
             if current_price:
-                st.write(f"当时价格: ¥{current_price:.2f}")
+                st.write(f"当时价格: {format_price(current_price)}")
             if target_price:
-                st.write(f"目标价: ¥{target_price:.2f}")
-        
+                st.write(f"目标价: {format_price(target_price)}")
+
         with col2:
             st.markdown("**进场区间**")
             if entry_min and entry_max:
-                st.write(f"¥{entry_min:.2f} ~ ¥{entry_max:.2f}")
-        
+                st.write(f"{format_price(entry_min)} ~ {format_price(entry_max)}")
+
         with col3:
             st.markdown("**风控位置**")
             if take_profit:
-                st.write(f"止盈: ¥{take_profit:.2f}")
+                st.write(f"止盈: {format_price(take_profit)}")
             if stop_loss:
-                st.write(f"止损: ¥{stop_loss:.2f}")
+                st.write(f"止损: {format_price(stop_loss)}")
         
         if summary:
             st.markdown("**分析摘要**")

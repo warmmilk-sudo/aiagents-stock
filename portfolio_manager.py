@@ -5,6 +5,7 @@
 """
 
 import time
+import re
 from typing import List, Dict, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
@@ -28,10 +29,110 @@ class PortfolioManager:
         self.lightweight_model = lightweight_model
         self.reasoning_model = reasoning_model
         self.db = portfolio_db
+
+    def _normalize_stock_code(self, code: str) -> str:
+        """标准化股票代码，兼容 .SH/.SZ/.HK 等输入格式。"""
+        normalized = (code or "").strip().upper()
+        if not normalized:
+            return ""
+
+        normalized = normalized.replace(" ", "")
+
+        if "." in normalized:
+            base, suffix = normalized.rsplit(".", 1)
+            if suffix in {"SH", "SZ", "BJ"} and base.isdigit() and len(base) == 6:
+                return base
+            if suffix == "HK" and base.isdigit():
+                return base.zfill(5)
+            if suffix in {"US", "NYSE", "NASDAQ", "AMEX"}:
+                return base
+
+        if normalized.startswith("HK") and normalized[2:].isdigit():
+            return normalized[2:].zfill(5)
+
+        if normalized.startswith("US:"):
+            return normalized[3:]
+
+        if normalized.isdigit() and 1 <= len(normalized) <= 5:
+            return normalized.zfill(5)
+
+        return normalized
+
+    def _is_valid_stock_name(self, name: str, code: str) -> bool:
+        """过滤数据源回退值，避免将占位名称写入持仓。"""
+        if not name:
+            return False
+
+        invalid_names = {
+            "",
+            "N/A",
+            "未知",
+            f"股票{code}",
+            f"港股{code}",
+            f"美股{code}",
+        }
+        return name not in invalid_names and name.upper() != code.upper()
+
+    def _is_a_share(self, code: str) -> bool:
+        """判断是否为 A 股代码。"""
+        return code.isdigit() and len(code) == 6
+
+    def _is_hk_stock(self, code: str) -> bool:
+        """判断是否为港股代码。"""
+        return code.isdigit() and 1 <= len(code) <= 5
+
+    def _resolve_stock_name(self, code: str) -> Optional[str]:
+        """根据股票代码自动识别股票名称。"""
+        normalized_code = self._normalize_stock_code(code)
+        if not normalized_code:
+            return None
+
+        try:
+            if self._is_a_share(normalized_code):
+                from data_source_manager import data_source_manager
+
+                stock_info = data_source_manager.get_stock_basic_info(normalized_code)
+                name = str(stock_info.get("name") or "").strip()
+                if self._is_valid_stock_name(name, normalized_code):
+                    return name
+            elif self._is_hk_stock(normalized_code):
+                try:
+                    import akshare as ak
+
+                    realtime_df = ak.stock_hk_spot_em()
+                    if realtime_df is not None and not realtime_df.empty:
+                        matched = realtime_df[realtime_df["代码"] == normalized_code]
+                        if not matched.empty:
+                            name = str(matched.iloc[0].get("名称") or "").strip()
+                            if self._is_valid_stock_name(name, normalized_code):
+                                return name
+                except Exception as e:
+                    print(f"[WARN] 港股名称识别 Akshare 失败 ({normalized_code}): {e}")
+
+                import yfinance as yf
+
+                yahoo_symbol = f"{int(normalized_code):04d}.HK"
+                ticker = yf.Ticker(yahoo_symbol)
+                ticker_info = ticker.info or {}
+                name = str(ticker_info.get("longName") or ticker_info.get("shortName") or "").strip()
+                if self._is_valid_stock_name(name, normalized_code):
+                    return name
+            else:
+                import yfinance as yf
+
+                ticker = yf.Ticker(normalized_code)
+                ticker_info = ticker.info or {}
+                name = str(ticker_info.get("longName") or ticker_info.get("shortName") or "").strip()
+                if self._is_valid_stock_name(name, normalized_code):
+                    return name
+        except Exception as e:
+            print(f"[WARN] 自动识别股票名称失败 ({normalized_code}): {e}")
+
+        return None
     
     # ==================== 持仓股票管理 ====================
     
-    def add_stock(self, code: str, name: str, cost_price: Optional[float] = None,
+    def add_stock(self, code: str, name: Optional[str], cost_price: Optional[float] = None,
                   quantity: Optional[int] = None, note: str = "", 
                   auto_monitor: bool = True) -> Tuple[bool, str, Optional[int]]:
         """
@@ -49,10 +150,16 @@ class PortfolioManager:
             (成功标志, 消息, 股票ID)
         """
         try:
-            # 验证股票代码格式
-            code = code.strip().upper()
+            # 验证并标准化股票代码
+            code = self._normalize_stock_code(code)
             if not code:
                 return False, "股票代码不能为空", None
+
+            provided_name = (name or "").strip()
+            resolved_name = self._resolve_stock_name(code)
+            final_name = resolved_name or provided_name
+            if not final_name:
+                return False, "无法根据股票代码自动识别股票名称，请检查代码格式后重试", None
             
             # 检查股票代码是否已存在
             existing = self.db.get_stock_by_code(code)
@@ -60,8 +167,8 @@ class PortfolioManager:
                 return False, f"股票代码 {code} 已存在", None
             
             # 添加到数据库
-            stock_id = self.db.add_stock(code, name, cost_price, quantity, note, auto_monitor)
-            return True, f"添加持仓股票成功: {code} {name}", stock_id
+            stock_id = self.db.add_stock(code, final_name, cost_price, quantity, note, auto_monitor)
+            return True, f"添加持仓股票成功: {code} {final_name}", stock_id
             
         except Exception as e:
             return False, f"添加失败: {str(e)}", None
@@ -139,6 +246,7 @@ class PortfolioManager:
         Returns:
             分析结果字典
         """
+        stock_code = self._normalize_stock_code(stock_code)
         print(f"\n{'='*60}")
         print(f"开始分析股票: {stock_code}")
         print(f"{'='*60}\n")
@@ -502,7 +610,6 @@ class PortfolioManager:
             stop_loss_str = final_decision.get("stop_loss", "")
             
             # 解析目标价格
-            import re
             target_price = None
             if target_price_str:
                 try:
