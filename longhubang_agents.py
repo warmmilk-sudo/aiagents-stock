@@ -7,6 +7,7 @@ from llm_client import LLMClient
 from typing import Dict, Any, List
 import time
 import config
+from ai_model_router import ModelTier
 
 
 class LonghubangAgents:
@@ -14,7 +15,7 @@ class LonghubangAgents:
     
     def __init__(self, model=None):
         self.model = model or config.DEFAULT_MODEL_NAME
-        self.deepseek_client = LLMClient(model=self.model)
+        self.ai_model_client = LLMClient(model=self.model)
         print(f"[智瞰龙虎] AI分析师系统初始化 (模型: {self.model})")
     
     def youzi_behavior_analyst(self, longhubang_data: str, summary: Dict) -> Dict[str, Any]:
@@ -103,7 +104,9 @@ class LonghubangAgents:
             {"role": "user", "content": prompt}
         ]
         
-        analysis = self.deepseek_client.call_api(messages, max_tokens=4000)
+        analysis = self.ai_model_client.call_api(
+            messages, max_tokens=4000, model_tier=ModelTier.LONG_CONTEXT
+        )
         
         print("  ✓ 游资行为分析师分析完成")
         
@@ -204,7 +207,9 @@ class LonghubangAgents:
             {"role": "user", "content": prompt}
         ]
         
-        analysis = self.deepseek_client.call_api(messages, max_tokens=4000)
+        analysis = self.ai_model_client.call_api(
+            messages, max_tokens=4000, model_tier=ModelTier.LONG_CONTEXT
+        )
         
         print("  ✓ 个股潜力分析师分析完成")
         
@@ -304,7 +309,9 @@ class LonghubangAgents:
             {"role": "user", "content": prompt}
         ]
         
-        analysis = self.deepseek_client.call_api(messages, max_tokens=4000)
+        analysis = self.ai_model_client.call_api(
+            messages, max_tokens=4000, model_tier=ModelTier.LONG_CONTEXT
+        )
         
         print("  ✓ 题材追踪分析师分析完成")
         
@@ -399,7 +406,9 @@ class LonghubangAgents:
             {"role": "user", "content": prompt}
         ]
         
-        analysis = self.deepseek_client.call_api(messages, max_tokens=4000)
+        analysis = self.ai_model_client.call_api(
+            messages, max_tokens=4000, model_tier=ModelTier.LONG_CONTEXT
+        )
         
         print("  ✓ 风险控制专家分析完成")
         
@@ -494,7 +503,9 @@ class LonghubangAgents:
             {"role": "user", "content": prompt}
         ]
         
-        analysis = self.deepseek_client.call_api(messages, max_tokens=5000)
+        analysis = self.ai_model_client.call_api(
+            messages, max_tokens=5000, model_tier=ModelTier.REASONING
+        )
         
         print("  ✓ 首席策略师分析完成")
         
@@ -548,4 +559,5 @@ if __name__ == "__main__":
     result = agents.youzi_behavior_analyst(test_data, test_summary)
     print(f"分析师: {result['agent_name']}")
     print(f"分析内容长度: {len(result['analysis'])} 字符")
+
 

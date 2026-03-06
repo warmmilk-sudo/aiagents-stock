@@ -792,7 +792,7 @@ def generate_markdown_report(result_data: dict) -> str:
 - **涉及股票**: {result_data.get('data_info', {}).get('total_stocks', 0)} 只
 - **涉及游资**: {result_data.get('data_info', {}).get('total_youzi', 0)} 个
 - **AI分析师**: 5位专业分析师团队
-- **分析模型**: DeepSeek AI Multi-Agent System
+- **分析模型**: AI模型 Multi-Agent System
 
 >  本报告由AI系统基于龙虎榜公开数据自动生成，仅供参考，不构成投资建议。市场有风险，投资需谨慎。
 

@@ -14,15 +14,33 @@ class ConfigManager:
     def __init__(self, env_file: str = ".env"):
         self.env_file = Path(env_file)
         self.default_config = {
-            "DEEPSEEK_API_KEY": {
+            "AI_MODEL_API_KEY": {
                 "value": "",
-                "description": "DeepSeek API密钥",
+                "description": "AI模型 API密钥",
                 "required": True,
                 "type": "password"
             },
-            "DEEPSEEK_BASE_URL": {
+            "AI_MODEL_BASE_URL": {
                 "value": "https://api.deepseek.com/v1",
-                "description": "DeepSeek API地址",
+                "description": "AI模型 API地址",
+                "required": False,
+                "type": "text"
+            },
+            "AI_MODEL_LIGHTWEIGHT_NAME": {
+                "value": "deepseek-chat",
+                "description": "轻量模型名称（快筛）",
+                "required": False,
+                "type": "text"
+            },
+            "AI_MODEL_LONG_CONTEXT_NAME": {
+                "value": "qwen-long",
+                "description": "长上下文模型名称（校验/检索）",
+                "required": False,
+                "type": "text"
+            },
+            "AI_MODEL_REASONING_NAME": {
+                "value": "deepseek-reasoner",
+                "description": "推理模型名称（辩论/决策）",
                 "required": False,
                 "type": "text"
             },
@@ -222,10 +240,13 @@ class ConfigManager:
             lines.append("# 由系统自动生成和管理")
             lines.append("")
             
-            # DeepSeek配置
-            lines.append("# ========== DeepSeek API配置 ==========")
-            lines.append(f'DEEPSEEK_API_KEY="{config.get("DEEPSEEK_API_KEY", "")}"')
-            lines.append(f'DEEPSEEK_BASE_URL="{config.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")}"')
+            # AI模型配置
+            lines.append("# ========== AI模型 API配置 ==========")
+            lines.append(f'AI_MODEL_API_KEY="{config.get("AI_MODEL_API_KEY", "")}"')
+            lines.append(f'AI_MODEL_BASE_URL="{config.get("AI_MODEL_BASE_URL", "https://api.deepseek.com/v1")}"')
+            lines.append(f'AI_MODEL_LIGHTWEIGHT_NAME="{config.get("AI_MODEL_LIGHTWEIGHT_NAME", "deepseek-chat")}"')
+            lines.append(f'AI_MODEL_LONG_CONTEXT_NAME="{config.get("AI_MODEL_LONG_CONTEXT_NAME", "qwen-long")}"')
+            lines.append(f'AI_MODEL_REASONING_NAME="{config.get("AI_MODEL_REASONING_NAME", "deepseek-reasoner")}"')
             lines.append(f'DEFAULT_MODEL_NAME="{config.get("DEFAULT_MODEL_NAME", "deepseek-chat")}"')
             lines.append(f'ADMIN_PASSWORD="{config.get("ADMIN_PASSWORD", "")}"')
             lines.append(f'ADMIN_PASSWORD_HASH="{config.get("ADMIN_PASSWORD_HASH", "")}"')
@@ -301,10 +322,10 @@ class ConfigManager:
                 return False, f"必填项 {info['description']} 不能为空"
         
         # 验证API Key格式（简单检查长度）
-        if config.get("DEEPSEEK_API_KEY"):
-            api_key = config.get("DEEPSEEK_API_KEY", "")
+        if config.get("AI_MODEL_API_KEY"):
+            api_key = config.get("AI_MODEL_API_KEY", "")
             if len(api_key) < 20:
-                return False, "DeepSeek API Key格式不正确（长度太短）"
+                return False, "AI模型 API Key格式不正确（长度太短）"
         
         return True, "配置验证通过"
     

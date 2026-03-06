@@ -212,7 +212,7 @@ class NewsFlowEngine:
                 if not self.agents:
                     logger.warning("⚠️ AI代理模块未初始化")
                 elif not self.agents.is_available():
-                    logger.warning("⚠️ DeepSeek API不可用，请检查API密钥配置")
+                    logger.warning("⚠️ AI模型 API不可用，请检查API密钥配置")
                 else:
                     logger.info("🤖 运行AI分析...")
                     
@@ -229,7 +229,7 @@ class NewsFlowEngine:
                         flow_type=model_data.get('flow_type', {}).get('flow_type', '未知') if model_data else '未知',
                     )
                     
-                    # 多板块深度分析（多次调用DeepSeek）
+                    # 多板块深度分析（多次调用AI模型）
                     logger.info("🔍 开始多板块深度分析...")
                     multi_sector_analysis = self.agents.run_multi_sector_analysis(
                         quick_result['hot_topics'],

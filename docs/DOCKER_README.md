@@ -30,8 +30,8 @@ sudo sh get-docker.sh
 # 复制配置模板
 cp .env.template .env
 
-# 编辑 .env 文件，填入你的 DeepSeek API Key
-# DEEPSEEK_API_KEY=sk-your-actual-api-key-here
+# 编辑 .env 文件，填入你的 AI模型 API Key
+# AI_MODEL_API_KEY=sk-your-actual-api-key-here
 ```
 
 ### 3️⃣ 启动服务
@@ -248,4 +248,5 @@ server {
 ---
 
 **Docker让部署更简单！祝您使用愉快！** 🚀🐳
+
 

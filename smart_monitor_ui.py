@@ -19,7 +19,7 @@ def smart_monitor_ui():
     configure_plotly_template()
     
     st.title("AI盯盘 - AI决策交易系统")
-    st.caption("参照AlphaArena项目，基于DeepSeek AI的A股自动化交易系统")
+    st.caption("参照AlphaArena项目，基于AI模型的A股自动化交易系统")
     
     # 使用说明
     with st.expander("快速使用指南", expanded=False):
@@ -28,7 +28,7 @@ def smart_monitor_ui():
         
         **第一步：环境配置**
         1. 点击左侧菜单" 环境配置"
-        2. 填写 DeepSeek API Key（必需）
+        2. 填写 AI模型 API Key（必需）
         3. 配置 miniQMT 账户（可选，用于实盘交易）
         4. 配置通知方式（可选，邮件/Webhook）
         
@@ -102,7 +102,7 @@ def smart_monitor_ui():
         
         ### 常见问题
         
-        **Q: 提示"DeepSeek API调用失败"？**
+        **Q: 提示"AI模型调用失败"？**
         - 检查API Key是否正确
         - 确认API账户余额充足
         - 检查网络连接
@@ -671,7 +671,7 @@ def render_settings():
     ### 配置说明
     
     智能盯盘使用主程序的统一配置系统，包括：
-    - **DeepSeek API** - AI决策引擎
+    - **AI模型 API** - AI决策引擎
     - **MiniQMT** - 量化交易接口
     - **邮件通知** - SMTP配置
     - **Webhook** - 钉钉/飞书通知
@@ -687,8 +687,8 @@ def render_settings():
     col1, col2 = st.columns(2)
     
     with col1:
-        st.markdown("**DeepSeek API**")
-        api_key = config.get('DEEPSEEK_API_KEY', '')
+        st.markdown("**AI模型 API**")
+        api_key = config.get('AI_MODEL_API_KEY', '')
         if api_key:
             st.success(f"已配置（{api_key[:8]}...）")
         else:

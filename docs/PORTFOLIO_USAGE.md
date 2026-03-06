@@ -20,7 +20,7 @@
 
 ```bash
 pip install schedule
-pip install openai  # DeepSeek API使用
+pip install openai  # AI模型 API使用
 ```
 
 ### 2. 访问功能
@@ -245,7 +245,7 @@ cp portfolio_stocks.db portfolio_stocks_backup_$(date +%Y%m%d).db
 ### Q1: 添加股票后为什么无法分析？
 
 **A:** 检查以下几点：
-1. DeepSeek API Key是否配置正确
+1. AI模型 API Key是否配置正确
 2. 股票代码格式是否正确（A股需要加`.SH`或`.SZ`后缀）
 3. 网络连接是否正常
 4. API额度是否充足
@@ -395,4 +395,5 @@ logging.basicConfig(level=logging.DEBUG)
 持仓定时分析功能旨在帮助您更高效地管理投资组合，做出明智的投资决策。
 
 **祝您投资顺利！📈**
+
 

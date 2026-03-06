@@ -54,7 +54,7 @@ def main():
     # 顶部标题栏
     render_page_header(
         "复合多AI智能体股票团队分析系统",
-        "基于DeepSeek的专业量化投资分析平台 | Multi-Agent Stock Analysis System",
+        "基于AI模型的专业量化投资分析平台 | Multi-Agent Stock Analysis System",
     )
 
     # 侧边栏
@@ -154,7 +154,7 @@ def main():
                     if key in st.session_state:
                         del st.session_state[key]
 
-            if st.button("AI盯盘", width='stretch', key="nav_smart_monitor", help="DeepSeek AI自动盯盘决策交易（支持A股T+1）"):
+            if st.button("AI盯盘", width='stretch', key="nav_smart_monitor", help="AI模型自动盯盘决策交易（支持A股T+1）"):
                 st.session_state.show_smart_monitor = True
                 for key in ['show_history', 'show_monitor', 'show_config', 'show_main_force',
                            'show_sector_strategy', 'show_longhubang', 'show_portfolio', 'show_low_price_bull', 'show_news_flow']:
@@ -463,7 +463,7 @@ def main():
 
     if analyze_button and stock_input:
         if not api_key_status:
-            st.error("请先配置 DeepSeek API Key")
+            st.error("请先配置 AI模型 API Key")
             return
 
         # 检查是否至少选择了一位分析师
@@ -568,7 +568,7 @@ def check_api_key():
     """检查API密钥是否配置"""
     try:
         import config
-        return bool(config.DEEPSEEK_API_KEY and config.DEEPSEEK_API_KEY.strip())
+        return bool(config.AI_MODEL_API_KEY and config.AI_MODEL_API_KEY.strip())
     except Exception:
         return False
 
@@ -1437,7 +1437,7 @@ def show_example_interface():
         - 美股：`AAPL`
         """
     )
-    st.caption("首次运行请先在 `.env` 配置 `DEEPSEEK_API_KEY`。投资有风险，结论仅供参考。")
+    st.caption("首次运行请先在 `.env` 配置 `AI_MODEL_API_KEY`。投资有风险，结论仅供参考。")
 
 def display_history_records():
     """显示历史分析记录"""

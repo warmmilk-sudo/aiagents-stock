@@ -435,7 +435,7 @@ class SectorStrategyScheduler:
         body_parts.append("智策板块策略分析报告")
         body_parts.append("="*60)
         body_parts.append(f"分析时间: {timestamp}")
-        body_parts.append(f"AI模型: DeepSeek Multi-Agent System")
+        body_parts.append(f"AI模型: AI模型 Multi-Agent System")
         body_parts.append("")
         
         # 1. 板块多空

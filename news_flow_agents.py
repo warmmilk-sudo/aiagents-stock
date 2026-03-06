@@ -1,6 +1,6 @@
 """
 新闻流量智能分析代理模块
-使用DeepSeek进行AI驱动的分析
+使用AI模型进行智能分析
 包含：板块影响分析、股票推荐、风险评估、投资建议
 """
 import json
@@ -8,6 +8,7 @@ import logging
 import time
 from datetime import datetime
 from typing import Dict, List, Optional
+from ai_model_router import ModelTier
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -25,22 +26,22 @@ class NewsFlowAgents:
         """
         import config
         self.model = model or config.DEFAULT_MODEL_NAME
-        self.deepseek_client = None
+        self.ai_model_client = None
         self._init_client()
     
     def _init_client(self):
-        """初始化DeepSeek客户端"""
+        """初始化AI模型客户端"""
         try:
             from llm_client import LLMClient
-            self.deepseek_client = LLMClient(model=self.model)
-            logger.info(f"✅ DeepSeek客户端初始化成功，模型: {self.model}")
+            self.ai_model_client = LLMClient(model=self.model)
+            logger.info(f"AI模型客户端初始化成功，模型: {self.model}")
         except Exception as e:
-            logger.error(f"❌ DeepSeek客户端初始化失败: {e}")
-            self.deepseek_client = None
+            logger.error(f"AI模型客户端初始化失败: {e}")
+            self.ai_model_client = None
     
     def is_available(self) -> bool:
         """检查AI是否可用"""
-        return self.deepseek_client is not None
+        return self.ai_model_client is not None
     
     def sector_impact_agent(self, hot_topics: List[Dict], 
                             stock_news: List[Dict],
@@ -130,7 +131,12 @@ class NewsFlowAgents:
                 {"role": "user", "content": prompt}
             ]
             
-            response = self.deepseek_client.call_api(messages, temperature=0.5, max_tokens=2000)
+            response = self.ai_model_client.call_api(
+                messages,
+                temperature=0.5,
+                max_tokens=2000,
+                model_tier=ModelTier.LIGHTWEIGHT
+            )
             
             # 解析JSON
             result = self._parse_json_response(response)
@@ -232,7 +238,12 @@ class NewsFlowAgents:
                 {"role": "user", "content": prompt}
             ]
             
-            response = self.deepseek_client.call_api(messages, temperature=0.6, max_tokens=2000)
+            response = self.ai_model_client.call_api(
+                messages,
+                temperature=0.6,
+                max_tokens=2000,
+                model_tier=ModelTier.LIGHTWEIGHT
+            )
             result = self._parse_json_response(response)
             
             if result:
@@ -312,7 +323,12 @@ class NewsFlowAgents:
                 {"role": "user", "content": prompt}
             ]
             
-            response = self.deepseek_client.call_api(messages, temperature=0.4, max_tokens=1500)
+            response = self.ai_model_client.call_api(
+                messages,
+                temperature=0.4,
+                max_tokens=1500,
+                model_tier=ModelTier.LIGHTWEIGHT
+            )
             result = self._parse_json_response(response)
             
             if result:
@@ -421,7 +437,12 @@ class NewsFlowAgents:
                 {"role": "user", "content": prompt}
             ]
             
-            response = self.deepseek_client.call_api(messages, temperature=0.5, max_tokens=2000)
+            response = self.ai_model_client.call_api(
+                messages,
+                temperature=0.5,
+                max_tokens=2000,
+                model_tier=ModelTier.REASONING
+            )
             result = self._parse_json_response(response)
             
             analysis_time = time.time() - start_time
@@ -526,7 +547,7 @@ class NewsFlowAgents:
         """
         深度分析单个板块
         
-        为每个热门板块单独调用DeepSeek进行深度分析
+        为每个热门板块单独调用AI模型进行深度分析
         """
         if not self.is_available():
             return {'success': False, 'error': 'AI不可用'}
@@ -593,7 +614,12 @@ class NewsFlowAgents:
                 {"role": "user", "content": prompt}
             ]
             
-            response = self.deepseek_client.call_api(messages, temperature=0.5, max_tokens=2000)
+            response = self.ai_model_client.call_api(
+                messages,
+                temperature=0.5,
+                max_tokens=2000,
+                model_tier=ModelTier.LONG_CONTEXT
+            )
             result = self._parse_json_response(response)
             
             if result:
@@ -612,7 +638,7 @@ class NewsFlowAgents:
         """
         多板块并行分析
         
-        对多个热门板块分别调用DeepSeek进行深度分析
+        对多个热门板块分别调用AI模型进行深度分析
         
         Args:
             hot_topics: 热门话题列表
@@ -995,3 +1021,4 @@ if __name__ == "__main__":
     sector_result = news_flow_agents.sector_impact_agent(hot_topics, stock_news, flow_data)
     print(f"受益板块: {[s.get('name', '') for s in sector_result.get('benefited_sectors', [])]}")
     print(f"是否降级: {sector_result.get('fallback', False)}")
+

@@ -4,11 +4,16 @@ from dotenv import load_dotenv
 # 加载环境变量（override=True 强制覆盖已存在的环境变量）
 load_dotenv(override=True)
 
-# DeepSeek API配置
-DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
-DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
+# AI模型 API配置
+AI_MODEL_API_KEY = os.getenv("AI_MODEL_API_KEY", "")
+AI_MODEL_BASE_URL = os.getenv("AI_MODEL_BASE_URL", "https://api.deepseek.com/v1")
 
-# 默认AI模型名称（支持任何OpenAI兼容的模型）
+# 分层模型名称配置（支持任何OpenAI兼容模型）
+AI_MODEL_LIGHTWEIGHT_NAME = os.getenv("AI_MODEL_LIGHTWEIGHT_NAME", "deepseek-chat")
+AI_MODEL_LONG_CONTEXT_NAME = os.getenv("AI_MODEL_LONG_CONTEXT_NAME", "qwen-long")
+AI_MODEL_REASONING_NAME = os.getenv("AI_MODEL_REASONING_NAME", "deepseek-reasoner")
+
+# 兜底模型名称（支持任何OpenAI兼容模型）
 DEFAULT_MODEL_NAME = os.getenv("DEFAULT_MODEL_NAME", "deepseek-chat")
 
 # 其他配置

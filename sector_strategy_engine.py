@@ -6,6 +6,7 @@
 from sector_strategy_agents import SectorStrategyAgents
 from sector_strategy_db import SectorStrategyDatabase
 from llm_client import LLMClient
+from ai_model_router import ModelTier
 from typing import Dict, Any
 import time
 import json
@@ -20,7 +21,7 @@ class SectorStrategyEngine:
     def __init__(self, model=None):
         self.model = model or config.DEFAULT_MODEL_NAME
         self.agents = SectorStrategyAgents(model=self.model)
-        self.deepseek_client = LLMClient(model=self.model)
+        self.ai_model_client = LLMClient(model=self.model)
         self.database = SectorStrategyDatabase()
         self.logger = logging.getLogger(__name__)
         if not self.logger.handlers:
@@ -273,7 +274,11 @@ class SectorStrategyEngine:
             {"role": "user", "content": prompt}
         ]
         
-        report = self.deepseek_client.call_api(messages, max_tokens=5000)
+        report = self.ai_model_client.call_api(
+            messages,
+            max_tokens=5000,
+            model_tier=ModelTier.REASONING
+        )
         
         print("  ✓ 综合研判完成")
         return report
@@ -399,7 +404,12 @@ class SectorStrategyEngine:
             {"role": "user", "content": prompt}
         ]
         
-        response = self.deepseek_client.call_api(messages, temperature=0.3, max_tokens=6000)
+        response = self.ai_model_client.call_api(
+            messages,
+            temperature=0.3,
+            max_tokens=6000,
+            model_tier=ModelTier.REASONING
+        )
         
         # 尝试解析JSON
         try:
@@ -605,4 +615,5 @@ if __name__ == "__main__":
     # 注意：这只是测试框架，实际运行需要真实数据和API key
     # results = engine.run_comprehensive_analysis(test_data)
     # print(f"\n分析结果: {results.get('success')}")
+
 

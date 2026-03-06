@@ -28,9 +28,9 @@ def check_config():
     """检查配置文件"""
     try:
         import config
-        if not config.DEEPSEEK_API_KEY:
-            print("⚠️  警告: DeepSeek API Key 未配置")
-            print("请在config.py中设置 DEEPSEEK_API_KEY")
+        if not config.AI_MODEL_API_KEY:
+            print("⚠️  警告: AI模型 API Key 未配置")
+            print("请在config.py中设置 AI_MODEL_API_KEY")
             return False
         print("✅ 配置文件检查通过")
         return True

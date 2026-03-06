@@ -213,7 +213,7 @@ cd /path/to/agentsstock1
 
 # 2. 创建 .env 文件
 cp .env.example .env
-# 编辑 .env，填入 DEEPSEEK_API_KEY
+# 编辑 .env，填入 AI_MODEL_API_KEY
 
 # 3. 构建镜像（国内源版）
 docker build -f "Dockerfile国内源版" -t agentsstock1:latest .
@@ -280,4 +280,5 @@ docker run --rm agentsstock1:latest pip list
 ---
 
 **享受高速Docker构建体验！** 🚀
+
 

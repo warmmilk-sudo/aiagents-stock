@@ -2,20 +2,21 @@ from llm_client import LLMClient
 from typing import Dict, Any
 import time
 import config
+from ai_model_router import ModelTier
 
 class StockAnalysisAgents:
     """股票分析AI智能体集合"""
     
     def __init__(self, model=None):
         self.model = model or config.DEFAULT_MODEL_NAME
-        self.deepseek_client = LLMClient(model=self.model)
+        self.ai_model_client = LLMClient(model=self.model)
         
     def technical_analyst_agent(self, stock_info: Dict, stock_data: Any, indicators: Dict) -> Dict[str, Any]:
         """技术面分析智能体"""
         print("[INFO] 技术分析师正在分析中...")
         time.sleep(1)  # 模拟分析时间
         
-        analysis = self.deepseek_client.technical_analysis(stock_info, stock_data, indicators)
+        analysis = self.ai_model_client.technical_analysis(stock_info, stock_data, indicators)
         
         return {
             "agent_name": "技术分析师",
@@ -41,7 +42,7 @@ class StockAnalysisAgents:
         
         time.sleep(1)
         
-        analysis = self.deepseek_client.fundamental_analysis(stock_info, financial_data, quarterly_data)
+        analysis = self.ai_model_client.fundamental_analysis(stock_info, financial_data, quarterly_data)
         
         return {
             "agent_name": "基本面分析师", 
@@ -65,7 +66,7 @@ class StockAnalysisAgents:
         
         time.sleep(1)
         
-        analysis = self.deepseek_client.fund_flow_analysis(stock_info, indicators, fund_flow_data)
+        analysis = self.ai_model_client.fund_flow_analysis(stock_info, indicators, fund_flow_data)
         
         return {
             "agent_name": "资金面分析师",
@@ -208,7 +209,9 @@ class StockAnalysisAgents:
             {"role": "user", "content": risk_prompt}
         ]
         
-        analysis = self.deepseek_client.call_api(messages, max_tokens=6000)
+        analysis = self.ai_model_client.call_api(
+            messages, max_tokens=6000, model_tier=ModelTier.LONG_CONTEXT
+        )
         
         return {
             "agent_name": "风险管理师",
@@ -300,7 +303,9 @@ class StockAnalysisAgents:
             {"role": "user", "content": sentiment_prompt}
         ]
         
-        analysis = self.deepseek_client.call_api(messages, max_tokens=4000)
+        analysis = self.ai_model_client.call_api(
+            messages, max_tokens=4000, model_tier=ModelTier.LIGHTWEIGHT
+        )
         
         return {
             "agent_name": "市场情绪分析师",
@@ -402,7 +407,9 @@ class StockAnalysisAgents:
             {"role": "user", "content": news_prompt}
         ]
         
-        analysis = self.deepseek_client.call_api(messages, max_tokens=4000)
+        analysis = self.ai_model_client.call_api(
+            messages, max_tokens=4000, model_tier=ModelTier.LONG_CONTEXT
+        )
         
         return {
             "agent_name": "新闻分析师",
@@ -538,7 +545,9 @@ class StockAnalysisAgents:
             {"role": "user", "content": discussion_prompt}
         ]
         
-        discussion_result = self.deepseek_client.call_api(messages, max_tokens=6000)
+        discussion_result = self.ai_model_client.call_api(
+            messages, max_tokens=6000, model_tier=ModelTier.REASONING
+        )
         
         print("[OK] 团队讨论完成")
         return discussion_result
@@ -548,8 +557,9 @@ class StockAnalysisAgents:
         print("[INFO] 正在制定最终投资决策...")
         time.sleep(1)
         
-        decision = self.deepseek_client.final_decision(discussion_result, stock_info, indicators)
+        decision = self.ai_model_client.final_decision(discussion_result, stock_info, indicators)
         
         print("[OK] 最终投资决策完成")
         return decision
+
 

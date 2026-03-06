@@ -8,6 +8,7 @@ from typing import Dict, Any
 import time
 import logging
 import config
+from ai_model_router import ModelTier
 
 
 class MacroCycleAgents:
@@ -15,7 +16,7 @@ class MacroCycleAgents:
 
     def __init__(self, model=None):
         self.model = model or config.DEFAULT_MODEL_NAME
-        self.deepseek_client = LLMClient(model=self.model)
+        self.ai_model_client = LLMClient(model=self.model)
         self.logger = logging.getLogger(__name__)
         self.logger.info(f"[宏观周期] AI智能体系统初始化 (模型: {self.model})")
 
@@ -106,7 +107,9 @@ class MacroCycleAgents:
             {"role": "user", "content": prompt}
         ]
 
-        analysis = self.deepseek_client.call_api(messages, max_tokens=6000)
+        analysis = self.ai_model_client.call_api(
+            messages, max_tokens=6000, model_tier=ModelTier.LONG_CONTEXT
+        )
         self.logger.info("  [OK] 康波周期分析师分析完成")
 
         return {
@@ -219,7 +222,9 @@ class MacroCycleAgents:
             {"role": "user", "content": prompt}
         ]
 
-        analysis = self.deepseek_client.call_api(messages, max_tokens=6000)
+        analysis = self.ai_model_client.call_api(
+            messages, max_tokens=6000, model_tier=ModelTier.LONG_CONTEXT
+        )
         self.logger.info("  [OK] 美林时钟分析师分析完成")
 
         return {
@@ -322,7 +327,9 @@ class MacroCycleAgents:
             {"role": "user", "content": prompt}
         ]
 
-        analysis = self.deepseek_client.call_api(messages, max_tokens=5000)
+        analysis = self.ai_model_client.call_api(
+            messages, max_tokens=5000, model_tier=ModelTier.LONG_CONTEXT
+        )
         self.logger.info("  [OK] 中国政策分析师分析完成")
 
         return {
@@ -437,7 +444,9 @@ class MacroCycleAgents:
             {"role": "user", "content": prompt}
         ]
 
-        analysis = self.deepseek_client.call_api(messages, max_tokens=6000)
+        analysis = self.ai_model_client.call_api(
+            messages, max_tokens=6000, model_tier=ModelTier.REASONING
+        )
         self.logger.info("  [OK] 首席宏观策略师综合研判完成")
 
         return {
@@ -458,3 +467,4 @@ if __name__ == "__main__":
     agents = MacroCycleAgents()
     print(f"模型: {agents.model}")
     print("初始化完成")
+

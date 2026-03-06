@@ -58,7 +58,7 @@
 - ✅ **新增 `DEFAULT_MODEL_NAME`** — 在 `.env` 中配置默认 AI 模型
 - ✅ **移除所有模型选择下拉框** — 龙虎榜、主力选股、智策板块等页面不再需要手动选模型
 - ✅ **环境配置 UI 新增模型输入** — 在「环境配置」中可直接输入模型名称，附常用模型参考
-- ✅ **支持任意 OpenAI 兼容模型** — DeepSeek、通义千问、GPT-4o 等一键切换
+- ✅ **支持任意 OpenAI 兼容模型** — AI模型、通义千问、GPT-4o 等一键切换
 
 **切换模型只需一步：**
 ```env
@@ -155,10 +155,10 @@ LOW_PRICE_BULL_HOLDING_DAYS=5            # 持股天数限制
 
 ## 🤖 新增--AI盯盘 - AI自动化交易决策系统（NEW！）
 
-参照AlphaArena项目，基于 DeepSeek AI 的A股自动化交易系统，支持实时监控、智能决策、自动交易（T+1规则适配）。
+参照AlphaArena项目，基于 AI模型 AI 的A股自动化交易系统，支持实时监控、智能决策、自动交易（T+1规则适配）。
 
 **核心功能：**
-- ✅ **DeepSeek AI决策** - 利用DeepSeek-V3进行深度技术分析
+- ✅ **AI模型 AI决策** - 利用AI模型-V3进行深度技术分析
 - ✅ **实时监控** - 24/7持续监控目标股票
 - ✅ **自动交易** - 集成miniQMT，支持实盘/模拟交易
 - ✅ **T+1规则** - 完全遵循A股交易规则
@@ -174,7 +174,7 @@ LOW_PRICE_BULL_HOLDING_DAYS=5            # 持股天数限制
 
 
 
-### 基于Python + Streamlit + DeepSeek的智能股票分析系统，模拟证券公司分析师团队，提供全方位的股票投资分析和决策建议。
+### 基于Python + Streamlit + AI模型的智能股票分析系统，模拟证券公司分析师团队，提供全方位的股票投资分析和决策建议。
 <img width="1910" height="923" alt="image" src="https://github.com/user-attachments/assets/fe366e1d-2352-46db-a3cc-6f147ee6d9d9" />
 <img width="1910" height="923" alt="image" src="https://github.com/user-attachments/assets/112e9e34-381e-4e61-b7b6-6614260b2594" />
 <img width="1910" height="923" alt="image" src="https://github.com/user-attachments/assets/46e36075-2f08-4113-bd1d-913ef4dd279c" />
@@ -543,7 +543,7 @@ StockAPI龙虎榜接口（每日更新，免费1000次）
 ### 前置要求
 - Docker 20.10+
 - Docker Compose 2.0+（推荐）
-- DeepSeek API Key
+- AI模型 API Key
 
 ### 快速开始
 
@@ -564,9 +564,9 @@ Copy-Item .env.example .env
 cp .env.example .env
 ```
 
-编辑 `.env` 文件，填入您的 DeepSeek API Key：
+编辑 `.env` 文件，填入您的 AI模型 API Key：
 ```env
-DEEPSEEK_API_KEY=sk-your-actual-api-key-here
+AI_MODEL_API_KEY=sk-your-actual-api-key-here
 ```
 
 #### 3. 启动服务
@@ -615,7 +615,7 @@ docker-compose restart
 - Python 3.8+(微软store或官网，推荐3.12)
 - Node.js 16+ (微软store或官网，pywencai需要)
 - 稳定的网络连接（大陆网络请关闭vpn）
-- DeepSeek API Key
+- AI模型 API Key
 
 ### 2. 安装依赖
 创建激活虚拟环境（powershell）并安装依赖
@@ -639,9 +639,9 @@ cp .env.example .env
 
 2. 编辑 `.env` 文件，设置您的配置（也可在前端web界面-环境配置中设置）：
 ```env
-# DeepSeek API配置（必需）
-DEEPSEEK_API_KEY=your_actual_deepseek_api_key_here
-DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
+# AI模型 API配置（必需）
+AI_MODEL_API_KEY=your_actual_deepseek_api_key_here
+AI_MODEL_BASE_URL=https://api.deepseek.com/v1
 
 # AI模型名称（可选，支持OpenAI兼容模型）
 # 常用：deepseek-chat, deepseek-reasoner, qwen-plus, gpt-4o
@@ -673,7 +673,7 @@ MINIQMT_PORT=58610
 
 #### 方法二：设置系统环境变量
 您也可以直接在系统环境变量中设置：
-- 变量名：`DEEPSEEK_API_KEY`
+- 变量名：`AI_MODEL_API_KEY`
 - 变量值：您的API密钥
 
 **注意**：环境变量文件的优先级高于系统环境变量。
@@ -1142,7 +1142,7 @@ WEBHOOK_KEYWORD=股票
 AI股票分析系统
 ├── app.py                          # Streamlit主界面
 ├── stock_data.py                   # 股票数据获取模块
-├── deepseek_client.py              # DeepSeek API客户端
+├── ai_model_client.py              # AI模型 API客户端
 ├── ai_agents.py                    # AI智能体分析模块
 ├── monitor_manager.py              # 监测管理界面
 ├── monitor_service.py              # 监测服务后台
@@ -1193,8 +1193,8 @@ AI股票分析系统
 - 最终决策生成
 - 财务数据深度解读
 
-#### 🔗 API客户端 (deepseek_client.py)
-- DeepSeek API封装
+#### 🔗 API客户端 (ai_model_client.py)
+- AI模型 API封装
 - 智能对话管理
 - 错误处理和重试
 - 响应格式解析
@@ -1382,7 +1382,7 @@ AI股票分析系统
 - **降级机制**：TDX → Tushare → AKShare 多层数据源保障
 
 ### AI模型
-- **语言模型**：支持任意 OpenAI 兼容模型（DeepSeek、通义千问、GPT-4o 等）
+- **语言模型**：支持任意 OpenAI 兼容模型（AI模型、通义千问、GPT-4o 等）
 - **模型配置**：通过 `.env` 文件中的 `DEFAULT_MODEL_NAME` 一键切换
 - **分析框架**：多智能体协作
 - **决策逻辑**：综合评分机制
@@ -1402,8 +1402,8 @@ AI股票分析系统
 ### API配置
 ```env
 # .env 文件
-DEEPSEEK_API_KEY=your_api_key
-DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
+AI_MODEL_API_KEY=your_api_key
+AI_MODEL_BASE_URL=https://api.deepseek.com/v1
 DEFAULT_MODEL_NAME=deepseek-chat   # 支持任意OpenAI兼容模型
 ```
 
@@ -1428,7 +1428,7 @@ DEFAULT_INTERVAL = "1d"    # 默认数据间隔
 ### 常见问题
 
 1. **API Key错误**
-   - 检查.env文件中的DEEPSEEK_API_KEY设置
+   - 检查.env文件中的AI_MODEL_API_KEY设置
    - 确保.env文件存在且格式正确
    - 确保API Key有效且有足够余额
 
@@ -1536,7 +1536,7 @@ DEFAULT_INTERVAL = "1d"    # 默认数据间隔
      - AKShare数据源可能暂时不可用，稍后重试
      - 查看终端日志确认具体错误信息
    - **AI分析超时或失败**：
-     - 检查DeepSeek API Key是否有效
+     - 检查AI模型 API Key是否有效
      - 确认API余额充足
      - deepseek-reasoner模型较慢（3-5分钟），请耐心等待
      - 可切换到deepseek-chat模型（2-3分钟）
@@ -1635,3 +1635,4 @@ MIT License
 **享受AI驱动的智能股票分析体验！** 🚀📈任何疑问请留言或联系ws3101001@126.com
 
 **技术支持：山东科技大学 于舒馨**
+

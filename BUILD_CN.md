@@ -16,7 +16,7 @@ cd agentsstock1
 
 # 配置环境变量
 cp .env.example .env
-# 编辑 .env，填入 DEEPSEEK_API_KEY
+# 编辑 .env，填入 AI_MODEL_API_KEY
 
 # 构建镜像（使用国内源版）
 docker build -f "Dockerfile国内源版" -t agentsstock1:latest .
@@ -151,4 +151,5 @@ docker run --rm agentsstock1:latest pip list | grep streamlit
 ---
 
 **享受极速Docker构建！** 🚀
+
 

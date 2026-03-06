@@ -198,7 +198,7 @@ class LonghubangPDFGenerator:
         <b>涉及股票:</b> {data_info.get('total_stocks', 0)} 只<br/>
         <b>涉及游资:</b> {data_info.get('total_youzi', 0)} 个<br/>
         <b>AI分析师:</b> 5位专业分析师团队<br/>
-        <b>分析模型:</b> DeepSeek AI Multi-Agent System
+        <b>分析模型:</b> AI模型 Multi-Agent System
         </para>
         """
         info = Paragraph(info_text, styles['Normal'])

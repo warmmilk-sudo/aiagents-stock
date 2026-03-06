@@ -10,7 +10,7 @@ pip install -r requirements.txt
 ### 配置API密钥
 在 `.env` 文件中添加：
 ```env
-DEEPSEEK_API_KEY=your_api_key_here
+AI_MODEL_API_KEY=your_api_key_here
 ```
 
 ### 启动系统
@@ -134,4 +134,5 @@ EMAIL_TO=receiver@example.com
 ---
 
 **祝您使用愉快！📈**
+
 

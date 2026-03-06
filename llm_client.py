@@ -1,8 +1,9 @@
 import openai
 import json
 import time
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Union
 import config
+from ai_model_router import ModelTier, resolve_api_credentials, resolve_model_name
 from logger import get_logger
 
 logger = get_logger(__name__)
@@ -12,17 +13,23 @@ class LLMClient:
     
     def __init__(self, model=None):
         self.model = model or config.DEFAULT_MODEL_NAME
+        api_key, base_url = resolve_api_credentials()
         self.client = openai.OpenAI(
-            api_key=config.DEEPSEEK_API_KEY,
-            base_url=config.DEEPSEEK_BASE_URL
+            api_key=api_key,
+            base_url=base_url
         )
         
-    def call_api(self, messages: List[Dict[str, str]], model: Optional[str] = None, 
+    def call_api(self, messages: List[Dict[str, str]], model: Optional[str] = None,
+                 model_tier: Optional[Union[ModelTier, str]] = None,
                  temperature: float = 0.7, max_tokens: int = 2000,
                  max_retries: int = 3) -> str:
         """调用LLM API（带重试机制）"""
-        # 使用实例的模型，如果没有传入则使用默认模型
-        model_to_use = model or self.model
+        if model:
+            model_to_use = str(model).strip()
+        elif model_tier is not None:
+            model_to_use = resolve_model_name(tier=model_tier)
+        else:
+            model_to_use = resolve_model_name(explicit_model=self.model)
         
         # 对于 reasoner 模型，自动增加 max_tokens
         if "reasoner" in model_to_use.lower() and max_tokens <= 2000:
@@ -59,12 +66,12 @@ class LLMClient:
                 last_error = e
                 if attempt < max_retries - 1:
                     wait_time = 2 ** attempt  # 指数退避: 1s, 2s, 4s
-                    logger.warning(f"API调用失败 (尝试 {attempt + 1}/{max_retries})，{wait_time}s后重试: {e}")
+                    logger.warning(f"AI模型调用失败 (尝试 {attempt + 1}/{max_retries})，{wait_time}s后重试: {e}")
                     time.sleep(wait_time)
                 else:
-                    logger.error(f"API调用失败，已达最大重试次数: {e}")
+                    logger.error(f"AI模型调用失败，已达最大重试次数: {e}")
         
-        return f"API调用失败: {str(last_error)}"
+        return f"AI模型调用失败: {str(last_error)}"
     
     def technical_analysis(self, stock_info: Dict, stock_data: Any, indicators: Dict) -> str:
         """技术面分析"""
@@ -109,7 +116,7 @@ class LLMClient:
             {"role": "user", "content": prompt}
         ]
         
-        return self.call_api(messages)
+        return self.call_api(messages, model_tier=ModelTier.LIGHTWEIGHT)
     
     def fundamental_analysis(self, stock_info: Dict, financial_data: Dict = None, quarterly_data: Dict = None) -> str:
         """基本面分析"""
@@ -252,7 +259,7 @@ class LLMClient:
             {"role": "user", "content": prompt}
         ]
         
-        return self.call_api(messages)
+        return self.call_api(messages, model_tier=ModelTier.LONG_CONTEXT)
     
     def fund_flow_analysis(self, stock_info: Dict, indicators: Dict, fund_flow_data: Dict = None) -> str:
         """资金面分析"""
@@ -368,7 +375,7 @@ class LLMClient:
             {"role": "user", "content": prompt}
         ]
         
-        return self.call_api(messages, max_tokens=3000)
+        return self.call_api(messages, max_tokens=3000, model_tier=ModelTier.LONG_CONTEXT)
     
     def comprehensive_discussion(self, technical_report: str, fundamental_report: str, 
                                fund_flow_report: str, stock_info: Dict) -> str:
@@ -407,7 +414,7 @@ class LLMClient:
             {"role": "user", "content": prompt}
         ]
         
-        return self.call_api(messages, max_tokens=6000)
+        return self.call_api(messages, max_tokens=6000, model_tier=ModelTier.REASONING)
     
     def final_decision(self, comprehensive_discussion: str, stock_info: Dict, 
                       indicators: Dict) -> Dict[str, Any]:
@@ -460,7 +467,7 @@ class LLMClient:
             {"role": "user", "content": prompt}
         ]
         
-        response = self.call_api(messages, temperature=0.3, max_tokens=4000)
+        response = self.call_api(messages, temperature=0.3, max_tokens=4000, model_tier=ModelTier.REASONING)
         
         try:
             # 尝试解析JSON响应

@@ -10,13 +10,18 @@ env_example_content = """# =====================================================
 # 3. 敏感信息（如API密钥、密码）请妥善保管，不要提交到版本控制
 # ============================================================
 
-# ========== DeepSeek API配置 ==========
-# DeepSeek API密钥（必填）
-# 获取地址：https://platform.deepseek.com/api_keys
-DEEPSEEK_API_KEY=your_actual_deepseek_api_key_here
+# ========== AI模型 API配置 ==========
+# AI模型 API密钥（必填）
+AI_MODEL_API_KEY=your_actual_ai_model_api_key_here
 
-# DeepSeek API基础URL（可选，使用默认值即可）
-DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
+# AI模型 API基础URL（可选，使用默认值即可）
+AI_MODEL_BASE_URL=https://api.deepseek.com/v1
+
+# 三类模型配置（可选）
+AI_MODEL_LIGHTWEIGHT_NAME=deepseek-chat
+AI_MODEL_LONG_CONTEXT_NAME=qwen-long
+AI_MODEL_REASONING_NAME=deepseek-reasoner
+DEFAULT_MODEL_NAME=deepseek-chat
 
 
 # ========== Tushare数据接口（可选）==========

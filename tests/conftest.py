@@ -19,7 +19,10 @@ def tmp_db(tmp_path):
 @pytest.fixture
 def mock_env(monkeypatch):
     """提供一个干净的环境变量上下文"""
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key-12345")
-    monkeypatch.setenv("DEEPSEEK_BASE_URL", "https://api.test.com/v1")
+    monkeypatch.setenv("AI_MODEL_API_KEY", "test-key-12345")
+    monkeypatch.setenv("AI_MODEL_BASE_URL", "https://api.test.com/v1")
+    monkeypatch.setenv("AI_MODEL_LIGHTWEIGHT_NAME", "deepseek-chat")
+    monkeypatch.setenv("AI_MODEL_LONG_CONTEXT_NAME", "qwen-long")
+    monkeypatch.setenv("AI_MODEL_REASONING_NAME", "deepseek-reasoner")
     monkeypatch.setenv("DEFAULT_MODEL_NAME", "test-model")
     monkeypatch.setenv("TUSHARE_TOKEN", "test-tushare-token")

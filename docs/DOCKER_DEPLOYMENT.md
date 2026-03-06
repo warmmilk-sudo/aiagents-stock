@@ -7,7 +7,7 @@
 - Docker 20.10+ 
 - Docker Compose 2.0+（可选，但推荐）
 - 至少 2GB 可用磁盘空间
-- DeepSeek API Key
+- AI模型 API Key
 
 ### 安装 Docker
 
@@ -66,7 +66,7 @@ cp .env.example .env
 
 3. **编辑 `.env` 文件，填入您的配置**
 ```env
-DEEPSEEK_API_KEY=sk-your-actual-api-key-here
+AI_MODEL_API_KEY=sk-your-actual-api-key-here
 EMAIL_ENABLED=false
 # ... 其他配置
 ```
@@ -319,7 +319,7 @@ services:
     secrets:
       - deepseek_api_key
     environment:
-      - DEEPSEEK_API_KEY_FILE=/run/secrets/deepseek_api_key
+      - AI_MODEL_API_KEY_FILE=/run/secrets/deepseek_api_key
 
 secrets:
   deepseek_api_key:
@@ -396,4 +396,5 @@ services:
 ---
 
 **享受 Docker 带来的便捷部署体验！** 🚀
+
 

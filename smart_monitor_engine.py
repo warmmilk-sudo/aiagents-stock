@@ -1,6 +1,6 @@
 """
 智能盯盘 - 主引擎
-整合DeepSeek AI决策、数据获取、交易执行、通知等功能
+整合AI模型决策、数据获取、交易执行、通知等功能
 """
 
 import logging
@@ -9,7 +9,7 @@ from typing import Dict, List, Optional
 from datetime import datetime
 import threading
 
-from smart_monitor_deepseek import SmartMonitorDeepSeek
+from smart_monitor_ai_model import SmartMonitorAIModel
 from smart_monitor_data import SmartMonitorDataFetcher
 from smart_monitor_qmt import SmartMonitorQMT, SmartMonitorQMTSimulator
 from smart_monitor_db import SmartMonitorDB
@@ -20,13 +20,13 @@ from config_manager import config_manager  # 复用主程序的配置管理器
 class SmartMonitorEngine:
     """智能盯盘引擎"""
     
-    def __init__(self, deepseek_api_key: str = None, qmt_account_id: str = None,
+    def __init__(self, ai_model_api_key: str = None, qmt_account_id: str = None,
                  use_simulator: bool = None):
         """
         初始化智能盯盘引擎
         
         Args:
-            deepseek_api_key: DeepSeek API密钥（可选，从配置读取）
+            ai_model_api_key: AI模型 API密钥（可选，从配置读取）
             qmt_account_id: miniQMT账户ID（可选，从配置读取）
             use_simulator: 是否使用模拟交易（可选，从配置读取）
         """
@@ -35,9 +35,9 @@ class SmartMonitorEngine:
         # 从配置管理器读取配置
         config = config_manager.read_env()
         
-        # DeepSeek API
-        if deepseek_api_key is None:
-            deepseek_api_key = config.get('DEEPSEEK_API_KEY', '')
+        # AI模型 API
+        if ai_model_api_key is None:
+            ai_model_api_key = config.get('AI_MODEL_API_KEY', '')
         
         # MiniQMT配置
         if qmt_account_id is None:
@@ -49,7 +49,7 @@ class SmartMonitorEngine:
             use_simulator = not miniqmt_enabled
         
         # 初始化各个模块
-        self.deepseek = SmartMonitorDeepSeek(deepseek_api_key)
+        self.ai_model = SmartMonitorAIModel(ai_model_api_key)
         self.data_fetcher = SmartMonitorDataFetcher()
         self.db = SmartMonitorDB()
         self.notification = notification_service  # 使用主程序的通知服务
@@ -103,7 +103,7 @@ class SmartMonitorEngine:
             self.logger.info(f"[{stock_code}] 开始分析...")
             
             # 1. 检查交易时段
-            session_info = self.deepseek.get_trading_session()
+            session_info = self.ai_model.get_trading_session()
             self.logger.info(f"[{stock_code}] 当前时段: {session_info['session']}")
             
             # 如果启用了仅交易时段分析，且当前不在交易时段，则跳过分析
@@ -145,8 +145,8 @@ class SmartMonitorEngine:
                                    f"成本价: {position_cost:.2f}, "
                                    f"浮动盈亏: {position.get('profit_loss_pct', 0):+.2f}%")
             
-            # 5. 调用DeepSeek AI决策
-            ai_result = self.deepseek.analyze_stock_and_decide(
+            # 5. 调用AI模型决策
+            ai_result = self.ai_model.analyze_stock_and_decide(
                 stock_code=stock_code,
                 market_data=market_data,
                 account_info=account_info,
@@ -624,7 +624,7 @@ if __name__ == '__main__':
     
     # 使用模拟模式测试
     engine = SmartMonitorEngine(
-        deepseek_api_key=os.getenv('DEEPSEEK_API_KEY'),
+        ai_model_api_key=os.getenv('AI_MODEL_API_KEY'),
         use_simulator=True
     )
     

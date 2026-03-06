@@ -39,25 +39,25 @@ def display_config_manager():
         st.session_state.temp_config = {key: info["value"] for key, info in config_info.items()}
 
     with tab1:
-        st.markdown("### DeepSeek API配置")
-        st.markdown("DeepSeek是系统的核心AI引擎，必须配置才能使用分析功能。")
-        st.markdown("DeepSeek:https://api.deepseek.com/v1")
+        st.markdown("### AI模型 API配置")
+        st.markdown("AI模型是系统的核心引擎，必须配置才能使用分析功能。")
+        st.markdown("兼容端点示例:https://api.deepseek.com/v1")
         st.markdown("硅基流动:https://api.siliconflow.cn/v1")
         st.markdown("火山引擎:https://ark.cn-beijing.volces.com/api/v3")
         st.markdown("阿里:https://dashscope.aliyuncs.com/compatible-mode/v1")
 
-    # DeepSeek API Key
-        api_key_info = config_info["DEEPSEEK_API_KEY"]
-        current_api_key = st.session_state.temp_config.get("DEEPSEEK_API_KEY", "")
+    # AI模型 API Key
+        api_key_info = config_info["AI_MODEL_API_KEY"]
+        current_api_key = st.session_state.temp_config.get("AI_MODEL_API_KEY", "")
 
         new_api_key = st.text_input(
             f"{api_key_info['description']} {'*' if api_key_info['required'] else ''}",
             value=current_api_key,
             type="password",
-            help="从 https://platform.deepseek.com 获取API密钥",
-            key="input_deepseek_api_key"
+            help="填写你的 OpenAI 兼容服务 API 密钥",
+            key="input_ai_model_api_key"
         )
-        st.session_state.temp_config["DEEPSEEK_API_KEY"] = new_api_key
+        st.session_state.temp_config["AI_MODEL_API_KEY"] = new_api_key
 
         # 显示当前状态
         if new_api_key:
@@ -68,17 +68,50 @@ def display_config_manager():
 
         st.markdown("---")
 
-        # DeepSeek Base URL
-        base_url_info = config_info["DEEPSEEK_BASE_URL"]
-        current_base_url = st.session_state.temp_config.get("DEEPSEEK_BASE_URL", "")
+        # AI模型 Base URL
+        base_url_info = config_info["AI_MODEL_BASE_URL"]
+        current_base_url = st.session_state.temp_config.get("AI_MODEL_BASE_URL", "")
 
         new_base_url = st.text_input(
             f"{base_url_info['description']}",
             value=current_base_url,
             help="一般无需修改，保持默认即可",
-            key="input_deepseek_base_url"
+            key="input_ai_model_base_url"
         )
-        st.session_state.temp_config["DEEPSEEK_BASE_URL"] = new_base_url
+        st.session_state.temp_config["AI_MODEL_BASE_URL"] = new_base_url
+
+        st.markdown("---")
+
+        # 三类模型配置
+        lightweight_model_info = config_info["AI_MODEL_LIGHTWEIGHT_NAME"]
+        current_lightweight_model = st.session_state.temp_config.get("AI_MODEL_LIGHTWEIGHT_NAME", "deepseek-chat")
+        new_lightweight_model = st.text_input(
+            f"{lightweight_model_info['description']}",
+            value=current_lightweight_model,
+            help="用于快筛任务",
+            key="input_ai_model_lightweight_name"
+        )
+        st.session_state.temp_config["AI_MODEL_LIGHTWEIGHT_NAME"] = new_lightweight_model
+
+        long_context_model_info = config_info["AI_MODEL_LONG_CONTEXT_NAME"]
+        current_long_context_model = st.session_state.temp_config.get("AI_MODEL_LONG_CONTEXT_NAME", "qwen-long")
+        new_long_context_model = st.text_input(
+            f"{long_context_model_info['description']}",
+            value=current_long_context_model,
+            help="用于长文本校验与检索任务",
+            key="input_ai_model_long_context_name"
+        )
+        st.session_state.temp_config["AI_MODEL_LONG_CONTEXT_NAME"] = new_long_context_model
+
+        reasoning_model_info = config_info["AI_MODEL_REASONING_NAME"]
+        current_reasoning_model = st.session_state.temp_config.get("AI_MODEL_REASONING_NAME", "deepseek-reasoner")
+        new_reasoning_model = st.text_input(
+            f"{reasoning_model_info['description']}",
+            value=current_reasoning_model,
+            help="用于辩论与最终决策任务",
+            key="input_ai_model_reasoning_name"
+        )
+        st.session_state.temp_config["AI_MODEL_REASONING_NAME"] = new_reasoning_model
 
         st.markdown("---")
 
@@ -184,17 +217,17 @@ def display_config_manager():
 
         st.markdown("""
         **常用模型名称参考：**
-        - `deepseek-chat` — DeepSeek Chat（默认）
-        - `deepseek-reasoner` — DeepSeek Reasoner（推理增强）
+        - `deepseek-chat` — chat 模型（默认）
+        - `deepseek-reasoner` — reasoning 模型（推理增强）
         - `qwen-plus` — 通义千问 Plus
         - `qwen-turbo` — 通义千问 Turbo
         - `gpt-4o` — OpenAI GPT-4o
         - `gpt-4o-mini` — OpenAI GPT-4o Mini
         
-        >  使用非 DeepSeek 模型时，请同时修改上方的 API地址 和 API密钥
+        >  使用非默认提供商模型时，请同时修改上方的 API地址 和 API密钥
         """)
 
-        st.caption("API密钥获取：https://platform.deepseek.com")
+        st.caption("请使用你所选服务商控制台提供的 API 密钥")
 
     with tab2:
         st.markdown("### Tushare数据接口（可选）")
@@ -524,9 +557,13 @@ def display_config_manager():
         st.code(f"""# AI股票分析系统环境配置
 # 由系统自动生成和管理
 
-# ========== DeepSeek API配置 ==========
-DEEPSEEK_API_KEY="{_mask_secret(current_config.get('DEEPSEEK_API_KEY', ''))}"
-DEEPSEEK_BASE_URL="{current_config.get('DEEPSEEK_BASE_URL', '')}"
+# ========== AI模型 API配置 ==========
+AI_MODEL_API_KEY="{_mask_secret(current_config.get('AI_MODEL_API_KEY', ''))}"
+AI_MODEL_BASE_URL="{current_config.get('AI_MODEL_BASE_URL', '')}"
+AI_MODEL_LIGHTWEIGHT_NAME="{current_config.get('AI_MODEL_LIGHTWEIGHT_NAME', 'deepseek-chat')}"
+AI_MODEL_LONG_CONTEXT_NAME="{current_config.get('AI_MODEL_LONG_CONTEXT_NAME', 'qwen-long')}"
+AI_MODEL_REASONING_NAME="{current_config.get('AI_MODEL_REASONING_NAME', 'deepseek-reasoner')}"
+DEFAULT_MODEL_NAME="{current_config.get('DEFAULT_MODEL_NAME', 'deepseek-chat')}"
 ADMIN_PASSWORD="{_mask_secret(current_config.get('ADMIN_PASSWORD', ''))}"
 ADMIN_PASSWORD_HASH="{_mask_secret(current_config.get('ADMIN_PASSWORD_HASH', ''))}"
 LOGIN_MAX_ATTEMPTS="{current_config.get('LOGIN_MAX_ATTEMPTS', '5')}"
