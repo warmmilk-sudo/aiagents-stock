@@ -39,7 +39,7 @@ class SectorStrategyPDFGenerator:
                         self.chinese_font = 'ChineseFont'
                         print(f"[PDF] 成功加载字体: {font_path}")
                         return
-                    except Exception:
+                    except:
                         continue
             
             # 如果都失败，使用默认字体
@@ -136,7 +136,7 @@ class SectorStrategyPDFGenerator:
         <para align=center>
         <b>生成时间:</b> {timestamp}<br/>
         <b>分析周期:</b> 当日市场数据<br/>
-        <b>AI模型:</b> AI模型 Multi-Agent System<br/>
+        <b>AI模型:</b> DeepSeek Multi-Agent System<br/>
         <b>分析维度:</b> 宏观·板块·资金·情绪
         </para>
         """

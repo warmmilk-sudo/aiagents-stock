@@ -8,6 +8,11 @@ TDX API配置测试脚本
 import os
 import sys
 import requests
+from dotenv import load_dotenv
+
+# 加载环境变量
+load_dotenv()
+
 # 获取TDX API URL
 TDX_API_URL = os.getenv('TDX_BASE_URL', 'http://127.0.0.1:5000')
 

@@ -1,5 +1,5 @@
 """
-智能盯盘 - AI模型决策引擎
+智能盯盘 - DeepSeek AI 决策引擎
 适配A股T+1交易规则的AI决策系统
 """
 
@@ -7,25 +7,23 @@ import logging
 from typing import Dict, List, Optional
 from datetime import datetime, time
 import pytz
-from ai_model_router import ModelTier, resolve_api_credentials, resolve_model_name
+import config
 
 
-class SmartMonitorAIModel:
-    """A股智能盯盘 - AI模型决策引擎"""
+class SmartMonitorDeepSeek:
+    """A股智能盯盘 - DeepSeek AI决策引擎"""
 
-    def __init__(self, api_key: Optional[str] = None, base_url: Optional[str] = None):
+    def __init__(self, api_key: str):
         """
-        初始化AI模型客户端
+        初始化DeepSeek客户端
         
         Args:
-            api_key: AI模型 API密钥（可选，默认读取环境配置）
-            base_url: AI模型 API地址（可选，默认读取环境配置）
+            api_key: DeepSeek API密钥
         """
-        resolved_api_key, resolved_base_url = resolve_api_credentials()
-        self.api_key = api_key or resolved_api_key
-        self.base_url = base_url or resolved_base_url
+        self.api_key = api_key
+        self.base_url = config.DEEPSEEK_BASE_URL
         self.headers = {
-            "Authorization": f"Bearer {self.api_key}",
+            "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
         }
         self.logger = logging.getLogger(__name__)
@@ -144,7 +142,7 @@ class SmartMonitorAIModel:
     def chat_completion(self, messages: List[Dict], model: str = None,
                        temperature: float = 0.7, max_tokens: int = 2000) -> Dict:
         """
-        调用AI模型 API（默认使用推理模型）
+        调用DeepSeek API
         
         Args:
             messages: 对话消息列表
@@ -157,15 +155,10 @@ class SmartMonitorAIModel:
         """
         import requests
         
-        model_to_use = resolve_model_name(
-            tier=ModelTier.REASONING,
-            explicit_model=model
-        )
-        if "reasoner" in model_to_use.lower() and max_tokens <= 2000:
-            max_tokens = 8000
+        model = model or config.DEFAULT_MODEL_NAME
         
         payload = {
-            "model": model_to_use,
+            "model": model,
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens
@@ -181,7 +174,7 @@ class SmartMonitorAIModel:
             response.raise_for_status()
             return response.json()
         except Exception as e:
-            self.logger.error(f"AI模型调用失败: {e}")
+            self.logger.error(f"DeepSeek API调用失败: {e}")
             raise
 
     def analyze_stock_and_decide(self, stock_code: str, market_data: Dict,

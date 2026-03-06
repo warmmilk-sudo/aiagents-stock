@@ -5,20 +5,16 @@
 """
 
 import streamlit as st
-from ui_theme import inject_global_theme, configure_plotly_template, render_page_header
 import pandas as pd
 from datetime import datetime
 from small_cap_selector import small_cap_selector
 from notification_service import notification_service
 from low_price_bull_monitor import low_price_bull_monitor
 from low_price_bull_service import low_price_bull_service
-from wencai_field_resolver import get_row_value
 
 
 def display_small_cap():
     """显示小市值策略界面"""
-    inject_global_theme()
-    configure_plotly_template()
     
     # 检查是否显示监控面板
     if st.session_state.get('show_small_cap_monitor'):
@@ -26,7 +22,7 @@ def display_small_cap():
         display_monitor_panel()
         
         # 返回按钮
-        if st.button("返回选股", type="secondary"):
+        if st.button("🔙 返回选股", type="secondary"):
             del st.session_state.show_small_cap_monitor
             st.rerun()
         return
@@ -35,38 +31,38 @@ def display_small_cap():
     col_select, col_monitor = st.columns([3, 1])
     
     with col_select:
-        st.markdown("## 小市值策略 - 小盘高成长股票筛选")
+        st.markdown("## 📊 小市值策略 - 小盘高成长股票筛选")
     
     with col_monitor:
         st.write("")  # 占位
-        if st.button("策略监控", type="primary", width='stretch'):
+        if st.button("📊 策略监控", type="primary", use_container_width=True):
             st.session_state.show_small_cap_monitor = True
             st.rerun()
     
     st.markdown("---")
     
     st.markdown("""
-    ### 选股策略说明
+    ### 📋 选股策略说明
     
     **筛选条件**：
-    - 总市值 ≤ 50亿
-    - 营收增长率 ≥ 10%
-    - 净利润增长率 ≥ 100%（净利润同比增长率）
-    - 沪深A股
-    - 非ST股票
-    - 非创业板
-    - 非科创板
-    - 按总市值由小至大排名
+    - ✅ 总市值 ≤ 50亿
+    - ✅ 营收增长率 ≥ 10%
+    - ✅ 净利润增长率 ≥ 100%（净利润同比增长率）
+    - ✅ 沪深A股
+    - ✅ 非ST股票
+    - ✅ 非创业板
+    - ✅ 非科创板
+    - ✅ 按总市值由小至大排名
     
     **量化交易策略**：
-    - 资金量：10万元
-    - 持股周期：5天
-    - 仓位控制：满仓
-    - 个股最大持仓：3成（30%）
-    - 账户最大持股数：4只
-    - 单日最大买入数：2只
-    - 买入时机：开盘买入
-    - 卖出时机：MA5下穿MA20或持股满5天
+    - 💰 资金量：10万元
+    - 📅 持股周期：5天
+    - 💼 仓位控制：满仓
+    - 📊 个股最大持仓：3成（30%）
+    - 🎯 账户最大持股数：4只
+    - 🛒 单日最大买入数：2只
+    - 📈 买入时机：开盘买入
+    - 📉 卖出时机：MA5下穿MA20或持股满5天
     """)
     
     st.markdown("---")
@@ -85,22 +81,22 @@ def display_small_cap():
         )
     
     with col2:
-        st.info(f"将筛选市值最小的前{top_n}只股票")
+        st.info(f"💡 将筛选市值最小的前{top_n}只股票")
     
     st.markdown("---")
     
     # 开始选股按钮
-    if st.button("开始小市值策略选股", type="primary", width='stretch'):
+    if st.button("🚀 开始小市值策略选股", type="primary", use_container_width=True):
         
         with st.spinner("正在获取数据，请稍候..."):
             # 创建选股器
             success, stocks_df, message = small_cap_selector.get_small_cap_stocks(top_n)
             
             if not success:
-                st.error(f"{message}")
+                st.error(f"❌ {message}")
                 return
             
-            st.success(f"{message}")
+            st.success(f"✅ {message}")
             
             # 保存到session_state
             st.session_state.small_cap_stocks = stocks_df
@@ -109,19 +105,19 @@ def display_small_cap():
     # 显示选股结果
     if 'small_cap_stocks' in st.session_state and st.session_state.small_cap_stocks is not None:
         st.markdown("---")
-        st.markdown("## 选股结果")
+        st.markdown("## 📈 选股结果")
         
         stocks_df = st.session_state.small_cap_stocks
         select_time = st.session_state.small_cap_time
         
-        st.info(f"选股时间：{select_time} | 股票数量：{len(stocks_df)} 只")
+        st.info(f"🕒 选股时间：{select_time} | 📊 股票数量：{len(stocks_df)} 只")
         
         # 显示股票列表
         display_stock_list(stocks_df)
         
         # 发送钉钉通知
         st.markdown("---")
-        if st.button("发送钉钉通知", type="secondary", width='stretch'):
+        if st.button("📲 发送钉钉通知", type="secondary", use_container_width=True):
             send_dingtalk_notification(stocks_df)
 
 
@@ -132,7 +128,7 @@ def display_stock_list(stocks_df: pd.DataFrame):
         stock_code = row.get('股票代码', 'N/A')
         stock_name = row.get('股票简称', 'N/A')
         
-        with st.expander(f"{idx+1}. {stock_code} {stock_name}", expanded=False):
+        with st.expander(f"📊 {idx+1}. {stock_code} {stock_name}", expanded=True):
             display_stock_detail(row)
 
 
@@ -141,13 +137,13 @@ def display_stock_detail(row: pd.Series):
     
     # 获取所有可能的字段
     financial_fields = [
-        ('总市值', get_row_value(row, ['总市值', '总市值(元)'], None)),
-        ('营收增长率', get_row_value(row, ['营收增长率', '营业收入增长率', '营业总收入同比增长率'], None)),
-        ('净利润增长率', get_row_value(row, ['净利润增长率', '净利润同比增长率'], None)),
-        ('股价', get_row_value(row, ['股价', '最新价', '收盘价'], None)),
-        ('市盈率', get_row_value(row, ['市盈率', '市盈率TTM', '市盈率(pe)'], None)),
-        ('市净率', get_row_value(row, ['市净率', '市净率PB', '市净率(pb)'], None)),
-        ('所属行业', get_row_value(row, ['所属行业', '所属同花顺行业'], None)),
+        ('总市值', row.get('总市值', row.get('总市值[20241211]', None))),
+        ('营收增长率', row.get('营收增长率', row.get('营业收入增长率', None))),
+        ('净利润增长率', row.get('净利润增长率', row.get('净利润同比增长率', None))),
+        ('股价', row.get('股价', row.get('最新价', None))),
+        ('市盈率', row.get('市盈率', row.get('市盈率TTM', None))),
+        ('市净率', row.get('市净率', row.get('市净率PB', None))),
+        ('所属行业', row.get('所属行业', row.get('所属同花顺行业', None))),
     ]
     
     # 检查是否有任何有效数据
@@ -161,14 +157,14 @@ def display_stock_detail(row: pd.Series):
         col2 = None
     
     with col1:
-        st.markdown("#### 基本信息")
+        st.markdown("#### 📊 基本信息")
         st.markdown(f"**股票代码**: {row.get('股票代码', 'N/A')}")
         st.markdown(f"**股票名称**: {row.get('股票简称', 'N/A')}")
     
     # 只有当有财务数据时才显示财务指标
     if col2 is not None:
         with col2:
-            st.markdown("#### 财务指标")
+            st.markdown("#### 💼 财务指标")
             
             for field_name, value in financial_fields:
                 if is_valid_value(value):
@@ -177,7 +173,7 @@ def display_stock_detail(row: pd.Series):
     
     # 添加监控按钮
     st.markdown("---")
-    st.markdown("#### 策略监控")
+    st.markdown("#### 📊 策略监控")
     
     from low_price_bull_monitor_ui import add_stock_to_monitor_button
     
@@ -192,7 +188,7 @@ def display_stock_detail(row: pd.Series):
     # 转换价格
     try:
         price_float = float(price) if price and not pd.isna(price) else None
-    except Exception:
+    except:
         price_float = None
     
     if stock_code and stock_name:
@@ -238,7 +234,7 @@ def send_dingtalk_notification(stocks_df: pd.DataFrame):
     
     try:
         if not notification_service.config['webhook_enabled']:
-            st.warning("Webhook通知未启用，请在系统配置中启用")
+            st.warning("⚠️ Webhook通知未启用，请在系统配置中启用")
             return
         
         # 构建消息
@@ -277,11 +273,11 @@ def send_dingtalk_notification(stocks_df: pd.DataFrame):
             )
             
             if response.status_code == 200:
-                st.success("钉钉通知发送成功")
+                st.success("✅ 钉钉通知发送成功")
             else:
-                st.error(f"钉钉通知发送失败: HTTP {response.status_code}")
+                st.error(f"❌ 钉钉通知发送失败: HTTP {response.status_code}")
         else:
-            st.warning("当前仅支持钉钉通知")
+            st.warning("⚠️ 当前仅支持钉钉通知")
     
     except Exception as e:
-        st.error(f"发送通知失败: {str(e)}")
+        st.error(f"❌ 发送通知失败: {str(e)}")

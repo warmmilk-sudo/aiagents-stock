@@ -226,7 +226,7 @@ class SectorStrategyScheduler:
 请检查系统日志获取详细信息。
 """
             self._send_email_direct(subject, body)
-        except Exception:
+        except:
             pass
     
     def _send_webhook_direct(self, predictions, timestamp):
@@ -435,7 +435,7 @@ class SectorStrategyScheduler:
         body_parts.append("智策板块策略分析报告")
         body_parts.append("="*60)
         body_parts.append(f"分析时间: {timestamp}")
-        body_parts.append(f"AI模型: AI模型 Multi-Agent System")
+        body_parts.append(f"AI模型: DeepSeek Multi-Agent System")
         body_parts.append("")
         
         # 1. 板块多空
@@ -592,7 +592,7 @@ class SectorStrategyScheduler:
                 next_run = jobs[0].next_run
                 if next_run:
                     return next_run.strftime('%Y-%m-%d %H:%M:%S')
-        except Exception:
+        except:
             pass
         
         return None

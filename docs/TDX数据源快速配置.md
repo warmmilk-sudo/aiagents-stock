@@ -136,8 +136,8 @@ print(f"RSI: {indicators['rsi6']:.2f}")
 ### 完整.env配置
 
 ```env
-# AI模型 AI配置（必需）
-AI_MODEL_API_KEY=sk-your-api-key
+# DeepSeek AI配置（必需）
+DEEPSEEK_API_KEY=sk-your-api-key
 
 # TDX数据源配置（可选，提升实时监测性能）
 TDX_ENABLED=true
@@ -305,4 +305,3 @@ WEBHOOK_KEYWORD=股票
 ---
 
 **提示**: 如有问题，请查看项目 [README.md](../README.md) 或联系技术支持。
-

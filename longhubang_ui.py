@@ -4,7 +4,6 @@
 """
 
 import streamlit as st
-from ui_theme import inject_global_theme, configure_plotly_template, render_page_header
 import plotly.graph_objects as go
 import plotly.express as px
 import pandas as pd
@@ -19,52 +18,52 @@ import config
 
 def display_longhubang():
     """显示智瞰龙虎主界面"""
-    inject_global_theme()
-    configure_plotly_template()
     
-    render_page_header(
-        "智瞰龙虎 - AI驱动的龙虎榜分析",
-        "Multi-Agent Dragon Tiger Analysis | 游资·个股·题材·风险多维分析",
-    )
+    st.markdown("""
+    <div class="top-nav">
+        <h1 class="nav-title">🎯 智瞰龙虎 - AI驱动的龙虎榜分析</h1>
+        <p class="nav-subtitle">Multi-Agent Dragon Tiger Analysis | 游资·个股·题材·风险多维分析</p>
+    </div>
+    """, unsafe_allow_html=True)
     
     st.markdown("---")
     
     # 功能说明
-    with st.expander("智瞰龙虎系统介绍", expanded=False):
+    with st.expander("💡 智瞰龙虎系统介绍", expanded=False):
         st.markdown("""
-        ### 系统特色
+        ### 🌟 系统特色
         
         **智瞰龙虎**是基于多AI智能体的龙虎榜深度分析系统，通过5位专业分析师的协同工作，
         为您挖掘次日大概率上涨的潜力股票。
         
-        ### AI分析师团队
+        ### 🤖 AI分析师团队
         
-        1. ** 游资行为分析师**
+        1. **🎯 游资行为分析师**
            - 识别活跃游资及其操作风格
            - 分析游资席位的进出特征
            - 研判游资对个股的态度
         
-        2. ** 个股潜力分析师**
+        2. **📈 个股潜力分析师**
            - 从龙虎榜数据挖掘潜力股
            - 识别次日大概率上涨的股票
            - 分析资金动向和技术形态
         
-        3. ** 题材追踪分析师**
+        3. **🔥 题材追踪分析师**
            - 识别当前热点题材和概念
            - 分析题材的炒作周期
            - 预判题材的持续性
         
-        4. ** 风险控制专家**
+        4. **⚠️ 风险控制专家**
            - 识别高风险股票和陷阱
            - 分析游资出货信号
            - 提供风险管理建议
         
-        5. ** 首席策略师**
+        5. **👔 首席策略师**
            - 综合所有分析师意见
            - 给出最终推荐股票清单
            - 提供具体操作策略
         
-        ### 数据来源
+        ### 📊 数据来源
         
         数据来自**StockAPI龙虎榜接口**，包括：
         - 游资上榜交割单历史数据
@@ -72,23 +71,23 @@ def display_longhubang():
         - 热门概念和题材
         - 更新时间：交易日下午5点40
         
-        ### 核心功能
+        ### 🎯 核心功能
         
-        - **潜力股挖掘** - AI识别次日大概率上涨股票
-        - **游资追踪** - 跟踪活跃游资的操作
-        - **题材识别** - 发现热点题材和龙头股
-        - **风险提示** - 识别高风险股票和陷阱
-        - **历史记录** - 存储所有龙虎榜数据
-        - **PDF报告** - 生成专业分析报告
+        - ✅ **潜力股挖掘** - AI识别次日大概率上涨股票
+        - ✅ **游资追踪** - 跟踪活跃游资的操作
+        - ✅ **题材识别** - 发现热点题材和龙头股
+        - ✅ **风险提示** - 识别高风险股票和陷阱
+        - ✅ **历史记录** - 存储所有龙虎榜数据
+        - ✅ **PDF报告** - 生成专业分析报告
         """)
     
     st.markdown("---")
     
     # 创建标签页
     tab1, tab2, tab3 = st.tabs([
-        "龙虎榜分析",
-        "历史报告",
-        "数据统计"
+        "📊 龙虎榜分析",
+        "📚 历史报告",
+        "📈 数据统计"
     ])
     
     with tab1:
@@ -109,7 +108,7 @@ def display_analysis_tab():
         run_longhubang_batch_analysis()
         return
     
-    st.subheader("龙虎榜综合分析")
+    st.subheader("🔍 龙虎榜综合分析")
     
     # 参数设置
     col1, col2 = st.columns([2, 2])
@@ -141,10 +140,10 @@ def display_analysis_tab():
     col1, col2 = st.columns([2, 2])
     
     with col1:
-        analyze_button = st.button("开始分析", type="primary", width='stretch')
+        analyze_button = st.button("🚀 开始分析", type="primary", width='stretch')
     
     with col2:
-        if st.button("清除结果", width='stretch'):
+        if st.button("🔄 清除结果", width='stretch'):
             if 'longhubang_result' in st.session_state:
                 del st.session_state.longhubang_result
             st.success("已清除分析结果")
@@ -172,7 +171,7 @@ def display_analysis_tab():
         if result.get("success"):
             display_analysis_results(result)
         else:
-            st.error(f"分析失败: {result.get('error', '未知错误')}")
+            st.error(f"❌ 分析失败: {result.get('error', '未知错误')}")
 
 
 def run_longhubang_analysis(model=None, date=None, days=1):
@@ -185,12 +184,12 @@ def run_longhubang_analysis(model=None, date=None, days=1):
     status_text = st.empty()
     
     try:
-        status_text.text("初始化分析引擎...")
+        status_text.text("🚀 初始化分析引擎...")
         progress_bar.progress(5)
         
         engine = LonghubangEngine(model=model)
         
-        status_text.text("正在获取龙虎榜数据...")
+        status_text.text("📊 正在获取龙虎榜数据...")
         progress_bar.progress(15)
         
         # 运行分析
@@ -203,7 +202,7 @@ def run_longhubang_analysis(model=None, date=None, days=1):
             st.session_state.longhubang_result = result
             
             progress_bar.progress(100)
-            status_text.text("分析完成！")
+            status_text.text("✅ 分析完成！")
             
             time.sleep(1)
             status_text.empty()
@@ -212,10 +211,10 @@ def run_longhubang_analysis(model=None, date=None, days=1):
             # 自动刷新显示结果
             st.rerun()
         else:
-            st.error(f"分析失败: {result.get('error', '未知错误')}")
+            st.error(f"❌ 分析失败: {result.get('error', '未知错误')}")
     
     except Exception as e:
-        st.error(f"分析过程出错: {str(e)}")
+        st.error(f"❌ 分析过程出错: {str(e)}")
         import traceback
         st.code(traceback.format_exc())
     finally:
@@ -226,8 +225,8 @@ def run_longhubang_analysis(model=None, date=None, days=1):
 def display_analysis_results(result):
     """显示分析结果"""
     
-    st.success("龙虎榜分析完成！")
-    st.info(f"分析时间: {result.get('timestamp', 'N/A')}")
+    st.success("✅ 龙虎榜分析完成！")
+    st.info(f"📅 分析时间: {result.get('timestamp', 'N/A')}")
     
     # 数据概况
     data_info = result.get('data_info', {})
@@ -253,11 +252,11 @@ def display_analysis_results(result):
     
     # 创建子标签页
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
-        "AI评分排名",
-        "推荐股票",
-        "AI分析师报告",
-        "数据详情",
-        "可视化图表"
+        "🏆 AI评分排名",
+        "🎯 推荐股票",
+        "🤖 AI分析师报告",
+        "📊 数据详情",
+        "📈 可视化图表"
     ])
     
     with tab1:
@@ -279,7 +278,7 @@ def display_analysis_results(result):
 def display_scoring_ranking(result):
     """显示AI智能评分排名"""
     
-    st.subheader("AI智能评分排名")
+    st.subheader("🏆 AI智能评分排名")
     
     scoring_df = result.get('scoring_ranking')
     
@@ -288,34 +287,34 @@ def display_scoring_ranking(result):
         return
     
     # 评分说明
-    with st.expander("评分维度说明", expanded=False):
+    with st.expander("📖 评分维度说明", expanded=False):
         st.markdown("""
-        ### AI智能评分体系 (总分100分)
+        ### 📊 AI智能评分体系 (总分100分)
         
-        #### 1⃣ 买入资金含金量 (0-30分)
+        #### 1️⃣ 买入资金含金量 (0-30分)
         - **顶级游资**（赵老哥、章盟主、92科比等）：每个 +10分
         - **知名游资**（深股通、中信证券等）：每个 +5分
         - **普通游资**：每个 +1.5分
         
-        #### 2⃣ 净买入额评分 (0-25分)
+        #### 2️⃣ 净买入额评分 (0-25分)
         - 净流入 < 1000万：0-10分
         - 净流入 1000-5000万：10-18分
         - 净流入 5000万-1亿：18-22分
         - 净流入 > 1亿：22-25分
         
-        #### 3⃣ 卖出压力评分 (0-20分)
-        - 卖出比例 0-10%：20分 （压力极小）
+        #### 3️⃣ 卖出压力评分 (0-20分)
+        - 卖出比例 0-10%：20分 ✨（压力极小）
         - 卖出比例 10-30%：15-20分（压力较小）
         - 卖出比例 30-50%：10-15分（压力中等）
         - 卖出比例 50-80%：5-10分（压力较大）
         - 卖出比例 > 80%：0-5分（压力极大）
         
-        #### 4⃣ 机构共振评分 (0-15分)
-        - **机构+游资共振**：15分 （最强信号）
+        #### 4️⃣ 机构共振评分 (0-15分)
+        - **机构+游资共振**：15分 ⭐（最强信号）
         - 仅机构买入：8-12分
         - 仅游资买入：5-10分
         
-        #### 5⃣ 其他加分项 (0-10分)
+        #### 5️⃣ 其他加分项 (0-10分)
         - **主力集中度**：席位越少越集中 (+1-3分)
         - **热门概念**：AI、新能源、芯片等 (+0-3分)
         - **连续上榜**：连续多日上榜 (+0-2分)
@@ -323,14 +322,14 @@ def display_scoring_ranking(result):
         
         ---
         
-         **评分越高，表示该股票受到资金青睐程度越高！** 
-         **但仍需结合市场环境、技术面等因素综合判断！**
+        💡 **评分越高，表示该股票受到资金青睐程度越高！**  
+        ⚠️ **但仍需结合市场环境、技术面等因素综合判断！**
         """)
     
     st.markdown("---")
     
     # 显示TOP10评分表格
-    st.markdown("### TOP10 综合评分排名")
+    st.markdown("### 🥇 TOP10 综合评分排名")
     
     # 兼容历史数据与类型统一，避免 Arrow 序列化错误
     if isinstance(scoring_df, list):
@@ -406,7 +405,7 @@ def display_scoring_ranking(result):
     
     col_batch1, col_batch2, col_batch3 = st.columns([2, 1, 1])
     with col_batch1:
-        st.markdown("#### 批量深度分析")
+        st.markdown("#### 🚀 批量深度分析")
         st.caption("对TOP10股票进行完整的AI团队分析，获取投资评级和关键价位")
     
     with col_batch2:
@@ -422,7 +421,7 @@ def display_scoring_ranking(result):
     
     with col_batch3:
         st.write("")  # 占位
-        if st.button("开始批量分析", type="primary", width='stretch'):
+        if st.button("🚀 开始批量分析", type="primary", width='stretch'):
             # 提取股票代码
             stock_codes = top10_df.head(batch_count)['股票代码'].tolist()
             
@@ -434,7 +433,7 @@ def display_scoring_ranking(result):
     st.markdown("---")
     
     # 评分分布图表
-    st.markdown("### 评分分布可视化")
+    st.markdown("### 📊 评分分布可视化")
     
     col1, col2 = st.columns(2)
     
@@ -455,7 +454,7 @@ def display_scoring_ranking(result):
             showlegend=False,
             height=400
         )
-        st.plotly_chart(fig1, config={'displayModeBar': False}, width='stretch')
+        st.plotly_chart(fig1, config={'displayModeBar': False}, use_container_width=True)
     
     with col2:
         # 五维评分雷达图（显示批量分析数量的股票）
@@ -493,7 +492,7 @@ def display_scoring_ranking(result):
                     )
                 ),
                 showlegend=True,
-                title=f"TOP{display_count} 五维评分对比",
+                title=f"🏆 TOP{display_count} 五维评分对比",
                 height=400,
                 legend=dict(
                     orientation="h",
@@ -503,12 +502,12 @@ def display_scoring_ranking(result):
                     x=0.5
                 )
             )
-            st.plotly_chart(fig2, config={'displayModeBar': False}, width='stretch')
+            st.plotly_chart(fig2, config={'displayModeBar': False}, use_container_width=True)
     
     st.markdown("---")
     
     # 完整排名表格
-    st.markdown("### 完整评分排名")
+    st.markdown("### 📋 完整评分排名")
     
     st.dataframe(
         scoring_df,
@@ -530,7 +529,7 @@ def display_scoring_ranking(result):
 def display_recommended_stocks(result):
     """显示推荐股票"""
     
-    st.subheader("AI推荐股票")
+    st.subheader("🎯 AI推荐股票")
     
     recommended = result.get('recommended_stocks', [])
     
@@ -538,7 +537,7 @@ def display_recommended_stocks(result):
         st.warning("暂无推荐股票")
         return
     
-    st.info(f"基于5位AI分析师的综合分析，系统识别出以下 **{len(recommended)}** 只潜力股票")
+    st.info(f"💡 基于5位AI分析师的综合分析，系统识别出以下 **{len(recommended)}** 只潜力股票")
     
     # 创建DataFrame
     df_recommended = pd.DataFrame(recommended)
@@ -560,7 +559,7 @@ def display_recommended_stocks(result):
     )
     
     # 详细推荐理由
-    st.markdown("### 详细推荐理由")
+    st.markdown("### 📝 详细推荐理由")
     
     for stock in recommended[:5]:  # 只显示前5只
         with st.expander(f"**{stock.get('rank', '-')}. {stock.get('name', '-')} ({stock.get('code', '-')})**"):
@@ -578,7 +577,7 @@ def display_recommended_stocks(result):
 def display_agents_reports(result):
     """显示AI分析师报告"""
     
-    st.subheader("AI分析师团队报告")
+    st.subheader("🤖 AI分析师团队报告")
     
     agents_analysis = result.get('agents_analysis', {})
     
@@ -588,17 +587,17 @@ def display_agents_reports(result):
     
     # 各分析师报告
     agent_info = {
-        'youzi': {'title': '游资行为分析师'},
-        'stock': {'title': '个股潜力分析师'},
-        'theme': {'title': '题材追踪分析师'},
-        'risk': {'title': '风险控制专家'},
-        'chief': {'title': '首席策略师综合研判'}
+        'youzi': {'title': '🎯 游资行为分析师', 'icon': '🎯'},
+        'stock': {'title': '📈 个股潜力分析师', 'icon': '📈'},
+        'theme': {'title': '🔥 题材追踪分析师', 'icon': '🔥'},
+        'risk': {'title': '⚠️ 风险控制专家', 'icon': '⚠️'},
+        'chief': {'title': '👔 首席策略师综合研判', 'icon': '👔'}
     }
     
     for agent_key, info in agent_info.items():
         agent_data = agents_analysis.get(agent_key, {})
         if agent_data:
-            with st.expander(info['title'], expanded=(agent_key == 'chief')):
+            with st.expander(f"{info['icon']} {info['title']}", expanded=(agent_key == 'chief')):
                 analysis = agent_data.get('analysis', '暂无分析')
                 st.markdown(analysis)
                 
@@ -609,14 +608,14 @@ def display_agents_reports(result):
 def display_data_details(result):
     """显示数据详情"""
     
-    st.subheader("龙虎榜数据详情")
+    st.subheader("📊 龙虎榜数据详情")
     
     data_info = result.get('data_info', {})
     summary = data_info.get('summary', {})
     
     # TOP游资
     if summary.get('top_youzi'):
-        st.markdown("### 活跃游资 TOP10")
+        st.markdown("### 🏆 活跃游资 TOP10")
         
         youzi_data = [
             {'排名': idx, '游资名称': name, '净流入金额': amount}
@@ -637,7 +636,7 @@ def display_data_details(result):
     
     # TOP股票
     if summary.get('top_stocks'):
-        st.markdown("### 资金净流入 TOP20 股票")
+        st.markdown("### 📈 资金净流入 TOP20 股票")
         
         df_stocks = pd.DataFrame(summary['top_stocks'][:20])
         
@@ -654,7 +653,7 @@ def display_data_details(result):
     
     # 热门概念
     if summary.get('hot_concepts'):
-        st.markdown("### 热门概念 TOP20")
+        st.markdown("### 🔥 热门概念 TOP20")
         
         concepts_data = [
             {'排名': idx, '概念名称': concept, '出现次数': count}
@@ -677,14 +676,14 @@ def display_data_details(result):
 def display_visualizations(result):
     """显示可视化图表"""
     
-    st.subheader("数据可视化")
+    st.subheader("📈 数据可视化")
     
     data_info = result.get('data_info', {})
     summary = data_info.get('summary', {})
     
     # 资金流向图表
     if summary.get('top_stocks'):
-        st.markdown("### TOP20 股票资金净流入")
+        st.markdown("### 💰 TOP20 股票资金净流入")
         
         stocks = summary['top_stocks'][:20]
         df_chart = pd.DataFrame(stocks)
@@ -697,11 +696,11 @@ def display_visualizations(result):
             labels={'name': '股票名称', 'net_inflow': '净流入金额(元)'}
         )
         fig.update_layout(xaxis_tickangle=-45)
-        st.plotly_chart(fig, config={'displayModeBar': False}, width='stretch')
+        st.plotly_chart(fig, config={'displayModeBar': False}, use_container_width=True)
     
     # 热门概念图表
     if summary.get('hot_concepts'):
-        st.markdown("### 热门概念分布")
+        st.markdown("### 🔥 热门概念分布")
         
         concepts = list(summary['hot_concepts'].items())[:15]
         df_concepts = pd.DataFrame(concepts, columns=['概念', '次数'])
@@ -712,21 +711,21 @@ def display_visualizations(result):
             names='概念',
             title='热门概念出现次数分布'
         )
-        st.plotly_chart(fig, config={'displayModeBar': False}, width='stretch')
+        st.plotly_chart(fig, config={'displayModeBar': False}, use_container_width=True)
 
 
 def display_pdf_export_section(result):
     """显示PDF导出功能"""
     
-    st.markdown("### 导出报告")
+    st.markdown("### 📄 导出报告")
     
     col1, col2, col3 = st.columns([2, 1, 1])
     
     with col1:
-        st.info("点击按钮生成并下载专业分析报告")
+        st.info("💡 点击按钮生成并下载专业分析报告")
     
     with col2:
-        if st.button("生成PDF", type="primary", width='stretch'):
+        if st.button("📥 生成PDF", type="primary", width='stretch'):
             with st.spinner("正在生成PDF报告..."):
                 try:
                     generator = LonghubangPDFGenerator()
@@ -738,20 +737,20 @@ def display_pdf_export_section(result):
                     
                     # 提供下载
                     st.download_button(
-                        label="下载PDF报告",
+                        label="📥 下载PDF报告",
                         data=pdf_bytes,
                         file_name=f"智瞰龙虎报告_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
                         mime="application/pdf",
                         width='stretch'
                     )
                     
-                    st.success("PDF报告生成成功！")
+                    st.success("✅ PDF报告生成成功！")
                 
                 except Exception as e:
-                    st.error(f"PDF生成失败: {str(e)}")
+                    st.error(f"❌ PDF生成失败: {str(e)}")
     
     with col3:
-        if st.button("生成Markdown", type="secondary", width='stretch'):
+        if st.button("📝 生成Markdown", type="secondary", width='stretch'):
             with st.spinner("正在生成Markdown报告..."):
                 try:
                     # 生成Markdown内容
@@ -759,17 +758,17 @@ def display_pdf_export_section(result):
                     
                     # 提供下载
                     st.download_button(
-                        label="下载Markdown报告",
+                        label="📥 下载Markdown报告",
                         data=markdown_content,
                         file_name=f"智瞰龙虎报告_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md",
                         mime="text/markdown",
                         width='stretch'
                     )
                     
-                    st.success("Markdown报告生成成功！")
+                    st.success("✅ Markdown报告生成成功！")
                 
                 except Exception as e:
-                    st.error(f"Markdown生成失败: {str(e)}")
+                    st.error(f"❌ Markdown生成失败: {str(e)}")
 
 
 def generate_markdown_report(result_data: dict) -> str:
@@ -785,20 +784,20 @@ def generate_markdown_report(result_data: dict) -> str:
 
 ---
 
-## 报告概览
+## 📊 报告概览
 
 - **生成时间**: {current_time}
 - **数据记录**: {result_data.get('data_info', {}).get('total_records', 0)} 条
 - **涉及股票**: {result_data.get('data_info', {}).get('total_stocks', 0)} 只
 - **涉及游资**: {result_data.get('data_info', {}).get('total_youzi', 0)} 个
 - **AI分析师**: 5位专业分析师团队
-- **分析模型**: AI模型 Multi-Agent System
+- **分析模型**: DeepSeek AI Multi-Agent System
 
->  本报告由AI系统基于龙虎榜公开数据自动生成，仅供参考，不构成投资建议。市场有风险，投资需谨慎。
+> ⚠️ 本报告由AI系统基于龙虎榜公开数据自动生成，仅供参考，不构成投资建议。市场有风险，投资需谨慎。
 
 ---
 
-## 数据概况
+## 📈 数据概况
 
 本次分析共涵盖 **{result_data.get('data_info', {}).get('total_records', 0)}** 条龙虎榜记录，
 涉及 **{result_data.get('data_info', {}).get('total_stocks', 0)}** 只股票和 
@@ -809,7 +808,7 @@ def generate_markdown_report(result_data: dict) -> str:
     # 资金概况
     summary = result_data.get('data_info', {}).get('summary', {})
     markdown_content += f"""
-### 资金概况
+### 💰 资金概况
 
 - **总买入金额**: {summary.get('total_buy_amount', 0):,.2f} 元
 - **总卖出金额**: {summary.get('total_sell_amount', 0):,.2f} 元
@@ -819,21 +818,21 @@ def generate_markdown_report(result_data: dict) -> str:
     
     # TOP游资
     if summary.get('top_youzi'):
-        markdown_content += "### 活跃游资 TOP10\n\n| 排名 | 游资名称 | 净流入金额(元) |\n|------|----------|---------------|\n"
+        markdown_content += "### 🏆 活跃游资 TOP10\n\n| 排名 | 游资名称 | 净流入金额(元) |\n|------|----------|---------------|\n"
         for idx, (name, amount) in enumerate(list(summary['top_youzi'].items())[:10], 1):
             markdown_content += f"| {idx} | {name} | {amount:,.2f} |\n"
         markdown_content += "\n"
     
     # TOP股票
     if summary.get('top_stocks'):
-        markdown_content += "### 资金净流入 TOP20 股票\n\n| 排名 | 股票代码 | 股票名称 | 净流入金额(元) |\n|------|----------|----------|---------------|\n"
+        markdown_content += "### 📈 资金净流入 TOP20 股票\n\n| 排名 | 股票代码 | 股票名称 | 净流入金额(元) |\n|------|----------|----------|---------------|\n"
         for idx, stock in enumerate(summary['top_stocks'][:20], 1):
             markdown_content += f"| {idx} | {stock['code']} | {stock['name']} | {stock['net_inflow']:,.2f} |\n"
         markdown_content += "\n"
     
     # 热门概念
     if summary.get('hot_concepts'):
-        markdown_content += "### 热门概念 TOP15\n\n"
+        markdown_content += "### 🔥 热门概念 TOP15\n\n"
         for idx, (concept, count) in enumerate(list(summary['hot_concepts'].items())[:15], 1):
             markdown_content += f"{idx}. {concept} ({count}次)  \n"
         markdown_content += "\n"
@@ -842,7 +841,7 @@ def generate_markdown_report(result_data: dict) -> str:
     recommended = result_data.get('recommended_stocks', [])
     if recommended:
         markdown_content += f"""
-## AI推荐股票
+## 🎯 AI推荐股票
 
 基于5位AI分析师的综合分析，系统识别出以下 **{len(recommended)}** 只潜力股票，
 这些股票在资金流向、游资关注度、题材热度等多个维度表现突出。
@@ -865,7 +864,7 @@ def generate_markdown_report(result_data: dict) -> str:
     # AI分析师报告
     agents_analysis = result_data.get('agents_analysis', {})
     if agents_analysis:
-        markdown_content += "## AI分析师报告\n\n"
+        markdown_content += "## 🤖 AI分析师报告\n\n"
         markdown_content += "本报告由5位AI专业分析师从不同维度进行分析，综合形成投资建议：\n\n"
         markdown_content += "- **游资行为分析师** - 分析游资操作特征和意图\n"
         markdown_content += "- **个股潜力分析师** - 挖掘次日大概率上涨的股票\n"
@@ -902,7 +901,7 @@ def generate_markdown_report(result_data: dict) -> str:
 def display_history_tab():
     """显示历史报告标签页（增强版）"""
     
-    st.subheader("历史分析报告")
+    st.subheader("📚 历史分析报告")
     
     try:
         engine = LonghubangEngine()
@@ -912,10 +911,10 @@ def display_history_tab():
             st.info("暂无历史报告")
             return
         
-        st.info(f"共有 {len(reports_df)} 条历史报告")
+        st.info(f"💾 共有 {len(reports_df)} 条历史报告")
         
         # 显示报告列表
-        st.markdown("### 报告列表")
+        st.markdown("### 📋 报告列表")
         
         # 为每条报告创建展开面板
         for idx, row in reports_df.iterrows():
@@ -926,7 +925,7 @@ def display_history_tab():
             
             # 创建展开面板
             with st.expander(
-                f"报告 #{report_id} | {analysis_date} | 数据范围: {data_date_range}",
+                f"📄 报告 #{report_id} | {analysis_date} | 数据范围: {data_date_range}",
                 expanded=False
             ):
                 # 获取完整报告详情
@@ -937,7 +936,7 @@ def display_history_tab():
                     continue
                 
                 # 显示摘要
-                st.markdown("#### 报告摘要")
+                st.markdown("#### 📝 报告摘要")
                 st.info(summary)
                 
                 st.markdown("---")
@@ -945,7 +944,7 @@ def display_history_tab():
                 # 显示推荐股票
                 recommended_stocks = report_detail.get('recommended_stocks', [])
                 if recommended_stocks:
-                    st.markdown(f"#### 推荐股票 ({len(recommended_stocks)}只)")
+                    st.markdown(f"#### 🎯 推荐股票 ({len(recommended_stocks)}只)")
                     
                     # 创建DataFrame显示
                     df_stocks = pd.DataFrame(recommended_stocks)
@@ -974,20 +973,20 @@ def display_history_tab():
                     agents_analysis = analysis_content_parsed.get('agents_analysis', {})
                     
                     if agents_analysis:
-                        st.markdown("#### AI分析师团队报告")
+                        st.markdown("#### 🤖 AI分析师团队报告")
                         
                         agent_info = {
-                            'youzi': {'title': '游资行为分析师'},
-                            'stock': {'title': '个股潜力分析师'},
-                            'theme': {'title': '题材追踪分析师'},
-                            'risk': {'title': '风险控制专家'},
-                            'chief': {'title': '首席策略师'}
+                            'youzi': {'title': '🎯 游资行为分析师', 'icon': '🎯'},
+                            'stock': {'title': '📈 个股潜力分析师', 'icon': '📈'},
+                            'theme': {'title': '🔥 题材追踪分析师', 'icon': '🔥'},
+                            'risk': {'title': '⚠️ 风险控制专家', 'icon': '⚠️'},
+                            'chief': {'title': '👔 首席策略师', 'icon': '👔'}
                         }
                         
                         for agent_key, info in agent_info.items():
                             agent_data = agents_analysis.get(agent_key, {})
                             if agent_data:
-                                with st.expander(info['title'], expanded=False):
+                                with st.expander(f"{info['icon']} {info['title']}", expanded=False):
                                     analysis = agent_data.get('analysis', '暂无分析')
                                     st.markdown(analysis)
                                     st.caption(f"分析时间: {agent_data.get('timestamp', 'N/A')}")
@@ -996,7 +995,7 @@ def display_history_tab():
                     scoring_ranking = analysis_content_parsed.get('scoring_ranking', [])
                     if scoring_ranking:
                         st.markdown("---")
-                        st.markdown("#### AI智能评分排名 (TOP10)")
+                        st.markdown("#### 🏆 AI智能评分排名 (TOP10)")
                         
                         df_scoring = pd.DataFrame(scoring_ranking[:10])
                         # 类型统一，避免Arrow序列化错误
@@ -1063,7 +1062,7 @@ def display_history_tab():
                         )
                         
                         # 显示评分说明
-                        with st.expander("评分维度说明", expanded=False):
+                        with st.expander("📖 评分维度说明", expanded=False):
                             st.markdown("""
                             **AI智能评分体系 (总分100分)**
                             
@@ -1073,14 +1072,14 @@ def display_history_tab():
                             - **机构共振** (0-15分)：机构+游资共振15分最高
                             - **加分项** (0-10分)：主力集中度、热门概念、连续上榜等
                             
-                             评分越高，表示该股票受到资金青睐程度越高！
+                            💡 评分越高，表示该股票受到资金青睐程度越高！
                             """)
                     
                     # 显示数据概况
                     data_info = analysis_content_parsed.get('data_info', {})
                     if data_info:
                         st.markdown("---")
-                        st.markdown("#### 数据概况")
+                        st.markdown("#### 📊 数据概况")
                         
                         col1, col2, col3 = st.columns(3)
                         with col1:
@@ -1092,7 +1091,7 @@ def display_history_tab():
                 
                 else:
                     # 如果无法解析，显示原始内容
-                    st.markdown("#### 原始分析内容")
+                    st.markdown("#### 📄 原始分析内容")
                     analysis_content = report_detail.get('analysis_content', '')
                     if analysis_content:
                         st.text_area("原始分析内容", value=analysis_content[:2000], height=200, disabled=True)
@@ -1104,13 +1103,13 @@ def display_history_tab():
                 col_export1, col_export2, col_export3 = st.columns(3)
                 
                 with col_export1:
-                    if st.button(f"导出为PDF", key=f"export_pdf_{report_id}"):
+                    if st.button(f"📥 导出为PDF", key=f"export_pdf_{report_id}"):
                         st.info("PDF导出功能开发中...")
                 
                 with col_export2:
                     # 使用session_state来管理按钮状态，避免需要点击两次的问题
                     load_key = f"load_report_{report_id}"
-                    if st.button(f"加载到分析页", key=load_key):
+                    if st.button(f"📋 加载到分析页", key=load_key):
                         # 将历史报告加载到当前分析结果中
                         if analysis_content_parsed:
                             # 重建完整的result结构
@@ -1142,44 +1141,44 @@ def display_history_tab():
                             }
                             st.session_state.longhubang_result = loaded_result
                             # 使用rerun来立即刷新页面状态
-                            st.success(' 报告已加载到分析页面，请切换到"龙虎榜分析"标签查看')
+                            st.success('✅ 报告已加载到分析页面，请切换到"龙虎榜分析"标签查看')
                             st.rerun()
                 
                 with col_export3:
                     # 删除按钮
                     delete_key = f"delete_report_{report_id}"
-                    if st.button(f"删除报告", key=delete_key, type="secondary"):
+                    if st.button(f"🗑️ 删除报告", key=delete_key, type="secondary"):
                         # 使用session_state来管理删除确认状态
                         st.session_state[f"confirm_delete_{report_id}"] = True
                         st.rerun()
                 
                 # 删除确认对话框
                 if st.session_state.get(f"confirm_delete_{report_id}", False):
-                    st.warning(f"确认删除报告 #{report_id}？此操作不可撤销！")
+                    st.warning(f"⚠️ 确认删除报告 #{report_id}？此操作不可撤销！")
                     col_confirm1, col_confirm2 = st.columns(2)
                     
                     with col_confirm1:
-                        if st.button(f"确认删除", key=f"confirm_delete_yes_{report_id}", type="primary"):
+                        if st.button(f"✅ 确认删除", key=f"confirm_delete_yes_{report_id}", type="primary"):
                             try:
                                 # 调用数据库删除方法 - 修复属性名
                                 engine.database.delete_analysis_report(report_id)
-                                st.success(f"报告 #{report_id} 已成功删除")
+                                st.success(f"✅ 报告 #{report_id} 已成功删除")
                                 # 清除确认状态并刷新页面
                                 if f"confirm_delete_{report_id}" in st.session_state:
                                     del st.session_state[f"confirm_delete_{report_id}"]
                                 st.rerun()
                             except Exception as e:
-                                st.error(f"删除失败: {str(e)}")
+                                st.error(f"❌ 删除失败: {str(e)}")
                     
                     with col_confirm2:
-                        if st.button(f"取消", key=f"confirm_delete_no_{report_id}"):
+                        if st.button(f"❌ 取消", key=f"confirm_delete_no_{report_id}"):
                             # 清除确认状态
                             if f"confirm_delete_{report_id}" in st.session_state:
                                 del st.session_state[f"confirm_delete_{report_id}"]
                             st.rerun()
         
     except Exception as e:
-        st.error(f"加载历史报告失败: {str(e)}")
+        st.error(f"❌ 加载历史报告失败: {str(e)}")
         import traceback
         st.code(traceback.format_exc())
 
@@ -1187,7 +1186,7 @@ def display_history_tab():
 def display_statistics_tab():
     """显示数据统计标签页"""
     
-    st.subheader("数据统计")
+    st.subheader("📈 数据统计")
     
     try:
         engine = LonghubangEngine()
@@ -1211,12 +1210,12 @@ def display_statistics_tab():
         # 日期范围
         date_range = stats.get('date_range', {})
         if date_range:
-            st.info(f"数据日期范围: {date_range.get('start', 'N/A')} 至 {date_range.get('end', 'N/A')}")
+            st.info(f"📅 数据日期范围: {date_range.get('start', 'N/A')} 至 {date_range.get('end', 'N/A')}")
         
         st.markdown("---")
         
         # 活跃游资排名
-        st.markdown("### 历史活跃游资排名 (近30天)")
+        st.markdown("### 🏆 历史活跃游资排名 (近30天)")
         
         end_date = datetime.now().strftime('%Y-%m-%d')
         start_date = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
@@ -1238,7 +1237,7 @@ def display_statistics_tab():
         st.markdown("---")
         
         # 热门股票排名
-        st.markdown("### 历史热门股票排名 (近30天)")
+        st.markdown("### 📈 历史热门股票排名 (近30天)")
         
         top_stocks_df = engine.get_top_stocks(start_date, end_date, limit=20)
         
@@ -1256,13 +1255,13 @@ def display_statistics_tab():
             )
         
     except Exception as e:
-        st.error(f"加载统计数据失败: {str(e)}")
+        st.error(f"❌ 加载统计数据失败: {str(e)}")
 
 
 def run_longhubang_batch_analysis():
     """执行龙虎榜TOP股票批量分析（遵循统一调用规范）"""
     
-    st.markdown("## 龙虎榜TOP股票批量分析")
+    st.markdown("## 🚀 龙虎榜TOP股票批量分析")
     st.markdown("---")
     
     # 检查是否已有分析结果
@@ -1272,7 +1271,7 @@ def run_longhubang_batch_analysis():
         # 返回按钮
         col_back, col_clear = st.columns(2)
         with col_back:
-            if st.button("返回龙虎榜分析", width='stretch'):
+            if st.button("🔙 返回龙虎榜分析", width='stretch'):
                 # 清除所有批量分析相关状态
                 if 'longhubang_batch_trigger' in st.session_state:
                     del st.session_state.longhubang_batch_trigger
@@ -1283,7 +1282,7 @@ def run_longhubang_batch_analysis():
                 st.rerun()
         
         with col_clear:
-            if st.button("重新分析", width='stretch'):
+            if st.button("🔄 重新分析", width='stretch'):
                 # 清除结果，保留触发标志和代码
                 if 'longhubang_batch_results' in st.session_state:
                     del st.session_state.longhubang_batch_results
@@ -1304,7 +1303,7 @@ def run_longhubang_batch_analysis():
     st.info(f"即将分析 {len(stock_codes)} 只股票：{', '.join(stock_codes)}")
     
     # 返回按钮
-    if st.button("取消返回", type="secondary"):
+    if st.button("🔙 取消返回", type="secondary"):
         # 清除所有批量分析相关状态
         if 'longhubang_batch_trigger' in st.session_state:
             del st.session_state.longhubang_batch_trigger
@@ -1344,11 +1343,11 @@ def run_longhubang_batch_analysis():
     
     start_analysis = False
     with col_confirm:
-        if st.button("确认开始分析", type="primary", width='stretch'):
+        if st.button("🚀 确认开始分析", type="primary", width='stretch'):
             start_analysis = True
     
     with col_cancel:
-        if st.button("取消", type="secondary", width='stretch'):
+        if st.button("❌ 取消", type="secondary", width='stretch'):
             # 清除所有批量分析相关状态
             if 'longhubang_batch_trigger' in st.session_state:
                 del st.session_state.longhubang_batch_trigger
@@ -1363,7 +1362,7 @@ def run_longhubang_batch_analysis():
         import time
         
         st.markdown("---")
-        st.info("处理中 正在执行批量分析，请稍候...")
+        st.info("⏳ 正在执行批量分析，请稍候...")
         
         # 进度显示
         progress_bar = st.progress(0)
@@ -1447,7 +1446,7 @@ def run_longhubang_batch_analysis():
         success_count = sum(1 for r in results if r.get("result", {}).get("success"))
         failed_count = len(results) - success_count
         
-        st.success(f"批量分析完成！成功 {success_count} 只，失败 {failed_count} 只，耗时 {elapsed_time:.1f}秒")
+        st.success(f"✅ 批量分析完成！成功 {success_count} 只，失败 {failed_count} 只，耗时 {elapsed_time:.1f}秒")
         
         # 保存结果到session_state
         st.session_state.longhubang_batch_results = {
@@ -1465,7 +1464,7 @@ def run_longhubang_batch_analysis():
 def display_longhubang_batch_results(batch_results: dict):
     """显示龙虎榜批量分析结果"""
     
-    st.markdown("### 批量分析结果")
+    st.markdown("### 📊 批量分析结果")
     
     results = batch_results.get("results", [])
     total = batch_results.get("total", 0)
@@ -1489,7 +1488,7 @@ def display_longhubang_batch_results(batch_results: dict):
     # 失败的股票
     failed_results = [r for r in results if not r.get("result", {}).get("success")]
     if failed_results:
-        with st.expander(f"失败股票 ({len(failed_results)}只)", expanded=False):
+        with st.expander(f"❌ 失败股票 ({len(failed_results)}只)", expanded=False):
             for item in failed_results:
                 code = item.get("code", "")
                 error = item.get("result", {}).get("error", "未知错误")
@@ -1499,10 +1498,10 @@ def display_longhubang_batch_results(batch_results: dict):
     success_results = [r for r in results if r.get("result", {}).get("success")]
     
     if not success_results:
-        st.warning("没有成功分析的股票")
+        st.warning("⚠️ 没有成功分析的股票")
         return
     
-    st.markdown("### 分析结果详情")
+    st.markdown("### 🎯 分析结果详情")
     
     # 显示每只股票的分析结果（使用统一字段名）
     for item in success_results:
@@ -1520,7 +1519,15 @@ def display_longhubang_batch_results(batch_results: dict):
         target_price = final_decision.get("target_price", "N/A")
         advice = final_decision.get("advice", "")
         
-        with st.expander(f"{code} {stock_info.get('name', '')} - {rating} (信心度: {confidence})", expanded=False):
+        # 评级颜色
+        if "强烈买入" in rating or "买入" in rating:
+            rating_color = "🟢"
+        elif "卖出" in rating:
+            rating_color = "🔴"
+        else:
+            rating_color = "🟡"
+        
+        with st.expander(f"{rating_color} {code} {stock_info.get('name', '')} - {rating} (信心度: {confidence})", expanded=False):
             col1, col2, col3 = st.columns(3)
             
             with col1:
@@ -1543,7 +1550,7 @@ def display_longhubang_batch_results(batch_results: dict):
                 st.info(advice)
             
             # 添加到监测按钮
-            if st.button(f"加入监测", key=f"add_monitor_{code}"):
+            if st.button(f"➕ 加入监测", key=f"add_monitor_{code}"):
                 add_to_monitor_from_longhubang(code, stock_info.get('name', ''), final_decision)
 
 
@@ -1566,7 +1573,7 @@ def add_to_monitor_from_longhubang(code: str, name: str, final_decision: dict):
                 parts = entry_range.split("-")
                 entry_min = float(parts[0].strip())
                 entry_max = float(parts[1].strip())
-            except Exception:
+            except:
                 pass
         
         # 解析止盈止损
@@ -1576,7 +1583,7 @@ def add_to_monitor_from_longhubang(code: str, name: str, final_decision: dict):
                 numbers = re.findall(r'\d+\.?\d*', str(take_profit_str))
                 if numbers:
                     take_profit = float(numbers[0])
-            except Exception:
+            except:
                 pass
         
         if stop_loss_str:
@@ -1584,12 +1591,12 @@ def add_to_monitor_from_longhubang(code: str, name: str, final_decision: dict):
                 numbers = re.findall(r'\d+\.?\d*', str(stop_loss_str))
                 if numbers:
                     stop_loss = float(numbers[0])
-            except Exception:
+            except:
                 pass
         
         # 验证必需参数
         if not all([entry_min, entry_max, take_profit, stop_loss]):
-            st.error("分析结果缺少完整的进场区间和止盈止损信息")
+            st.error("❌ 分析结果缺少完整的进场区间和止盈止损信息")
             return
         
         # 添加到监测
@@ -1604,16 +1611,17 @@ def add_to_monitor_from_longhubang(code: str, name: str, final_decision: dict):
             notification_enabled=True
         )
         
-        st.success(f"{code} 已成功加入监测列表！")
+        st.success(f"✅ {code} 已成功加入监测列表！")
         
     except Exception as e:
-        st.error(f"添加监测失败: {str(e)}")
+        st.error(f"❌ 添加监测失败: {str(e)}")
 
 
 # 测试函数
 if __name__ == "__main__":
     st.set_page_config(
         page_title="智瞰龙虎",
+        page_icon="🎯",
         layout="wide"
     )
     

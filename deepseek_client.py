@@ -1,77 +1,55 @@
 import openai
 import json
-import time
-from typing import Dict, List, Any, Optional, Union
+from typing import Dict, List, Any, Optional
 import config
-from ai_model_router import ModelTier, resolve_api_credentials, resolve_model_name
-from logger import get_logger
 
-logger = get_logger(__name__)
-
-class LLMClient:
-    """LLM API客户端（支持所有OpenAI兼容模型）"""
+class DeepSeekClient:
+    """DeepSeek API客户端"""
     
     def __init__(self, model=None):
         self.model = model or config.DEFAULT_MODEL_NAME
-        api_key, base_url = resolve_api_credentials()
         self.client = openai.OpenAI(
-            api_key=api_key,
-            base_url=base_url
+            api_key=config.DEEPSEEK_API_KEY,
+            base_url=config.DEEPSEEK_BASE_URL
         )
         
-    def call_api(self, messages: List[Dict[str, str]], model: Optional[str] = None,
-                 model_tier: Optional[Union[ModelTier, str]] = None,
-                 temperature: float = 0.7, max_tokens: int = 2000,
-                 max_retries: int = 3) -> str:
-        """调用LLM API（带重试机制）"""
-        if model:
-            model_to_use = str(model).strip()
-        elif model_tier is not None:
-            model_to_use = resolve_model_name(tier=model_tier)
-        else:
-            model_to_use = resolve_model_name(explicit_model=self.model)
+    def call_api(self, messages: List[Dict[str, str]], model: Optional[str] = None, 
+                 temperature: float = 0.7, max_tokens: int = 2000) -> str:
+        """调用DeepSeek API"""
+        # 使用实例的模型，如果没有传入则使用默认模型
+        model_to_use = model or self.model
         
         # 对于 reasoner 模型，自动增加 max_tokens
         if "reasoner" in model_to_use.lower() and max_tokens <= 2000:
             max_tokens = 8000  # reasoner 模型需要更多 tokens 来输出推理过程
         
-        last_error = None
-        for attempt in range(max_retries):
-            try:
-                response = self.client.chat.completions.create(
-                    model=model_to_use,
-                    messages=messages,
-                    temperature=temperature,
-                    max_tokens=max_tokens
-                )
-                
-                # 处理 reasoner 模型的响应
-                message = response.choices[0].message
-                
-                # reasoner 模型可能包含 reasoning_content（推理过程）和 content（最终答案）
-                # 我们返回完整内容，包括推理过程（如果有的话）
-                result = ""
-                
-                # 检查是否有推理内容
-                if hasattr(message, 'reasoning_content') and message.reasoning_content:
-                    result += f"【推理过程】\n{message.reasoning_content}\n\n"
-                
-                # 添加最终内容
-                if message.content:
-                    result += message.content
-                
-                return result if result else "API返回空响应"
-                
-            except Exception as e:
-                last_error = e
-                if attempt < max_retries - 1:
-                    wait_time = 2 ** attempt  # 指数退避: 1s, 2s, 4s
-                    logger.warning(f"AI模型调用失败 (尝试 {attempt + 1}/{max_retries})，{wait_time}s后重试: {e}")
-                    time.sleep(wait_time)
-                else:
-                    logger.error(f"AI模型调用失败，已达最大重试次数: {e}")
-        
-        return f"AI模型调用失败: {str(last_error)}"
+        try:
+            response = self.client.chat.completions.create(
+                model=model_to_use,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens
+            )
+            
+            # 处理 reasoner 模型的响应
+            message = response.choices[0].message
+            
+            # reasoner 模型可能包含 reasoning_content（推理过程）和 content（最终答案）
+            # 我们返回完整内容，包括推理过程（如果有的话）
+            result = ""
+            
+            # 检查是否有推理内容
+            if hasattr(message, 'reasoning_content') and message.reasoning_content:
+                result += f"【推理过程】\n{message.reasoning_content}\n\n"
+            
+            # 添加最终内容
+            if message.content:
+                result += message.content
+            
+            return result if result else "API返回空响应"
+            
+        except Exception as e:
+            return f"API调用失败: {str(e)}"
     
     def technical_analysis(self, stock_info: Dict, stock_data: Any, indicators: Dict) -> str:
         """技术面分析"""
@@ -116,7 +94,7 @@ class LLMClient:
             {"role": "user", "content": prompt}
         ]
         
-        return self.call_api(messages, model_tier=ModelTier.LIGHTWEIGHT)
+        return self.call_api(messages)
     
     def fundamental_analysis(self, stock_info: Dict, financial_data: Dict = None, quarterly_data: Dict = None) -> str:
         """基本面分析"""
@@ -165,14 +143,12 @@ class LLMClient:
             # 使用格式化的季报数据
             from quarterly_report_data import QuarterlyReportDataFetcher
             fetcher = QuarterlyReportDataFetcher()
-            quarterly_source = quarterly_data.get('source', 'unknown')
             quarterly_section = f"""
 
 【最近8期季报详细数据】
 {fetcher.format_quarterly_reports_for_ai(quarterly_data)}
 
-数据来源：{quarterly_source}
-请重点基于这些数据进行趋势分析。
+以上是通过akshare获取的最近8期季度财务报告，请重点基于这些数据进行趋势分析。
 """
         
         prompt = f"""
@@ -259,25 +235,23 @@ class LLMClient:
             {"role": "user", "content": prompt}
         ]
         
-        return self.call_api(messages, model_tier=ModelTier.LONG_CONTEXT)
+        return self.call_api(messages)
     
     def fund_flow_analysis(self, stock_info: Dict, indicators: Dict, fund_flow_data: Dict = None) -> str:
         """资金面分析"""
         
-        # 构建资金流向数据部分 - 使用实际返回数据源格式化
+        # 构建资金流向数据部分 - 使用akshare格式化数据
         fund_flow_section = ""
         if fund_flow_data and fund_flow_data.get('data_success'):
             # 使用格式化的资金流向数据
             from fund_flow_akshare import FundFlowAkshareDataFetcher
             fetcher = FundFlowAkshareDataFetcher()
-            flow_source = fund_flow_data.get('source', 'unknown')
             fund_flow_section = f"""
 
 【近20个交易日资金流向详细数据】
 {fetcher.format_fund_flow_for_ai(fund_flow_data)}
 
-数据来源：{flow_source}
-请重点基于这些数据进行趋势分析。
+以上是通过akshare从东方财富获取的实际资金流向数据，请重点基于这些数据进行趋势分析。
 """
         else:
             fund_flow_section = "\n【资金流向数据】\n注意：未能获取到资金流向数据，将基于成交量进行分析。\n"
@@ -375,7 +349,7 @@ class LLMClient:
             {"role": "user", "content": prompt}
         ]
         
-        return self.call_api(messages, max_tokens=3000, model_tier=ModelTier.LONG_CONTEXT)
+        return self.call_api(messages, max_tokens=3000)
     
     def comprehensive_discussion(self, technical_report: str, fundamental_report: str, 
                                fund_flow_report: str, stock_info: Dict) -> str:
@@ -414,7 +388,7 @@ class LLMClient:
             {"role": "user", "content": prompt}
         ]
         
-        return self.call_api(messages, max_tokens=6000, model_tier=ModelTier.REASONING)
+        return self.call_api(messages, max_tokens=6000)
     
     def final_decision(self, comprehensive_discussion: str, stock_info: Dict, 
                       indicators: Dict) -> Dict[str, Any]:
@@ -467,7 +441,7 @@ class LLMClient:
             {"role": "user", "content": prompt}
         ]
         
-        response = self.call_api(messages, temperature=0.3, max_tokens=4000, model_tier=ModelTier.REASONING)
+        response = self.call_api(messages, temperature=0.3, max_tokens=4000)
         
         try:
             # 尝试解析JSON响应
@@ -479,6 +453,5 @@ class LLMClient:
             else:
                 # 如果无法解析JSON，返回文本响应
                 return {"decision_text": response}
-        except (json.JSONDecodeError, Exception) as e:
-            logger.warning(f"解析投资决策JSON失败: {e}")
+        except:
             return {"decision_text": response}

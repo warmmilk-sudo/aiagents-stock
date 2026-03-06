@@ -6,7 +6,6 @@
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import pandas as pd
-import tushare as ts
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 import logging
@@ -311,7 +310,7 @@ class SmartMonitorKline:
     
     def get_kline_data(self, stock_code: str, days: int = 60, data_fetcher=None) -> Optional[pd.DataFrame]:
         """
-        获取K线数据（支持TDX/Tushare/AKShare降级机制）
+        获取K线数据（支持TDX/AKShare/Tushare降级机制）
         
         Args:
             stock_code: 股票代码
@@ -334,23 +333,15 @@ class SmartMonitorKline:
                         self.logger.info(f"✅ TDX获取K线数据成功 {stock_code}，共{len(df)}条")
                         return df
                     else:
-                        self.logger.warning(f"TDX未返回K线数据 {stock_code}，尝试降级到Tushare")
+                        self.logger.warning(f"TDX未返回K线数据 {stock_code}，尝试降级到AKShare")
                 except Exception as e:
-                    self.logger.warning(f"TDX获取K线数据失败 {stock_code}: {type(e).__name__}, 尝试降级到Tushare")
+                    self.logger.warning(f"TDX获取K线数据失败 {stock_code}: {type(e).__name__}, 尝试降级到AKShare")
             
             # 计算日期范围
             end_date = datetime.now().strftime('%Y%m%d')
             start_date = (datetime.now() - timedelta(days=days + 30)).strftime('%Y%m%d')  # 多取30天以确保足够数据
             
-            # 方法2: 优先降级到Tushare（有Token时）
-            if data_fetcher and data_fetcher.ts_pro:
-                self.logger.info(f"降级使用Tushare获取K线数据 {stock_code}")
-                df = self._get_kline_from_tushare(stock_code, days, data_fetcher.ts_pro)
-                if df is not None and not df.empty:
-                    self.logger.info(f"✅ Tushare获取K线数据成功 {stock_code}，共{len(df)}条")
-                    return df
-
-            # 方法3: 最后尝试AKShare（只尝试1次，避免IP封禁）
+            # 方法2: 尝试使用AKShare获取（只尝试1次，避免IP封禁）
             try:
                 import akshare as ak
                 df = ak.stock_zh_a_hist(
@@ -360,15 +351,24 @@ class SmartMonitorKline:
                     end_date=end_date,
                     adjust='qfq'
                 )
-
+                
                 if df is not None and not df.empty:
+                    # 只保留最近days天的数据
                     df = df.tail(days)
                     self.logger.info(f"✅ AKShare获取K线数据成功 {stock_code}，共{len(df)}条")
                     return df
                 else:
-                    self.logger.warning(f"AKShare未返回K线数据 {stock_code}")
+                    self.logger.warning(f"AKShare未返回K线数据 {stock_code}，尝试降级到Tushare")
             except Exception as e:
-                self.logger.warning(f"AKShare获取K线数据失败 {stock_code}: {type(e).__name__}")
+                self.logger.warning(f"AKShare获取K线数据失败 {stock_code}: {type(e).__name__}, 尝试降级到Tushare")
+            
+            # 方法3: 降级到Tushare
+            if data_fetcher and data_fetcher.ts_pro:
+                self.logger.info(f"降级使用Tushare获取K线数据 {stock_code}")
+                df = self._get_kline_from_tushare(stock_code, days, data_fetcher.ts_pro)
+                if df is not None and not df.empty:
+                    self.logger.info(f"✅ Tushare获取K线数据成功 {stock_code}，共{len(df)}条")
+                    return df
             
             self.logger.error(f"所有数据源都无法获取K线数据 {stock_code}")
             return None
@@ -404,14 +404,11 @@ class SmartMonitorKline:
             end_date = datetime.now().strftime('%Y%m%d')
             start_date = (datetime.now() - timedelta(days=days + 60)).strftime('%Y%m%d')
             
-            # 使用 pro_bar 获取前复权日线，避免 ts_pro.daily 不支持 adj 导致失真
-            df = ts.pro_bar(
+            # 获取日K线数据（前复权）
+            df = ts_pro.daily(
                 ts_code=ts_code,
-                api=ts_pro,
                 start_date=start_date,
                 end_date=end_date,
-                freq='D',
-                asset='E',
                 adj='qfq'
             )
             
@@ -432,8 +429,6 @@ class SmartMonitorKline:
                 'vol': '成交量',
                 'amount': '成交额'
             })
-            df['成交量'] = pd.to_numeric(df['成交量'], errors='coerce') * 100
-            df['成交额'] = pd.to_numeric(df['成交额'], errors='coerce') * 1000
             
             # 转换日期格式（Tushare: 20240115 -> 2024-01-15）
             df['日期'] = pd.to_datetime(df['日期'])

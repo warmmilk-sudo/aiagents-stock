@@ -5,7 +5,6 @@
 """
 
 import streamlit as st
-from ui_theme import inject_global_theme, configure_plotly_template, render_page_header
 import pandas as pd
 from datetime import datetime
 from low_price_bull_selector import LowPriceBullSelector
@@ -13,13 +12,10 @@ from low_price_bull_strategy import LowPriceBullStrategy
 from notification_service import notification_service
 from low_price_bull_monitor import low_price_bull_monitor
 from low_price_bull_service import low_price_bull_service
-from wencai_field_resolver import get_row_value
 
 
 def display_low_price_bull():
     """显示低价擒牛选股界面"""
-    inject_global_theme()
-    configure_plotly_template()
     
     # 检查是否显示监控面板
     if st.session_state.get('show_low_price_monitor'):
@@ -27,7 +23,7 @@ def display_low_price_bull():
         display_monitor_panel()
         
         # 返回按钮
-        if st.button("返回选股", type="secondary"):
+        if st.button("🔙 返回选股", type="secondary"):
             del st.session_state.show_low_price_monitor
             st.rerun()
         return
@@ -36,37 +32,37 @@ def display_low_price_bull():
     col_select, col_monitor = st.columns([3, 1])
     
     with col_select:
-        st.markdown("## 低价擒牛 - 低价高成长股票筛选")
+        st.markdown("## 🐂 低价擒牛 - 低价高成长股票筛选")
     
     with col_monitor:
         st.write("")  # 占位
-        if st.button("策略监控", type="primary", width='content'):
+        if st.button("📊 策略监控", type="primary", width='content'):
             st.session_state.show_low_price_monitor = True
             st.rerun()
     
     st.markdown("---")
     
     st.markdown("""
-    ### 选股策略说明
+    ### 📋 选股策略说明
     
     **筛选条件**：
-    - 股价 < 10元
-    - 净利润增长率 ≥ 100%（净利润同比增长率）
-    - 非ST股票
-    - 非科创板
-    - 非创业板
-    - 沪深A股
-    - 按成交额由小至大排名
+    - ✅ 股价 < 10元
+    - ✅ 净利润增长率 ≥ 100%（净利润同比增长率）
+    - ✅ 非ST股票
+    - ✅ 非科创板
+    - ✅ 非创业板
+    - ✅ 沪深A股
+    - ✅ 按成交额由小至大排名
     
     **量化交易策略**：
-    - 资金量：100万元
-    - 持股周期：5天
-    - 仓位控制：满仓
-    - 个股最大持仓：4成（40%）
-    - 账户最大持股数：4只
-    - 单日最大买入数：2只
-    - 买入时机：开盘买入
-    - 卖出时机：MA5下穿MA20或持股满5天
+    - 💰 资金量：100万元
+    - 📅 持股周期：5天
+    - 💼 仓位控制：满仓
+    - 📊 个股最大持仓：4成（40%）
+    - 🎯 账户最大持股数：4只
+    - 🛒 单日最大买入数：2只
+    - 📈 买入时机：开盘买入
+    - 📉 卖出时机：MA5下穿MA20或持股满5天
     """)
     
     st.markdown("---")
@@ -85,12 +81,12 @@ def display_low_price_bull():
         )
     
     with col2:
-        st.info(f"将筛选成交额最小的前{top_n}只股票")
+        st.info(f"💡 将筛选成交额最小的前{top_n}只股票")
     
     st.markdown("---")
     
     # 开始选股按钮
-    if st.button("开始低价擒牛选股", type="primary", width='content'):
+    if st.button("🚀 开始低价擒牛选股", type="primary", width='content'):
         
         with st.spinner("正在获取数据，请稍候..."):
             # 创建选股器
@@ -104,14 +100,14 @@ def display_low_price_bull():
                 st.session_state.low_price_bull_stocks = stocks_df
                 st.session_state.low_price_bull_selector = selector
                 
-                st.success(f"{message}")
+                st.success(f"✅ {message}")
                 
                 # 发送钉钉通知
                 send_dingtalk_notification(stocks_df, top_n)
                 
                 st.rerun()
             else:
-                st.error(f"{message}")
+                st.error(f"❌ {message}")
     
     # 显示选股结果
     if 'low_price_bull_stocks' in st.session_state:
@@ -125,7 +121,7 @@ def display_stock_results(stocks_df: pd.DataFrame, selector):
     """显示选股结果"""
     
     st.markdown("---")
-    st.markdown("## 选股结果")
+    st.markdown("## 📊 选股结果")
     
     # 统计信息
     col1, col2, col3 = st.columns(3)
@@ -162,7 +158,7 @@ def display_stock_results(stocks_df: pd.DataFrame, selector):
     st.markdown("---")
     
     # 显示股票列表
-    st.markdown("### 精选股票列表")
+    st.markdown("### 📋 精选股票列表")
     
     for idx, row in stocks_df.iterrows():
         # 获取股票代码和简称
@@ -175,8 +171,8 @@ def display_stock_results(stocks_df: pd.DataFrame, selector):
         if price is not None and not pd.isna(price):
             try:
                 price_float = float(price)
-                price_str = f"| 价格: {price_float:.2f}元"
-            except Exception:
+                price_str = f" | 价格: {price_float:.2f}元"
+            except:
                 pass
         
         with st.expander(
@@ -187,7 +183,7 @@ def display_stock_results(stocks_df: pd.DataFrame, selector):
     
     # 完整数据表格
     st.markdown("---")
-    st.markdown("### 完整数据表格")
+    st.markdown("### 📊 完整数据表格")
     
     # 选择关键列显示
     display_cols = ['股票代码', '股票简称']
@@ -225,7 +221,7 @@ def display_stock_results(stocks_df: pd.DataFrame, selector):
         # 下载按钮
         csv = stocks_df[final_cols].to_csv(index=False, encoding='utf-8-sig')
         st.download_button(
-            label="下载股票列表CSV",
+            label="📥 下载股票列表CSV",
             data=csv,
             file_name=f"low_price_bull_{datetime.now().strftime('%Y%m%d')}.csv",
             mime="text/csv"
@@ -263,12 +259,12 @@ def display_stock_detail(row: pd.Series):
     # 先检查是否有任何财务数据
     has_any_data = False
     financial_fields = [
-        ('所属行业', get_row_value(row, ['所属行业', '所属同花顺行业'], None)),
-        ('总市值', get_row_value(row, ['总市值', '总市值(元)'], None)),
-        ('市盈率', get_row_value(row, ['市盈率', '市盈率pe', '市盈率(pe)'], None)),
-        ('市净率', get_row_value(row, ['市净率', '市净率pb', '市净率(pb)'], None)),
-        ('流通市值', get_row_value(row, ['流通市值'], None)),
-        ('换手率', get_row_value(row, ['换手率', '换手率[%]'], None))
+        ('所属行业', row.get('所属行业', row.get('所属同花顺行业', None))),
+        ('总市值', row.get('总市值', row.get('总市值[20241211]', None))),
+        ('市盈率', row.get('市盈率', row.get('市盈率pe', None))),
+        ('市净率', row.get('市净率', row.get('市净率pb', None))),
+        ('流通市值', row.get('流通市值', row.get('流通市值[20241211]', None))),
+        ('换手率', row.get('换手率', row.get('换手率[%]', None)))
     ]
     
     for _, value in financial_fields:
@@ -284,7 +280,7 @@ def display_stock_detail(row: pd.Series):
         col2 = None
     
     with col1:
-        st.markdown("#### 基本信息")
+        st.markdown("#### 📊 基本信息")
         
         # 股票代码（必显示）
         code = row.get('股票代码', '')
@@ -319,7 +315,7 @@ def display_stock_detail(row: pd.Series):
     # 只有当有财务数据时才显示财务指标栏目
     if col2 is not None:
         with col2:
-            st.markdown("#### 财务指标")
+            st.markdown("#### 💼 财务指标")
             
             # 所属行业
             industry = row.get('所属行业', row.get('所属同花顺行业', None))
@@ -327,7 +323,7 @@ def display_stock_detail(row: pd.Series):
                 st.markdown(f"**所属行业**: {industry}")
             
             # 总市值
-            market_cap = get_row_value(row, ['总市值', '总市值(元)'], None)
+            market_cap = row.get('总市值', row.get('总市值[20241211]', None))
             if is_valid_value(market_cap):
                 st.markdown(f"**总市值**: {format_value(market_cap, '元')}")
             
@@ -342,7 +338,7 @@ def display_stock_detail(row: pd.Series):
                 st.markdown(f"**市净率**: {format_value(pb, '')}")
             
             # 流通市值
-            float_cap = get_row_value(row, ['流通市值'], None)
+            float_cap = row.get('流通市值', row.get('流通市值[20241211]', None))
             if is_valid_value(float_cap):
                 st.markdown(f"**流通市值**: {format_value(float_cap, '元')}")
             
@@ -353,7 +349,7 @@ def display_stock_detail(row: pd.Series):
     
     # 添加监控按钮
     st.markdown("---")
-    st.markdown("#### 策略监控")
+    st.markdown("#### 📊 策略监控")
     
     from low_price_bull_monitor_ui import add_stock_to_monitor_button
     
@@ -368,7 +364,7 @@ def display_stock_detail(row: pd.Series):
     # 转换价格
     try:
         price_float = float(price) if price and not pd.isna(price) else None
-    except Exception:
+    except:
         price_float = None
     
     if stock_code and stock_name:
@@ -378,26 +374,26 @@ def display_stock_detail(row: pd.Series):
 def display_strategy_simulation(stocks_df: pd.DataFrame, selector):
     """显示量化交易策略模拟"""
     
-    st.markdown("## 策略监控与模拟")
+    st.markdown("## 🎯 策略监控与模拟")
     
     st.info("""
     **监控说明**：
-    - 在上方股票列表中点击" 加入策略监控"按钮即可加入
+    - 在上方股票列表中点击"➕ 加入策略监控"按钮即可加入
     - 监控条件：① 持股满5天第6天开盘提醒卖出 ② MA5下穿MA20提醒卖出
     - 扫描频率：每分钟扫描1次（可在监控面板配置）
     - 提醒卖出后自动移出监控列表
-    - 点击右上角" 策略监控"按钮查看监控面板
+    - 点击右上角"📊 策略监控"按钮查看监控面板
     """)
     
     col1, col2 = st.columns(2)
     
     with col1:
-        if st.button("开始策略模拟", type="primary", width='content'):
+        if st.button("🎮 开始策略模拟", type="primary", width='content'):
             st.session_state.show_strategy_simulation = True
     
     with col2:
-        if st.button("连接MiniQMT实盘", type="secondary", width='content'):
-            st.warning("MiniQMT实盘交易功能需要先配置环境变量，详见系统配置")
+        if st.button("🔗 连接MiniQMT实盘", type="secondary", width='content'):
+            st.warning("⚠️ MiniQMT实盘交易功能需要先配置环境变量，详见系统配置")
     
     # 显示模拟结果
     if st.session_state.get('show_strategy_simulation'):
@@ -408,13 +404,13 @@ def run_strategy_simulation(stocks_df: pd.DataFrame):
     """运行策略模拟"""
     
     st.markdown("---")
-    st.markdown("### 策略模拟执行")
+    st.markdown("### 📈 策略模拟执行")
     
     # 创建策略实例
     strategy = LowPriceBullStrategy(initial_capital=1000000.0)
     
     # 模拟买入（按成交额排序，优先买入成交额小的）
-    st.markdown("#### 1⃣ 模拟买入信号")
+    st.markdown("#### 1️⃣ 模拟买入信号")
     
     buy_results = []
     current_date = datetime.now().strftime("%Y-%m-%d")
@@ -437,11 +433,11 @@ def run_strategy_simulation(stocks_df: pd.DataFrame):
         if result['success']:
             st.success(result['message'])
         else:
-            st.warning(f"{result['message']}")
+            st.warning(f"⚠️ {result['message']}")
     
     # 显示持仓
     st.markdown("---")
-    st.markdown("#### 2⃣ 当前持仓")
+    st.markdown("#### 2️⃣ 当前持仓")
     
     positions = strategy.get_positions()
     if positions:
@@ -452,7 +448,7 @@ def run_strategy_simulation(stocks_df: pd.DataFrame):
     
     # 显示账户摘要
     st.markdown("---")
-    st.markdown("#### 3⃣ 账户摘要")
+    st.markdown("#### 3️⃣ 账户摘要")
     
     summary = strategy.get_portfolio_summary()
     
@@ -473,7 +469,7 @@ def run_strategy_simulation(stocks_df: pd.DataFrame):
     st.markdown("---")
     
     # 策略说明
-    st.markdown("#### 策略执行说明")
+    st.markdown("#### 📝 策略执行说明")
     st.markdown("""
     **后续操作**：
     1. **持有期管理**：系统会自动跟踪每只股票的持有天数
@@ -484,9 +480,9 @@ def run_strategy_simulation(stocks_df: pd.DataFrame):
     3. **轮动买入**：卖出后释放资金，继续买入新的符合条件的股票
     
     **风险提示**：
-    - 本策略为模拟演示，实际交易存在滑点、手续费等成本
-    - 历史业绩不代表未来收益
-    - 请谨慎评估风险，理性投资
+    - ⚠️ 本策略为模拟演示，实际交易存在滑点、手续费等成本
+    - ⚠️ 历史业绩不代表未来收益
+    - ⚠️ 请谨慎评估风险，理性投资
     """)
 
 
@@ -498,7 +494,7 @@ def send_dingtalk_notification(stocks_df: pd.DataFrame, top_n: int):
         webhook_config = notification_service.get_webhook_config_status()
         
         if not webhook_config['enabled'] or not webhook_config['configured']:
-            st.info("未配置Webhook通知，如需接收钉钉消息请在环境配置中设置")
+            st.info("💡 未配置Webhook通知，如需接收钉钉消息请在环境配置中设置")
             return
         
         # 构建消息内容
@@ -521,8 +517,8 @@ def send_dingtalk_notification(stocks_df: pd.DataFrame, top_n: int):
             if price is not None and not pd.isna(price) and str(price).strip() not in ['', 'N/A']:
                 try:
                     price_float = float(price)
-                    message_text += f"- 股价: {price_float:.2f}元\n"
-                except Exception:
+                    message_text += f"   - 股价: {price_float:.2f}元\n"
+                except:
                     pass
             
             # 净利润增长率
@@ -530,8 +526,8 @@ def send_dingtalk_notification(stocks_df: pd.DataFrame, top_n: int):
             if growth is not None and not pd.isna(growth) and str(growth).strip() not in ['', 'N/A']:
                 try:
                     growth_float = float(growth)
-                    message_text += f"- 净利增长: {growth_float:.2f}%\n"
-                except Exception:
+                    message_text += f"   - 净利增长: {growth_float:.2f}%\n"
+                except:
                     pass
             
             # 成交额
@@ -540,18 +536,18 @@ def send_dingtalk_notification(stocks_df: pd.DataFrame, top_n: int):
                 try:
                     turnover_float = float(turnover)
                     if turnover_float >= 100000000:  # 亿
-                        message_text += f"- 成交额: {turnover_float/100000000:.2f}亿元\n"
+                        message_text += f"   - 成交额: {turnover_float/100000000:.2f}亿元\n"
                     elif turnover_float >= 10000:  # 万
-                        message_text += f"- 成交额: {turnover_float/10000:.2f}万元\n"
+                        message_text += f"   - 成交额: {turnover_float/10000:.2f}万元\n"
                     else:
-                        message_text += f"- 成交额: {turnover_float:.2f}元\n"
-                except Exception:
+                        message_text += f"   - 成交额: {turnover_float:.2f}元\n"
+                except:
                     pass
             
             # 所属行业
             industry = row.get('所属行业', row.get('所属同花顺行业', None))
             if industry is not None and not pd.isna(industry) and str(industry).strip() not in ['', 'N/A']:
-                message_text += f"- 所属行业: {industry}\n"
+                message_text += f"   - 所属行业: {industry}\n"
             
             message_text += "\n"
         
@@ -581,13 +577,13 @@ def send_dingtalk_notification(stocks_df: pd.DataFrame, top_n: int):
                 if response.status_code == 200:
                     result = response.json()
                     if result.get('errcode') == 0:
-                        st.success("已发送钉钉通知")
+                        st.success("✅ 已发送钉钉通知")
                     else:
-                        st.warning(f"钉钉通知发送失败: {result.get('errmsg')}")
+                        st.warning(f"⚠️ 钉钉通知发送失败: {result.get('errmsg')}")
                 else:
-                    st.warning(f"钉钉通知请求失败: HTTP {response.status_code}")
+                    st.warning(f"⚠️ 钉钉通知请求失败: HTTP {response.status_code}")
             except Exception as e:
-                st.warning(f"发送钉钉通知失败: {str(e)}")
+                st.warning(f"⚠️ 发送钉钉通知失败: {str(e)}")
         
     except Exception as e:
-        st.warning(f"发送通知时出错: {str(e)}")
+        st.warning(f"⚠️ 发送通知时出错: {str(e)}")

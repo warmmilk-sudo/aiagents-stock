@@ -25,7 +25,7 @@ def _setup_stdout_encoding():
             # 不在streamlit环境，可以安全修改
             try:
                 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='ignore')
-            except Exception:
+            except:
                 pass
 
 _setup_stdout_encoding()
@@ -162,7 +162,7 @@ class NewsAnnouncementDataFetcher:
                     # 保存字段
                     try:
                         item[col] = str(value)
-                    except Exception:
+                    except:
                         item[col] = "无法解析"
                 
                 if item:  # 如果有数据才添加
@@ -252,7 +252,7 @@ class NewsAnnouncementDataFetcher:
                     # 保存字段
                     try:
                         item[col] = str(value)
-                    except Exception:
+                    except:
                         item[col] = "无法解析"
                 
                 if item:  # 如果有数据才添加

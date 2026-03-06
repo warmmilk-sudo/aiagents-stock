@@ -7,7 +7,6 @@
 """
 
 import streamlit as st
-from ui_theme import inject_global_theme, configure_plotly_template, render_page_header
 import time
 import uuid
 from datetime import datetime, timedelta
@@ -19,28 +18,17 @@ from monitor_service import monitor_service
 from notification_service import notification_service
 from stock_data import StockDataFetcher
 from miniqmt_interface import miniqmt, get_miniqmt_status, QuantStrategyConfig
-from portfolio_manager import portfolio_manager
 
 def display_monitor_manager():
     """显示监测管理主页面"""
-    inject_global_theme()
-    configure_plotly_template()
-
-    # 启动时仅执行一次三端持仓回填对齐
-    if not st.session_state.get("portfolio_sync_reconciled", False):
-        try:
-            st.session_state.portfolio_sync_reconcile_result = portfolio_manager.reconcile_portfolio_sync_on_startup()
-            st.session_state.portfolio_sync_reconciled = True
-        except Exception as e:
-            st.warning(f"持仓联动初始化失败：{e}")
     
-    st.markdown("## 股票监测管理")
+    st.markdown("## 📊 股票监测管理")
     st.markdown("---")
     
     # 检查是否有跳转提示
     if 'monitor_jump_highlight' in st.session_state:
         symbol = st.session_state.monitor_jump_highlight
-        st.success(f"{symbol} 已成功加入监测列表！您可以在下方查看。")
+        st.success(f"✅ {symbol} 已成功加入监测列表！您可以在下方查看。")
         del st.session_state.monitor_jump_highlight
     
     # 监测服务状态
@@ -62,9 +50,9 @@ def display_monitor_status():
     
     with col1:
         if monitor_service.running:
-            st.success("运行中")
+            st.success("🟢 运行中")
         else:
-            st.error("已停止")
+            st.error("🔴 已停止")
     
     with col2:
         stocks = monitor_db.get_monitored_stocks()
@@ -78,24 +66,24 @@ def display_monitor_status():
         # 显示MiniQMT状态
         qmt_status = get_miniqmt_status()
         if qmt_status['ready']:
-            st.success("QMT在线")
+            st.success("🤖 QMT在线")
         else:
-            st.info("QMT离线")
+            st.info("🤖 QMT离线")
     
     with col5:
         if monitor_service.running:
-            if st.button("停止监测", type="secondary"):
+            if st.button("⏹️ 停止监测", type="secondary"):
                 monitor_service.stop_monitoring()
-                st.success("监测服务已停止")
+                st.success("✅ 监测服务已停止")
                 st.rerun()
         else:
-            if st.button("启动监测", type="primary"):
+            if st.button("▶️ 启动监测", type="primary"):
                 monitor_service.start_monitoring()
-                st.success("监测服务已启动")
+                st.success("✅ 监测服务已启动")
                 st.rerun()
     
     with col6:
-        if st.button("刷新状态"):
+        if st.button("🔄 刷新状态"):
             st.rerun()
     
     # 显示定时调度状态和配置
@@ -104,43 +92,43 @@ def display_monitor_status():
 def display_add_stock_section():
     """显示添加股票监测区域"""
     
-    st.markdown("### 添加股票监测")
+    st.markdown("### ➕ 添加股票监测")
     
     with st.expander("点击展开添加股票监测", expanded=False):
         col1, col2 = st.columns([1, 1])
         
         with col1:
             # 股票信息输入
-            st.subheader("股票信息")
+            st.subheader("📈 股票信息")
             symbol = st.text_input("股票代码", placeholder="例如: AAPL, 000001", help="支持美股和A股代码")
             name = st.text_input("股票名称", placeholder="例如: 苹果公司", help="可选，用于显示")
             
             # 获取股票基本信息
             if symbol:
-                if st.button("获取股票信息"):
+                if st.button("🔍 获取股票信息"):
                     with st.spinner("正在获取股票信息..."):
                         fetcher = StockDataFetcher()
                         stock_info = fetcher.get_stock_info(symbol)
                         
                         if "error" not in stock_info:
-                            st.success("股票信息获取成功")
+                            st.success("✅ 股票信息获取成功")
                             st.session_state.temp_stock_info = stock_info
                         else:
-                            st.error(f"{stock_info['error']}")
+                            st.error(f"❌ {stock_info['error']}")
         
         with col2:
             # 监测设置
-            st.subheader("监测设置")
+            st.subheader("⚙️ 监测设置")
             
             # 关键位置设置
-            st.markdown("**关键位置设置**")
+            st.markdown("**🎯 关键位置设置**")
             entry_min = st.number_input("进场区间最低价", value=0.0, step=0.01, format="%.2f")
             entry_max = st.number_input("进场区间最高价", value=0.0, step=0.01, format="%.2f")
             take_profit = st.number_input("止盈价位", value=0.0, step=0.01, format="%.2f", help="可选")
             stop_loss = st.number_input("止损价位", value=0.0, step=0.01, format="%.2f", help="可选")
             
             # 监测参数
-            st.markdown("**监测参数**")
+            st.markdown("**⏰ 监测参数**")
             check_interval = st.slider("监测间隔(分钟)", 5, 120, 30)
             notification_enabled = st.checkbox("启用通知", value=True)
             
@@ -148,7 +136,7 @@ def display_add_stock_section():
             rating = st.selectbox("投资评级", ["买入", "持有", "卖出"], index=0)
             
             # 量化交易设置
-            st.markdown("**量化交易（MiniQMT）**")
+            st.markdown("**🤖 量化交易（MiniQMT）**")
             quant_enabled = st.checkbox("启用量化自动交易", value=False, help="需要先配置MiniQMT连接")
             
             if quant_enabled:
@@ -157,7 +145,7 @@ def display_add_stock_section():
                 auto_take_profit = st.checkbox("自动止盈", value=True)
         
         # 添加按钮
-        if st.button("添加监测", type="primary", width='stretch'):
+        if st.button("✅ 添加监测", type="primary", width='stretch'):
             if symbol and entry_min > 0 and entry_max > 0 and entry_max > entry_min:
                 try:
                     # 准备数据
@@ -184,12 +172,10 @@ def display_add_stock_section():
                         check_interval=check_interval,
                         notification_enabled=notification_enabled,
                         quant_enabled=quant_enabled,
-                        quant_config=quant_config,
-                        source_type="watch",
-                        source_label="关注"
+                        quant_config=quant_config
                     )
                     
-                    st.success(f"已成功添加 {symbol} 到监测列表")
+                    st.success(f"✅ 已成功添加 {symbol} 到监测列表")
                     st.balloons()
                     
                     # 立即更新一次价格
@@ -199,32 +185,32 @@ def display_add_stock_section():
                     st.rerun()
                     
                 except Exception as e:
-                    st.error(f"添加失败: {str(e)}")
+                    st.error(f"❌ 添加失败: {str(e)}")
             else:
-                st.error("请填写完整的股票信息和有效的进场区间")
+                st.error("❌ 请填写完整的股票信息和有效的进场区间")
 
 def display_monitored_stocks():
     """显示监测股票列表 - 卡片式布局"""
     
-    st.markdown("### 监测股票列表")
+    st.markdown("### 📋 监测股票列表")
     
     stocks = monitor_db.get_monitored_stocks()
     
     if not stocks:
-        st.info("暂无监测股票，请添加股票开始监测")
+        st.info("📭 暂无监测股票，请添加股票开始监测")
         return
     
     # 筛选和搜索
     col1, col2, col3 = st.columns([2, 1, 1])
     
     with col1:
-        search_term = st.text_input("搜索股票", placeholder="输入股票代码或名称")
+        search_term = st.text_input("🔍 搜索股票", placeholder="输入股票代码或名称")
     
     with col2:
         rating_filter = st.selectbox("评级筛选", ["全部", "买入", "持有", "卖出"])
     
     with col3:
-        if st.button("刷新列表"):
+        if st.button("🔄 刷新列表"):
             st.rerun()
     
     # 筛选股票
@@ -236,7 +222,7 @@ def display_monitored_stocks():
         filtered_stocks = [s for s in filtered_stocks if s['rating'] == rating_filter]
     
     if not filtered_stocks:
-        st.warning("未找到匹配的股票")
+        st.warning("🔍 未找到匹配的股票")
         return
     
     # 卡片式布局 - 每行显示2个卡片
@@ -262,7 +248,16 @@ def display_stock_card(stock: Dict):
     
     with st.container():
         # 卡片头部
-        st.markdown('<div class="agent-card">', unsafe_allow_html=True)
+        st.markdown(f"""
+        <div style="
+            border: 1px solid #ddd;
+            border-radius: 10px;
+            padding: 15px;
+            margin: 10px 0;
+            background-color: #f9f9f9;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        ">
+        """, unsafe_allow_html=True)
         
         # 股票基本信息
         col1, col2 = st.columns([2, 1])
@@ -271,7 +266,12 @@ def display_stock_card(stock: Dict):
             st.markdown(f"**{stock['symbol']}** - {stock['name']}")
             
             # 评级显示
-            st.markdown(f"评级: {stock['rating']}")
+            rating_color = {
+                '买入': '🟢',
+                '持有': '🟡',
+                '卖出': '🔴'
+            }
+            st.markdown(f"评级: {rating_color.get(stock['rating'], '⚪')} {stock['rating']}")
         
         with col2:
             if stock['current_price'] and stock['current_price'] != 'N/A':
@@ -280,7 +280,7 @@ def display_stock_card(stock: Dict):
                 st.metric("当前价格", "等待更新")
         
         # 关键位置信息
-        st.markdown("**关键位置**")
+        st.markdown("**🎯 关键位置**")
         
         entry_range = stock.get('entry_range')
         col1, col2, col3 = st.columns(3)
@@ -304,8 +304,8 @@ def display_stock_card(stock: Dict):
                 st.info("**止损位**\n未设置")
         
         # 监测状态
-        st.markdown("**监测状态**")
-        col1, col2, col3, col4 = st.columns(4)
+        st.markdown("**📊 监测状态**")
+        col1, col2, col3 = st.columns(3)
         
         with col1:
             st.caption(f"监测间隔: {stock['check_interval']}分钟")
@@ -318,38 +318,28 @@ def display_stock_card(stock: Dict):
                 st.caption("最后检查: 从未检查")
         
         with col3:
-            status = "启用" if stock['notification_enabled'] else "禁用"
+            status = "🟢 启用" if stock['notification_enabled'] else "🔴 禁用"
             st.caption(f"通知: {status}")
             
             # 显示量化状态
             if stock.get('quant_enabled', False):
-                st.caption("量化: 启用")
+                st.caption("🤖 量化: 🟢 启用")
             else:
-                st.caption("量化: 禁用")
-
-        with col4:
-            source_label = stock.get("source_label") or ("持仓" if stock.get("source_type") == "portfolio" else "关注")
-            st.caption(f"来源: {source_label}")
-            if stock.get("has_position"):
-                qty = stock.get("position_quantity") or 0
-                cost = stock.get("position_cost") or 0
-                st.caption(f"持仓: {qty}股 @ {cost:.2f}")
-            else:
-                st.caption("持仓: 无")
+                st.caption("🤖 量化: 🔴 禁用")
         
         # 操作按钮
-        st.markdown("**操作**")
+        st.markdown("**🔧 操作**")
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
-            if st.button("更新", key=f"update_{stock['id']}"):
+            if st.button("🔄 更新", key=f"update_{stock['id']}"):
                 if monitor_service.manual_update_stock(stock['id']):
-                    st.success("更新成功")
+                    st.success("✅ 更新成功")
                 else:
-                    st.error("更新失败")
+                    st.error("❌ 更新失败")
         
         with col2:
-            if st.button("编辑", key=f"edit_{stock['id']}"):
+            if st.button("✏️ 编辑", key=f"edit_{stock['id']}"):
                 st.session_state.editing_stock_id = stock['id']
                 st.rerun()
         
@@ -357,18 +347,18 @@ def display_stock_card(stock: Dict):
             # 切换通知状态
             current_status = stock['notification_enabled']
             if current_status:
-                if st.button("禁用", key=f"notify_{stock['id']}"):
+                if st.button("🔕 禁用", key=f"notify_{stock['id']}"):
                     monitor_db.toggle_notification(stock['id'], False)
-                    st.success("已禁用通知")
+                    st.success("✅ 已禁用通知")
                     st.rerun()
             else:
-                if st.button("启用", key=f"notify_{stock['id']}"):
+                if st.button("🔔 启用", key=f"notify_{stock['id']}"):
                     monitor_db.toggle_notification(stock['id'], True)
-                    st.success("已启用通知")
+                    st.success("✅ 已启用通知")
                     st.rerun()
         
         with col4:
-            if st.button("删除", key=f"delete_{stock['id']}"):
+            if st.button("🗑️ 删除", key=f"delete_{stock['id']}"):
                 st.session_state.deleting_stock_id = stock['id']
                 st.rerun()
         
@@ -379,18 +369,18 @@ def display_edit_dialog(stock_id: int):
     
     stock = monitor_db.get_stock_by_id(stock_id)
     if not stock:
-        st.error("股票不存在")
+        st.error("❌ 股票不存在")
         del st.session_state.editing_stock_id
         return
     
     st.markdown("---")
-    st.markdown(f"### 编辑监测 - {stock['symbol']} {stock['name']}")
+    st.markdown(f"### ✏️ 编辑监测 - {stock['symbol']} {stock['name']}")
     
     with st.form(key=f"edit_form_{stock_id}"):
         col1, col2 = st.columns([1, 1])
         
         with col1:
-            st.subheader("关键位置")
+            st.subheader("🎯 关键位置")
             entry_range = stock.get('entry_range', {})
             entry_min = st.number_input("进场区间最低价", value=float(entry_range.get('min', 0)), step=0.01, format="%.2f")
             entry_max = st.number_input("进场区间最高价", value=float(entry_range.get('max', 0)), step=0.01, format="%.2f")
@@ -398,14 +388,14 @@ def display_edit_dialog(stock_id: int):
             stop_loss = st.number_input("止损价位", value=float(stock['stop_loss']) if stock['stop_loss'] else 0.0, step=0.01, format="%.2f")
         
         with col2:
-            st.subheader("监测设置")
+            st.subheader("⚙️ 监测设置")
             check_interval = st.slider("监测间隔(分钟)", 5, 120, stock['check_interval'])
             rating = st.selectbox("投资评级", ["买入", "持有", "卖出"], 
                                  index=["买入", "持有", "卖出"].index(stock['rating']) if stock['rating'] in ["买入", "持有", "卖出"] else 0)
             notification_enabled = st.checkbox("启用通知", value=stock['notification_enabled'])
             
             # 量化交易设置
-            st.markdown("**量化交易**")
+            st.markdown("**🤖 量化交易**")
             quant_enabled = st.checkbox("启用量化自动交易", value=stock.get('quant_enabled', False))
             
             if quant_enabled:
@@ -418,10 +408,10 @@ def display_edit_dialog(stock_id: int):
         col1, col2, col3 = st.columns(3)
         
         with col1:
-            submit = st.form_submit_button("保存修改", type="primary", width='stretch')
+            submit = st.form_submit_button("✅ 保存修改", type="primary", width='stretch')
         
         with col2:
-            cancel = st.form_submit_button("取消", width='stretch')
+            cancel = st.form_submit_button("❌ 取消", width='stretch')
         
         if submit:
             if entry_min > 0 and entry_max > 0 and entry_max > entry_min:
@@ -451,13 +441,13 @@ def display_edit_dialog(stock_id: int):
                         quant_config=new_quant_config
                     )
                     
-                    st.success("修改已保存")
+                    st.success("✅ 修改已保存")
                     del st.session_state.editing_stock_id
                     st.rerun()
                 except Exception as e:
-                    st.error(f"保存失败: {str(e)}")
+                    st.error(f"❌ 保存失败: {str(e)}")
             else:
-                st.error("请输入有效的进场区间")
+                st.error("❌ 请输入有效的进场区间")
         
         if cancel:
             del st.session_state.editing_stock_id
@@ -468,14 +458,14 @@ def display_delete_confirm_dialog(stock_id: int):
     
     stock = monitor_db.get_stock_by_id(stock_id)
     if not stock:
-        st.error("股票不存在或已被删除")
+        st.error("❌ 股票不存在或已被删除")
         if 'deleting_stock_id' in st.session_state:
             del st.session_state.deleting_stock_id
         st.rerun()
         return
     
     st.markdown("---")
-    st.markdown(f"### 确认删除")
+    st.markdown(f"### ⚠️ 确认删除")
     
     st.warning(f"""
     您确定要删除以下监测吗？
@@ -485,10 +475,6 @@ def display_delete_confirm_dialog(stock_id: int):
     **股票名称**: {stock['name']}
     
     **投资评级**: {stock['rating']}
-
-    **来源**: {stock.get('source_label') or ('持仓' if stock.get('source_type') == 'portfolio' else '关注')}
-
-    {'⚠️ 该条目来源于持仓，删除后会同步删除持仓分析与AI盯盘中的同股票记录。' if stock.get('source_type') == 'portfolio' else ''}
     
     此操作不可撤销！
     """)
@@ -496,46 +482,40 @@ def display_delete_confirm_dialog(stock_id: int):
     col1, col2, col3 = st.columns([1, 1, 1])
     
     with col1:
-        if st.button("确认删除", type="primary", width='stretch', key=f"confirm_delete_{stock_id}"):
+        if st.button("🗑️ 确认删除", type="primary", width='stretch', key=f"confirm_delete_{stock_id}"):
             try:
-                source_type = stock.get("source_type", "watch")
-                if source_type == "portfolio":
-                    result, delete_msg = portfolio_manager.delete_stock_by_code(stock["symbol"])
-                else:
-                    result = monitor_db.remove_monitored_stock(stock_id)
-                    delete_msg = "已成功删除监测"
-
+                result = monitor_db.remove_monitored_stock(stock_id)
                 if result:
                     # 清理session state
                     if 'deleting_stock_id' in st.session_state:
                         del st.session_state.deleting_stock_id
                     
-                    st.success(delete_msg)
+                    st.success("✅ 已成功删除监测")
                     st.balloons()
                     time.sleep(0.8)  # 短暂延迟，让用户看到成功消息
                     st.rerun()
                 else:
-                    st.error(delete_msg if source_type == "portfolio" else "删除失败：股票不存在或已被删除")
+                    st.error("❌ 删除失败：股票不存在或已被删除")
                     time.sleep(1)
                     if 'deleting_stock_id' in st.session_state:
                         del st.session_state.deleting_stock_id
                     st.rerun()
             except Exception as e:
-                st.error(f"删除失败：{str(e)}")
+                st.error(f"❌ 删除失败：{str(e)}")
                 time.sleep(1)
                 if 'deleting_stock_id' in st.session_state:
                     del st.session_state.deleting_stock_id
                 st.rerun()
     
     with col2:
-        if st.button("取消", width='stretch', key=f"cancel_delete_{stock_id}"):
+        if st.button("❌ 取消", width='stretch', key=f"cancel_delete_{stock_id}"):
             del st.session_state.deleting_stock_id
             st.rerun()
 
 def display_notification_management():
     """显示通知管理"""
     
-    st.markdown("### 通知管理")
+    st.markdown("### 🔔 通知管理")
     
     # 显示MiniQMT量化交易状态
     display_miniqmt_status()
@@ -546,16 +526,16 @@ def display_notification_management():
     col1, col2 = st.columns([1, 1])
     
     with col1:
-        st.subheader("邮件通知设置")
+        st.subheader("📧 邮件通知设置")
         
         # 获取当前邮件配置状态
         email_config = notification_service.get_email_config_status()
         
         # 显示配置状态
         if email_config['configured']:
-            st.success("邮件配置已完成")
+            st.success("✅ 邮件配置已完成")
         else:
-            st.warning("邮件未配置或配置不完整")
+            st.warning("⚠️ 邮件未配置或配置不完整")
         
         # 显示配置信息
         st.info(f"""
@@ -568,7 +548,7 @@ def display_notification_management():
         """)
         
         st.markdown("---")
-        st.markdown("**配置说明**")
+        st.markdown("**⚙️ 配置说明**")
         st.caption("""
         在 `.env` 文件中配置以下参数：
         ```
@@ -580,7 +560,7 @@ def display_notification_management():
         EMAIL_TO=receiver@example.com
         ```
         
-         提示：
+        💡 提示：
         - 端口：587 (TLS) 或 465 (SSL)
         - 密码：使用邮箱授权码，不是登录密码
         - QQ邮箱授权码获取：设置 → 账户 → POP3/IMAP/SMTP → 生成授权码
@@ -588,20 +568,20 @@ def display_notification_management():
         
         # 测试邮件按钮
         if email_config['configured']:
-            if st.button("发送测试邮件", type="primary", width='stretch'):
+            if st.button("📧 发送测试邮件", type="primary", width='stretch'):
                 with st.spinner("正在发送测试邮件..."):
                     success, message = notification_service.send_test_email()
                     if success:
-                        st.success(f"{message}")
+                        st.success(f"✅ {message}")
                         st.balloons()
                     else:
-                        st.error(f"{message}")
+                        st.error(f"❌ {message}")
         else:
-            st.button("发送测试邮件", type="primary", width='stretch', disabled=True)
+            st.button("📧 发送测试邮件", type="primary", width='stretch', disabled=True)
             st.caption("请先在.env文件中配置邮件参数")
     
     with col2:
-        st.subheader("通知历史")
+        st.subheader("📱 通知历史")
         
         # 显示所有通知（包括已发送和未发送的）
         all_notifications = monitor_db.get_all_recent_notifications(limit=10)
@@ -609,53 +589,62 @@ def display_notification_management():
         if all_notifications:
             # 显示通知列表
             for notification in all_notifications:
+                notification_type = notification['type']
+                color_map = {
+                    'entry': '🟢',
+                    'take_profit': '🟡',
+                    'stop_loss': '🔴',
+                    'quant_trade': '🤖'
+                }
+                icon = color_map.get(notification_type, '🔵')
+                
                 # 显示已发送状态
-                sent_status = "已发送" if notification.get('sent') else "待发送"
-
+                sent_status = "✅ 已发送" if notification.get('sent') else "⏳ 待发送"
+                
                 # 显示通知信息
-                st.info(f"**{notification['symbol']}** - {notification['message']}\n\n_{notification['triggered_at']}_ | {sent_status}")
+                st.info(f"{icon} **{notification['symbol']}** - {notification['message']}\n\n_{notification['triggered_at']}_ | {sent_status}")
             
             # 显示待发送通知数量
             pending_count = len([n for n in all_notifications if not n.get('sent')])
             if pending_count > 0:
-                st.warning(f"有 {pending_count} 条待发送通知")
+                st.warning(f"⚠️ 有 {pending_count} 条待发送通知")
             
             # 清空通知按钮
             col_a, col_b = st.columns(2)
             with col_a:
-                if st.button("标记已读"):
+                if st.button("✅ 标记已读"):
                     monitor_db.mark_all_notifications_sent()
-                    st.success("所有通知已标记为已读")
+                    st.success("✅ 所有通知已标记为已读")
                     st.rerun()
             
             with col_b:
-                if st.button("清空通知"):
+                if st.button("🗑️ 清空通知"):
                     monitor_db.clear_all_notifications()
-                    st.success("通知已清空")
+                    st.success("✅ 通知已清空")
                     st.rerun()
         else:
-            st.info("暂无通知")
+            st.info("📭 暂无通知")
 
 def display_miniqmt_status():
     """显示MiniQMT量化交易状态"""
-    st.markdown("### MiniQMT量化交易")
+    st.markdown("### 🤖 MiniQMT量化交易")
     
     qmt_status = get_miniqmt_status()
     
     col1, col2 = st.columns([1, 1])
     
     with col1:
-        st.subheader("连接状态")
+        st.subheader("📊 连接状态")
         
         if qmt_status['enabled']:
-            st.success("MiniQMT已启用")
+            st.success("✅ MiniQMT已启用")
         else:
-            st.warning("MiniQMT未启用")
+            st.warning("⚠️ MiniQMT未启用")
         
         if qmt_status['connected']:
-            st.success("已连接到MiniQMT")
+            st.success("✅ 已连接到MiniQMT")
         else:
-            st.info("未连接到MiniQMT")
+            st.info("⏸️ 未连接到MiniQMT")
         
         if qmt_status['account_id']:
             st.info(f"**账户ID**: {qmt_status['account_id']}")
@@ -663,7 +652,7 @@ def display_miniqmt_status():
             st.caption("未配置账户ID")
         
         st.markdown("---")
-        st.markdown("**配置说明**")
+        st.markdown("**⚙️ 配置说明**")
         st.caption("""
         在 `config.py` 中配置以下参数：
         ```python
@@ -673,14 +662,14 @@ def display_miniqmt_status():
         }
         ```
         
-         提示：
+        💡 提示：
         - 需要安装并启动MiniQMT客户端
         - 确保账户已登录
         - 预留接口已实现，可对接真实交易
         """)
     
     with col2:
-        st.subheader("量化统计")
+        st.subheader("📈 量化统计")
         
         # 统计启用量化的股票
         stocks = monitor_db.get_monitored_stocks()
@@ -691,7 +680,7 @@ def display_miniqmt_status():
         if quant_stocks:
             st.markdown("**量化监测列表：**")
             for stock in quant_stocks:
-                st.caption(f"{stock['symbol']} - {stock['name']}")
+                st.caption(f"🤖 {stock['symbol']} - {stock['name']}")
         else:
             st.info("暂无启用量化交易的股票")
         
@@ -699,23 +688,23 @@ def display_miniqmt_status():
         
         # 连接按钮
         if qmt_status['enabled'] and not qmt_status['connected']:
-            if st.button("连接MiniQMT", type="primary", width='stretch'):
+            if st.button("🔗 连接MiniQMT", type="primary", width='stretch'):
                 success, msg = miniqmt.connect()
                 if success:
-                    st.success(f"{msg}")
+                    st.success(f"✅ {msg}")
                 else:
-                    st.error(f"{msg}")
+                    st.error(f"❌ {msg}")
                 st.rerun()
         elif qmt_status['connected']:
-            if st.button("断开连接", width='stretch'):
+            if st.button("🔌 断开连接", width='stretch'):
                 if miniqmt.disconnect():
-                    st.info("已断开MiniQMT连接")
+                    st.info("⏸️ 已断开MiniQMT连接")
                     st.rerun()
 
 def display_scheduler_section():
     """显示定时调度配置区域"""
     st.markdown("---")
-    st.markdown("### 定时自动启动/关闭")
+    st.markdown("### ⏰ 定时自动启动/关闭")
     
     # 获取调度器实例
     scheduler = monitor_service.get_scheduler()
@@ -726,34 +715,34 @@ def display_scheduler_section():
     
     with col1:
         if status['scheduler_enabled']:
-            st.success("定时已启用")
+            st.success("🟢 定时已启用")
         else:
-            st.info("定时未启用")
+            st.info("⚪ 定时未启用")
     
     with col2:
         if status['scheduler_running']:
-            st.success("调度器运行中")
+            st.success("🔄 调度器运行中")
         else:
-            st.info("调度器未运行")
+            st.info("⏸️ 调度器未运行")
     
     with col3:
         if status['is_trading_day']:
-            st.success(f"交易日")
+            st.success(f"📅 交易日")
         else:
-            st.info("非交易日")
+            st.info("📅 非交易日")
     
     with col4:
         if status['is_trading_time']:
-            st.success("交易时间内")
+            st.success("⏰ 交易时间内")
         else:
-            st.info(f"{status['next_trading_time']}")
+            st.info(f"⏰ {status['next_trading_time']}")
     
     # 配置设置
-    with st.expander("定时调度设置", expanded=False):
+    with st.expander("⚙️ 定时调度设置", expanded=False):
         col1, col2 = st.columns([1, 1])
         
         with col1:
-            st.subheader("市场选择")
+            st.subheader("📊 市场选择")
             
             market = st.selectbox(
                 "选择市场",
@@ -771,12 +760,12 @@ def display_scheduler_section():
             
             # 显示交易时间
             trading_hours = scheduler.config['trading_hours'].get(market, [])
-            st.markdown("**交易时间：**")
+            st.markdown("**📅 交易时间：**")
             for i, period in enumerate(trading_hours, 1):
                 st.caption(f"时段{i}: {period['start']} - {period['end']}")
             
             # 交易日设置
-            st.markdown("**交易日设置**")
+            st.markdown("**📅 交易日设置**")
             trading_days = st.multiselect(
                 "选择交易日",
                 options=[1, 2, 3, 4, 5, 6, 7],
@@ -786,7 +775,7 @@ def display_scheduler_section():
             )
         
         with col2:
-            st.subheader("调度参数")
+            st.subheader("⚙️ 调度参数")
             
             enabled = st.checkbox(
                 "启用定时调度",
@@ -820,7 +809,7 @@ def display_scheduler_section():
             
             # 说明信息
             st.info("""
-            ** 使用说明：**
+            **💡 使用说明：**
             - 启用定时调度后，系统将在交易时间自动启动监测
             - 非交易时间或非交易日将自动停止监测（如启用自动停止）
             - 调度器独立运行，不影响手动启动/停止
@@ -831,7 +820,7 @@ def display_scheduler_section():
         col1, col2, col3 = st.columns([1, 1, 1])
         
         with col1:
-            if st.button("保存设置", type="primary", width='stretch'):
+            if st.button("💾 保存设置", type="primary", width='stretch'):
                 try:
                     # 更新配置
                     scheduler.update_config(
@@ -843,33 +832,33 @@ def display_scheduler_section():
                         post_market_minutes=post_market_minutes
                     )
                     
-                    st.success("设置已保存")
+                    st.success("✅ 设置已保存")
                     st.balloons()
                     time.sleep(1)
                     st.rerun()
                 except Exception as e:
-                    st.error(f"保存失败: {e}")
+                    st.error(f"❌ 保存失败: {e}")
         
         with col2:
             if status['scheduler_running']:
-                if st.button("停止调度器", width='stretch'):
+                if st.button("⏹️ 停止调度器", width='stretch'):
                     scheduler.stop_scheduler()
-                    st.info("调度器已停止")
+                    st.info("⏸️ 调度器已停止")
                     time.sleep(0.5)
                     st.rerun()
             else:
                 if enabled:
-                    if st.button("启动调度器", type="secondary", width='stretch'):
+                    if st.button("▶️ 启动调度器", type="secondary", width='stretch'):
                         scheduler.start_scheduler()
-                        st.success("调度器已启动")
+                        st.success("✅ 调度器已启动")
                         time.sleep(0.5)
                         st.rerun()
                 else:
-                    st.button("启动调度器", width='stretch', disabled=True)
+                    st.button("▶️ 启动调度器", width='stretch', disabled=True)
                     st.caption("请先启用定时调度")
         
         with col3:
-            if st.button("刷新状态", width='stretch'):
+            if st.button("🔄 刷新状态", width='stretch'):
                 st.rerun()
 
 def get_monitor_summary():

@@ -8,7 +8,6 @@
 import logging
 from typing import Tuple, Optional
 import pandas as pd
-from wencai_field_resolver import get_row_value
 
 
 class ProfitGrowthSelector:
@@ -93,10 +92,10 @@ class ProfitGrowthSelector:
         
         lines = []
         for idx, row in df.iterrows():
-            stock_code = get_row_value(row, ['股票代码', '代码'], 'N/A')
-            stock_name = get_row_value(row, ['股票简称', '名称'], 'N/A')
-            profit_growth = get_row_value(row, ['净利润增长率', '净利润同比增长率'], 'N/A')
-            turnover = get_row_value(row, ['成交额'], 'N/A')
+            stock_code = row.get('股票代码', 'N/A')
+            stock_name = row.get('股票简称', 'N/A')
+            profit_growth = row.get('净利润增长率', row.get('净利润同比增长率', 'N/A'))
+            turnover = row.get('成交额', row.get('成交额[20241213]', 'N/A'))
             
             line = f"{idx+1}. {stock_code} {stock_name}"
             
@@ -106,7 +105,7 @@ class ProfitGrowthSelector:
             if profit_growth != 'N/A':
                 try:
                     details.append(f"净利增长:{float(profit_growth):.2f}%")
-                except Exception:
+                except:
                     pass
             
             if turnover != 'N/A':
@@ -116,7 +115,7 @@ class ProfitGrowthSelector:
                         details.append(f"成交额:{turnover_val/100000000:.2f}亿")
                     else:
                         details.append(f"成交额:{turnover_val/10000:.2f}万")
-                except Exception:
+                except:
                     pass
             
             if details:

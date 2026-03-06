@@ -10,7 +10,6 @@ import pywencai
 from datetime import datetime
 from typing import Tuple, Optional
 import time
-from wencai_field_resolver import get_row_value
 
 
 class ValueStockSelector:
@@ -101,13 +100,13 @@ class ValueStockSelector:
             # 显示选中的股票
             print(f"\n✅ 选中的股票:")
             for idx, row in selected.iterrows():
-                code = get_row_value(row, ['股票代码', '代码'], 'N/A')
-                name = get_row_value(row, ['股票简称', '名称'], 'N/A')
-                pe = get_row_value(row, ['市盈率', '市盈率(动态)', '市盈率TTM', '市盈率(pe)'], 'N/A')
-                pb = get_row_value(row, ['市净率', '市净率PB', '市净率(pb)'], 'N/A')
-                div_rate = get_row_value(row, ['股息率', '股息率TTM'], 'N/A')
-                debt_ratio = get_row_value(row, ['资产负债率'], 'N/A')
-                cap = get_row_value(row, ['流通市值', '总市值'], 'N/A')
+                code = row.get('股票代码', 'N/A')
+                name = row.get('股票简称', 'N/A')
+                pe = row.get('市盈率', row.get('市盈率(动态)', 'N/A'))
+                pb = row.get('市净率', 'N/A')
+                div_rate = row.get('股息率', 'N/A')
+                debt_ratio = row.get('资产负债率', 'N/A')
+                cap = row.get('流通市值', 'N/A')
                 print(f"  {idx+1}. {code} {name} - PE:{pe} PB:{pb} 股息率:{div_rate}% 负债率:{debt_ratio}% 流通市值:{cap}")
 
             print(f"{'='*60}\n")

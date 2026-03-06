@@ -1,10 +1,8 @@
 import sqlite3
 import json
 from datetime import datetime
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional
 import os
-
-_UNSET = object()
 
 class StockMonitorDatabase:
     """股票监测数据库管理类"""
@@ -39,13 +37,6 @@ class StockMonitorDatabase:
                 trading_hours_only BOOLEAN DEFAULT TRUE,  -- 仅交易时段监控
                 quant_enabled BOOLEAN DEFAULT FALSE,  -- 量化交易开关
                 quant_config TEXT,  -- 量化配置JSON
-                source_type TEXT DEFAULT 'watch',  -- 来源类型: portfolio|watch
-                source_label TEXT DEFAULT '关注',  -- 来源标签: 持仓|关注
-                portfolio_stock_id INTEGER,  -- 关联持仓ID
-                has_position BOOLEAN DEFAULT FALSE,  -- 是否有持仓
-                position_cost REAL,  -- 持仓成本
-                position_quantity INTEGER,  -- 持仓数量
-                position_updated_at TIMESTAMP,  -- 持仓更新时间
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
@@ -57,27 +48,6 @@ class StockMonitorDatabase:
         except sqlite3.OperationalError:
             cursor.execute("ALTER TABLE monitored_stocks ADD COLUMN trading_hours_only BOOLEAN DEFAULT TRUE")
             print("✅ 已添加trading_hours_only字段")
-
-        # 迁移持仓来源与持仓字段（兼容已有数据库）
-        migrate_columns = [
-            ("source_type", "TEXT DEFAULT 'watch'"),
-            ("source_label", "TEXT DEFAULT '关注'"),
-            ("portfolio_stock_id", "INTEGER"),
-            ("has_position", "BOOLEAN DEFAULT FALSE"),
-            ("position_cost", "REAL"),
-            ("position_quantity", "INTEGER"),
-            ("position_updated_at", "TIMESTAMP"),
-        ]
-        for column_name, column_def in migrate_columns:
-            try:
-                cursor.execute(f"SELECT {column_name} FROM monitored_stocks LIMIT 1")
-            except sqlite3.OperationalError:
-                cursor.execute(f"ALTER TABLE monitored_stocks ADD COLUMN {column_name} {column_def}")
-                print(f"✅ 已添加{column_name}字段")
-
-        # 旧数据默认标记为 watch/关注
-        cursor.execute("UPDATE monitored_stocks SET source_type = 'watch' WHERE source_type IS NULL OR TRIM(source_type) = ''")
-        cursor.execute("UPDATE monitored_stocks SET source_label = '关注' WHERE source_label IS NULL OR TRIM(source_label) = ''")
         
         # 创建价格历史表
         cursor.execute('''
@@ -105,52 +75,6 @@ class StockMonitorDatabase:
         
         conn.commit()
         conn.close()
-
-    @staticmethod
-    def _row_to_stock(row: sqlite3.Row) -> Dict[str, Any]:
-        """将数据库行转换为监测股票字典"""
-        try:
-            entry_range = json.loads(row["entry_range"]) if row["entry_range"] else None
-        except (json.JSONDecodeError, TypeError):
-            entry_range = None
-
-        try:
-            quant_config = json.loads(row["quant_config"]) if row["quant_config"] else None
-        except (json.JSONDecodeError, TypeError):
-            quant_config = None
-
-        has_position = bool(row["has_position"]) if row["has_position"] is not None else False
-        position_cost = row["position_cost"]
-        position_quantity = row["position_quantity"]
-
-        if (position_cost in (None, 0) or position_quantity in (None, 0)) and has_position:
-            has_position = False
-
-        return {
-            "id": row["id"],
-            "symbol": row["symbol"],
-            "name": row["name"],
-            "rating": row["rating"],
-            "entry_range": entry_range,
-            "take_profit": row["take_profit"],
-            "stop_loss": row["stop_loss"],
-            "current_price": row["current_price"],
-            "last_checked": row["last_checked"],
-            "check_interval": row["check_interval"],
-            "notification_enabled": bool(row["notification_enabled"]),
-            "trading_hours_only": bool(row["trading_hours_only"]) if row["trading_hours_only"] is not None else True,
-            "quant_enabled": bool(row["quant_enabled"]) if row["quant_enabled"] is not None else False,
-            "quant_config": quant_config,
-            "source_type": row["source_type"] or "watch",
-            "source_label": row["source_label"] or "关注",
-            "portfolio_stock_id": row["portfolio_stock_id"],
-            "has_position": has_position,
-            "position_cost": position_cost,
-            "position_quantity": position_quantity,
-            "position_updated_at": row["position_updated_at"],
-            "created_at": row["created_at"],
-            "updated_at": row["updated_at"],
-        }
     
     def add_monitored_stock(self, symbol: str, name: str, rating: str, 
                            entry_range: Dict, take_profit: float, 
@@ -158,34 +82,20 @@ class StockMonitorDatabase:
                            notification_enabled: bool = True,
                            trading_hours_only: bool = True,
                            quant_enabled: bool = False,
-                           quant_config: Dict = None,
-                           source_type: str = "watch",
-                           source_label: str = "关注",
-                           portfolio_stock_id: Optional[int] = None,
-                           has_position: bool = False,
-                           position_cost: Optional[float] = None,
-                           position_quantity: Optional[int] = None,
-                           position_updated_at: Optional[str] = None) -> int:
+                           quant_config: Dict = None) -> int:
         """添加监测股票"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
         quant_config_json = json.dumps(quant_config) if quant_config else None
-        source_type = source_type or "watch"
-        source_label = source_label or ("持仓" if source_type == "portfolio" else "关注")
-        position_updated_at = position_updated_at or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
         cursor.execute('''
             INSERT INTO monitored_stocks 
             (symbol, name, rating, entry_range, take_profit, stop_loss, check_interval, 
-             notification_enabled, trading_hours_only, quant_enabled, quant_config,
-             source_type, source_label, portfolio_stock_id, has_position, position_cost,
-             position_quantity, position_updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             notification_enabled, trading_hours_only, quant_enabled, quant_config)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (symbol, name, rating, json.dumps(entry_range), take_profit, stop_loss, 
-              check_interval, notification_enabled, trading_hours_only, quant_enabled, quant_config_json,
-              source_type, source_label, portfolio_stock_id, 1 if has_position else 0,
-              position_cost, position_quantity, position_updated_at))
+              check_interval, notification_enabled, trading_hours_only, quant_enabled, quant_config_json))
         
         stock_id = cursor.lastrowid
         conn.commit()
@@ -196,21 +106,45 @@ class StockMonitorDatabase:
     def get_monitored_stocks(self) -> List[Dict]:
         """获取所有监测股票"""
         conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
         
         cursor.execute('''
             SELECT id, symbol, name, rating, entry_range, take_profit, stop_loss, 
                    current_price, last_checked, check_interval, notification_enabled,
-                   trading_hours_only, quant_enabled, quant_config,
-                   source_type, source_label, portfolio_stock_id, has_position,
-                   position_cost, position_quantity, position_updated_at,
-                   created_at, updated_at
+                   trading_hours_only, quant_enabled, quant_config, created_at, updated_at
             FROM monitored_stocks
             ORDER BY created_at DESC
         ''')
         
-        stocks = [self._row_to_stock(row) for row in cursor.fetchall()]
+        stocks = []
+        for row in cursor.fetchall():
+            try:
+                quant_config = json.loads(row[13]) if row[13] else None
+                entry_range = json.loads(row[4]) if row[4] else None
+            except (json.JSONDecodeError, TypeError) as e:
+                print(f"警告: 股票 {row[1]} 的JSON解析失败: {e}")
+                entry_range = None
+                quant_config = None
+                
+            stocks.append({
+                'id': row[0],
+                'symbol': row[1],
+                'name': row[2],
+                'rating': row[3],
+                'entry_range': entry_range,
+                'take_profit': row[5],
+                'stop_loss': row[6],
+                'current_price': row[7],
+                'last_checked': row[8],
+                'check_interval': row[9],
+                'notification_enabled': bool(row[10]),
+                'trading_hours_only': bool(row[11]) if row[11] is not None else True,
+                'quant_enabled': bool(row[12]),
+                'quant_config': quant_config,
+                'created_at': row[14],
+                'updated_at': row[15]
+            })
+        
         conn.close()
         return stocks
     
@@ -390,100 +324,49 @@ class StockMonitorDatabase:
         except Exception as e:
             print(f"删除股票失败: {e}")
             return False
-
-    def remove_monitored_stock_by_symbol(self, symbol: str) -> bool:
-        """按股票代码移除监测股票"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        try:
-            cursor.execute("SELECT id FROM monitored_stocks WHERE symbol = ?", (symbol,))
-            row = cursor.fetchone()
-            if not row:
-                return False
-            stock_id = row[0]
-            cursor.execute("DELETE FROM price_history WHERE stock_id = ?", (stock_id,))
-            cursor.execute("DELETE FROM notifications WHERE stock_id = ?", (stock_id,))
-            cursor.execute("DELETE FROM monitored_stocks WHERE id = ?", (stock_id,))
-            conn.commit()
-            return cursor.rowcount > 0
-        finally:
-            conn.close()
     
-    def update_monitored_stock(self, stock_id: int, rating: str, entry_range: Dict,
-                              take_profit: float, stop_loss: float,
+    def update_monitored_stock(self, stock_id: int, rating: str, entry_range: Dict, 
+                              take_profit: float, stop_loss: float, 
                               check_interval: int, notification_enabled: bool,
-                              trading_hours_only: Any = _UNSET,
-                              quant_enabled: Any = _UNSET,
-                              quant_config: Any = _UNSET,
-                              source_type: Any = _UNSET,
-                              source_label: Any = _UNSET,
-                              portfolio_stock_id: Any = _UNSET,
-                              has_position: Any = _UNSET,
-                              position_cost: Any = _UNSET,
-                              position_quantity: Any = _UNSET,
-                              position_updated_at: Any = _UNSET):
+                              trading_hours_only: bool = None,
+                              quant_enabled: bool = None,
+                              quant_config: Dict = None):
         """更新监测股票"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
-
-        update_fields = [
-            "rating = ?",
-            "entry_range = ?",
-            "take_profit = ?",
-            "stop_loss = ?",
-            "check_interval = ?",
-            "notification_enabled = ?",
-        ]
-        params = [rating, json.dumps(entry_range), take_profit, stop_loss, check_interval, notification_enabled]
-
-        if trading_hours_only is not _UNSET:
-            update_fields.append("trading_hours_only = ?")
-            params.append(trading_hours_only)
-
-        if quant_enabled is not _UNSET:
-            update_fields.append("quant_enabled = ?")
-            params.append(quant_enabled)
-
-        if quant_config is not _UNSET:
-            update_fields.append("quant_config = ?")
-            params.append(json.dumps(quant_config) if quant_config else None)
-
-        if source_type is not _UNSET:
-            update_fields.append("source_type = ?")
-            params.append(source_type)
-
-        if source_label is not _UNSET:
-            update_fields.append("source_label = ?")
-            params.append(source_label)
-
-        if portfolio_stock_id is not _UNSET:
-            update_fields.append("portfolio_stock_id = ?")
-            params.append(portfolio_stock_id)
-
-        if has_position is not _UNSET:
-            update_fields.append("has_position = ?")
-            params.append(1 if has_position else 0)
-
-        if position_cost is not _UNSET:
-            update_fields.append("position_cost = ?")
-            params.append(position_cost)
-
-        if position_quantity is not _UNSET:
-            update_fields.append("position_quantity = ?")
-            params.append(position_quantity)
-
-        if position_updated_at is not _UNSET:
-            update_fields.append("position_updated_at = ?")
-            params.append(position_updated_at)
-
-        update_fields.append("updated_at = CURRENT_TIMESTAMP")
-        params.append(stock_id)
-
-        cursor.execute(
-            f"UPDATE monitored_stocks SET {', '.join(update_fields)} WHERE id = ?",
-            tuple(params),
-        )
-
+        
+        if quant_enabled is not None and quant_config is not None:
+            quant_config_json = json.dumps(quant_config) if quant_config else None
+            trading_hours_sql = ", trading_hours_only = ?" if trading_hours_only is not None else ""
+            params = [rating, json.dumps(entry_range), take_profit, stop_loss, 
+                      check_interval, notification_enabled, quant_enabled, quant_config_json]
+            if trading_hours_only is not None:
+                params.append(trading_hours_only)
+            params.append(stock_id)
+            
+            cursor.execute(f'''
+                UPDATE monitored_stocks 
+                SET rating = ?, entry_range = ?, take_profit = ?, stop_loss = ?, 
+                    check_interval = ?, notification_enabled = ?, 
+                    quant_enabled = ?, quant_config = ?{trading_hours_sql},
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            ''', tuple(params))
+        else:
+            trading_hours_sql = ", trading_hours_only = ?" if trading_hours_only is not None else ""
+            params = [rating, json.dumps(entry_range), take_profit, stop_loss, check_interval, notification_enabled]
+            if trading_hours_only is not None:
+                params.append(trading_hours_only)
+            params.append(stock_id)
+            
+            cursor.execute(f'''
+                UPDATE monitored_stocks 
+                SET rating = ?, entry_range = ?, take_profit = ?, stop_loss = ?, 
+                    check_interval = ?, notification_enabled = ?{trading_hours_sql}, 
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            ''', tuple(params))
+        
         conn.commit()
         conn.close()
         
@@ -508,16 +391,12 @@ class StockMonitorDatabase:
     def get_stock_by_id(self, stock_id: int) -> Optional[Dict]:
         """根据ID获取股票信息"""
         conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
         
         cursor.execute('''
             SELECT id, symbol, name, rating, entry_range, take_profit, stop_loss,
                    current_price, last_checked, check_interval, notification_enabled,
-                   trading_hours_only, quant_enabled, quant_config,
-                   source_type, source_label, portfolio_stock_id, has_position,
-                   position_cost, position_quantity, position_updated_at,
-                   created_at, updated_at
+                   trading_hours_only, quant_enabled, quant_config
             FROM monitored_stocks WHERE id = ?
         ''', (stock_id,))
         
@@ -525,7 +404,30 @@ class StockMonitorDatabase:
         conn.close()
         
         if row:
-            return self._row_to_stock(row)
+            try:
+                quant_config = json.loads(row[13]) if row[13] else None
+                entry_range = json.loads(row[4]) if row[4] else None
+            except (json.JSONDecodeError, TypeError) as e:
+                print(f"警告: 股票 {row[1]} 的JSON解析失败: {e}")
+                entry_range = None
+                quant_config = None
+                
+            return {
+                'id': row[0],
+                'symbol': row[1],
+                'name': row[2],
+                'rating': row[3],
+                'entry_range': entry_range,
+                'take_profit': row[5],
+                'stop_loss': row[6],
+                'current_price': row[7],
+                'last_checked': row[8],
+                'check_interval': row[9],
+                'notification_enabled': bool(row[10]),
+                'trading_hours_only': bool(row[11]) if row[11] is not None else True,
+                'quant_enabled': bool(row[12]),
+                'quant_config': quant_config
+            }
         return None
     
     def get_monitor_by_code(self, symbol: str) -> Optional[Dict]:
@@ -539,7 +441,6 @@ class StockMonitorDatabase:
             监测股票信息字典，不存在则返回None
         """
         conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
         
         cursor.execute('''
@@ -549,7 +450,31 @@ class StockMonitorDatabase:
         row = cursor.fetchone()
         conn.close()
         
-        return self._row_to_stock(row) if row else None
+        if row:
+            try:
+                entry_range = json.loads(row[4]) if row[4] else None
+                quant_config = json.loads(row[12]) if row[12] else None
+            except (json.JSONDecodeError, TypeError) as e:
+                print(f"警告: 股票 {row[1]} 的JSON解析失败: {e}")
+                entry_range = None
+                quant_config = None
+            
+            return {
+                'id': row[0],
+                'symbol': row[1],
+                'name': row[2],
+                'rating': row[3],
+                'entry_range': entry_range,
+                'take_profit': row[5],
+                'stop_loss': row[6],
+                'current_price': row[7],
+                'last_checked': row[8],
+                'check_interval': row[9],
+                'notification_enabled': row[10],
+                'quant_enabled': row[11],
+                'quant_config': quant_config
+            }
+        return None
     
     def batch_add_or_update_monitors(self, monitors_data: List[Dict]) -> Dict[str, int]:
         """
@@ -575,92 +500,29 @@ class StockMonitorDatabase:
         
         for data in monitors_data:
             try:
-                def _to_float(value):
-                    if value is None:
-                        return None
-                    try:
-                        return float(value)
-                    except (TypeError, ValueError):
-                        return None
-
                 # 兼容code和symbol两种字段名
                 symbol = data.get('code') or data.get('symbol')
                 name = data.get('name', symbol)
                 rating = data.get('rating', '持有')
-                entry_min = _to_float(data.get('entry_min'))
-                entry_max = _to_float(data.get('entry_max'))
-                take_profit = _to_float(data.get('take_profit'))
-                stop_loss = _to_float(data.get('stop_loss'))
-                check_interval = data.get('check_interval')
-                notification_enabled = data.get('notification_enabled')
-                trading_hours_only = data.get('trading_hours_only')
-                needs_review = bool(data.get('needs_review', False))
-                source_type = data.get('source_type')
-                source_label = data.get('source_label')
-                portfolio_stock_id = data.get('portfolio_stock_id')
-                has_position = data.get('has_position')
-                position_cost = _to_float(data.get('position_cost'))
-                position_quantity = data.get('position_quantity')
-                position_updated_at = data.get('position_updated_at')
-                has_portfolio_stock_id = 'portfolio_stock_id' in data
-                has_position_cost = 'position_cost' in data
-                has_position_quantity = 'position_quantity' in data
-                has_has_position = 'has_position' in data
+                entry_min = data.get('entry_min')
+                entry_max = data.get('entry_max')
+                take_profit = data.get('take_profit')
+                stop_loss = data.get('stop_loss')
+                check_interval = data.get('check_interval', 60)
+                notification_enabled = data.get('notification_enabled', True)
+                trading_hours_only = data.get('trading_hours_only', True)
                 
                 # 验证必需字段
-                if (
-                    not symbol
-                    or entry_min is None
-                    or entry_max is None
-                    or take_profit is None
-                    or stop_loss is None
-                    or entry_max <= entry_min
-                    or take_profit <= 0
-                    or stop_loss <= 0
-                ):
+                if not symbol or not all([entry_min, entry_max, take_profit, stop_loss]):
                     print(f"[WARN] {symbol} 参数不完整，跳过")
                     failed += 1
                     continue
                 
                 # 构建entry_range
                 entry_range = {"min": entry_min, "max": entry_max}
-                if needs_review:
-                    entry_range["needs_review"] = True
                 
                 # 检查是否已存在
                 existing = self.get_monitor_by_code(symbol)
-                if existing:
-                    if check_interval is None:
-                        check_interval = existing.get('check_interval', 60)
-                    if notification_enabled is None:
-                        notification_enabled = existing.get('notification_enabled', True)
-                    if trading_hours_only is None:
-                        trading_hours_only = existing.get('trading_hours_only', True)
-                    if source_type is None:
-                        source_type = existing.get('source_type', 'watch')
-                    if source_label is None:
-                        source_label = existing.get('source_label') or ('持仓' if source_type == 'portfolio' else '关注')
-                    if not has_portfolio_stock_id:
-                        portfolio_stock_id = existing.get('portfolio_stock_id')
-                    if not has_has_position:
-                        has_position = existing.get('has_position', False)
-                    if not has_position_cost:
-                        position_cost = existing.get('position_cost')
-                    if not has_position_quantity:
-                        position_quantity = existing.get('position_quantity')
-                else:
-                    if check_interval is None:
-                        check_interval = 60
-                    if notification_enabled is None:
-                        notification_enabled = True
-                    if trading_hours_only is None:
-                        trading_hours_only = True
-                    if source_type is None:
-                        source_type = 'watch'
-                    if source_label is None:
-                        source_label = '持仓' if source_type == 'portfolio' else '关注'
-                    if has_position is None:
-                        has_position = bool(position_cost and position_quantity)
                 
                 if existing:
                     # 更新现有监测
@@ -672,14 +534,7 @@ class StockMonitorDatabase:
                         stop_loss=stop_loss,
                         check_interval=check_interval,
                         notification_enabled=notification_enabled,
-                        trading_hours_only=trading_hours_only,
-                        source_type=source_type,
-                        source_label=source_label,
-                        portfolio_stock_id=portfolio_stock_id,
-                        has_position=has_position,
-                        position_cost=position_cost,
-                        position_quantity=position_quantity,
-                        position_updated_at=position_updated_at or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        trading_hours_only=trading_hours_only
                     )
                     updated += 1
                     print(f"[OK] 更新监测: {symbol}")
@@ -694,14 +549,7 @@ class StockMonitorDatabase:
                         stop_loss=stop_loss,
                         check_interval=check_interval,
                         notification_enabled=notification_enabled,
-                        trading_hours_only=trading_hours_only,
-                        source_type=source_type,
-                        source_label=source_label,
-                        portfolio_stock_id=portfolio_stock_id,
-                        has_position=has_position,
-                        position_cost=position_cost,
-                        position_quantity=position_quantity,
-                        position_updated_at=position_updated_at
+                        trading_hours_only=trading_hours_only
                     )
                     added += 1
                     print(f"[OK] 添加监测: {symbol}")

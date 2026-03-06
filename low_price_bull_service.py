@@ -32,6 +32,9 @@ class LowPriceBullService:
     def _load_config(self):
         """从环境变量加载配置"""
         try:
+            from dotenv import load_dotenv
+            load_dotenv()
+            
             # 扫描间隔
             interval = os.getenv('LOW_PRICE_BULL_SCAN_INTERVAL', '60')
             self.scan_interval = int(interval)

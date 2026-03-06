@@ -50,11 +50,11 @@ class NewsFlowPDFGenerator:
                     try:
                         pdfmetrics.registerFont(TTFont('ChineseFont', font_path))
                         return 'ChineseFont'
-                    except Exception:
+                    except:
                         continue
             
             return 'Helvetica'
-        except Exception:
+        except:
             return 'Helvetica'
     
     def _create_styles(self) -> Dict:

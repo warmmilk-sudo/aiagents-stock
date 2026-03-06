@@ -14,33 +14,15 @@ class ConfigManager:
     def __init__(self, env_file: str = ".env"):
         self.env_file = Path(env_file)
         self.default_config = {
-            "AI_MODEL_API_KEY": {
+            "DEEPSEEK_API_KEY": {
                 "value": "",
-                "description": "AI模型 API密钥",
+                "description": "DeepSeek API密钥",
                 "required": True,
                 "type": "password"
             },
-            "AI_MODEL_BASE_URL": {
+            "DEEPSEEK_BASE_URL": {
                 "value": "https://api.deepseek.com/v1",
-                "description": "AI模型 API地址",
-                "required": False,
-                "type": "text"
-            },
-            "AI_MODEL_LIGHTWEIGHT_NAME": {
-                "value": "deepseek-chat",
-                "description": "轻量模型名称（快筛）",
-                "required": False,
-                "type": "text"
-            },
-            "AI_MODEL_LONG_CONTEXT_NAME": {
-                "value": "qwen-long",
-                "description": "长上下文模型名称（校验/检索）",
-                "required": False,
-                "type": "text"
-            },
-            "AI_MODEL_REASONING_NAME": {
-                "value": "deepseek-reasoner",
-                "description": "推理模型名称（辩论/决策）",
+                "description": "DeepSeek API地址",
                 "required": False,
                 "type": "text"
             },
@@ -50,59 +32,11 @@ class ConfigManager:
                 "required": False,
                 "type": "text"
             },
-            "ADMIN_PASSWORD": {
-                "value": "",
-                "description": "管理员密码（为空则不需密码）",
-                "required": False,
-                "type": "password"
-            },
-            "ADMIN_PASSWORD_HASH": {
-                "value": "",
-                "description": "管理员密码哈希（推荐，优先于明文密码）",
-                "required": False,
-                "type": "password"
-            },
-            "LOGIN_MAX_ATTEMPTS": {
-                "value": "5",
-                "description": "登录最大失败次数",
-                "required": False,
-                "type": "text"
-            },
-            "LOGIN_LOCKOUT_SECONDS": {
-                "value": "300",
-                "description": "登录锁定时长（秒）",
-                "required": False,
-                "type": "text"
-            },
-            "ADMIN_SESSION_TTL_SECONDS": {
-                "value": "28800",
-                "description": "管理员会话有效期（秒）",
-                "required": False,
-                "type": "text"
-            },
-            "ICP_NUMBER": {
-                "value": "京ICP备2026007346号",
-                "description": "网站备案号（为空则不显示）",
-                "required": False,
-                "type": "text"
-            },
-            "ICP_LINK": {
-                "value": "https://beian.miit.gov.cn/",
-                "description": "备案号跳转地址（留空则仅显示文本）",
-                "required": False,
-                "type": "text"
-            },
             "TUSHARE_TOKEN": {
                 "value": "",
                 "description": "Tushare数据接口Token（可选）",
                 "required": False,
                 "type": "password"
-            },
-            "TUSHARE_URL": {
-                "value": "https://api.tushare.pro",
-                "description": "Tushare API地址",
-                "required": False,
-                "type": "text"
             },
             "MINIQMT_ENABLED": {
                 "value": "false",
@@ -240,27 +174,15 @@ class ConfigManager:
             lines.append("# 由系统自动生成和管理")
             lines.append("")
             
-            # AI模型配置
-            lines.append("# ========== AI模型 API配置 ==========")
-            lines.append(f'AI_MODEL_API_KEY="{config.get("AI_MODEL_API_KEY", "")}"')
-            lines.append(f'AI_MODEL_BASE_URL="{config.get("AI_MODEL_BASE_URL", "https://api.deepseek.com/v1")}"')
-            lines.append(f'AI_MODEL_LIGHTWEIGHT_NAME="{config.get("AI_MODEL_LIGHTWEIGHT_NAME", "deepseek-chat")}"')
-            lines.append(f'AI_MODEL_LONG_CONTEXT_NAME="{config.get("AI_MODEL_LONG_CONTEXT_NAME", "qwen-long")}"')
-            lines.append(f'AI_MODEL_REASONING_NAME="{config.get("AI_MODEL_REASONING_NAME", "deepseek-reasoner")}"')
-            lines.append(f'DEFAULT_MODEL_NAME="{config.get("DEFAULT_MODEL_NAME", "deepseek-chat")}"')
-            lines.append(f'ADMIN_PASSWORD="{config.get("ADMIN_PASSWORD", "")}"')
-            lines.append(f'ADMIN_PASSWORD_HASH="{config.get("ADMIN_PASSWORD_HASH", "")}"')
-            lines.append(f'LOGIN_MAX_ATTEMPTS="{config.get("LOGIN_MAX_ATTEMPTS", "5")}"')
-            lines.append(f'LOGIN_LOCKOUT_SECONDS="{config.get("LOGIN_LOCKOUT_SECONDS", "300")}"')
-            lines.append(f'ADMIN_SESSION_TTL_SECONDS="{config.get("ADMIN_SESSION_TTL_SECONDS", "28800")}"')
-            lines.append(f'ICP_NUMBER="{config.get("ICP_NUMBER", "京ICP备2026007346号")}"')
-            lines.append(f'ICP_LINK="{config.get("ICP_LINK", "https://beian.miit.gov.cn/")}"')
+            # DeepSeek配置
+            lines.append("# ========== DeepSeek API配置 ==========")
+            lines.append(f'DEEPSEEK_API_KEY="{config.get("DEEPSEEK_API_KEY", "")}"')
+            lines.append(f'DEEPSEEK_BASE_URL="{config.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")}"')
             lines.append("")
             
             # Tushare配置
             lines.append("# ========== Tushare数据接口（可选）==========")
             lines.append(f'TUSHARE_TOKEN="{config.get("TUSHARE_TOKEN", "")}"')
-            lines.append(f'TUSHARE_URL="{config.get("TUSHARE_URL", "https://api.tushare.pro")}"')
             lines.append("")
             
             # MiniQMT配置
@@ -322,16 +244,20 @@ class ConfigManager:
                 return False, f"必填项 {info['description']} 不能为空"
         
         # 验证API Key格式（简单检查长度）
-        if config.get("AI_MODEL_API_KEY"):
-            api_key = config.get("AI_MODEL_API_KEY", "")
+        if config.get("DEEPSEEK_API_KEY"):
+            api_key = config.get("DEEPSEEK_API_KEY", "")
             if len(api_key) < 20:
-                return False, "AI模型 API Key格式不正确（长度太短）"
+                return False, "DeepSeek API Key格式不正确（长度太短）"
         
         return True, "配置验证通过"
     
     def reload_config(self):
         """重新加载配置（重新加载.env文件）"""
+        from dotenv import load_dotenv
         # 强制覆盖已存在的环境变量
+        load_dotenv(override=True)
+
+
 # 全局配置管理器实例
 config_manager = ConfigManager()
 

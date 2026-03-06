@@ -8,7 +8,6 @@ import requests
 import json
 import pywencai
 from data_source_manager import data_source_manager
-from data_source_policy import policy
 
 class StockDataFetcher:
     """股票数据获取类"""
@@ -84,108 +83,63 @@ class StockDataFetcher:
                 "market": "中国A股",
                 "exchange": "上海/深圳证券交易所"
             }
-
-            def _is_missing(value):
-                if value in (None, "", "N/A", "-"):
-                    return True
-                return isinstance(value, float) and pd.isna(value)
             
             # 先尝试使用数据源管理器获取基本信息
             basic_info = self.data_source_manager.get_stock_basic_info(symbol)
             if basic_info:
                 info.update(basic_info)
-
-            ts_code = self.data_source_manager._convert_to_ts_code(symbol)
-            prefer_tushare = self.data_source_manager.tushare_available
-
-            # 方法1: 优先使用Tushare补充核心估值字段
-            if prefer_tushare:
-                try:
-                    print(f"[Tushare] 优先获取 {symbol} 估值与基础信息...")
-                    end_date = datetime.now().strftime('%Y%m%d')
-                    start_date = (datetime.now() - timedelta(days=20)).strftime('%Y%m%d')
-
-                    basic_df = self.data_source_manager.tushare_api.stock_basic(
-                        ts_code=ts_code,
-                        fields='ts_code,name,industry,market,list_date'
-                    )
-                    if basic_df is not None and not basic_df.empty:
-                        basic_row = basic_df.iloc[0]
-                        if _is_missing(info.get('name')) or info.get('name') == '未知':
-                            info['name'] = basic_row.get('name', info.get('name'))
-                        if _is_missing(info.get('industry')) or info.get('industry') == '未知':
-                            info['industry'] = basic_row.get('industry', info.get('industry'))
-                        if _is_missing(info.get('market')) or info.get('market') == '未知':
-                            info['market'] = basic_row.get('market', info.get('market'))
-                        if _is_missing(info.get('list_date')):
-                            info['list_date'] = basic_row.get('list_date', info.get('list_date'))
-
-                    daily_basic_df = self.data_source_manager.tushare_api.daily_basic(
-                        ts_code=ts_code,
-                        start_date=start_date,
-                        end_date=end_date,
-                        fields='ts_code,trade_date,pe,pb,total_mv'
-                    )
-                    if daily_basic_df is not None and not daily_basic_df.empty:
-                        latest = daily_basic_df.sort_values('trade_date', ascending=False).iloc[0]
-                        pe_val = latest.get('pe')
-                        pb_val = latest.get('pb')
-                        mv_val = latest.get('total_mv')
-                        if not _is_missing(pe_val):
-                            pe_val = float(pe_val)
-                            if 0 < pe_val <= 1000:
-                                info['pe_ratio'] = pe_val
-                        if not _is_missing(pb_val):
-                            pb_val = float(pb_val)
-                            if 0 < pb_val <= 100:
-                                info['pb_ratio'] = pb_val
-                        if not _is_missing(mv_val):
-                            info['market_cap'] = float(mv_val)
-                except Exception as e:
-                    print(f"[Tushare] 获取个股详情失败: {e}")
-
-            # 方法2: 仅在字段缺失时使用AkShare补充（避免覆盖Tushare优先结果）
-            need_akshare_detail = (
-                (not prefer_tushare)
-                or _is_missing(info.get('name')) or info.get('name') == '未知'
-                or _is_missing(info.get('market_cap'))
-                or _is_missing(info.get('pe_ratio'))
-                or _is_missing(info.get('pb_ratio'))
-            )
-            if need_akshare_detail:
-                try:
-                    stock_info = ak.stock_individual_info_em(symbol=symbol)
-                    if stock_info is not None and not stock_info.empty:
-                        for _, row in stock_info.iterrows():
-                            key = row['item']
-                            value = row['value']
-
-                            if key == '股票简称' and (info.get('name') == '未知' or _is_missing(info.get('name'))):
-                                info['name'] = value
-                            elif key == '总市值' and _is_missing(info.get('market_cap')):
-                                try:
-                                    if value and value != '-':
-                                        info['market_cap'] = float(value)
-                                except Exception:
-                                    pass
-                            elif key == '市盈率-动态' and _is_missing(info.get('pe_ratio')):
-                                try:
-                                    if value and value != '-':
-                                        pe_value = float(value)
-                                        if 0 < pe_value <= 1000:
-                                            info['pe_ratio'] = pe_value
-                                except Exception:
-                                    pass
-                            elif key == '市净率' and _is_missing(info.get('pb_ratio')):
-                                try:
-                                    if value and value != '-':
-                                        pb_value = float(value)
-                                        if 0 < pb_value <= 100:
-                                            info['pb_ratio'] = pb_value
-                                except Exception:
-                                    pass
-                except Exception as e:
-                    print(f"[Akshare] 获取个股详细信息失败: {e}")
+            
+            # 方法1: 尝试获取个股详细信息（akshare）
+            try:
+                stock_info = ak.stock_individual_info_em(symbol=symbol)
+                if stock_info is not None and not stock_info.empty:
+                    for _, row in stock_info.iterrows():
+                        key = row['item']
+                        value = row['value']
+                        
+                        if key == '股票简称':
+                            info['name'] = value
+                        elif key == '总市值':
+                            try:
+                                if value and value != '-':
+                                    info['market_cap'] = float(value)
+                            except:
+                                pass
+                        elif key == '市盈率-动态':
+                            try:
+                                if value and value != '-':
+                                    pe_value = float(value)
+                                    if 0 < pe_value <= 1000:
+                                        info['pe_ratio'] = pe_value
+                            except:
+                                pass
+                        elif key == '市净率':
+                            try:
+                                if value and value != '-':
+                                    pb_value = float(value)
+                                    if 0 < pb_value <= 100:
+                                        info['pb_ratio'] = pb_value
+                            except:
+                                pass
+            except Exception as e:
+                print(f"[Akshare] 获取个股详细信息失败: {e}")
+                # 如果akshare失败，尝试从tushare获取
+                if self.data_source_manager.tushare_available and info['name'] == '未知':
+                    print(f"[Tushare] 尝试获取基本信息（tushare）...")
+                    try:
+                        ts_code = self.data_source_manager._convert_to_ts_code(symbol)
+                        df = self.data_source_manager.tushare_api.daily_basic(
+                            ts_code=ts_code,
+                            trade_date=datetime.now().strftime('%Y%m%d')
+                        )
+                        if df is not None and not df.empty:
+                            row = df.iloc[0]
+                            info['pe_ratio'] = row.get('pe', 'N/A')
+                            info['pb_ratio'] = row.get('pb', 'N/A')
+                            info['market_cap'] = row.get('total_mv', 'N/A')
+                            print(f"[Tushare] ✅ 成功获取部分信息")
+                    except Exception as te:
+                        print(f"[Tushare] ❌ 获取失败: {te}")
             
             # 方法2: 尝试获取历史价格和涨跌幅（如果网络允许）
             # try:
@@ -208,7 +162,7 @@ class StockDataFetcher:
             #                         pe_val = float(pe_val)
             #                         if 0 < pe_val <= 1000:
             #                             info['pe_ratio'] = pe_val
-            #                 except Exception:
+            #                 except:
             #                     pass
                         
             #             if '市净率' in row and info['pb_ratio'] == 'N/A':
@@ -218,7 +172,7 @@ class StockDataFetcher:
             #                         pb_val = float(pb_val)
             #                         if 0 < pb_val <= 100:
             #                             info['pb_ratio'] = pb_val
-            #                 except Exception:
+            #                 except:
             #                     pass
                                 
             # except Exception as e:
@@ -243,7 +197,7 @@ class StockDataFetcher:
                             prev_close = hist_data.iloc[-2]['close']
                             change_pct = ((latest['close'] - prev_close) / prev_close) * 100
                             info['change_percent'] = round(change_pct, 2)
-                        print(f"[数据源管理器] [OK] 成功获取价格数据")
+                        print(f"[数据源管理器] ✅ 成功获取价格数据")
             except Exception as e2:
                 print(f"获取历史数据也失败: {e2}")
             
@@ -326,7 +280,7 @@ class StockDataFetcher:
                         if market_cap != 'N/A':
                             try:
                                 info['market_cap'] = float(market_cap)
-                            except Exception:
+                            except:
                                 pass
                         
                         # 市盈率
@@ -336,7 +290,7 @@ class StockDataFetcher:
                                 pe_val = float(pe)
                                 if 0 < pe_val <= 1000:
                                     info['pe_ratio'] = pe_val
-                            except Exception:
+                            except:
                                 pass
             except Exception as e:
                 print(f"获取港股实时数据失败: {e}")
@@ -398,7 +352,7 @@ class StockDataFetcher:
                 else:
                     current_price = 'N/A'
                     change_percent = 'N/A'
-            except Exception:
+            except:
                 current_price = 'N/A'
                 change_percent = 'N/A'
             
@@ -506,7 +460,7 @@ class StockDataFetcher:
                     df['Date'] = pd.to_datetime(df['Date'])
                     df.set_index('Date', inplace=True)
                 
-                print(f"[OK] 成功获取 {symbol} 的历史数据，共 {len(df)} 条记录")
+                print(f"✅ 成功获取 {symbol} 的历史数据，共 {len(df)} 条记录")
                 return df
             else:
                 return {"error": "所有数据源均无法获取历史数据"}
@@ -655,61 +609,73 @@ class StockDataFetcher:
             "cash_flow": None,  # 现金流量表
             "financial_ratios": {},  # 财务比率
             "quarter_data": None,  # 季度数据
-            "source": "unknown",
-            "source_chain": [],
-            "error_detail": {}
         }
         
         try:
-            used_sources = []
-            errors = {}
-            used_sources.append("akshare")
-
-            for report_type, target_key in [
-                ("income", "income_statement"),
-                ("balance", "balance_sheet"),
-                ("cashflow", "cash_flow"),
-            ]:
-                try:
-                    df = self.data_source_manager.get_financial_data(symbol, report_type=report_type)
-                    if df is not None and not df.empty:
-                        financial_data[target_key] = df.head(8).to_dict('records')
-                    else:
-                        errors[f"akshare_{report_type}"] = "empty result"
-                except Exception as e:
-                    errors[f"akshare_{report_type}"] = str(e)
-
+            # 1. 获取资产负债表
+            try:
+                balance_sheet = ak.stock_financial_abstract_ths(symbol=symbol, indicator="资产负债表")
+                if balance_sheet is not None and not balance_sheet.empty:
+                    financial_data["balance_sheet"] = balance_sheet.head(8).to_dict('records')
+            except Exception as e:
+                print(f"获取资产负债表失败: {e}")
+            
+            # 2. 获取利润表
+            try:
+                income_statement = ak.stock_financial_abstract_ths(symbol=symbol, indicator="利润表")
+                if income_statement is not None and not income_statement.empty:
+                    financial_data["income_statement"] = income_statement.head(8).to_dict('records')
+            except Exception as e:
+                print(f"获取利润表失败: {e}")
+            
+            # 3. 获取现金流量表
+            try:
+                cash_flow = ak.stock_financial_abstract_ths(symbol=symbol, indicator="现金流量表")
+                if cash_flow is not None and not cash_flow.empty:
+                    financial_data["cash_flow"] = cash_flow.head(8).to_dict('records')
+            except Exception as e:
+                print(f"获取现金流量表失败: {e}")
+            
+            # 4. 获取主要财务指标
             try:
                 financial_abstract = ak.stock_financial_abstract(symbol=symbol)
                 if financial_abstract is not None and not financial_abstract.empty:
+                    # 提取关键财务指标
                     key_indicators = [
                         '净资产收益率(ROE)', '总资产报酬率(ROA)', '销售毛利率', '销售净利率',
                         '资产负债率', '流动比率', '速动比率', '存货周转率', '应收账款周转率',
                         '总资产周转率', '营业收入同比增长', '净利润同比增长'
                     ]
+                    
+                    # 筛选出包含关键指标的行
                     indicator_rows = financial_abstract[financial_abstract['指标'].isin(key_indicators)]
-                    date_columns = [col for col in financial_abstract.columns if col not in ['选项', '指标']]
-                    if not indicator_rows.empty and date_columns:
-                        latest_date = date_columns[0]
-                        ratios = {"报告期": latest_date}
-                        for _, row in indicator_rows.iterrows():
-                            indicator_name = row['指标']
-                            value = row.get(latest_date, 'N/A')
-                            if value is not None and not (isinstance(value, float) and pd.isna(value)):
-                                ratios[indicator_name] = str(value)
-                            else:
-                                ratios[indicator_name] = "N/A"
-                        financial_data["financial_ratios"] = ratios
-                else:
-                    errors["akshare_indicator"] = "empty result"
+                    
+                    if not indicator_rows.empty:
+                        # 获取最新的报告期数据（第一列日期）
+                        date_columns = [col for col in financial_abstract.columns if col not in ['选项', '指标']]
+                        if date_columns:
+                            latest_date = date_columns[0]  # 最新日期列
+                            
+                            # 构建财务比率字典
+                            financial_ratios = {"报告期": latest_date}
+                            
+                            # 提取每个指标的最新值
+                            for _, row in indicator_rows.iterrows():
+                                indicator_name = row['指标']
+                                value = row.get(latest_date, 'N/A')
+                                if value is not None and not (isinstance(value, float) and pd.isna(value)):
+                                    try:
+                                        financial_ratios[indicator_name] = str(value)
+                                    except:
+                                        financial_ratios[indicator_name] = "N/A"
+                                else:
+                                    financial_ratios[indicator_name] = "N/A"
+                            
+                            financial_data["financial_ratios"] = financial_ratios
             except Exception as e:
-                errors["akshare_indicator"] = str(e)
-
-            financial_data["source"] = "akshare"
-            financial_data["source_chain"] = used_sources
-            financial_data["error_detail"] = errors
+                print(f"获取财务指标失败: {e}")
             
-            # 注意：季报数据现在由 quarterly_report_data.py 模块统一获取
+            # 注意：季报数据现在由 quarterly_report_data.py 模块使用 akshare 获取（8期完整季报）
             # 不再使用问财获取季报，避免重复
             
             return financial_data
@@ -719,7 +685,7 @@ class StockDataFetcher:
             return financial_data
     
     # 已删除 _get_quarter_data_from_wencai 方法
-    # 季报数据现在统一由 quarterly_report_data.py 模块获取
+    # 季报数据现在统一由 quarterly_report_data.py 模块使用 akshare 获取
     # 获取最近8期完整季报（利润表、资产负债表、现金流量表）
     # 避免重复获取，提高效率
     
@@ -772,16 +738,16 @@ class StockDataFetcher:
                         "每手股": self._safe_convert(indicator_dict.get('每手股', 'N/A')),
                     }
                     
-                    print(f"[OK] 成功获取港股 {hk_code} 的财务指标")
+                    print(f"✅ 成功获取港股 {hk_code} 的财务指标")
                     print(f"   ROE: {financial_data['financial_ratios']['ROE股东权益回报率']}")
                     print(f"   市盈率: {financial_data['financial_ratios']['市盈率']}")
                     print(f"   市净率: {financial_data['financial_ratios']['市净率']}")
                 else:
-                    print(f"[WARN]️ 未获取到港股 {hk_code} 的财务指标数据")
+                    print(f"⚠️ 未获取到港股 {hk_code} 的财务指标数据")
                     financial_data["note"] = "未获取到财务数据"
                     
             except Exception as e:
-                print(f"[WARN]️ 获取港股财务指标失败: {e}")
+                print(f"⚠️ 获取港股财务指标失败: {e}")
                 financial_data["note"] = f"获取财务数据失败: {str(e)}"
             
             return financial_data
@@ -855,7 +821,7 @@ class StockDataFetcher:
             return financial_data
     
     # 已删除 get_fund_flow_data 方法（使用问财）
-    # 资金流向数据现在统一由 fund_flow_akshare.py 模块获取（Tushare优先 + AkShare兜底）
+    # 资金流向数据现在统一由 fund_flow_akshare.py 模块使用 akshare 获取
     # 获取近20个交易日的详细资金流向数据（主力、超大单、大单、中单、小单）
     # 避免重复获取，提高效率和数据质量
     # 
@@ -903,7 +869,7 @@ class StockDataFetcher:
                 value = value.replace('%', '').replace(',', '')
                 return float(value)
             return value
-        except Exception:
+        except:
             return value
     
     def _calculate_main_fund_ratio(self, main_fund, total_fund):
@@ -912,7 +878,6 @@ class StockDataFetcher:
             if main_fund != 'N/A' and total_fund != 'N/A' and total_fund != 0:
                 ratio = (main_fund / total_fund) * 100
                 return f"{ratio:.2f}%"
-        except Exception:
+        except:
             pass
         return 'N/A'
-

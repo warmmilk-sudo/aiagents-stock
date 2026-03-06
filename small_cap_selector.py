@@ -8,7 +8,6 @@
 import logging
 from typing import Tuple, Optional
 import pandas as pd
-from wencai_field_resolver import get_row_value
 
 
 class SmallCapSelector:
@@ -97,11 +96,11 @@ class SmallCapSelector:
         
         lines = []
         for idx, row in df.iterrows():
-            stock_code = get_row_value(row, ['股票代码', '代码'], 'N/A')
-            stock_name = get_row_value(row, ['股票简称', '名称'], 'N/A')
-            market_cap = get_row_value(row, ['总市值', '总市值(元)'], 'N/A')
-            revenue_growth = get_row_value(row, ['营收增长率', '营业收入增长率', '营业总收入同比增长率'], 'N/A')
-            profit_growth = get_row_value(row, ['净利润增长率', '净利润同比增长率'], 'N/A')
+            stock_code = row.get('股票代码', 'N/A')
+            stock_name = row.get('股票简称', 'N/A')
+            market_cap = row.get('总市值', row.get('总市值[20241211]', 'N/A'))
+            revenue_growth = row.get('营收增长率', row.get('营业收入增长率', 'N/A'))
+            profit_growth = row.get('净利润增长率', row.get('净利润同比增长率', 'N/A'))
             
             line = f"{idx+1}. {stock_code} {stock_name}"
             
@@ -114,19 +113,19 @@ class SmallCapSelector:
                         details.append(f"市值:{cap_val/100000000:.2f}亿")
                     else:
                         details.append(f"市值:{cap_val/10000:.2f}万")
-                except Exception:
+                except:
                     pass
             
             if revenue_growth != 'N/A':
                 try:
                     details.append(f"营收增长:{float(revenue_growth):.2f}%")
-                except Exception:
+                except:
                     pass
             
             if profit_growth != 'N/A':
                 try:
                     details.append(f"净利增长:{float(profit_growth):.2f}%")
-                except Exception:
+                except:
                     pass
             
             if details:

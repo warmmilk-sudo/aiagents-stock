@@ -445,7 +445,7 @@ class LonghubangScoring:
             
             results.append({
                 '排名': 0,  # 稍后填充
-                '排名_display': '',  # 用于显示排名
+                '排名_display': '',  # 用于显示奖牌
                 '股票名称': stock_info['name'],
                 '股票代码': code,
                 '综合评分': round(total_score, 1),
@@ -456,7 +456,7 @@ class LonghubangScoring:
                 '加分项': round(bonus, 0),
                 '顶级游资': self._count_top_youzi(records),
                 '买方数': buy_seats,
-                '机构参与': '' if has_institution else '',
+                '机构参与': '✅' if has_institution else '❌',
                 '净流入': round(total_net, 2)
             })
         
@@ -468,14 +468,14 @@ class LonghubangScoring:
         df = df.sort_values('综合评分', ascending=False).reset_index(drop=True)
         df['排名'] = range(1, len(df) + 1)
         
-        # 添加排名显示
+        # 添加奖牌显示
         df['排名_display'] = df['排名'].astype(str)
         if len(df) >= 1:
-            df.loc[0, '排名_display'] = '1'
+            df.loc[0, '排名_display'] = '🥇 1'
         if len(df) >= 2:
-            df.loc[1, '排名_display'] = '2'
+            df.loc[1, '排名_display'] = '🥈 2'
         if len(df) >= 3:
-            df.loc[2, '排名_display'] = '3'
+            df.loc[2, '排名_display'] = '🥉 3'
         
         return df
     
@@ -505,38 +505,38 @@ class LonghubangScoring:
         explanation = """
         【AI智能评分维度说明】
         
-         总分100分，由5个维度组成：
+        📊 总分100分，由5个维度组成：
         
-        1⃣ 买入资金含金量 (0-30分)
+        1️⃣ 买入资金含金量 (0-30分)
            - 顶级游资（赵老哥、章盟主等）：每个+10分
            - 知名游资（深股通、中信等）：每个+5分
            - 普通游资：每个+1.5分
            
-        2⃣ 净买入额评分 (0-25分)
+        2️⃣ 净买入额评分 (0-25分)
            - 净流入1000万以下：0-10分
            - 净流入1000-5000万：10-18分
            - 净流入5000万-1亿：18-22分
            - 净流入1亿以上：22-25分
            
-        3⃣ 卖出压力评分 (0-20分)
+        3️⃣ 卖出压力评分 (0-20分)
            - 卖出比例0-10%：20分（压力极小）
            - 卖出比例10-30%：15-20分（压力较小）
            - 卖出比例30-50%：10-15分（压力中等）
            - 卖出比例50-80%：5-10分（压力较大）
            - 卖出比例80%以上：0-5分（压力极大）
            
-        4⃣ 机构共振评分 (0-15分)
+        4️⃣ 机构共振评分 (0-15分)
            - 机构+游资共振：15分（最强信号）
            - 仅机构买入：8-12分
            - 仅游资买入：5-10分
            
-        5⃣ 其他加分项 (0-10分)
+        5️⃣ 其他加分项 (0-10分)
            - 主力集中度：席位越少越集中，+1-3分
            - 热门概念：AI、新能源、芯片等，+0-3分
            - 连续上榜：连续多日上榜，+0-2分
            - 买卖比例优秀：买入远大于卖出，+0-2分
         
-         评分越高，表示该股票受到资金青睐程度越高，
+        💡 评分越高，表示该股票受到资金青睐程度越高，
            但仍需结合市场环境、技术面等因素综合判断！
         """
         return explanation
@@ -544,9 +544,9 @@ class LonghubangScoring:
 
 # 测试函数
 if __name__ == "__main__":
-    print("="* 60)
+    print("=" * 60)
     print("测试智瞰龙虎评分系统")
-    print("="* 60)
+    print("=" * 60)
     
     # 创建测试数据
     test_data = [

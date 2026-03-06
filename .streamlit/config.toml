@@ -1,10 +1,5 @@
 [theme]
-base = "dark"
-primaryColor = "#22D3EE"
-backgroundColor = "#0B1220"
-secondaryBackgroundColor = "#111827"
-textColor = "#E5E7EB"
-font = "sans serif"
+base = "light"
 
 [server]
 port = 8503

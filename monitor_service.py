@@ -156,7 +156,7 @@ class StockMonitorService:
             # 即使失败也更新last_checked，避免持续重试
             try:
                 monitor_db.update_last_checked(stock['id'])
-            except Exception:
+            except:
                 pass
     
     def _is_a_stock(self, symbol: str) -> bool:

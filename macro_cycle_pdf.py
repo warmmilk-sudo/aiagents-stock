@@ -42,7 +42,7 @@ class MacroCyclePDFGenerator:
                         self.chinese_font = 'ChineseFont'
                         print(f"[宏观PDF] 成功加载字体: {font_path}")
                         return
-                    except Exception:
+                    except:
                         continue
 
             self.chinese_font = 'Helvetica'

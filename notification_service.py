@@ -13,6 +13,8 @@ class NotificationService:
     
     def __init__(self):
         # 强制重新加载环境变量
+        from dotenv import load_dotenv
+        load_dotenv()
         self.config = self._load_config()
     
     def _load_config(self) -> Dict:

@@ -244,7 +244,7 @@ def generate_pdf_report(stock_info, agents_results, discussion_result, final_dec
         # 清理临时文件
         try:
             os.unlink(temp_md_path)
-        except Exception:
+        except:
             pass
             
         st.success("✅ 报告生成成功！请点击上方链接下载报告文件。")
