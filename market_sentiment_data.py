@@ -38,6 +38,69 @@ class MarketSentimentDataFetcher:
     
     def __init__(self):
         self.arbr_period = 26  # ARBR计算周期
+
+    def _interpret_turnover_rate(self, turnover_rate):
+        """将换手率数值转换为可读解释。"""
+        interpretation = ""
+        if turnover_rate in (None, 'N/A'):
+            return interpretation
+
+        try:
+            turnover = float(turnover_rate)
+            if turnover > 20:
+                interpretation = "换手率极高（>20%），资金活跃度极高，可能存在炒作"
+            elif turnover > 10:
+                interpretation = "换手率较高（>10%），交易活跃"
+            elif turnover > 5:
+                interpretation = "换手率正常（5%-10%），交易适中"
+            elif turnover > 2:
+                interpretation = "换手率偏低（2%-5%），交易相对清淡"
+            else:
+                interpretation = "换手率很低（<2%），交易清淡"
+        except Exception:
+            pass
+
+        return interpretation
+
+    def _get_latest_tushare_daily_basic(self, symbol, fields='ts_code,trade_date,turnover_rate'):
+        """获取最近一个可用交易日的 daily_basic 数据。"""
+        if not data_source_manager.tushare_available:
+            return None
+
+        try:
+            ts_code = data_source_manager._convert_to_ts_code(symbol)
+            end_date = datetime.now().strftime('%Y%m%d')
+            start_date = (datetime.now() - timedelta(days=10)).strftime('%Y%m%d')
+            df = data_source_manager.tushare_api.daily_basic(
+                ts_code=ts_code,
+                start_date=start_date,
+                end_date=end_date,
+                fields=fields,
+            )
+            if df is None or df.empty:
+                return None
+            return df.sort_values('trade_date', ascending=False).iloc[0]
+        except Exception:
+            return None
+
+    def _get_latest_tushare_index_daily(self, ts_code):
+        """获取最近一个可用交易日的指数日线数据。"""
+        if not data_source_manager.tushare_available:
+            return None
+
+        try:
+            end_date = datetime.now().strftime('%Y%m%d')
+            start_date = (datetime.now() - timedelta(days=10)).strftime('%Y%m%d')
+            df = data_source_manager.tushare_api.index_daily(
+                ts_code=ts_code,
+                start_date=start_date,
+                end_date=end_date,
+            )
+            if df is None or df.empty:
+                return None
+            return df.sort_values('trade_date', ascending=False).iloc[0]
+        except Exception:
+            return None
     
     def get_market_sentiment_data(self, symbol, stock_data=None):
         """
@@ -330,6 +393,7 @@ class MarketSentimentDataFetcher:
     
     def _get_turnover_rate(self, symbol):
         """获取换手率数据（支持akshare和tushare自动切换）"""
+        turnover_rate = None
         try:
             # 优先使用akshare获取最近的换手率数据
             print(f"   [Akshare] 正在获取换手率数据...")
@@ -340,25 +404,9 @@ class MarketSentimentDataFetcher:
                 if not stock_data.empty:
                     row = stock_data.iloc[0]
                     turnover_rate = row.get('换手率', 'N/A')
-                    
-                    # 解读换手率
-                    interpretation = ""
-                    if turnover_rate != 'N/A':
-                        try:
-                            turnover = float(turnover_rate)
-                            if turnover > 20:
-                                interpretation = "换手率极高（>20%），资金活跃度极高，可能存在炒作"
-                            elif turnover > 10:
-                                interpretation = "换手率较高（>10%），交易活跃"
-                            elif turnover > 5:
-                                interpretation = "换手率正常（5%-10%），交易适中"
-                            elif turnover > 2:
-                                interpretation = "换手率偏低（2%-5%），交易相对清淡"
-                            else:
-                                interpretation = "换手率很低（<2%），交易清淡"
-                        except:
-                            pass
-                    
+
+                    interpretation = self._interpret_turnover_rate(turnover_rate)
+
                     print(f"   [Akshare] ✅ 成功获取换手率: {turnover_rate}%")
                     return {
                         "current_turnover_rate": turnover_rate,
@@ -366,48 +414,23 @@ class MarketSentimentDataFetcher:
                     }
         except Exception as e:
             print(f"   [Akshare] ❌ 获取换手率失败: {e}")
-            
-            # akshare失败，尝试tushare
-            if data_source_manager.tushare_available:
-                try:
-                    print(f"   [Tushare] 正在获取换手率数据（备用数据源）...")
-                    ts_code = data_source_manager._convert_to_ts_code(symbol)
-                    
-                    # 获取最近一个交易日的数据
-                    df = data_source_manager.tushare_api.daily_basic(
-                        ts_code=ts_code,
-                        trade_date=datetime.now().strftime('%Y%m%d')
-                    )
-                    
-                    if df is not None and not df.empty:
-                        row = df.iloc[0]
-                        turnover_rate = row.get('turnover_rate', 'N/A')
-                        
-                        # 解读换手率
-                        interpretation = ""
-                        if turnover_rate != 'N/A':
-                            try:
-                                turnover = float(turnover_rate)
-                                if turnover > 20:
-                                    interpretation = "换手率极高（>20%），资金活跃度极高，可能存在炒作"
-                                elif turnover > 10:
-                                    interpretation = "换手率较高（>10%），交易活跃"
-                                elif turnover > 5:
-                                    interpretation = "换手率正常（5%-10%），交易适中"
-                                elif turnover > 2:
-                                    interpretation = "换手率偏低（2%-5%），交易相对清淡"
-                                else:
-                                    interpretation = "换手率很低（<2%），交易清淡"
-                            except:
-                                pass
-                        
-                        print(f"   [Tushare] ✅ 成功获取换手率: {turnover_rate}%")
-                        return {
-                            "current_turnover_rate": turnover_rate,
-                            "interpretation": interpretation
-                        }
-                except Exception as te:
-                    print(f"   [Tushare] ❌ 获取失败: {te}")
+
+        # akshare失败或未返回有效数据时，尝试tushare
+        if data_source_manager.tushare_available:
+            try:
+                print(f"   [Tushare] 正在获取换手率数据（备用数据源）...")
+                row = self._get_latest_tushare_daily_basic(symbol)
+                if row is not None:
+                    turnover_rate = row.get('turnover_rate', 'N/A')
+                    interpretation = self._interpret_turnover_rate(turnover_rate)
+
+                    print(f"   [Tushare] ✅ 成功获取换手率: {turnover_rate}%")
+                    return {
+                        "current_turnover_rate": turnover_rate,
+                        "interpretation": interpretation
+                    }
+            except Exception as te:
+                print(f"   [Tushare] ❌ 获取失败: {te}")
         
         return None
     
@@ -470,30 +493,22 @@ class MarketSentimentDataFetcher:
                     }
         except Exception as e:
             print(f"   [Akshare] ❌ 获取大盘指数失败: {e}")
-            
-            # akshare失败，尝试tushare
-            if data_source_manager.tushare_available:
-                try:
-                    print(f"   [Tushare] 正在获取大盘指数数据（备用数据源）...")
-                    
-                    # 获取上证指数数据
-                    df = data_source_manager.tushare_api.index_daily(
-                        ts_code='000001.SH',
-                        start_date=datetime.now().strftime('%Y%m%d'),
-                        end_date=datetime.now().strftime('%Y%m%d')
-                    )
-                    
-                    if df is not None and not df.empty:
-                        row = df.iloc[0]
-                        change_pct = row.get('pct_chg', 0)
-                        
-                        print(f"   [Tushare] ✅ 成功获取大盘指数涨跌幅: {change_pct}%")
-                        return {
-                            "index_name": "上证指数",
-                            "change_percent": change_pct
-                        }
-                except Exception as te:
-                    print(f"   [Tushare] ❌ 获取失败: {te}")
+
+        # akshare失败时，尝试tushare最近交易日数据
+        if data_source_manager.tushare_available:
+            try:
+                print(f"   [Tushare] 正在获取大盘指数数据（备用数据源）...")
+                row = self._get_latest_tushare_index_daily('000001.SH')
+                if row is not None:
+                    change_pct = row.get('pct_chg', 0)
+
+                    print(f"   [Tushare] ✅ 成功获取大盘指数涨跌幅: {change_pct}%")
+                    return {
+                        "index_name": "上证指数",
+                        "change_percent": change_pct
+                    }
+            except Exception as te:
+                print(f"   [Tushare] ❌ 获取失败: {te}")
         
         return None
     
