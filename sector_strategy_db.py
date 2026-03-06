@@ -4,7 +4,7 @@
 """
 
 import sqlite3
-from datetime import datetime
+from datetime import datetime, date
 import json
 import pandas as pd
 import logging
@@ -30,6 +30,57 @@ class SectorStrategyDatabase:
     def get_connection(self):
         """获取数据库连接"""
         return sqlite3.connect(self.db_path)
+
+    def _make_json_serializable(self, value):
+        """递归转换 pandas / numpy 对象，确保可被 JSON 序列化。"""
+        if value is None or isinstance(value, (str, int, float, bool)):
+            return value
+
+        if isinstance(value, (datetime, date)):
+            return value.isoformat()
+
+        if isinstance(value, dict):
+            return {
+                str(key): self._make_json_serializable(item)
+                for key, item in value.items()
+            }
+
+        if isinstance(value, (list, tuple, set)):
+            return [self._make_json_serializable(item) for item in value]
+
+        if isinstance(value, pd.DataFrame):
+            return self._make_json_serializable(value.to_dict(orient='records'))
+
+        if isinstance(value, pd.Series):
+            return self._make_json_serializable(value.to_dict())
+
+        try:
+            if pd.isna(value):
+                return None
+        except (TypeError, ValueError):
+            pass
+
+        if hasattr(value, 'item'):
+            try:
+                return self._make_json_serializable(value.item())
+            except (TypeError, ValueError):
+                pass
+
+        if hasattr(value, 'tolist'):
+            try:
+                return self._make_json_serializable(value.tolist())
+            except TypeError:
+                pass
+
+        return str(value)
+
+    def _to_json(self, value, *, indent=None):
+        """统一的 JSON 序列化入口。"""
+        return json.dumps(
+            self._make_json_serializable(value),
+            ensure_ascii=False,
+            indent=indent
+        )
     
     def init_database(self):
         """初始化数据库表"""
@@ -333,9 +384,8 @@ class SectorStrategyDatabase:
         conn = self.get_connection()
         cursor = conn.cursor()
         
-        # 如果传入的是字典，转换为JSON字符串
-        if isinstance(analysis_content, dict):
-            analysis_content = json.dumps(analysis_content, ensure_ascii=False, indent=2)
+        if not isinstance(analysis_content, str):
+            analysis_content = self._to_json(analysis_content, indent=2)
         
         cursor.execute('''
         INSERT INTO sector_analysis_reports 
@@ -346,7 +396,7 @@ class SectorStrategyDatabase:
             datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
             data_date_range,
             analysis_content,
-            json.dumps(recommended_sectors, ensure_ascii=False),
+            self._to_json(recommended_sectors),
             summary,
             confidence_score,
             risk_level,
