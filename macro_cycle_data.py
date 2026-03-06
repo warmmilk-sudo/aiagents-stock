@@ -21,7 +21,7 @@ class MacroCycleDataFetcher:
     """宏观经济数据采集器"""
 
     def __init__(self):
-        print("[宏观周期] 数据采集器初始化...")
+        logger.info("[宏观周期] 数据采集器初始化...")
         self.max_retries = 3
 
     def _safe_request(self, func, *args, **kwargs):
@@ -42,7 +42,7 @@ class MacroCycleDataFetcher:
         Returns:
             dict: 包含多维度宏观数据的字典
         """
-        print("\n[宏观周期] 开始采集宏观经济数据...")
+        logger.info("[宏观周期] 开始采集宏观经济数据...")
         data = {
             "success": False,
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -60,103 +60,103 @@ class MacroCycleDataFetcher:
         }
 
         # 1. GDP
-        print("  1/9 获取GDP数据...")
+        logger.info("  1/9 获取GDP数据...")
         try:
             gdp_data = self._get_gdp_data()
             if gdp_data:
                 data["gdp"] = gdp_data
-                print("    ✓ GDP数据获取成功")
+                logger.info("    [OK] GDP数据获取成功")
         except Exception as e:
             data["errors"].append(f"GDP: {e}")
-            print(f"    ✗ GDP数据获取失败: {e}")
+            logger.warning(f"    [ERR] GDP数据获取失败: {e}")
 
         # 2. CPI/PPI
-        print("  2/9 获取CPI/PPI数据...")
+        logger.info("  2/9 获取CPI/PPI数据...")
         try:
             cpi_ppi = self._get_cpi_ppi_data()
             if cpi_ppi:
                 data["cpi_ppi"] = cpi_ppi
-                print("    ✓ CPI/PPI数据获取成功")
+                logger.info("    [OK] CPI/PPI数据获取成功")
         except Exception as e:
             data["errors"].append(f"CPI/PPI: {e}")
-            print(f"    ✗ CPI/PPI获取失败: {e}")
+            logger.warning(f"    [ERR] CPI/PPI获取失败: {e}")
 
         # 3. PMI
-        print("  3/9 获取PMI数据...")
+        logger.info("  3/9 获取PMI数据...")
         try:
             pmi = self._get_pmi_data()
             if pmi:
                 data["pmi"] = pmi
-                print("    ✓ PMI数据获取成功")
+                logger.info("    [OK] PMI数据获取成功")
         except Exception as e:
             data["errors"].append(f"PMI: {e}")
-            print(f"    ✗ PMI获取失败: {e}")
+            logger.warning(f"    [ERR] PMI获取失败: {e}")
 
         # 4. 货币供应量 M2
-        print("  4/9 获取货币供应数据...")
+        logger.info("  4/9 获取货币供应数据...")
         try:
             money = self._get_money_supply()
             if money:
                 data["money_supply"] = money
-                print("    ✓ 货币供应数据获取成功")
+                logger.info("    [OK] 货币供应数据获取成功")
         except Exception as e:
             data["errors"].append(f"货币供应: {e}")
-            print(f"    ✗ 货币供应获取失败: {e}")
+            logger.warning(f"    [ERR] 货币供应获取失败: {e}")
 
         # 5. 利率
-        print("  5/9 获取利率数据...")
+        logger.info("  5/9 获取利率数据...")
         try:
             rate = self._get_interest_rate()
             if rate:
                 data["interest_rate"] = rate
-                print("    ✓ 利率数据获取成功")
+                logger.info("    [OK] 利率数据获取成功")
         except Exception as e:
             data["errors"].append(f"利率: {e}")
-            print(f"    ✗ 利率获取失败: {e}")
+            logger.warning(f"    [ERR] 利率获取失败: {e}")
 
         # 6. 市场指数
-        print("  6/9 获取市场指数...")
+        logger.info("  6/9 获取市场指数...")
         try:
             indices = self._get_market_indices()
             if indices:
                 data["market_indices"] = indices
-                print("    ✓ 市场指数获取成功")
+                logger.info("    [OK] 市场指数获取成功")
         except Exception as e:
             data["errors"].append(f"市场指数: {e}")
-            print(f"    ✗ 市场指数获取失败: {e}")
+            logger.warning(f"    [ERR] 市场指数获取失败: {e}")
 
         # 7. 大宗商品
-        print("  7/9 获取大宗商品数据...")
+        logger.info("  7/9 获取大宗商品数据...")
         try:
             commodities = self._get_commodities_data()
             if commodities:
                 data["commodities"] = commodities
-                print("    ✓ 大宗商品数据获取成功")
+                logger.info("    [OK] 大宗商品数据获取成功")
         except Exception as e:
             data["errors"].append(f"大宗商品: {e}")
-            print(f"    ✗ 大宗商品获取失败: {e}")
+            logger.warning(f"    [ERR] 大宗商品获取失败: {e}")
 
         # 8. 房地产
-        print("  8/9 获取房地产数据...")
+        logger.info("  8/9 获取房地产数据...")
         try:
             real_estate = self._get_real_estate_data()
             if real_estate:
                 data["real_estate"] = real_estate
-                print("    ✓ 房地产数据获取成功")
+                logger.info("    [OK] 房地产数据获取成功")
         except Exception as e:
             data["errors"].append(f"房地产: {e}")
-            print(f"    ✗ 房地产获取失败: {e}")
+            logger.warning(f"    [ERR] 房地产获取失败: {e}")
 
         # 9. 财经新闻
-        print("  9/9 获取财经新闻...")
+        logger.info("  9/9 获取财经新闻...")
         try:
             news = self._get_macro_news()
             if news:
                 data["news"] = news
-                print(f"    ✓ 获取{len(news)}条新闻")
+                logger.info(f"    [OK] 获取{len(news)}条新闻")
         except Exception as e:
             data["errors"].append(f"新闻: {e}")
-            print(f"    ✗ 新闻获取失败: {e}")
+            logger.warning(f"    [ERR] 新闻获取失败: {e}")
 
         # 判断是否有足够数据
         valid_count = sum(1 for k in ["gdp", "cpi_ppi", "pmi", "money_supply",
@@ -164,9 +164,9 @@ class MacroCycleDataFetcher:
                          if data.get(k))
         if valid_count >= 3:
             data["success"] = True
-            print(f"\n[宏观周期] 数据采集完成，成功获取 {valid_count}/7 项核心数据")
+            logger.info(f"[宏观周期] 数据采集完成，成功获取 {valid_count}/7 项核心数据")
         else:
-            print(f"\n[宏观周期] 数据不足（仅 {valid_count}/7 项），分析可能不够准确")
+            logger.warning(f"[宏观周期] 数据不足（仅 {valid_count}/7 项），分析可能不够准确")
             data["success"] = True  # 仍允许分析
 
         return data

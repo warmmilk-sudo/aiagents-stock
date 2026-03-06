@@ -500,26 +500,46 @@ class StockMonitorDatabase:
         
         for data in monitors_data:
             try:
+                def _to_float(value):
+                    if value is None:
+                        return None
+                    try:
+                        return float(value)
+                    except (TypeError, ValueError):
+                        return None
+
                 # 兼容code和symbol两种字段名
                 symbol = data.get('code') or data.get('symbol')
                 name = data.get('name', symbol)
                 rating = data.get('rating', '持有')
-                entry_min = data.get('entry_min')
-                entry_max = data.get('entry_max')
-                take_profit = data.get('take_profit')
-                stop_loss = data.get('stop_loss')
+                entry_min = _to_float(data.get('entry_min'))
+                entry_max = _to_float(data.get('entry_max'))
+                take_profit = _to_float(data.get('take_profit'))
+                stop_loss = _to_float(data.get('stop_loss'))
                 check_interval = data.get('check_interval', 60)
                 notification_enabled = data.get('notification_enabled', True)
                 trading_hours_only = data.get('trading_hours_only', True)
+                needs_review = bool(data.get('needs_review', False))
                 
                 # 验证必需字段
-                if not symbol or not all([entry_min, entry_max, take_profit, stop_loss]):
+                if (
+                    not symbol
+                    or entry_min is None
+                    or entry_max is None
+                    or take_profit is None
+                    or stop_loss is None
+                    or entry_max <= entry_min
+                    or take_profit <= 0
+                    or stop_loss <= 0
+                ):
                     print(f"[WARN] {symbol} 参数不完整，跳过")
                     failed += 1
                     continue
                 
                 # 构建entry_range
                 entry_range = {"min": entry_min, "max": entry_max}
+                if needs_review:
+                    entry_range["needs_review"] = True
                 
                 # 检查是否已存在
                 existing = self.get_monitor_by_code(symbol)

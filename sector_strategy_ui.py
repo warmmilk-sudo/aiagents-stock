@@ -282,6 +282,9 @@ def run_sector_strategy_analysis(model=None):
         
         engine = SectorStrategyEngine(model=model)
         result = engine.run_comprehensive_analysis(data)
+        result["used_trade_date"] = data.get("used_trade_date")
+        result["lag_days"] = data.get("lag_days")
+        result["data_source_summary"] = data.get("data_source_summary", {})
         # 传递缓存元信息到结果以便页面提示
         if data.get("from_cache") or data.get("cache_warning"):
             result["cache_meta"] = {
@@ -323,6 +326,21 @@ def display_data_summary(data):
     # 缓存提示横幅
     if data.get("from_cache") or data.get("cache_warning"):
         st.warning(data.get("cache_warning", "当前数据来自缓存，可能不是最新信息"))
+
+    used_trade_date = data.get("used_trade_date")
+    lag_days = data.get("lag_days")
+    source_summary = data.get("data_source_summary", {})
+    source_labels = []
+    for key in ["sectors", "concepts", "fund_flow"]:
+        source = source_summary.get(key, {}).get("source")
+        if source:
+            source_labels.append(f"{key}:{source}")
+
+    if used_trade_date:
+        st.caption(
+            f"实际交易日: {used_trade_date} | 滞后天数: {lag_days if lag_days is not None else '未知'} | "
+            f"数据来源: {', '.join(source_labels) if source_labels else 'N/A'}"
+        )
     
     col1, col2, col3, col4 = st.columns(4)
     
@@ -402,6 +420,20 @@ def display_analysis_results(result):
     cache_meta = result.get("cache_meta")
     if cache_meta and (cache_meta.get("from_cache") or cache_meta.get("cache_warning")):
         st.warning(cache_meta.get("cache_warning", "当前分析基于缓存数据，可能不是最新信息"))
+
+    used_trade_date = result.get("used_trade_date")
+    lag_days = result.get("lag_days")
+    source_summary = result.get("data_source_summary", {})
+    if used_trade_date:
+        source_labels = []
+        for key in ["sectors", "concepts", "fund_flow"]:
+            source = source_summary.get(key, {}).get("source")
+            if source:
+                source_labels.append(f"{key}:{source}")
+        st.caption(
+            f"实际交易日: {used_trade_date} | 滞后天数: {lag_days if lag_days is not None else '未知'} | "
+            f"数据来源: {', '.join(source_labels) if source_labels else 'N/A'}"
+        )
 
     # 如果内容源自历史报告，给出返回入口
     if st.session_state.get('sector_strategy_result_source') == 'from_history':

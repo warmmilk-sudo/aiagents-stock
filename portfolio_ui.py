@@ -186,8 +186,8 @@ def display_add_stock_form():
         with col1:
             code = st.text_input(
                 "股票代码*", 
-                placeholder="例如: 600519.SH 或 000001.SZ",
-                help="必填，格式：代码.市场（SH/SZ/HK/US）"
+                placeholder="例如: 600519 / 600519.SH / 00700 / HK00700 / AAPL",
+                help="支持A股6位代码（可带.SH/.SZ）、港股5位或HK前缀、美股代码"
             )
             name = st.text_input(
                 "股票名称", 
@@ -217,7 +217,7 @@ def display_add_stock_form():
                 st.error("请输入股票代码")
             else:
                 try:
-                    portfolio_manager.add_stock(
+                    success, message, _ = portfolio_manager.add_stock(
                         code=code.strip().upper(),
                         name=name.strip() if name else None,
                         cost_price=cost_price if cost_price > 0 else None,
@@ -225,9 +225,12 @@ def display_add_stock_form():
                         note=note.strip() if note else None,
                         auto_monitor=auto_monitor
                     )
-                    st.success(f"已添加 {code} 到持仓列表")
-                    time.sleep(0.5)
-                    st.rerun()
+                    if success:
+                        st.success(message)
+                        time.sleep(0.5)
+                        st.rerun()
+                    else:
+                        st.error(message)
                 except Exception as e:
                     st.error(f"添加失败: {str(e)}")
 
@@ -330,6 +333,14 @@ def display_batch_analysis():
                     st.metric("失败", result.get("failed", 0))
                 with col_r4:
                     st.metric("耗时", f"{result.get('elapsed_time', 0):.1f}秒")
+
+                if result.get("succeeded", 0) == 0:
+                    st.warning("本次没有成功分析的股票，历史记录与监测同步将为空。")
+                    failed_preview = result.get("failed_stocks", [])[:5]
+                    if failed_preview:
+                        st.markdown("失败原因摘要：")
+                        for failed_item in failed_preview:
+                            st.write(f"- {failed_item.get('code', 'N/A')}: {failed_item.get('error', '未知错误')}")
                 
                 # 保存分析结果到数据库
                 saved_ids = portfolio_manager.save_analysis_results(result)
@@ -338,80 +349,29 @@ def display_batch_analysis():
                 # 同步到监测
                 sync_result = None  # 初始化同步结果
                 if auto_sync:
-                    with st.spinner("正在同步到监测列表..."):
-                        from monitor_db import monitor_db
-                        
-                        # 准备同步数据
-                        monitors_to_sync = []
-                        for item in result.get("results", []):
-                            # 检查分析是否成功
-                            if not item.get("result", {}).get("success"):
-                                continue
-                            
-                            code = item["code"]
-                            stock = portfolio_manager.db.get_stock_by_code(code)
-                            
-                            # 只同步启用了自动监测的股票
-                            if not stock or not stock.get("auto_monitor"):
-                                continue
-                            
-                            analysis_result = item["result"]
-                            stock_info = analysis_result.get("stock_info", {})
-                            final_decision = analysis_result.get("final_decision", {})
-                            
-                            # 从final_decision中提取数据
-                            rating = final_decision.get("rating", "持有")
-                            entry_range = final_decision.get("entry_range", "")
-                            take_profit_str = final_decision.get("take_profit", "")
-                            stop_loss_str = final_decision.get("stop_loss", "")
-                            
-                            # 解析进场区间（格式如"10.5-12.3"）
-                            entry_min, entry_max = None, None
-                            if entry_range and isinstance(entry_range, str) and "-" in entry_range:
-                                try:
-                                    parts = entry_range.split("-")
-                                    entry_min = float(parts[0].strip())
-                                    entry_max = float(parts[1].strip())
-                                except Exception:
-                                    pass
-                            
-                            # 解析止盈止损（提取数字）
-                            import re
-                            take_profit, stop_loss = None, None
-                            if take_profit_str:
-                                try:
-                                    numbers = re.findall(r'\d+\.?\d*', str(take_profit_str))
-                                    if numbers:
-                                        take_profit = float(numbers[0])
-                                except Exception:
-                                    pass
-                            
-                            if stop_loss_str:
-                                try:
-                                    numbers = re.findall(r'\d+\.?\d*', str(stop_loss_str))
-                                    if numbers:
-                                        stop_loss = float(numbers[0])
-                                except Exception:
-                                    pass
-                            
-                            # 只有当所有必需字段都有效时才添加
-                            if entry_min and entry_max and take_profit and stop_loss:
-                                monitors_to_sync.append({
-                                    "code": code,
-                                    "name": stock_info.get("name", stock.get("name", "")),
-                                    "rating": rating,
-                                    "entry_min": entry_min,
-                                    "entry_max": entry_max,
-                                    "take_profit": take_profit,
-                                    "stop_loss": stop_loss
-                                })
-                        
-                        if monitors_to_sync:
-                            sync_result = monitor_db.batch_add_or_update_monitors(monitors_to_sync)
-                            st.info(f"监测同步: 新增 {sync_result.get('added', 0)} 只, 更新 {sync_result.get('updated', 0)} 只")
-                        else:
-                            sync_result = {"added": 0, "updated": 0, "failed": 0, "total": 0}
-                            st.info("无需同步监测列表（无启用自动监测的股票）")
+                    with st.spinner("正在同步到实时监测和AI盯盘..."):
+                        sync_result = portfolio_manager.sync_analysis_to_monitors(result)
+                        realtime = sync_result.get("realtime_sync", {})
+                        smart = sync_result.get("smart_sync", {})
+                        st.info(
+                            "实时监测同步: "
+                            f"新增 {realtime.get('added', 0)} 只, "
+                            f"更新 {realtime.get('updated', 0)} 只, "
+                            f"失败 {realtime.get('failed', 0)} 只"
+                        )
+                        st.info(
+                            "AI盯盘任务同步: "
+                            f"新增 {smart.get('added', 0)} 条, "
+                            f"更新 {smart.get('updated', 0)} 条, "
+                            f"失败 {smart.get('failed', 0)} 条"
+                        )
+                        if sync_result.get("skipped", 0) > 0:
+                            st.warning(f"已跳过 {sync_result.get('skipped', 0)} 只未启用自动监测或无有效数据的股票")
+                            failed_reasons = sync_result.get("failed_reasons", [])[:5]
+                            if failed_reasons:
+                                st.markdown("同步失败/跳过原因：")
+                                for item in failed_reasons:
+                                    st.write(f"- {item.get('code', 'N/A')}: {item.get('reason', '未知原因')}")
                 
                 # 发送通知
                 if send_notification:

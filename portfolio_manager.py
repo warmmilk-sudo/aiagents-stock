@@ -5,6 +5,7 @@
 """
 
 import time
+import re
 from typing import List, Dict, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
@@ -26,6 +27,244 @@ class PortfolioManager:
         """
         self.model = model or config.DEFAULT_MODEL_NAME
         self.db = portfolio_db
+
+    @staticmethod
+    def normalize_stock_code(code: str) -> str:
+        """
+        统一股票代码格式，避免 A 股 .SH/.SZ 导致识别失败
+        """
+        if not code:
+            return ""
+
+        normalized = str(code).strip().upper()
+        if "." in normalized:
+            base, suffix = normalized.rsplit(".", 1)
+            if suffix in {"SH", "SZ", "HK"}:
+                return base.strip()
+        return normalized
+
+    @staticmethod
+    def _extract_first_float(value) -> Optional[float]:
+        """从任意值中提取第一个数字"""
+        if value is None:
+            return None
+        if isinstance(value, (int, float)):
+            return float(value)
+
+        numbers = re.findall(r"\d+\.?\d*", str(value))
+        if not numbers:
+            return None
+
+        try:
+            return float(numbers[0])
+        except (ValueError, TypeError):
+            return None
+
+    @staticmethod
+    def _parse_entry_range(entry_range) -> Tuple[Optional[float], Optional[float]]:
+        """解析进场区间，兼容字符串/字典/自然语言"""
+        if isinstance(entry_range, dict):
+            min_val = PortfolioManager._extract_first_float(entry_range.get("min"))
+            max_val = PortfolioManager._extract_first_float(entry_range.get("max"))
+            if min_val is not None and max_val is not None and max_val > min_val:
+                return min_val, max_val
+
+        if entry_range is None:
+            return None, None
+
+        text = str(entry_range)
+        numbers = re.findall(r"\d+\.?\d*", text)
+        if len(numbers) >= 2:
+            try:
+                first = float(numbers[0])
+                second = float(numbers[1])
+                if second > first:
+                    return first, second
+            except (ValueError, TypeError):
+                return None, None
+        return None, None
+
+    @staticmethod
+    def _build_fallback_levels(current_price: float) -> Dict[str, float]:
+        """基于当前价生成保守阈值"""
+        return {
+            "entry_min": round(current_price * 0.98, 2),
+            "entry_max": round(current_price * 1.02, 2),
+            "take_profit": round(current_price * 1.10, 2),
+            "stop_loss": round(current_price * 0.95, 2)
+        }
+
+    def _build_monitor_payload(self, code: str, result: Dict, stock: Dict) -> Tuple[Optional[Dict], Optional[str]]:
+        """
+        构建同步到监测的标准数据。
+        先尝试严格解析价格位，失败后按 current_price 兜底并标记 needs_review。
+        """
+        if not result.get("success"):
+            return None, "分析未成功"
+
+        final_decision = result.get("final_decision", {})
+        if not isinstance(final_decision, dict):
+            final_decision = {}
+        stock_info = result.get("stock_info", {}) or {}
+
+        rating = final_decision.get("rating", "持有")
+        entry_min, entry_max = self._parse_entry_range(final_decision.get("entry_range"))
+        take_profit = self._extract_first_float(final_decision.get("take_profit"))
+        stop_loss = self._extract_first_float(final_decision.get("stop_loss"))
+        current_price = self._extract_first_float(stock_info.get("current_price"))
+        needs_review = False
+
+        levels_complete = (
+            entry_min is not None
+            and entry_max is not None
+            and take_profit is not None
+            and stop_loss is not None
+            and entry_max > entry_min
+            and take_profit > 0
+            and stop_loss > 0
+        )
+
+        if not levels_complete:
+            if current_price is None or current_price <= 0:
+                return None, "关键价格位无法解析且缺少有效 current_price，无法兜底"
+            fallback = self._build_fallback_levels(current_price)
+            entry_min = fallback["entry_min"]
+            entry_max = fallback["entry_max"]
+            take_profit = fallback["take_profit"]
+            stop_loss = fallback["stop_loss"]
+            needs_review = True
+        else:
+            entry_min = round(float(entry_min), 2)
+            entry_max = round(float(entry_max), 2)
+            take_profit = round(float(take_profit), 2)
+            stop_loss = round(float(stop_loss), 2)
+            if current_price is None:
+                current_price = self._extract_first_float(stock_info.get("last_price"))
+
+        payload = {
+            "code": code,
+            "name": stock_info.get("name") or stock.get("name") or code,
+            "rating": rating,
+            "entry_min": entry_min,
+            "entry_max": entry_max,
+            "take_profit": take_profit,
+            "stop_loss": stop_loss,
+            "needs_review": needs_review,
+            "current_price": round(float(current_price), 2) if current_price else None
+        }
+        return payload, None
+
+    @staticmethod
+    def _build_smart_task_payload(monitor_payload: Dict) -> Dict:
+        """将监测价格位映射为 AI 盯盘任务"""
+        current_price = monitor_payload.get("current_price")
+        stop_loss = monitor_payload.get("stop_loss")
+        take_profit = monitor_payload.get("take_profit")
+
+        stop_loss_pct = 5.0
+        take_profit_pct = 10.0
+        if current_price and current_price > 0:
+            if stop_loss is not None and stop_loss < current_price:
+                stop_loss_pct = max(1.0, min(50.0, round((current_price - stop_loss) / current_price * 100, 2)))
+            if take_profit is not None and take_profit > current_price:
+                take_profit_pct = max(1.0, min(200.0, round((take_profit - current_price) / current_price * 100, 2)))
+
+        name = monitor_payload.get("name") or monitor_payload.get("code")
+        task_name = f"{name}盯盘"
+        if monitor_payload.get("needs_review"):
+            task_name = f"{task_name}[待确认]"
+
+        return {
+            "task_name": task_name,
+            "stock_code": str(monitor_payload.get("code", "")).strip(),
+            "stock_name": name,
+            "enabled": 0,  # 默认禁用待确认
+            "auto_trade": 0,  # 默认不自动交易
+            "check_interval": 300,
+            "trading_hours_only": 1,
+            "position_size_pct": 20,
+            "stop_loss_pct": stop_loss_pct,
+            "take_profit_pct": take_profit_pct
+        }
+
+    def sync_analysis_to_monitors(self, analysis_results: Dict) -> Dict[str, Dict[str, int]]:
+        """
+        将持仓分析结果统一同步到实时监测与AI盯盘。
+        Returns:
+            {
+                "realtime_sync": {"added":0,"updated":0,"failed":0,"total":0},
+                "smart_sync": {"added":0,"updated":0,"failed":0,"total":0},
+                "added":0,"updated":0,"failed":0,"total":0,  # 兼容旧调用（对应 realtime）
+                "skipped": 0
+            }
+        """
+        sync_result = {
+            "realtime_sync": {"added": 0, "updated": 0, "failed": 0, "total": 0},
+            "smart_sync": {"added": 0, "updated": 0, "failed": 0, "total": 0},
+            "added": 0,
+            "updated": 0,
+            "failed": 0,
+            "total": 0,
+            "skipped": 0,
+            "failed_reasons": []
+        }
+
+        if not analysis_results.get("success"):
+            return sync_result
+
+        monitor_payloads = []
+        smart_payloads = []
+        skipped = 0
+
+        for item in analysis_results.get("results", []):
+            code = self.normalize_stock_code(item.get("code", ""))
+            if not code:
+                sync_result["failed_reasons"].append({
+                    "code": item.get("code", ""),
+                    "reason": "股票代码为空，无法同步"
+                })
+                skipped += 1
+                continue
+
+            stock = self.db.get_stock_by_code(code)
+            if not stock or not stock.get("auto_monitor"):
+                sync_result["failed_reasons"].append({
+                    "code": code,
+                    "reason": "未启用自动监测或持仓不存在"
+                })
+                skipped += 1
+                continue
+
+            result = item.get("result", {})
+            payload, reason = self._build_monitor_payload(code, result, stock)
+            if not payload:
+                sync_result["failed_reasons"].append({
+                    "code": code,
+                    "reason": reason or "价格位解析失败"
+                })
+                skipped += 1
+                continue
+
+            monitor_payloads.append(payload)
+            smart_payloads.append(self._build_smart_task_payload(payload))
+
+        if monitor_payloads:
+            from monitor_db import monitor_db
+            realtime_sync = monitor_db.batch_add_or_update_monitors(monitor_payloads)
+            sync_result["realtime_sync"] = realtime_sync
+            # 兼容旧通知结构：默认仍输出实时监测统计
+            sync_result["added"] = realtime_sync.get("added", 0)
+            sync_result["updated"] = realtime_sync.get("updated", 0)
+            sync_result["failed"] = realtime_sync.get("failed", 0)
+            sync_result["total"] = realtime_sync.get("total", 0)
+
+        if smart_payloads:
+            from smart_monitor_db import SmartMonitorDB
+            smart_db = SmartMonitorDB()
+            sync_result["smart_sync"] = smart_db.batch_add_or_update_tasks(smart_payloads)
+
+        sync_result["skipped"] = skipped
+        return sync_result
     
     # ==================== 持仓股票管理 ====================
     
@@ -48,7 +287,7 @@ class PortfolioManager:
         """
         try:
             # 验证股票代码格式
-            code = code.strip().upper()
+            code = self.normalize_stock_code(code)
             if not code:
                 return False, "股票代码不能为空", None
             
@@ -402,7 +641,7 @@ class PortfolioManager:
             return saved_ids
         
         for item in analysis_results.get("results", []):
-            code = item.get("code")
+            code = self.normalize_stock_code(item.get("code", ""))
             result = item.get("result", {})
             
             # 获取持仓股票ID
@@ -449,32 +688,13 @@ class PortfolioManager:
                     pass
             
             # 解析进场区间
-            entry_min, entry_max = None, None
-            if entry_range and isinstance(entry_range, str) and "-" in entry_range:
-                try:
-                    parts = entry_range.split("-")
-                    entry_min = float(parts[0].strip())
-                    entry_max = float(parts[1].strip())
-                except Exception:
-                    pass
+            entry_min, entry_max = self._parse_entry_range(entry_range)
             
             # 解析止盈止损
             take_profit, stop_loss = None, None
-            if take_profit_str:
-                try:
-                    numbers = re.findall(r'\d+\.?\d*', str(take_profit_str))
-                    if numbers:
-                        take_profit = float(numbers[0])
-                except Exception:
-                    pass
+            take_profit = self._extract_first_float(take_profit_str)
             
-            if stop_loss_str:
-                try:
-                    numbers = re.findall(r'\d+\.?\d*', str(stop_loss_str))
-                    if numbers:
-                        stop_loss = float(numbers[0])
-                except Exception:
-                    pass
+            stop_loss = self._extract_first_float(stop_loss_str)
             
             # 生成摘要（使用advice或summary字段）
             summary = final_decision.get("advice", final_decision.get("summary", ""))[:500]  # 限制长度

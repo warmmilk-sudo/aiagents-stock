@@ -240,6 +240,16 @@ class SmartMonitorDB:
         conn.close()
         
         return [dict(row) for row in rows]
+
+    def get_monitor_task_by_stock_code(self, stock_code: str) -> Optional[Dict]:
+        """根据股票代码获取监控任务"""
+        conn = sqlite3.connect(self.db_file)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM monitor_tasks WHERE stock_code = ? LIMIT 1', (stock_code,))
+        row = cursor.fetchone()
+        conn.close()
+        return dict(row) if row else None
     
     def update_monitor_task(self, task_id: int, updates: Dict):
         """更新监控任务"""
@@ -270,11 +280,19 @@ class SmartMonitorDB:
         if 'task_name' in task_data:
             update_fields.append('task_name = ?')
             values.append(task_data['task_name'])
-        
+
+        if 'stock_name' in task_data:
+            update_fields.append('stock_name = ?')
+            values.append(task_data['stock_name'])
+
         if 'check_interval' in task_data:
             update_fields.append('check_interval = ?')
             values.append(task_data['check_interval'])
-        
+
+        if 'enabled' in task_data:
+            update_fields.append('enabled = ?')
+            values.append(task_data['enabled'])
+
         if 'auto_trade' in task_data:
             update_fields.append('auto_trade = ?')
             values.append(task_data['auto_trade'])
@@ -286,6 +304,14 @@ class SmartMonitorDB:
         if 'position_size_pct' in task_data:
             update_fields.append('position_size_pct = ?')
             values.append(task_data['position_size_pct'])
+
+        if 'stop_loss_pct' in task_data:
+            update_fields.append('stop_loss_pct = ?')
+            values.append(task_data['stop_loss_pct'])
+
+        if 'take_profit_pct' in task_data:
+            update_fields.append('take_profit_pct = ?')
+            values.append(task_data['take_profit_pct'])
         
         if 'has_position' in task_data:
             update_fields.append('has_position = ?')
@@ -320,6 +346,41 @@ class SmartMonitorDB:
         conn.close()
         
         self.logger.info(f"更新监控任务: {stock_code}")
+
+    def batch_add_or_update_tasks(self, tasks_data: List[Dict]) -> Dict[str, int]:
+        """
+        批量新增或更新监控任务（按 stock_code 唯一）
+        Returns:
+            {"added": X, "updated": Y, "failed": Z, "total": N}
+        """
+        added = 0
+        updated = 0
+        failed = 0
+
+        for task_data in tasks_data:
+            stock_code = str(task_data.get('stock_code', '')).strip()
+            if not stock_code:
+                failed += 1
+                continue
+
+            try:
+                existing = self.get_monitor_task_by_stock_code(stock_code)
+                if existing:
+                    self.update_monitor_task(stock_code, task_data)
+                    updated += 1
+                else:
+                    self.add_monitor_task(task_data)
+                    added += 1
+            except Exception as e:
+                self.logger.error(f"批量同步监控任务失败({stock_code}): {e}")
+                failed += 1
+
+        return {
+            "added": added,
+            "updated": updated,
+            "failed": failed,
+            "total": added + updated + failed
+        }
     
     def delete_monitor_task(self, task_id: int):
         """删除监控任务"""

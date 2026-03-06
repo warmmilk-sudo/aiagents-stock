@@ -10,6 +10,7 @@ import warnings
 import time
 import logging
 import os
+from typing import List, Optional
 from contextlib import contextmanager
 from sector_strategy_db import SectorStrategyDatabase
 warnings.filterwarnings('ignore')
@@ -133,6 +134,60 @@ class SectorStrategyDataFetcher:
         self._latest_trade_date_cache = today
         return today
 
+    def _get_recent_trade_dates(self, lookback_days: int = 20, limit: int = 5) -> List[str]:
+        """获取最近N个交易日（按新到旧）"""
+        latest = self._get_latest_trade_date()
+        if not self.ts_pro:
+            latest_dt = datetime.strptime(latest, "%Y%m%d")
+            return [
+                (latest_dt - timedelta(days=i)).strftime("%Y%m%d")
+                for i in range(limit)
+            ]
+
+        try:
+            start_date = (datetime.strptime(latest, "%Y%m%d") - timedelta(days=lookback_days)).strftime("%Y%m%d")
+            cal_df = self._safe_request(
+                self.ts_pro.trade_cal,
+                exchange='SSE',
+                start_date=start_date,
+                end_date=latest,
+                is_open='1',
+                fields='cal_date,is_open'
+            )
+            if cal_df is not None and not cal_df.empty:
+                dates = sorted(cal_df['cal_date'].astype(str).tolist(), reverse=True)
+                return dates[:limit]
+        except Exception as e:
+            print(f"    [Tushare] 获取交易日列表失败，回退连续日期: {e}")
+
+        latest_dt = datetime.strptime(latest, "%Y%m%d")
+        return [
+            (latest_dt - timedelta(days=i)).strftime("%Y%m%d")
+            for i in range(limit)
+        ]
+
+    def _calc_trade_lag_days(self, used_trade_date: Optional[str]) -> Optional[int]:
+        """计算所用交易日相对最近交易日的滞后天数"""
+        if not used_trade_date:
+            return None
+        latest_trade_date = self._get_latest_trade_date()
+        try:
+            latest_dt = datetime.strptime(latest_trade_date, "%Y%m%d")
+            used_dt = datetime.strptime(str(used_trade_date), "%Y%m%d")
+            return max((latest_dt - used_dt).days, 0)
+        except Exception:
+            return None
+
+    def _record_fetch_meta(self, key: str, source: str, used_trade_date: Optional[str], records: int):
+        """记录各数据维度的来源与交易日元信息"""
+        if not hasattr(self, "_fetch_meta"):
+            self._fetch_meta = {}
+        self._fetch_meta[key] = {
+            "source": source,
+            "used_trade_date": str(used_trade_date) if used_trade_date else None,
+            "records": int(records or 0)
+        }
+
     @staticmethod
     def _is_proxy_related_error(error: Exception) -> bool:
         """判断异常是否与代理连接相关"""
@@ -244,8 +299,12 @@ class SectorStrategyDataFetcher:
             "sector_fund_flow": {},
             "market_overview": {},
             "north_flow": {},
-            "news": []
+            "news": [],
+            "used_trade_date": None,
+            "lag_days": None,
+            "data_source_summary": {}
         }
+        self._fetch_meta = {}
         
         try:
             # 1. 获取行业板块数据
@@ -290,11 +349,37 @@ class SectorStrategyDataFetcher:
                 data["news"] = news_data
                 print(f"    [OK] 成功获取 {len(news_data)} 条新闻")
             
-            data["success"] = True
-            print("[智策] [OK] 板块数据获取完成！")
+            core_empty = (
+                not data.get("sectors")
+                and not data.get("concepts")
+                and not data.get("sector_fund_flow", {}).get("today")
+            )
+            if core_empty:
+                data["success"] = False
+                data["error"] = "核心板块数据为空（行业/概念/资金流向均无有效数据）"
+                print("[智策] [ERR] 核心板块数据为空")
+            else:
+                data["success"] = True
+                print("[智策] [OK] 板块数据获取完成！")
+
+            # 汇总时效元信息
+            core_trade_dates = []
+            for key in ["sectors", "concepts", "fund_flow"]:
+                item = self._fetch_meta.get(key, {})
+                used_date = item.get("used_trade_date")
+                if used_date:
+                    core_trade_dates.append(used_date)
+
+            if core_trade_dates:
+                used_trade_date = min(core_trade_dates)
+                data["used_trade_date"] = used_trade_date
+                data["lag_days"] = self._calc_trade_lag_days(used_trade_date)
+
+            data["data_source_summary"] = self._fetch_meta.copy()
             
-            # 保存原始数据到数据库
-            self._save_raw_data_to_db(data)
+            # 保存原始数据到数据库（仅在成功场景）
+            if data["success"]:
+                self._save_raw_data_to_db(data)
             
         except Exception as e:
             print(f"[智策] [ERR] 数据获取出错: {e}")
@@ -308,13 +393,15 @@ class SectorStrategyDataFetcher:
         if self.ts_pro:
             try:
                 print("    [Tushare] 正在获取行业板块行情...")
-                trade_date = self._get_latest_trade_date()
-                df = self._safe_request(
-                    self.ts_pro.moneyflow_ind_ths,
-                    trade_date=trade_date
-                )
+                for trade_date in self._get_recent_trade_dates():
+                    df = self._safe_request(
+                        self.ts_pro.moneyflow_ind_ths,
+                        trade_date=trade_date
+                    )
 
-                if df is not None and not df.empty:
+                    if df is None or df.empty:
+                        continue
+
                     sectors = {}
                     for _, row in df.iterrows():
                         sector_name = row.get('industry', '')
@@ -339,7 +426,8 @@ class SectorStrategyDataFetcher:
                         }
 
                     if sectors:
-                        print("    [Tushare] [OK] 成功获取行业板块行情")
+                        print(f"    [Tushare] [OK] 成功获取行业板块行情 (trade_date={trade_date})")
+                        self._record_fetch_meta("sectors", "tushare", trade_date, len(sectors))
                         return sectors
                 print("    [Tushare] [ERR] 行业板块行情为空，尝试Akshare...")
             except Exception as e:
@@ -353,6 +441,7 @@ class SectorStrategyDataFetcher:
             df = self._safe_request(ak.stock_board_industry_name_em)
             
             if df is None or df.empty:
+                self._record_fetch_meta("sectors", "akshare", datetime.now().strftime("%Y%m%d"), 0)
                 return {}
             
             # 转换为字典格式
@@ -371,11 +460,12 @@ class SectorStrategyDataFetcher:
                         "up_count": row.get('上涨家数', 0),
                         "down_count": row.get('下跌家数', 0)
                     }
-            
+            self._record_fetch_meta("sectors", "akshare", datetime.now().strftime("%Y%m%d"), len(sectors))
             return sectors
             
         except Exception as e:
             print(f"    获取行业板块数据失败: {e}")
+            self._record_fetch_meta("sectors", "none", None, 0)
             return {}
     
     def _get_concept_performance(self):
@@ -384,52 +474,54 @@ class SectorStrategyDataFetcher:
         if self.ts_pro:
             try:
                 print("    [Tushare] 正在获取概念板块行情...")
-                trade_date = self._get_latest_trade_date()
-
                 idx_df = self._safe_request(
                     self.ts_pro.ths_index,
                     exchange='A',
                     fields='ts_code,name,type,count'
                 )
-                daily_df = self._safe_request(
-                    self.ts_pro.ths_daily,
-                    trade_date=trade_date,
-                    fields='ts_code,trade_date,pct_change,turnover_rate'
-                )
-
-                if idx_df is not None and not idx_df.empty and daily_df is not None and not daily_df.empty:
-                    # 仅保留概念/主题类，剔除行业地域和榜单噪声
-                    concept_idx = idx_df[idx_df['type'].isin(self.CONCEPT_ALLOWED_TYPES)].copy()
-                    if concept_idx.empty:
-                        concept_idx = idx_df[~idx_df['type'].isin(['I', 'R'])].copy()
-                    if not concept_idx.empty:
-                        blacklist_pattern = "|".join(self.CONCEPT_NAME_BLACKLIST)
-                        concept_idx = concept_idx[
-                            ~concept_idx['name'].astype(str).str.contains(blacklist_pattern, na=False)
-                        ]
-                    merged = concept_idx.merge(daily_df, on='ts_code', how='inner')
-
-                    concepts = {}
-                    for _, row in merged.iterrows():
-                        concept_name = row.get('name', '')
-                        if not concept_name:
+                if idx_df is not None and not idx_df.empty:
+                    for trade_date in self._get_recent_trade_dates():
+                        daily_df = self._safe_request(
+                            self.ts_pro.ths_daily,
+                            trade_date=trade_date,
+                            fields='ts_code,trade_date,pct_change,turnover_rate'
+                        )
+                        if daily_df is None or daily_df.empty:
                             continue
 
-                        concepts[concept_name] = {
-                            "sector_code": str(row.get('ts_code', '') or concept_name),
-                            "name": concept_name,
-                            "change_pct": float(row.get('pct_change', 0) or 0),
-                            "turnover": float(row.get('turnover_rate', 0) or 0),
-                            "total_market_cap": 0,
-                            "top_stock": '',
-                            "top_stock_change": 0,
-                            "up_count": 0,
-                            "down_count": 0
-                        }
+                        # 仅保留概念/主题类，剔除行业地域和榜单噪声
+                        concept_idx = idx_df[idx_df['type'].isin(self.CONCEPT_ALLOWED_TYPES)].copy()
+                        if concept_idx.empty:
+                            concept_idx = idx_df[~idx_df['type'].isin(['I', 'R'])].copy()
+                        if not concept_idx.empty:
+                            blacklist_pattern = "|".join(self.CONCEPT_NAME_BLACKLIST)
+                            concept_idx = concept_idx[
+                                ~concept_idx['name'].astype(str).str.contains(blacklist_pattern, na=False)
+                            ]
+                        merged = concept_idx.merge(daily_df, on='ts_code', how='inner')
 
-                    if concepts:
-                        print("    [Tushare] [OK] 成功获取概念板块行情")
-                        return concepts
+                        concepts = {}
+                        for _, row in merged.iterrows():
+                            concept_name = row.get('name', '')
+                            if not concept_name:
+                                continue
+
+                            concepts[concept_name] = {
+                                "sector_code": str(row.get('ts_code', '') or concept_name),
+                                "name": concept_name,
+                                "change_pct": float(row.get('pct_change', 0) or 0),
+                                "turnover": float(row.get('turnover_rate', 0) or 0),
+                                "total_market_cap": 0,
+                                "top_stock": '',
+                                "top_stock_change": 0,
+                                "up_count": 0,
+                                "down_count": 0
+                            }
+
+                        if concepts:
+                            print(f"    [Tushare] [OK] 成功获取概念板块行情 (trade_date={trade_date})")
+                            self._record_fetch_meta("concepts", "tushare", trade_date, len(concepts))
+                            return concepts
                 print("    [Tushare] [ERR] 概念板块行情为空，尝试Akshare...")
             except Exception as e:
                 print(f"    [Tushare] 获取概念板块行情失败: {e}，尝试Akshare...")
@@ -442,6 +534,7 @@ class SectorStrategyDataFetcher:
             df = self._safe_request(ak.stock_board_concept_name_em)
             
             if df is None or df.empty:
+                self._record_fetch_meta("concepts", "akshare", datetime.now().strftime("%Y%m%d"), 0)
                 return {}
             
             # 转换为字典格式
@@ -463,10 +556,12 @@ class SectorStrategyDataFetcher:
                         "down_count": row.get('下跌家数', 0)
                     }
             
+            self._record_fetch_meta("concepts", "akshare", datetime.now().strftime("%Y%m%d"), len(concepts))
             return concepts
             
         except Exception as e:
             print(f"    获取概念板块数据失败: {e}")
+            self._record_fetch_meta("concepts", "none", None, 0)
             return {}
     
     def _get_sector_fund_flow(self):
@@ -475,13 +570,15 @@ class SectorStrategyDataFetcher:
         if self.ts_pro:
             try:
                 print("    [Tushare] 正在获取行业资金流向...")
-                trade_date = self._get_latest_trade_date()
-                df = self._safe_request(
-                    self.ts_pro.moneyflow_ind_ths,
-                    trade_date=trade_date
-                )
+                for trade_date in self._get_recent_trade_dates():
+                    df = self._safe_request(
+                        self.ts_pro.moneyflow_ind_ths,
+                        trade_date=trade_date
+                    )
 
-                if df is not None and not df.empty:
+                    if df is None or df.empty:
+                        continue
+
                     fund_flow = {
                         "today": [],
                         "update_time": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -507,7 +604,8 @@ class SectorStrategyDataFetcher:
                         })
 
                     if fund_flow["today"]:
-                        print("    [Tushare] [OK] 成功获取行业资金流向")
+                        print(f"    [Tushare] [OK] 成功获取行业资金流向 (trade_date={trade_date})")
+                        self._record_fetch_meta("fund_flow", "tushare", trade_date, len(fund_flow["today"]))
                         return fund_flow
                 print("    [Tushare] [ERR] 行业资金流向为空，尝试Akshare...")
             except Exception as e:
@@ -521,6 +619,7 @@ class SectorStrategyDataFetcher:
             df = self._safe_request(ak.stock_sector_fund_flow_rank, indicator="今日")
             
             if df is None or df.empty:
+                self._record_fetch_meta("fund_flow", "akshare", datetime.now().strftime("%Y%m%d"), 0)
                 return {}
             
             # 转换为字典格式
@@ -541,10 +640,12 @@ class SectorStrategyDataFetcher:
                     "change_pct": row.get('今日涨跌幅', 0)
                 })
             
+            self._record_fetch_meta("fund_flow", "akshare", datetime.now().strftime("%Y%m%d"), len(fund_flow["today"]))
             return fund_flow
             
         except Exception as e:
             print(f"    获取行业资金流向失败: {e}")
+            self._record_fetch_meta("fund_flow", "none", None, 0)
             return {}
     
     def _get_market_overview(self):
@@ -1054,6 +1155,12 @@ class SectorStrategyDataFetcher:
             fresh_data = self.get_all_sector_data()
             
             if fresh_data.get("success"):
+                lag_days = fresh_data.get("lag_days")
+                if lag_days and lag_days > 0:
+                    fresh_data["cache_warning"] = (
+                        f"板块核心数据使用最近可用交易日 {fresh_data.get('used_trade_date')}，"
+                        f"较最新交易日滞后 {lag_days} 天"
+                    )
                 return fresh_data
             
             # 如果获取失败，回退到缓存数据
@@ -1063,7 +1170,15 @@ class SectorStrategyDataFetcher:
             if cached_data:
                 print("[智策] [OK] 成功加载缓存数据")
                 cached_data["from_cache"] = True
-                cached_data["cache_warning"] = "当前显示为缓存数据（24小时内），可能不是最新信息"
+                used_trade_date = cached_data.get("used_trade_date")
+                lag_days = cached_data.get("lag_days")
+                if used_trade_date:
+                    cached_data["cache_warning"] = (
+                        f"当前显示为缓存数据，核心交易日 {used_trade_date}，"
+                        f"滞后 {lag_days if lag_days is not None else '未知'} 天"
+                    )
+                else:
+                    cached_data["cache_warning"] = "当前显示为缓存数据（24小时内），可能不是最新信息"
                 return cached_data
             else:
                 print("[智策] [ERR] 无可用缓存数据")
@@ -1093,39 +1208,69 @@ class SectorStrategyDataFetcher:
                 "sector_fund_flow": {},
                 "market_overview": {},
                 "north_flow": {},
-                "news": []
+                "news": [],
+                "used_trade_date": None,
+                "lag_days": None,
+                "data_source_summary": {}
             }
+            cache_dates = {}
             
             # 加载板块数据
             sectors_data = self.database.get_latest_raw_data("sectors")
             if sectors_data:
                 cached_data["sectors"] = sectors_data.get("data_content", {})
+                cache_dates["sectors"] = sectors_data.get("data_date")
             
             # 加载概念数据
             concepts_data = self.database.get_latest_raw_data("concepts")
             if concepts_data:
                 cached_data["concepts"] = concepts_data.get("data_content", {})
+                cache_dates["concepts"] = concepts_data.get("data_date")
             
             # 加载资金流向数据
             fund_flow_data = self.database.get_latest_raw_data("fund_flow")
             if fund_flow_data:
                 cached_data["sector_fund_flow"] = fund_flow_data.get("data_content", {})
+                cache_dates["fund_flow"] = fund_flow_data.get("data_date")
             
             # 加载市场概况数据
             market_data = self.database.get_latest_raw_data("market_overview")
             if market_data:
                 cached_data["market_overview"] = market_data.get("data_content", {})
+                cache_dates["market_overview"] = market_data.get("data_date")
             
             # 加载北向资金数据
             north_data = self.database.get_latest_raw_data("north_flow")
             if north_data:
                 cached_data["north_flow"] = north_data.get("data_content", {})
+                cache_dates["north_flow"] = north_data.get("data_date")
             
             # 加载新闻数据
             news_data = self.database.get_latest_news_data()
             if news_data:
                 # 仅传递内容列表给下游分析，避免结构不一致
                 cached_data["news"] = news_data.get("data_content", [])
+                cache_dates["news"] = news_data.get("data_date")
+
+            core_trade_dates = [
+                cache_dates.get("sectors"),
+                cache_dates.get("concepts"),
+                cache_dates.get("fund_flow")
+            ]
+            core_trade_dates = [d for d in core_trade_dates if d]
+            if core_trade_dates:
+                used_trade_date = min(core_trade_dates)
+                cached_data["used_trade_date"] = used_trade_date
+                cached_data["lag_days"] = self._calc_trade_lag_days(used_trade_date)
+
+            cached_data["data_source_summary"] = {
+                "sectors": {"source": "cache", "used_trade_date": cache_dates.get("sectors")},
+                "concepts": {"source": "cache", "used_trade_date": cache_dates.get("concepts")},
+                "fund_flow": {"source": "cache", "used_trade_date": cache_dates.get("fund_flow")},
+                "market_overview": {"source": "cache", "used_trade_date": cache_dates.get("market_overview")},
+                "north_flow": {"source": "cache", "used_trade_date": cache_dates.get("north_flow")},
+                "news": {"source": "cache", "used_trade_date": cache_dates.get("news")}
+            }
             
             # 检查是否有有效数据
             has_data = any([
