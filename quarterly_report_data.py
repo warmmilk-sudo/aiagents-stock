@@ -1,6 +1,6 @@
 """
 季报数据获取模块
-Tushare优先获取个股最近8期季度财务报告，AkShare兜底
+统一使用 AkShare/Sina 格式获取个股最近 8 期季度财务报告
 """
 
 import pandas as pd
@@ -37,16 +37,16 @@ _setup_stdout_encoding()
 
 
 class QuarterlyReportDataFetcher:
-    """季报数据获取类（Tushare优先，AkShare兜底）"""
+    """季报数据获取类（AkShare/Sina 单一格式）"""
     
     def __init__(self):
         self.periods = 8  # 获取最近8期季报
         self.available = True
         self.ts_pro = data_source_manager.tushare_api if data_source_manager.tushare_available else None
-        self.prefer_tushare = policy.prefer_tushare and bool(self.ts_pro)
+        self.prefer_tushare = False
         self._section_sources = {}
         self._section_errors = {}
-        source_text = "tushare-first" if self.prefer_tushare else "akshare-only/fallback"
+        source_text = "akshare-only"
         print(f"[OK] 季报数据获取器初始化成功（{source_text}）")
     
     def get_quarterly_reports(self, symbol):
@@ -166,7 +166,7 @@ class QuarterlyReportDataFetcher:
     def _get_income_statement(self, symbol):
         """获取利润表数据"""
         errors = []
-        ts_code = data_source_manager._convert_to_ts_code(symbol)
+        sina_stock = data_source_manager._convert_to_sina_financial_code(symbol)
 
         if self.prefer_tushare:
             try:
@@ -183,7 +183,7 @@ class QuarterlyReportDataFetcher:
                 errors.append(f"tushare: {e}")
 
         try:
-            df = ak.stock_financial_report_sina(stock=symbol, symbol="利润表")
+            df = ak.stock_financial_report_sina(stock=sina_stock, symbol="利润表")
             if df is not None and not df.empty:
                 result = self._convert_df_to_records(df.head(self.periods), "akshare")
                 if result:
@@ -200,7 +200,7 @@ class QuarterlyReportDataFetcher:
     def _get_balance_sheet(self, symbol):
         """获取资产负债表数据"""
         errors = []
-        ts_code = data_source_manager._convert_to_ts_code(symbol)
+        sina_stock = data_source_manager._convert_to_sina_financial_code(symbol)
 
         if self.prefer_tushare:
             try:
@@ -217,7 +217,7 @@ class QuarterlyReportDataFetcher:
                 errors.append(f"tushare: {e}")
 
         try:
-            df = ak.stock_financial_report_sina(stock=symbol, symbol="资产负债表")
+            df = ak.stock_financial_report_sina(stock=sina_stock, symbol="资产负债表")
             if df is not None and not df.empty:
                 result = self._convert_df_to_records(df.head(self.periods), "akshare")
                 if result:
@@ -234,7 +234,7 @@ class QuarterlyReportDataFetcher:
     def _get_cash_flow(self, symbol):
         """获取现金流量表数据"""
         errors = []
-        ts_code = data_source_manager._convert_to_ts_code(symbol)
+        sina_stock = data_source_manager._convert_to_sina_financial_code(symbol)
 
         if self.prefer_tushare:
             try:
@@ -251,7 +251,7 @@ class QuarterlyReportDataFetcher:
                 errors.append(f"tushare: {e}")
 
         try:
-            df = ak.stock_financial_report_sina(stock=symbol, symbol="现金流量表")
+            df = ak.stock_financial_report_sina(stock=sina_stock, symbol="现金流量表")
             if df is not None and not df.empty:
                 result = self._convert_df_to_records(df.head(self.periods), "akshare")
                 if result:

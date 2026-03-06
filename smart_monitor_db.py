@@ -49,6 +49,9 @@ class SmartMonitorDB:
                 position_cost REAL DEFAULT 0,
                 position_quantity INTEGER DEFAULT 0,
                 position_date TEXT,
+                source_type TEXT DEFAULT 'watch',
+                source_label TEXT DEFAULT '关注',
+                portfolio_stock_id INTEGER,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(stock_code)
@@ -81,6 +84,25 @@ class SmartMonitorDB:
             cursor.execute("ALTER TABLE monitor_tasks ADD COLUMN trading_hours_only INTEGER DEFAULT 1")
         except sqlite3.OperationalError:
             pass
+
+        # 添加来源标记字段
+        try:
+            cursor.execute("ALTER TABLE monitor_tasks ADD COLUMN source_type TEXT DEFAULT 'watch'")
+        except sqlite3.OperationalError:
+            pass
+
+        try:
+            cursor.execute("ALTER TABLE monitor_tasks ADD COLUMN source_label TEXT DEFAULT '关注'")
+        except sqlite3.OperationalError:
+            pass
+
+        try:
+            cursor.execute("ALTER TABLE monitor_tasks ADD COLUMN portfolio_stock_id INTEGER")
+        except sqlite3.OperationalError:
+            pass
+
+        cursor.execute("UPDATE monitor_tasks SET source_type = 'watch' WHERE source_type IS NULL OR TRIM(source_type) = ''")
+        cursor.execute("UPDATE monitor_tasks SET source_label = '关注' WHERE source_label IS NULL OR TRIM(source_label) = ''")
         
         # 2. AI决策记录表
         cursor.execute('''
@@ -195,8 +217,9 @@ class SmartMonitorDB:
             (task_name, stock_code, stock_name, enabled, check_interval, 
              auto_trade, trading_hours_only, position_size_pct, stop_loss_pct, take_profit_pct,
              qmt_account_id, notify_email, notify_webhook,
-             has_position, position_cost, position_quantity, position_date)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             has_position, position_cost, position_quantity, position_date,
+             source_type, source_label, portfolio_stock_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             task_data.get('task_name'),
             task_data.get('stock_code'),
@@ -214,7 +237,10 @@ class SmartMonitorDB:
             task_data.get('has_position', 0),
             task_data.get('position_cost', 0),
             task_data.get('position_quantity', 0),
-            task_data.get('position_date')
+            task_data.get('position_date'),
+            task_data.get('source_type', 'watch'),
+            task_data.get('source_label', '关注'),
+            task_data.get('portfolio_stock_id')
         ))
         
         task_id = cursor.lastrowid
@@ -332,6 +358,26 @@ class SmartMonitorDB:
         if 'notify_email' in task_data:
             update_fields.append('notify_email = ?')
             values.append(task_data['notify_email'])
+
+        if 'notify_webhook' in task_data:
+            update_fields.append('notify_webhook = ?')
+            values.append(task_data['notify_webhook'])
+
+        if 'qmt_account_id' in task_data:
+            update_fields.append('qmt_account_id = ?')
+            values.append(task_data['qmt_account_id'])
+
+        if 'source_type' in task_data:
+            update_fields.append('source_type = ?')
+            values.append(task_data['source_type'])
+
+        if 'source_label' in task_data:
+            update_fields.append('source_label = ?')
+            values.append(task_data['source_label'])
+
+        if 'portfolio_stock_id' in task_data:
+            update_fields.append('portfolio_stock_id = ?')
+            values.append(task_data['portfolio_stock_id'])
         
         # 添加更新时间
         update_fields.append('updated_at = CURRENT_TIMESTAMP')
@@ -363,6 +409,11 @@ class SmartMonitorDB:
                 failed += 1
                 continue
 
+            if not task_data.get("source_type"):
+                task_data["source_type"] = "watch"
+            if not task_data.get("source_label"):
+                task_data["source_label"] = "关注"
+
             try:
                 existing = self.get_monitor_task_by_stock_code(stock_code)
                 if existing:
@@ -391,6 +442,16 @@ class SmartMonitorDB:
         
         conn.commit()
         conn.close()
+
+    def delete_monitor_task_by_stock_code(self, stock_code: str) -> bool:
+        """按股票代码删除监控任务"""
+        conn = sqlite3.connect(self.db_file)
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM monitor_tasks WHERE stock_code = ?', (stock_code,))
+        conn.commit()
+        affected = cursor.rowcount
+        conn.close()
+        return affected > 0
     
     # ========== AI决策记录 ==========
     

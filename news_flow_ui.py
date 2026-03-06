@@ -18,7 +18,8 @@ def display_news_flow_monitor():
     configure_plotly_template()
     render_page_header(
         "新闻流量监测",
-        "短线流量热度、情绪阶段与交易建议一体化看板",
+        compact=True,
+        show_subtitle=False,
     )
     
     # 功能说明
@@ -275,78 +276,68 @@ def display_wordcloud_and_top_news():
             st.info("暂无热点话题")
     
     st.divider()
-    
-    # 跨平台热点新闻TOP100
-    st.markdown("#### 跨平台热点新闻TOP100")
-    
-    try:
-        # 获取所有平台新闻
-        fetcher = NewsFlowDataFetcher()
-        multi_result = fetcher.get_multi_platform_news()
-        
-        if multi_result.get('success'):
-            # 汇总所有新闻
-            all_news = []
-            for platform_data in multi_result.get('platforms_data', []):
-                if platform_data.get('success'):
-                    platform_name = platform_data.get('platform_name', '')
-                    category = platform_data.get('category', '')
-                    weight = platform_data.get('weight', 5)
-                    
-                    for news in platform_data.get('data', []):
-                        rank = news.get('rank', 99)
-                        # 计算综合得分
-                        score = (100 - rank) * weight
+
+    with st.expander("跨平台热点新闻TOP100", expanded=False):
+        try:
+            # 获取所有平台新闻
+            fetcher = NewsFlowDataFetcher()
+            multi_result = fetcher.get_multi_platform_news()
+            
+            if multi_result.get('success'):
+                # 汇总所有新闻
+                all_news = []
+                for platform_data in multi_result.get('platforms_data', []):
+                    if platform_data.get('success'):
+                        platform_name = platform_data.get('platform_name', '')
+                        category = platform_data.get('category', '')
+                        weight = platform_data.get('weight', 5)
                         
-                        all_news.append({
-                            '排名': len(all_news) + 1,
-                            '平台': platform_name,
-                            '类别': {'finance': '财经', 'social': '社交', 'news': '新闻', 'tech': '科技'}.get(category, '其他'),
-                            '标题': (news.get('title') or '')[:40],
-                            '平台排名': rank,
-                            '综合分': score,
-                        })
-            
-            # 按综合分排序
-            all_news.sort(key=lambda x: x['综合分'], reverse=True)
-            
-            # 取TOP100
-            top_100 = all_news[:100]
-            
-            # 重新编排名
-            for i, news in enumerate(top_100, 1):
-                news['排名'] = i
-            
-            if top_100:
-                df_news = pd.DataFrame(top_100)
+                        for news in platform_data.get('data', []):
+                            rank = news.get('rank', 99)
+                            score = (100 - rank) * weight
+                            
+                            all_news.append({
+                                '排名': len(all_news) + 1,
+                                '平台': platform_name,
+                                '类别': {'finance': '财经', 'social': '社交', 'news': '新闻', 'tech': '科技'}.get(category, '其他'),
+                                '标题': (news.get('title') or '')[:40],
+                                '平台排名': rank,
+                                '综合分': score,
+                            })
                 
-                # 添加筛选
-                filter_col1, filter_col2 = st.columns([1, 3])
-                with filter_col1:
+                all_news.sort(key=lambda x: x['综合分'], reverse=True)
+                top_100 = all_news[:100]
+                
+                for i, news in enumerate(top_100, 1):
+                    news['排名'] = i
+                
+                if top_100:
+                    df_news = pd.DataFrame(top_100)
+                    
                     category_filter = st.selectbox(
                         "按类别筛选",
                         ["全部", "财经", "社交", "新闻", "科技"],
                         key="news_category_filter"
                     )
-                
-                if category_filter != "全部":
-                    df_news = df_news[df_news['类别'] == category_filter]
-                
-                st.dataframe(
-                    df_news[['排名', '平台', '类别', '标题', '综合分']],
-                    width='stretch',
-                    hide_index=True,
-                    height=400
-                )
-                
-                st.caption(f"共 {len(df_news)} 条新闻 | 数据来源: {multi_result.get('success_count', 0)} 个平台")
+                    
+                    if category_filter != "全部":
+                        df_news = df_news[df_news['类别'] == category_filter]
+                    
+                    st.dataframe(
+                        df_news[['排名', '平台', '类别', '标题', '综合分']],
+                        width='stretch',
+                        hide_index=True,
+                        height=400
+                    )
+                    
+                    st.caption(f"共 {len(df_news)} 条新闻 | 数据来源: {multi_result.get('success_count', 0)} 个平台")
+                else:
+                    st.info("暂无新闻数据")
             else:
-                st.info("暂无新闻数据")
-        else:
-            st.warning("获取新闻数据失败")
-            
-    except Exception as e:
-        st.error(f"加载新闻失败: {e}")
+                st.warning("获取新闻数据失败")
+                
+        except Exception as e:
+            st.error(f"加载新闻失败: {e}")
 
 
 def display_realtime_monitor():
@@ -354,14 +345,11 @@ def display_realtime_monitor():
     st.subheader("实时监测")
     
     # 监测参数
-    col1, col2, col3 = st.columns([1, 1, 1])
-    
-    with col1:
-        category = st.selectbox(
-            "平台类别",
-            ["全部平台", "财经平台", "社交媒体", "新闻媒体", "科技媒体"],
-            key="monitor_category"
-        )
+    category = st.selectbox(
+        "平台类别",
+        ["全部平台", "财经平台", "社交媒体", "新闻媒体", "科技媒体"],
+        key="monitor_category"
+    )
     
     category_map = {
         "全部平台": None,
@@ -371,15 +359,7 @@ def display_realtime_monitor():
         "科技媒体": "tech",
     }
     
-    with col2:
-        st.write("")
-        st.write("")
-        run_btn = st.button("开始AI智能分析", type="primary", width='stretch')
-    
-    with col3:
-        st.write("")
-        st.write("")
-        # 空占位
+    run_btn = st.button("开始AI智能分析", type="primary", width='stretch')
     
     if run_btn:
         with st.spinner("AI正在分析全网热点新闻..."):

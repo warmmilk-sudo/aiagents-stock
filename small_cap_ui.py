@@ -39,7 +39,7 @@ def display_small_cap():
     
     with col_monitor:
         st.write("")  # 占位
-        if st.button("策略监控", type="primary", use_container_width=True):
+        if st.button("策略监控", type="primary", width='stretch'):
             st.session_state.show_small_cap_monitor = True
             st.rerun()
     
@@ -90,7 +90,7 @@ def display_small_cap():
     st.markdown("---")
     
     # 开始选股按钮
-    if st.button("开始小市值策略选股", type="primary", use_container_width=True):
+    if st.button("开始小市值策略选股", type="primary", width='stretch'):
         
         with st.spinner("正在获取数据，请稍候..."):
             # 创建选股器
@@ -121,7 +121,7 @@ def display_small_cap():
         
         # 发送钉钉通知
         st.markdown("---")
-        if st.button("发送钉钉通知", type="secondary", use_container_width=True):
+        if st.button("发送钉钉通知", type="secondary", width='stretch'):
             send_dingtalk_notification(stocks_df)
 
 

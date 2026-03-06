@@ -13,6 +13,7 @@ from typing import Dict
 from smart_monitor_engine import SmartMonitorEngine
 from smart_monitor_db import SmartMonitorDB
 from config_manager import config_manager  # 使用主程序的配置管理器
+from portfolio_manager import portfolio_manager
 def smart_monitor_ui():
     """AI盯盘主界面"""
     inject_global_theme()
@@ -20,7 +21,8 @@ def smart_monitor_ui():
     
     render_page_header(
         "AI盯盘 - AI决策交易系统",
-        "参照AlphaArena项目，基于AI模型的A股自动化交易系统",
+        compact=True,
+        show_subtitle=False,
     )
     
     # 使用说明
@@ -136,6 +138,14 @@ def smart_monitor_ui():
         """)
     
     st.markdown("---")
+
+    # 启动时仅执行一次三端持仓回填对齐
+    if not st.session_state.get("portfolio_sync_reconciled", False):
+        try:
+            st.session_state.portfolio_sync_reconcile_result = portfolio_manager.reconcile_portfolio_sync_on_startup()
+            st.session_state.portfolio_sync_reconciled = True
+        except Exception as e:
+            st.warning(f"持仓联动初始化失败：{e}")
     
     # 初始化组件（自动从配置读取）
     if 'engine' not in st.session_state:
@@ -383,7 +393,9 @@ def render_monitor_tasks():
                             'has_position': 1 if has_position else 0,
                             'position_cost': position_cost if has_position else 0,
                             'position_quantity': position_quantity if has_position else 0,
-                            'position_date': datetime.now().strftime('%Y-%m-%d') if has_position else None
+                            'position_date': datetime.now().strftime('%Y-%m-%d') if has_position else None,
+                            'source_type': 'watch',
+                            'source_label': '关注'
                         }
                         
                         task_id = db.add_monitor_task(task_data)
@@ -445,6 +457,7 @@ def render_monitor_tasks():
             trading_mode = "仅交易时段" if task.get('trading_hours_only', 1) else "全时段"
             is_running = task['stock_code'] in engine.monitoring_threads
             run_status_text = "运行中" if is_running else "未运行"
+            source_label = task.get("source_label") or ("持仓" if task.get("source_type") == "portfolio" else "关注")
 
             pnl_text = "无持仓数据"
             if has_position and current_price > 0:
@@ -457,6 +470,7 @@ def render_monitor_tasks():
                     <p><strong>标的:</strong> {task['stock_code']} | 间隔 {task['check_interval']} 秒</p>
                     <p><strong>状态:</strong> {status} | {run_status_text}</p>
                     <p><strong>模式:</strong> {auto_trade_status} | {trading_mode}</p>
+                    <p><strong>来源:</strong> {source_label}</p>
                     <p><strong>持仓:</strong> {"是" if has_position else "否"} | <strong>盈亏:</strong> {pnl_text}</p>
                 </div>
                 """,
@@ -490,8 +504,15 @@ def render_monitor_tasks():
                 if st.button("删除任务", key=f"del_{task['id']}", width='stretch'):
                     if task['stock_code'] in engine.monitoring_threads:
                         engine.stop_monitor(task['stock_code'])
-                    db.delete_monitor_task(task['id'])
-                    st.success("已删除")
+                    if task.get("source_type") == "portfolio":
+                        success, msg = portfolio_manager.delete_stock_by_code(task['stock_code'])
+                        if success:
+                            st.success(msg)
+                        else:
+                            st.error(msg)
+                    else:
+                        db.delete_monitor_task(task['id'])
+                        st.success("已删除")
                     st.rerun()
             
             # K线图和AI决策详情（可展开）
@@ -514,11 +535,30 @@ def render_position_management():
     
     st.markdown("### 账户概览")
     
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("总资产", f"¥{account_info['total_value']:,.2f}")
-    col2.metric("可用资金", f"¥{account_info['available_cash']:,.2f}")
-    col3.metric("持仓数量", f"{account_info['positions_count']}个")
-    col4.metric("总盈亏", f"¥{account_info['total_profit_loss']:,.2f}")
+    # 使用自定义 HTML 2×2 指标网格（移动端友好）
+    st.markdown(
+        f"""
+        <div class="mobile-metric-grid">
+            <div class="metric-item">
+                <div class="metric-label">总资产</div>
+                <div class="metric-value">¥{account_info['total_value']:,.2f}</div>
+            </div>
+            <div class="metric-item">
+                <div class="metric-label">可用资金</div>
+                <div class="metric-value">¥{account_info['available_cash']:,.2f}</div>
+            </div>
+            <div class="metric-item">
+                <div class="metric-label">持仓数量</div>
+                <div class="metric-value">{account_info['positions_count']}个</div>
+            </div>
+            <div class="metric-item">
+                <div class="metric-label">总盈亏</div>
+                <div class="metric-value">¥{account_info['total_profit_loss']:,.2f}</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
     
     # 获取持仓列表
     positions = qmt.get_all_positions()
@@ -529,28 +569,37 @@ def render_position_management():
     
     st.markdown("### 持仓列表")
     
-    # 转换为DataFrame
-    df = pd.DataFrame(positions)
-    
-    # 显示表格
-    st.dataframe(
-        df[[
-            'stock_code', 'stock_name', 'quantity', 'can_sell',
-            'cost_price', 'current_price', 'profit_loss', 'profit_loss_pct'
-        ]],
-        column_config={
-            "stock_code": "代码",
-            "stock_name": "名称",
-            "quantity": "持仓",
-            "can_sell": "可卖",
-            "cost_price": "成本价",
-            "current_price": "现价",
-            "profit_loss": "盈亏",
-            "profit_loss_pct": "盈亏%"
-        },
-        hide_index=True,
-        width='stretch'
-    )
+    # 使用 HTML 卡片列表代替 st.dataframe（移动端友好）
+    for p in positions:
+        pnl = p.get('profit_loss', 0)
+        pnl_pct = p.get('profit_loss_pct', 0)
+        pnl_class = "pos-pnl-positive" if pnl >= 0 else "pos-pnl-negative"
+        pnl_sign = "+" if pnl >= 0 else ""
+        st.markdown(
+            f"""
+            <div class="position-card">
+                <div class="pos-header">
+                    <span class="pos-name">{p.get('stock_name', '--')}</span>
+                    <span class="pos-code">{p.get('stock_code', '--')}</span>
+                </div>
+                <div class="pos-body">
+                    <span class="pos-label">持仓</span>
+                    <span class="pos-val">{p.get('quantity', 0)}</span>
+                    <span class="pos-label">可卖</span>
+                    <span class="pos-val">{p.get('can_sell', 0)}</span>
+                    <span class="pos-label">成本价</span>
+                    <span class="pos-val">¥{p.get('cost_price', 0):.2f}</span>
+                    <span class="pos-label">现价</span>
+                    <span class="pos-val">¥{p.get('current_price', 0):.2f}</span>
+                    <span class="pos-label">盈亏</span>
+                    <span class="pos-val {pnl_class}">{pnl_sign}{pnl:.2f}</span>
+                    <span class="pos-label">盈亏%</span>
+                    <span class="pos-val {pnl_class}">{pnl_sign}{pnl_pct:.2f}%</span>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
     
     # 单只股票操作
     st.markdown("### 快速操作")
@@ -620,25 +669,34 @@ def render_history():
         if not trades:
             st.info("暂无交易记录")
         else:
-            df = pd.DataFrame(trades)
-            st.dataframe(
-                df[[
-                    'trade_time', 'stock_code', 'stock_name', 'trade_type',
-                    'quantity', 'price', 'amount', 'profit_loss'
-                ]],
-                column_config={
-                    "trade_time": "时间",
-                    "stock_code": "代码",
-                    "stock_name": "名称",
-                    "trade_type": "类型",
-                    "quantity": "数量",
-                    "price": "价格",
-                    "amount": "金额",
-                    "profit_loss": "盈亏"
-                },
-                hide_index=True,
-                width='stretch'
-            )
+            # 使用 HTML 卡片列表代替 st.dataframe（移动端友好）
+            for t in trades:
+                trade_type = t.get('trade_type', '')
+                type_class = "trade-type-buy" if '买' in trade_type else "trade-type-sell"
+                pnl = t.get('profit_loss', 0)
+                pnl_display = f"{pnl:+.2f}" if pnl else "--"
+                st.markdown(
+                    f"""
+                    <div class="trade-card">
+                        <div class="trade-header">
+                            <span class="trade-stock">{t.get('stock_code', '--')} {t.get('stock_name', '')}</span>
+                            <span class="{type_class}">{trade_type}</span>
+                        </div>
+                        <div class="trade-body">
+                            <span class="trade-label">数量</span>
+                            <span class="trade-val">{t.get('quantity', 0)}</span>
+                            <span class="trade-label">价格</span>
+                            <span class="trade-val">¥{t.get('price', 0):.2f}</span>
+                            <span class="trade-label">金额</span>
+                            <span class="trade-val">¥{t.get('amount', 0):,.2f}</span>
+                            <span class="trade-label">盈亏</span>
+                            <span class="trade-val">{pnl_display}</span>
+                        </div>
+                        <div class="trade-time">{t.get('trade_time', '')}</div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
     
     # 通知记录
     with tab3:
@@ -786,7 +844,7 @@ def _render_task_kline_and_decisions(task: Dict, db: SmartMonitorDB, engine):
                 )
                 
                 # 显示图表
-                st.plotly_chart(fig, use_container_width=True, config={'responsive': True})
+                st.plotly_chart(fig, width='stretch', config={'responsive': True})
                 
                 st.caption(f"数据时间范围：{kline_data['日期'].min()} ~ {kline_data['日期'].max()}")
             else:

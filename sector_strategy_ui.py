@@ -45,7 +45,8 @@ def display_sector_strategy():
     
     render_page_header(
         "智策 - AI驱动的板块策略分析",
-        "Multi-Agent Sector Strategy Analysis | 板块多空·轮动·热度预测",
+        compact=True,
+        show_subtitle=False,
     )
     
     st.markdown("---")
@@ -742,7 +743,7 @@ def display_visualizations(predictions):
                      title='板块多空信心度对比')
         
         fig.update_layout(height=400)
-        st.plotly_chart(fig, use_container_width=True, config={'responsive': True}, key="sector_confidence")
+        st.plotly_chart(fig, width='stretch', config={'responsive': True}, key="sector_confidence")
     else:
         st.info("暂无多空信心度数据")
     
@@ -781,7 +782,7 @@ def display_visualizations(predictions):
                         title='板块热度分布图')
         
         fig.update_layout(height=400)
-        st.plotly_chart(fig, use_container_width=True, config={'responsive': True}, key="sector_heat")
+        st.plotly_chart(fig, width='stretch', config={'responsive': True}, key="sector_heat")
     else:
         st.info("暂无板块热度分布数据")
 

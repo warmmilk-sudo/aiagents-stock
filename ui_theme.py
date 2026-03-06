@@ -75,18 +75,25 @@ html, body, [class*="css"] {{
     margin-bottom: 1rem;
 }}
 
+.page-header.compact {{
+    padding: 0.62rem 0.86rem;
+    border-radius: 12px;
+    margin-bottom: 0.72rem;
+}}
+
 .nav-title {{
     margin: 0;
-    font-size: 1.45rem;
+    font-size: 1.08rem;
     line-height: 1.25;
     color: var(--tra-text);
-    font-weight: 700;
+    font-weight: 650;
 }}
 
 .nav-subtitle {{
-    margin: 0.35rem 0 0;
-    font-size: 0.92rem;
+    margin: 0.25rem 0 0;
+    font-size: 0.78rem;
     color: var(--tra-muted);
+    opacity: 0.9;
 }}
 
 [data-testid="stSidebar"] {{
@@ -104,6 +111,16 @@ label,
 [data-testid="stMetricDelta"] {{
     color: var(--tra-text) !important;
 }}
+
+/* ── 优化页面标题文字大小 ── */
+h1 {{ font-size: 1.6rem !important; margin-bottom: 0.8rem !important; }}
+h2 {{ font-size: 1.3rem !important; margin-bottom: 0.6rem !important; }}
+h3 {{ font-size: 1.1rem !important; margin-bottom: 0.4rem !important; }}
+
+[data-testid="stMarkdownContainer"] p {{
+    font-size: 0.92rem !important;
+}}
+
 
 small,
 caption,
@@ -225,26 +242,19 @@ footer {{
 }}
 
 .site-filing {{
-    position: fixed;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    z-index: 1000;
-    padding: 0.5rem 0.75rem;
-    background: rgba(11, 18, 32, 0.85);
-    border-top: 1px solid var(--tra-border);
+    padding: 0.4rem 0;
     text-align: center;
-    font-size: 0.82rem;
+    font-size: 0.78rem;
     color: var(--tra-muted);
-    backdrop-filter: blur(6px);
 }}
 
-.mobile-bottom-nav {{
+.mobile-quick-menu {{
     display: none;
 }}
 
-.mobile-nav-item {{
-    text-decoration: none;
+/* ── 底部导航栏（桌面端隐藏） ── */
+.mobile-bottom-nav {{
+    display: none;
 }}
 
 .site-filing a {{
@@ -257,33 +267,184 @@ footer {{
     text-decoration: underline;
 }}
 
+/* ── 自定义 2×2 指标网格 ── */
+.mobile-metric-grid {{
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0.6rem;
+}}
+
+.mobile-metric-grid .metric-item {{
+    background: rgba(17, 24, 39, 0.82);
+    border: 1px solid var(--tra-border);
+    border-radius: 12px;
+    padding: 0.7rem 0.8rem;
+    text-align: center;
+}}
+
+.mobile-metric-grid .metric-item .metric-label {{
+    font-size: 0.72rem;
+    color: var(--tra-muted);
+    margin-bottom: 0.2rem;
+}}
+
+.mobile-metric-grid .metric-item .metric-value {{
+    font-size: 1.05rem;
+    font-weight: 650;
+    color: var(--tra-text);
+}}
+
+/* ── 持仓卡片 ── */
+.position-card {{
+    background: rgba(17, 24, 39, 0.86);
+    border: 1px solid var(--tra-border);
+    border-radius: 12px;
+    padding: 0.8rem 1rem;
+    margin: 0.5rem 0;
+}}
+
+.position-card .pos-header {{
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.4rem;
+}}
+
+.position-card .pos-header .pos-name {{
+    font-weight: 650;
+    font-size: 0.95rem;
+    color: var(--tra-text);
+}}
+
+.position-card .pos-header .pos-code {{
+    font-size: 0.78rem;
+    color: var(--tra-muted);
+}}
+
+.position-card .pos-body {{
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0.3rem 1rem;
+    font-size: 0.82rem;
+}}
+
+.position-card .pos-body .pos-label {{
+    color: var(--tra-muted);
+}}
+
+.position-card .pos-body .pos-val {{
+    text-align: right;
+    color: var(--tra-text);
+}}
+
+.position-card .pos-pnl-positive {{
+    color: {SUCCESS_COLOR} !important;
+}}
+
+.position-card .pos-pnl-negative {{
+    color: {DANGER_COLOR} !important;
+}}
+
+/* ── 交易记录卡片 ── */
+.trade-card {{
+    background: rgba(17, 24, 39, 0.86);
+    border: 1px solid var(--tra-border);
+    border-radius: 12px;
+    padding: 0.7rem 0.9rem;
+    margin: 0.45rem 0;
+}}
+
+.trade-card .trade-header {{
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.35rem;
+}}
+
+.trade-card .trade-header .trade-stock {{
+    font-weight: 600;
+    color: var(--tra-text);
+}}
+
+.trade-card .trade-header .trade-type-buy {{
+    color: {DANGER_COLOR};
+    font-weight: 600;
+    font-size: 0.82rem;
+}}
+
+.trade-card .trade-header .trade-type-sell {{
+    color: {SUCCESS_COLOR};
+    font-weight: 600;
+    font-size: 0.82rem;
+}}
+
+.trade-card .trade-body {{
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0.2rem 1rem;
+    font-size: 0.8rem;
+}}
+
+.trade-card .trade-body .trade-label {{
+    color: var(--tra-muted);
+}}
+
+.trade-card .trade-body .trade-val {{
+    text-align: right;
+    color: var(--tra-text);
+}}
+
+.trade-card .trade-time {{
+    font-size: 0.72rem;
+    color: var(--tra-muted);
+    margin-top: 0.3rem;
+}}
+
 @media (max-width: 768px) {{
     .block-container {{
         padding-top: 0.8rem;
         padding-left: 0.7rem;
         padding-right: 0.7rem;
-        padding-bottom: calc(8.4rem + env(safe-area-inset-bottom));
+        padding-bottom: calc(4.5rem + env(safe-area-inset-bottom));
     }}
 
     .nav-title {{
-        font-size: 1.2rem;
+        font-size: 0.96rem;
     }}
 
     .nav-subtitle {{
-        font-size: 0.82rem;
+        font-size: 0.72rem;
     }}
 
+    /* ── 栅格优化：默认 2 列网格，保持紧凑 ── */
     div[data-testid="stHorizontalBlock"] {{
-        flex-direction: column !important;
-        gap: 0.65rem !important;
+        display: grid !important;
+        grid-template-columns: repeat(2, 1fr) !important;
+        gap: 0.5rem !important;
+    }}
+
+    /* 3 列及以上的子项（如技术指标详情）折叠为单列 */
+    div[data-testid="stHorizontalBlock"]:has(> div:nth-child(3)) {{
+        grid-template-columns: 1fr !important;
+    }}
+
+    /* 恰好 4 列（如 metric 列）保持 2×2 */
+    div[data-testid="stHorizontalBlock"]:has(> div:nth-child(4)):not(:has(> div:nth-child(5))) {{
+        grid-template-columns: repeat(2, 1fr) !important;
+    }}
+
+    /* 恰好 2 列保持并排（操作按钮组） */
+    div[data-testid="stHorizontalBlock"]:has(> div:nth-child(2)):not(:has(> div:nth-child(3))) {{
+        grid-template-columns: repeat(2, 1fr) !important;
     }}
 
     div[data-testid="column"] {{
         width: 100% !important;
-        min-width: 100% !important;
-        flex: 1 1 100% !important;
+        min-width: 0 !important;
+        flex: unset !important;
     }}
 
+    /* ── 表单/输入控件全宽 ── */
     .stButton > button,
     .stDownloadButton > button,
     .stTextInput,
@@ -306,68 +467,25 @@ footer {{
         align-items: center;
     }}
 
-    .mobile-bottom-nav {{
-        position: fixed;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        z-index: 1101;
-        display: flex;
-        justify-content: space-around;
-        align-items: center;
-        gap: 0.25rem;
-        padding: 0.35rem 0.4rem calc(0.35rem + env(safe-area-inset-bottom));
-        background: rgba(11, 18, 32, 0.98);
-        border-top: 1px solid var(--tra-border);
-        backdrop-filter: blur(10px);
-    }}
 
-    .mobile-nav-item {{
-        flex: 1 1 0;
-        min-height: 48px;
-        border: 1px solid transparent;
-        border-radius: 10px;
-        padding: 0.32rem 0.25rem;
-        text-align: center;
-        color: var(--tra-muted);
-        background: transparent;
-        transition: all 160ms ease;
-    }}
-
-    .mobile-nav-item.active {{
-        color: var(--tra-text);
-        border-color: rgba(34, 211, 238, 0.5);
-        background: rgba(34, 211, 238, 0.12);
-    }}
-
-    .mobile-nav-item:active {{
-        transform: translateY(1px);
-    }}
-
-    .mobile-nav-icon {{
-        display: block;
-        line-height: 1.05;
-        font-size: 0.95rem;
-    }}
-
-    .mobile-nav-label {{
-        display: block;
-        margin-top: 0.1rem;
-        font-size: 0.72rem;
-        line-height: 1.05;
-    }}
-
-    .site-filing {{
-        bottom: calc(3.85rem + env(safe-area-inset-bottom));
-        z-index: 1100;
-    }}
-
+    /* ── Tabs 横向可滚动 ── */
     .stTabs [data-baseweb="tab-list"] {{
-        padding: 0.35rem;
+        padding: 0.3rem;
+        overflow-x: auto;
+        flex-wrap: nowrap;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+    }}
+
+    .stTabs [data-baseweb="tab-list"]::-webkit-scrollbar {{
+        display: none;
     }}
 
     .stTabs [data-baseweb="tab"] {{
-        padding: 0.45rem 0.75rem;
+        padding: 0.42rem 0.65rem;
+        font-size: 0.82rem;
+        white-space: nowrap;
+        flex-shrink: 0;
     }}
 }}
 
@@ -435,12 +553,18 @@ def configure_plotly_template() -> None:
     pio.templates.default = PLOTLY_TEMPLATE_NAME
 
 
-def render_page_header(title: str, subtitle: str | None = None) -> None:
+def render_page_header(
+    title: str,
+    subtitle: str | None = None,
+    compact: bool = True,
+    show_subtitle: bool = False,
+) -> None:
     """Render consistent page header."""
-    subtitle_markup = f'<p class="nav-subtitle">{subtitle}</p>' if subtitle else ""
+    subtitle_markup = f'<p class="nav-subtitle">{subtitle}</p>' if subtitle and show_subtitle else ""
+    header_class = "page-header compact" if compact else "page-header"
     st.markdown(
         f"""
-<div class="page-header">
+<div class="{header_class}">
     <h1 class="nav-title">{title}</h1>
     {subtitle_markup}
 </div>

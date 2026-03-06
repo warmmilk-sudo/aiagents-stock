@@ -6,6 +6,7 @@
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import pandas as pd
+import tushare as ts
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 import logging
@@ -403,11 +404,14 @@ class SmartMonitorKline:
             end_date = datetime.now().strftime('%Y%m%d')
             start_date = (datetime.now() - timedelta(days=days + 60)).strftime('%Y%m%d')
             
-            # 获取日K线数据（前复权）
-            df = ts_pro.daily(
+            # 使用 pro_bar 获取前复权日线，避免 ts_pro.daily 不支持 adj 导致失真
+            df = ts.pro_bar(
                 ts_code=ts_code,
+                api=ts_pro,
                 start_date=start_date,
                 end_date=end_date,
+                freq='D',
+                asset='E',
                 adj='qfq'
             )
             
@@ -428,6 +432,8 @@ class SmartMonitorKline:
                 'vol': '成交量',
                 'amount': '成交额'
             })
+            df['成交量'] = pd.to_numeric(df['成交量'], errors='coerce') * 100
+            df['成交额'] = pd.to_numeric(df['成交额'], errors='coerce') * 1000
             
             # 转换日期格式（Tushare: 20240115 -> 2024-01-15）
             df['日期'] = pd.to_datetime(df['日期'])

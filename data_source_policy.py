@@ -1,9 +1,9 @@
 """
 Unified data-source policy helpers.
 
-Rule:
-- If TUSHARE_TOKEN is configured, prefer Tushare first.
-- If Tushare fails or returns empty data, fallback to other providers.
+This module exposes reusable availability checks and fallback execution.
+Actual source priority is decided by each call site because different data
+types have different preferred providers.
 """
 
 from __future__ import annotations
@@ -44,7 +44,7 @@ class DataSourcePolicy:
 
     @property
     def prefer_tushare(self) -> bool:
-        """Policy switch: available client means Tushare is preferred."""
+        """Legacy convenience flag: indicates Tushare client availability."""
         return self.tushare_available
 
     def _init_tushare(self) -> None:

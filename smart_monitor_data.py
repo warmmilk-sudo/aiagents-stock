@@ -364,11 +364,13 @@ class SmartMonitorDataFetcher:
             end_date = datetime.now().strftime('%Y%m%d')
             start_date = (datetime.now() - timedelta(days=400)).strftime('%Y%m%d')
             
-            # 获取历史数据
-            df = self.ts_pro.daily(
+            # 使用 pro_bar 获取前复权日线，避免除权后技术指标失真
+            df = self._fetch_tushare_pro_bar(
                 ts_code=ts_code,
                 start_date=start_date,
-                end_date=end_date
+                end_date=end_date,
+                freq='D',
+                adj='qfq'
             )
             
             if df is None or df.empty:
@@ -392,6 +394,10 @@ class SmartMonitorDataFetcher:
                 'amount': '成交额',
                 'trade_date': '日期'
             })
+            if '成交量' in df.columns:
+                df['成交量'] = pd.to_numeric(df['成交量'], errors='coerce') * 100
+            if '成交额' in df.columns:
+                df['成交额'] = pd.to_numeric(df['成交额'], errors='coerce') * 1000
             
             # 如果没有关键列，尝试使用其他可能的列名
             column_mapping = {
@@ -596,7 +602,7 @@ class SmartMonitorDataFetcher:
     def _get_realtime_quote_from_tushare(self, stock_code: str) -> Optional[Dict]:
         """
         从Tushare获取实时行情（备用数据源）
-        使用免费接口，无需积分
+        使用分钟线接口获取盘中最新价
         
         Args:
             stock_code: 股票代码
@@ -613,62 +619,78 @@ class SmartMonitorDataFetcher:
             else:
                 self.logger.warning(f"无法识别股票代码市场: {stock_code}")
                 return None
-            
-            # 方法1: 尝试使用daily_basic（基础日线，无需积分）
+
+            today = datetime.now().strftime('%Y%m%d')
+            start_date = (datetime.now() - timedelta(days=5)).strftime('%Y%m%d')
+
+            minute_df = self._fetch_tushare_pro_bar(
+                ts_code=ts_code,
+                start_date=start_date,
+                end_date=today,
+                freq='1MIN',
+                adj=None,
+                limit=800
+            )
+            if minute_df is None or minute_df.empty:
+                self.logger.error(f"Tushare分钟线为空 {stock_code}")
+                return None
+
+            minute_df = minute_df.copy()
+            minute_df['_trade_time'] = pd.to_datetime(minute_df['trade_time'], errors='coerce')
+            minute_df = minute_df.dropna(subset=['_trade_time']).sort_values('_trade_time').reset_index(drop=True)
+            if minute_df.empty:
+                self.logger.error(f"Tushare分钟线时间字段异常 {stock_code}")
+                return None
+
+            latest = minute_df.iloc[-1]
+
+            prev_close = self._get_tushare_previous_close(ts_code, today)
+            current_price = float(latest['close'])
+            change_amount = current_price - prev_close if prev_close not in (None, 0) else 0.0
+            change_pct = (change_amount / prev_close * 100) if prev_close not in (None, 0) else 0.0
+
+            turnover_rate = 0.0
+            volume_ratio = 1.0
             try:
-                df = self.ts_pro.daily_basic(ts_code=ts_code, 
-                                             trade_date=datetime.now().strftime('%Y%m%d'),
-                                             fields='ts_code,trade_date,close,turnover_rate,volume_ratio,pe,pb')
-                
-                if df.empty:
-                    # 获取最近交易日
-                    end_date = datetime.now().strftime('%Y%m%d')
-                    df = self.ts_pro.daily_basic(ts_code=ts_code, 
-                                                 end_date=end_date,
-                                                 fields='ts_code,trade_date,close,turnover_rate,volume_ratio,pe,pb')
-                    df = df.head(1)
-                
-                if not df.empty:
-                    row = df.iloc[0]
-                    
-                    # 获取日线数据补充价格信息
-                    df_daily = self.ts_pro.daily(ts_code=ts_code, 
-                                                 trade_date=row['trade_date'],
-                                                 fields='open,high,low,pre_close,change,pct_chg,vol,amount')
-                    
-                    if not df_daily.empty:
-                        daily_row = df_daily.iloc[0]
-                        
-                        # 获取股票名称
-                        stock_basic = self.ts_pro.stock_basic(ts_code=ts_code, fields='name')
-                        stock_name = stock_basic.iloc[0]['name'] if not stock_basic.empty else 'N/A'
-                        
-                        self.logger.info(f"[OK] Tushare降级成功（基础接口），获取到 {stock_code} 数据")
-                        
-                        return {
-                            'code': stock_code,
-                            'name': stock_name,
-                            'current_price': float(row['close']),
-                            'change_pct': float(daily_row.get('pct_chg', 0)),
-                            'change_amount': float(daily_row.get('change', 0)),
-                            'volume': float(daily_row.get('vol', 0)) * 100,
-                            'amount': float(daily_row.get('amount', 0)) * 1000,
-                            'high': float(daily_row.get('high', 0)),
-                            'low': float(daily_row.get('low', 0)),
-                            'open': float(daily_row.get('open', 0)),
-                            'pre_close': float(daily_row.get('pre_close', 0)),
-                            'turnover_rate': float(row.get('turnover_rate', 0)),
-                            'volume_ratio': float(row.get('volume_ratio', 1.0)),
-                            'update_time': row['trade_date'],
-                            'data_source': 'tushare'
-                        }
+                daily_basic = self.ts_pro.daily_basic(
+                    ts_code=ts_code,
+                    end_date=today,
+                    fields='trade_date,turnover_rate,volume_ratio'
+                )
+                if daily_basic is not None and not daily_basic.empty:
+                    latest_basic = daily_basic.sort_values('trade_date', ascending=False).iloc[0]
+                    turnover_rate = float(latest_basic.get('turnover_rate', 0) or 0)
+                    volume_ratio = float(latest_basic.get('volume_ratio', 1.0) or 1.0)
             except Exception as e:
-                self.logger.warning(f"Tushare基础接口失败: {str(e)[:100]}")
-            
-            # 所有方法都失败
-            self.logger.error(f"Tushare所有接口都失败 {stock_code}，可能是积分不足或网络问题")
-            self.logger.info("[TIP] 提示：访问 https://tushare.pro/user/token 查看积分和权限")
-            return None
+                self.logger.debug(f"Tushare daily_basic补充字段失败 {stock_code}: {e}")
+
+            stock_name = 'N/A'
+            try:
+                stock_basic = self.ts_pro.stock_basic(ts_code=ts_code, fields='name')
+                if stock_basic is not None and not stock_basic.empty:
+                    stock_name = stock_basic.iloc[0].get('name', 'N/A')
+            except Exception as e:
+                self.logger.debug(f"Tushare股票名称获取失败 {stock_code}: {e}")
+
+            self.logger.info(f"[OK] Tushare分钟线获取成功，获取到 {stock_code} 数据")
+
+            return {
+                'code': stock_code,
+                'name': stock_name,
+                'current_price': current_price,
+                'change_pct': float(change_pct),
+                'change_amount': float(change_amount),
+                'volume': float(latest.get('vol', 0) or 0),
+                'amount': float(latest.get('amount', 0) or 0),
+                'high': float(latest.get('high', 0) or 0),
+                'low': float(latest.get('low', 0) or 0),
+                'open': float(latest.get('open', 0) or 0),
+                'pre_close': float(prev_close or 0),
+                'turnover_rate': turnover_rate,
+                'volume_ratio': volume_ratio,
+                'update_time': str(latest.get('trade_time', today)),
+                'data_source': 'tushare'
+            }
             
         except Exception as e:
             error_msg = str(e)
@@ -682,6 +704,46 @@ class SmartMonitorDataFetcher:
             else:
                 self.logger.error(f"Tushare获取失败 {stock_code}: {error_msg[:100]}")
             return None
+
+    def _fetch_tushare_pro_bar(
+        self,
+        ts_code: str,
+        start_date: str,
+        end_date: str,
+        freq: str,
+        adj: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> Optional[pd.DataFrame]:
+        """统一封装 Tushare pro_bar。"""
+        import tushare as ts
+
+        return ts.pro_bar(
+            ts_code=ts_code,
+            api=self.ts_pro,
+            start_date=start_date,
+            end_date=end_date,
+            freq=freq,
+            asset='E',
+            adj=adj,
+            limit=limit,
+        )
+
+    def _get_tushare_previous_close(self, ts_code: str, today: str) -> Optional[float]:
+        """获取实时涨跌计算所需的昨收价。"""
+        daily_df = self.ts_pro.daily(
+            ts_code=ts_code,
+            end_date=today,
+            fields='trade_date,close,pre_close'
+        )
+        if daily_df is None or daily_df.empty:
+            return None
+
+        latest = daily_df.sort_values('trade_date', ascending=False).iloc[0]
+        if str(latest.get('trade_date', '')) == today:
+            value = latest.get('pre_close')
+        else:
+            value = latest.get('close')
+        return float(value) if value not in (None, '') else None
     
     def _get_main_force_from_tushare(self, stock_code: str) -> Optional[Dict]:
         """

@@ -663,137 +663,53 @@ class StockDataFetcher:
         try:
             used_sources = []
             errors = {}
-            ts_code = self.data_source_manager._convert_to_ts_code(symbol)
-            ts_preferred = self.data_source_manager.tushare_available
+            used_sources.append("akshare")
 
-            # 1) Tushare优先：核心财务链路
-            if ts_preferred:
-                used_sources.append("tushare")
+            for report_type, target_key in [
+                ("income", "income_statement"),
+                ("balance", "balance_sheet"),
+                ("cashflow", "cash_flow"),
+            ]:
                 try:
-                    income_df = self.data_source_manager.tushare_api.income(ts_code=ts_code)
-                    if income_df is not None and not income_df.empty:
-                        if 'end_date' in income_df.columns:
-                            income_df = income_df.sort_values('end_date', ascending=False)
-                        financial_data["income_statement"] = income_df.head(8).to_dict('records')
+                    df = self.data_source_manager.get_financial_data(symbol, report_type=report_type)
+                    if df is not None and not df.empty:
+                        financial_data[target_key] = df.head(8).to_dict('records')
+                    else:
+                        errors[f"akshare_{report_type}"] = "empty result"
                 except Exception as e:
-                    errors["tushare_income"] = str(e)
+                    errors[f"akshare_{report_type}"] = str(e)
 
-                try:
-                    balance_df = self.data_source_manager.tushare_api.balancesheet(ts_code=ts_code)
-                    if balance_df is not None and not balance_df.empty:
-                        if 'end_date' in balance_df.columns:
-                            balance_df = balance_df.sort_values('end_date', ascending=False)
-                        financial_data["balance_sheet"] = balance_df.head(8).to_dict('records')
-                except Exception as e:
-                    errors["tushare_balance"] = str(e)
+            try:
+                financial_abstract = ak.stock_financial_abstract(symbol=symbol)
+                if financial_abstract is not None and not financial_abstract.empty:
+                    key_indicators = [
+                        '净资产收益率(ROE)', '总资产报酬率(ROA)', '销售毛利率', '销售净利率',
+                        '资产负债率', '流动比率', '速动比率', '存货周转率', '应收账款周转率',
+                        '总资产周转率', '营业收入同比增长', '净利润同比增长'
+                    ]
+                    indicator_rows = financial_abstract[financial_abstract['指标'].isin(key_indicators)]
+                    date_columns = [col for col in financial_abstract.columns if col not in ['选项', '指标']]
+                    if not indicator_rows.empty and date_columns:
+                        latest_date = date_columns[0]
+                        ratios = {"报告期": latest_date}
+                        for _, row in indicator_rows.iterrows():
+                            indicator_name = row['指标']
+                            value = row.get(latest_date, 'N/A')
+                            if value is not None and not (isinstance(value, float) and pd.isna(value)):
+                                ratios[indicator_name] = str(value)
+                            else:
+                                ratios[indicator_name] = "N/A"
+                        financial_data["financial_ratios"] = ratios
+                else:
+                    errors["akshare_indicator"] = "empty result"
+            except Exception as e:
+                errors["akshare_indicator"] = str(e)
 
-                try:
-                    cash_df = self.data_source_manager.tushare_api.cashflow(ts_code=ts_code)
-                    if cash_df is not None and not cash_df.empty:
-                        if 'end_date' in cash_df.columns:
-                            cash_df = cash_df.sort_values('end_date', ascending=False)
-                        financial_data["cash_flow"] = cash_df.head(8).to_dict('records')
-                except Exception as e:
-                    errors["tushare_cashflow"] = str(e)
-
-                try:
-                    indicator_df = self.data_source_manager.tushare_api.fina_indicator(ts_code=ts_code)
-                    if indicator_df is not None and not indicator_df.empty:
-                        if 'end_date' in indicator_df.columns:
-                            indicator_df = indicator_df.sort_values('end_date', ascending=False)
-                        latest = indicator_df.iloc[0]
-                        financial_data["financial_ratios"] = {
-                            "报告期": latest.get('end_date', 'N/A'),
-                            "净资产收益率(ROE)": latest.get('roe', 'N/A'),
-                            "总资产报酬率(ROA)": latest.get('roa', latest.get('roa_yearly', 'N/A')),
-                            "销售毛利率": latest.get('grossprofit_margin', 'N/A'),
-                            "销售净利率": latest.get('netprofit_margin', 'N/A'),
-                            "资产负债率": latest.get('debt_to_assets', 'N/A'),
-                            "流动比率": latest.get('current_ratio', 'N/A'),
-                            "速动比率": latest.get('quick_ratio', 'N/A'),
-                            "存货周转率": latest.get('invturn_days', latest.get('inv_turn', 'N/A')),
-                            "应收账款周转率": latest.get('arturn_days', latest.get('ar_turn', 'N/A')),
-                            "总资产周转率": latest.get('assets_turn', 'N/A'),
-                            "营业收入同比增长": latest.get('or_yoy', 'N/A'),
-                            "净利润同比增长": latest.get('netprofit_yoy', 'N/A'),
-                            "EPS": latest.get('eps', 'N/A'),
-                            "每股账面价值": latest.get('bps', 'N/A')
-                        }
-                except Exception as e:
-                    errors["tushare_indicator"] = str(e)
-            else:
-                if policy.tushare_configured and not self.data_source_manager.tushare_available:
-                    errors["tushare_init"] = "Tushare token configured but client unavailable"
-
-            # 2) AkShare兜底：只补缺失项
-            need_balance = not financial_data["balance_sheet"]
-            need_income = not financial_data["income_statement"]
-            need_cash = not financial_data["cash_flow"]
-            need_ratio = not financial_data["financial_ratios"]
-
-            if need_balance or need_income or need_cash or need_ratio:
-                used_sources.append("akshare")
-
-                if need_balance:
-                    try:
-                        balance_sheet = ak.stock_financial_abstract_ths(symbol=symbol, indicator="资产负债表")
-                        if balance_sheet is not None and not balance_sheet.empty:
-                            financial_data["balance_sheet"] = balance_sheet.head(8).to_dict('records')
-                    except Exception as e:
-                        errors["akshare_balance"] = str(e)
-
-                if need_income:
-                    try:
-                        income_statement = ak.stock_financial_abstract_ths(symbol=symbol, indicator="利润表")
-                        if income_statement is not None and not income_statement.empty:
-                            financial_data["income_statement"] = income_statement.head(8).to_dict('records')
-                    except Exception as e:
-                        errors["akshare_income"] = str(e)
-
-                if need_cash:
-                    try:
-                        cash_flow = ak.stock_financial_abstract_ths(symbol=symbol, indicator="现金流量表")
-                        if cash_flow is not None and not cash_flow.empty:
-                            financial_data["cash_flow"] = cash_flow.head(8).to_dict('records')
-                    except Exception as e:
-                        errors["akshare_cashflow"] = str(e)
-
-                if need_ratio:
-                    try:
-                        financial_abstract = ak.stock_financial_abstract(symbol=symbol)
-                        if financial_abstract is not None and not financial_abstract.empty:
-                            key_indicators = [
-                                '净资产收益率(ROE)', '总资产报酬率(ROA)', '销售毛利率', '销售净利率',
-                                '资产负债率', '流动比率', '速动比率', '存货周转率', '应收账款周转率',
-                                '总资产周转率', '营业收入同比增长', '净利润同比增长'
-                            ]
-                            indicator_rows = financial_abstract[financial_abstract['指标'].isin(key_indicators)]
-                            date_columns = [col for col in financial_abstract.columns if col not in ['选项', '指标']]
-                            if not indicator_rows.empty and date_columns:
-                                latest_date = date_columns[0]
-                                ratios = {"报告期": latest_date}
-                                for _, row in indicator_rows.iterrows():
-                                    indicator_name = row['指标']
-                                    value = row.get(latest_date, 'N/A')
-                                    if value is not None and not (isinstance(value, float) and pd.isna(value)):
-                                        ratios[indicator_name] = str(value)
-                                    else:
-                                        ratios[indicator_name] = "N/A"
-                                financial_data["financial_ratios"] = ratios
-                    except Exception as e:
-                        errors["akshare_indicator"] = str(e)
-
-            unique_sources = [s for i, s in enumerate(used_sources) if s and s not in used_sources[:i]]
-            if len(unique_sources) > 1:
-                financial_data["source"] = "mixed"
-            elif len(unique_sources) == 1:
-                financial_data["source"] = unique_sources[0]
-            else:
-                financial_data["source"] = "unknown"
-            financial_data["source_chain"] = unique_sources
+            financial_data["source"] = "akshare"
+            financial_data["source_chain"] = used_sources
             financial_data["error_detail"] = errors
             
-            # 注意：季报数据现在由 quarterly_report_data.py 模块统一获取（Tushare优先 + AkShare兜底）
+            # 注意：季报数据现在由 quarterly_report_data.py 模块统一获取
             # 不再使用问财获取季报，避免重复
             
             return financial_data
@@ -803,7 +719,7 @@ class StockDataFetcher:
             return financial_data
     
     # 已删除 _get_quarter_data_from_wencai 方法
-    # 季报数据现在统一由 quarterly_report_data.py 模块获取（Tushare优先 + AkShare兜底）
+    # 季报数据现在统一由 quarterly_report_data.py 模块获取
     # 获取最近8期完整季报（利润表、资产负债表、现金流量表）
     # 避免重复获取，提高效率
     

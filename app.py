@@ -10,7 +10,7 @@ import os
 import hmac
 import hashlib
 import config
-from navigation import navigate_to, resolve_current_page
+from quick_nav import apply_quick_to_state, clear_nav_flags, clear_quick_param
 
 from stock_data import StockDataFetcher
 from ai_agents import StockAnalysisAgents
@@ -34,7 +34,7 @@ from ui_theme import (
 
 # 页面配置
 st.set_page_config(
-    page_title="复合多AI智能体股票团队分析系统",
+    page_title="AI智能体股票团队分析系统",
     layout="wide",
     initial_sidebar_state="auto"
 )
@@ -48,115 +48,142 @@ def show_current_model_info():
     st.sidebar.caption("可在「环境配置」中修改模型名称")
 
 
-def render_mobile_bottom_nav(current_page: str) -> None:
-    """Render mobile-first fixed bottom navigation."""
-    nav_items = [
-        ("home", "首页", "🏠"),
-        ("main_force", "选股", "📈"),
-        ("sector_strategy", "智策", "🧠"),
-        ("news_flow", "新闻", "📰"),
-        ("smart_monitor", "盯盘", "👀"),
-    ]
+NAV_GROUP_FLAGS = {
+    "stock_selection": ["show_main_force", "show_low_price_bull", "show_small_cap", "show_profit_growth", "show_value_stock"],
+    "strategy": ["show_sector_strategy", "show_longhubang", "show_news_flow", "show_macro_cycle"],
+    "investment": ["show_portfolio", "show_smart_monitor", "show_monitor"],
+}
 
-    if current_page in {"low_price_bull", "small_cap", "profit_growth", "value_stock"}:
-        active_page = "main_force"
-    elif current_page in {"longhubang", "macro_cycle"}:
-        active_page = "sector_strategy"
-    elif current_page in {"monitor", "portfolio"}:
-        active_page = "smart_monitor"
-    else:
-        active_page = current_page
 
-    links = []
-    for page_key, label, icon in nav_items:
-        classes = "mobile-nav-item"
-        if active_page == page_key:
-            classes += " active"
-        links.append(
-            f'<a class="{classes}" href="?page={page_key}">'
-            f'<span class="mobile-nav-icon">{icon}</span>'
-            f'<span class="mobile-nav-label">{label}</span>'
-            "</a>"
-        )
+def _clear_all_view_flags() -> None:
+    clear_nav_flags(st.session_state)
 
-    st.markdown(
-        f'<nav class="mobile-bottom-nav">{"".join(links)}</nav>',
-        unsafe_allow_html=True,
-    )
+
+def _activate_view(flag_key: str | None = None) -> None:
+    _clear_all_view_flags()
+    if flag_key:
+        st.session_state[flag_key] = True
+
+
+def _is_group_active(group_name: str) -> bool:
+    return any(bool(st.session_state.get(flag)) for flag in NAV_GROUP_FLAGS.get(group_name, []))
+
+
+def _read_query_value(name: str) -> str | None:
+    if hasattr(st, "query_params"):
+        raw_value = st.query_params.get(name)
+        if isinstance(raw_value, list):
+            return raw_value[0] if raw_value else None
+        return raw_value if isinstance(raw_value, str) else None
+
+    params = st.experimental_get_query_params()
+    values = params.get(name)
+    if isinstance(values, list) and values:
+        return values[0]
+    if isinstance(values, str):
+        return values
+    return None
+
+
+def _clear_quick_query_param() -> None:
+    if hasattr(st, "query_params"):
+        try:
+            clear_quick_param(st.query_params)
+        except Exception:
+            pass
+        return
+
+    params = st.experimental_get_query_params()
+    if "quick" in params:
+        clear_quick_param(params)
+        st.experimental_set_query_params(**params)
+
+
+def apply_quick_nav_bridge() -> None:
+    """Apply lightweight quick-nav query to legacy show_* state."""
+    quick_value = _read_query_value("quick")
+    if not quick_value:
+        return
+
+    applied = apply_quick_to_state(st.session_state, quick_value)
+    _clear_quick_query_param()
+    if applied:
+        st.rerun()
+
+
 
 # 全局主题
 inject_global_theme()
 configure_plotly_template()
 
 def main():
-    # 顶部标题栏
     render_page_header(
-        "复合多AI智能体股票团队分析系统",
-        "基于AI模型的专业量化投资分析平台 | Multi-Agent Stock Analysis System",
+        "AI智能体股票团队分析系统",
+        compact=True,
+        show_subtitle=False,
     )
-    current_page = resolve_current_page()
+    apply_quick_nav_bridge()
 
-    # 侧边栏
     with st.sidebar:
         st.markdown("### 功能导航")
 
         if st.button("股票分析", width='stretch', key="nav_home", help="返回首页，进行单只股票的深度分析"):
-            current_page = navigate_to("home")
+            _activate_view()
 
         st.markdown("---")
 
-        with st.expander("选股板块", expanded=current_page in {"main_force", "low_price_bull", "small_cap", "profit_growth", "value_stock"}):
+        with st.expander("选股板块", expanded=_is_group_active("stock_selection")):
             st.markdown("**根据不同策略筛选优质股票**")
 
             if st.button("主力选股", width='stretch', key="nav_main_force", help="基于主力资金流向的选股策略"):
-                current_page = navigate_to("main_force")
+                _activate_view("show_main_force")
 
             if st.button("低价擒牛", width='stretch', key="nav_low_price_bull", help="低价高成长股票筛选策略"):
-                current_page = navigate_to("low_price_bull")
+                _activate_view("show_low_price_bull")
 
             if st.button("小市值策略", width='stretch', key="nav_small_cap", help="小盘高成长股票筛选策略"):
-                current_page = navigate_to("small_cap")
+                _activate_view("show_small_cap")
 
             if st.button("净利增长", width='stretch', key="nav_profit_growth", help="净利润增长稳健股票筛选策略"):
-                current_page = navigate_to("profit_growth")
+                _activate_view("show_profit_growth")
 
             if st.button("低估值策略", width='stretch', key="nav_value_stock", help="低PE+低PB+高股息+低负债 价值投资筛选"):
-                current_page = navigate_to("value_stock")
+                _activate_view("show_value_stock")
 
-        with st.expander("策略分析", expanded=current_page in {"sector_strategy", "longhubang", "news_flow", "macro_cycle"}):
+        with st.expander("策略分析", expanded=_is_group_active("strategy")):
             st.markdown("**AI驱动的板块和龙虎榜策略**")
 
             if st.button("智策板块", width='stretch', key="nav_sector_strategy", help="AI板块策略分析"):
-                current_page = navigate_to("sector_strategy")
+                _activate_view("show_sector_strategy")
 
             if st.button("智瞰龙虎", width='stretch', key="nav_longhubang", help="龙虎榜深度分析"):
-                current_page = navigate_to("longhubang")
+                _activate_view("show_longhubang")
 
             if st.button("新闻流量", width='stretch', key="nav_news_flow", help="新闻流量监测与短线指导"):
-                current_page = navigate_to("news_flow")
+                _activate_view("show_news_flow")
 
             if st.button("宏观周期", width='stretch', key="nav_macro_cycle", help="康波周期 × 美林投资时钟 × 政策分析"):
-                current_page = navigate_to("macro_cycle")
+                _activate_view("show_macro_cycle")
 
-        with st.expander("投资管理", expanded=current_page in {"portfolio", "smart_monitor", "monitor"}):
+        with st.expander("投资管理", expanded=_is_group_active("investment")):
             st.markdown("**持仓跟踪与实时监测**")
 
             if st.button("持仓分析", width='stretch', key="nav_portfolio", help="投资组合分析与定时跟踪"):
-                current_page = navigate_to("portfolio")
+                _activate_view("show_portfolio")
 
             if st.button("AI盯盘", width='stretch', key="nav_smart_monitor", help="AI模型自动盯盘决策交易（支持A股T+1）"):
-                current_page = navigate_to("smart_monitor")
+                _activate_view("show_smart_monitor")
 
             if st.button("实时监测", width='stretch', key="nav_monitor", help="价格监控与预警提醒"):
-                current_page = navigate_to("monitor")
+                _activate_view("show_monitor")
 
         st.markdown("---")
 
         if st.button("历史记录", width='stretch', key="nav_history", help="查看历史分析记录"):
-            current_page = navigate_to("history")
+            _activate_view("show_history")
 
         if st.button("环境配置", width='stretch', key="nav_config", help="系统设置与API配置"):
-            current_page = navigate_to("config")
+            _activate_view("show_config")
 
         st.markdown("---")
 
@@ -239,113 +266,102 @@ def main():
             7. AI分析 → 8. 团队讨论 → 9. 决策
             """)
 
-    render_mobile_bottom_nav(current_page)
+        render_site_filing()
 
-    if current_page == "history":
+    if st.session_state.get("show_history"):
         display_history_records()
         return
 
-    if current_page == "monitor":
+    if st.session_state.get("show_monitor"):
         display_monitor_manager()
         return
 
-    if current_page == "main_force":
+    if st.session_state.get("show_main_force"):
         display_main_force_selector()
         return
 
-    if current_page == "low_price_bull":
+    if st.session_state.get("show_low_price_bull"):
         from low_price_bull_ui import display_low_price_bull
         display_low_price_bull()
         return
 
-    if current_page == "small_cap":
+    if st.session_state.get("show_small_cap"):
         from small_cap_ui import display_small_cap
         display_small_cap()
         return
 
-    if current_page == "profit_growth":
+    if st.session_state.get("show_profit_growth"):
         from profit_growth_ui import display_profit_growth
         display_profit_growth()
         return
 
-    if current_page == "value_stock":
+    if st.session_state.get("show_value_stock"):
         from value_stock_ui import display_value_stock
         display_value_stock()
         return
 
-    if current_page == "sector_strategy":
+    if st.session_state.get("show_sector_strategy"):
         display_sector_strategy()
         return
 
-    if current_page == "longhubang":
+    if st.session_state.get("show_longhubang"):
         display_longhubang()
         return
 
-    if current_page == "smart_monitor":
+    if st.session_state.get("show_smart_monitor"):
         smart_monitor_ui()
         return
 
-    if current_page == "portfolio":
+    if st.session_state.get("show_portfolio"):
         from portfolio_ui import display_portfolio_manager
         display_portfolio_manager()
         return
 
-    if current_page == "news_flow":
+    if st.session_state.get("show_news_flow"):
         display_news_flow_monitor()
         return
 
-    if current_page == "macro_cycle":
+    if st.session_state.get("show_macro_cycle"):
         from macro_cycle_ui import display_macro_cycle
         display_macro_cycle()
         return
 
-    if current_page == "config":
+    if st.session_state.get("show_config"):
         display_config_manager()
         return
 
-    # 主界面
-    col_mode1, col_mode2 = st.columns([1, 3])
-    with col_mode1:
-        analysis_mode = st.radio(
-            "分析模式",
-            ["单个分析", "批量分析"],
-            horizontal=True,
-            help="单个分析：分析单只股票；批量分析：同时分析多只股票"
-        )
+    # 主界面（移动端优先）
+    analysis_mode = st.radio(
+        "分析模式",
+        ["单个分析", "批量分析"],
+        horizontal=True,
+        help="单个分析：分析单只股票；批量分析：同时分析多只股票"
+    )
 
-    with col_mode2:
-        if analysis_mode == "批量分析":
-            batch_mode = st.radio(
-                "批量模式",
-                ["顺序分析", "多线程并行"],
-                horizontal=True,
-                help="顺序分析：按次序分析，稳定但较慢；多线程并行：同时分析多只，快速但消耗资源"
-            )
-            st.session_state.batch_mode = batch_mode
+    if analysis_mode == "批量分析":
+        batch_mode = st.radio(
+            "批量模式",
+            ["顺序分析", "多线程并行"],
+            horizontal=True,
+            help="顺序分析：按次序分析，稳定但较慢；多线程并行：同时分析多只，快速但消耗资源"
+        )
+        st.session_state.batch_mode = batch_mode
 
     st.markdown("---")
 
     if analysis_mode == "单个分析":
-        # 单个股票分析界面
-        col1, col2, col3 = st.columns([2, 1, 1])
+        stock_input = st.text_input(
+            "请输入股票代码或名称",
+            placeholder="例如: AAPL, 000001, 00700",
+            help="支持A股(如000001)、港股(如00700)和美股(如AAPL)"
+        )
 
-        with col1:
-            stock_input = st.text_input(
-                "请输入股票代码或名称",
-                placeholder="例如: AAPL, 000001, 00700",
-                help="支持A股(如000001)、港股(如00700)和美股(如AAPL)"
-            )
-
-        with col2:
-            analyze_button = st.button("开始分析", type="primary", width='stretch')
-
-        with col3:
-            if st.button("清除缓存", width='stretch'):
-                st.cache_data.clear()
-                st.success("缓存已清除")
+        analyze_button = st.button("开始分析", type="primary", width='stretch')
+        if st.button("清除缓存", width='stretch'):
+            st.cache_data.clear()
+            st.success("缓存已清除")
 
     else:
-        # 批量股票分析界面
         stock_input = st.text_area(
             "请输入多个股票代码（每行一个或用逗号分隔）",
             placeholder="例如:\n000001\n600036\n00700\n\n或者: 000001, 600036, 00700, AAPL",
@@ -353,18 +369,14 @@ def main():
             help="支持多种格式：每行一个代码或用逗号分隔。支持A股、港股、美股"
         )
 
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            analyze_button = st.button("开始批量分析", type="primary", width='stretch')
-        with col2:
-            if st.button("清除缓存", width='stretch'):
-                st.cache_data.clear()
-                st.success("缓存已清除")
-        with col3:
-            if st.button("清除结果", width='stretch'):
-                if 'batch_analysis_results' in st.session_state:
-                    del st.session_state.batch_analysis_results
-                st.success("已清除批量分析结果")
+        analyze_button = st.button("开始批量分析", type="primary", width='stretch')
+        if st.button("清除缓存", width='stretch'):
+            st.cache_data.clear()
+            st.success("缓存已清除")
+        if st.button("清除结果", width='stretch'):
+            if 'batch_analysis_results' in st.session_state:
+                del st.session_state.batch_analysis_results
+            st.success("已清除批量分析结果")
 
     # 分析师团队选择
     st.markdown("---")
@@ -1248,7 +1260,7 @@ def display_stock_chart(stock_data, stock_info):
 
     # 生成唯一的key
     chart_key = f"main_stock_chart_{stock_info.get('symbol', 'unknown')}_{int(time.time())}"
-    st.plotly_chart(fig, use_container_width=True, config={'responsive': True}, key=chart_key)
+    st.plotly_chart(fig, width='stretch', config={'responsive': True}, key=chart_key)
 
     # 成交量图
     if 'Volume' in stock_data.columns:
@@ -1269,7 +1281,7 @@ def display_stock_chart(stock_data, stock_info):
 
         # 生成唯一的key
         volume_key = f"volume_chart_{stock_info.get('symbol', 'unknown')}_{int(time.time())}"
-        st.plotly_chart(fig_volume, use_container_width=True, config={'responsive': True}, key=volume_key)
+        st.plotly_chart(fig_volume, width='stretch', config={'responsive': True}, key=volume_key)
 
 def display_agents_analysis(agents_results):
     """显示各分析师报告"""
@@ -1440,30 +1452,21 @@ def display_history_records():
         rating = record.get('rating', '未知')
 
         with st.expander(f"{record['stock_name']} ({record['symbol']}) - {record['analysis_date']} | {rating}"):
-            col1, col2, col3, col4 = st.columns([2, 2, 1, 1])
+            st.write(f"**股票代码:** {record['symbol']}")
+            st.write(f"**股票名称:** {record['stock_name']}")
+            st.write(f"**分析时间:** {record['analysis_date']}")
+            st.write(f"**数据周期:** {record['period']}")
+            st.write(f"**投资评级:** **{rating}**")
 
-            with col1:
-                st.write(f"**股票代码:** {record['symbol']}")
-                st.write(f"**股票名称:** {record['stock_name']}")
+            if st.button("查看详情", key=f"view_{record['id']}", type="primary", width='stretch'):
+                st.session_state.viewing_record_id = record['id']
 
-            with col2:
-                st.write(f"**分析时间:** {record['analysis_date']}")
-                st.write(f"**数据周期:** {record['period']}")
-                st.write(f"**投资评级:** **{rating}**")
-
-            with col3:
-                if st.button("查看详情", key=f"view_{record['id']}"):
-                    st.session_state.viewing_record_id = record['id']
-
-            with col4:
-                if st.button("监测", key=f"add_monitor_{record['id']}"):
+            with st.expander("更多操作", expanded=False):
+                if st.button("加入监测", key=f"add_monitor_{record['id']}", width='stretch'):
                     st.session_state.add_to_monitor_id = record['id']
                     st.session_state.viewing_record_id = record['id']
 
-            # 删除按钮（新增一行）
-            col5, _, _, _ = st.columns(4)
-            with col5:
-                if st.button("删除", key=f"delete_{record['id']}"):
+                if st.button("删除记录", key=f"delete_{record['id']}", width='stretch'):
                     if db.delete_record(record['id']):
                         st.success("记录已删除")
                         st.rerun()
@@ -1625,7 +1628,7 @@ def display_add_to_monitor_dialog(record):
                         if 'viewing_record_id' in st.session_state:
                             del st.session_state.viewing_record_id
                         # 设置跳转到监测页面
-                        navigate_to("monitor")
+                        _activate_view("show_monitor")
                         st.session_state.monitor_jump_highlight = record['symbol']  # 标记要高亮显示的股票
 
                         time.sleep(1.5)
@@ -2047,7 +2050,7 @@ def _show_login_page():
     with col2:
         st.markdown('<div class="login-container">', unsafe_allow_html=True)
         st.markdown('<p class="login-title">🔐 系统登录</p>', unsafe_allow_html=True)
-        st.markdown('<p class="login-subtitle">复合多AI智能体股票团队分析系统</p>', unsafe_allow_html=True)
+        st.markdown('<p class="login-subtitle">AI智能体股票团队分析系统</p>', unsafe_allow_html=True)
 
         now_ts = int(time.time())
         lock_until = int(st.session_state.get("login_lock_until", 0))
@@ -2064,7 +2067,7 @@ def _show_login_page():
             disabled=is_locked,
         )
 
-        if st.button("登 录", type="primary", use_container_width=True, disabled=is_locked):
+        if st.button("登 录", type="primary", width='stretch', disabled=is_locked):
             if _verify_admin_password(password):
                 st.session_state.authenticated = True
                 st.session_state.authenticated_at = int(time.time())
@@ -2114,7 +2117,5 @@ if __name__ == "__main__":
                 st.session_state.pop("authenticated_at", None)
         if not st.session_state.get("authenticated", False):
             _show_login_page()
-            render_site_filing()
             st.stop()
     main()
-    render_site_filing()

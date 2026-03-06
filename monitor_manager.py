@@ -19,11 +19,20 @@ from monitor_service import monitor_service
 from notification_service import notification_service
 from stock_data import StockDataFetcher
 from miniqmt_interface import miniqmt, get_miniqmt_status, QuantStrategyConfig
+from portfolio_manager import portfolio_manager
 
 def display_monitor_manager():
     """显示监测管理主页面"""
     inject_global_theme()
     configure_plotly_template()
+
+    # 启动时仅执行一次三端持仓回填对齐
+    if not st.session_state.get("portfolio_sync_reconciled", False):
+        try:
+            st.session_state.portfolio_sync_reconcile_result = portfolio_manager.reconcile_portfolio_sync_on_startup()
+            st.session_state.portfolio_sync_reconciled = True
+        except Exception as e:
+            st.warning(f"持仓联动初始化失败：{e}")
     
     st.markdown("## 股票监测管理")
     st.markdown("---")
@@ -175,7 +184,9 @@ def display_add_stock_section():
                         check_interval=check_interval,
                         notification_enabled=notification_enabled,
                         quant_enabled=quant_enabled,
-                        quant_config=quant_config
+                        quant_config=quant_config,
+                        source_type="watch",
+                        source_label="关注"
                     )
                     
                     st.success(f"已成功添加 {symbol} 到监测列表")
@@ -294,7 +305,7 @@ def display_stock_card(stock: Dict):
         
         # 监测状态
         st.markdown("**监测状态**")
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3, col4 = st.columns(4)
         
         with col1:
             st.caption(f"监测间隔: {stock['check_interval']}分钟")
@@ -315,6 +326,16 @@ def display_stock_card(stock: Dict):
                 st.caption("量化: 启用")
             else:
                 st.caption("量化: 禁用")
+
+        with col4:
+            source_label = stock.get("source_label") or ("持仓" if stock.get("source_type") == "portfolio" else "关注")
+            st.caption(f"来源: {source_label}")
+            if stock.get("has_position"):
+                qty = stock.get("position_quantity") or 0
+                cost = stock.get("position_cost") or 0
+                st.caption(f"持仓: {qty}股 @ {cost:.2f}")
+            else:
+                st.caption("持仓: 无")
         
         # 操作按钮
         st.markdown("**操作**")
@@ -464,6 +485,10 @@ def display_delete_confirm_dialog(stock_id: int):
     **股票名称**: {stock['name']}
     
     **投资评级**: {stock['rating']}
+
+    **来源**: {stock.get('source_label') or ('持仓' if stock.get('source_type') == 'portfolio' else '关注')}
+
+    {'⚠️ 该条目来源于持仓，删除后会同步删除持仓分析与AI盯盘中的同股票记录。' if stock.get('source_type') == 'portfolio' else ''}
     
     此操作不可撤销！
     """)
@@ -473,18 +498,24 @@ def display_delete_confirm_dialog(stock_id: int):
     with col1:
         if st.button("确认删除", type="primary", width='stretch', key=f"confirm_delete_{stock_id}"):
             try:
-                result = monitor_db.remove_monitored_stock(stock_id)
+                source_type = stock.get("source_type", "watch")
+                if source_type == "portfolio":
+                    result, delete_msg = portfolio_manager.delete_stock_by_code(stock["symbol"])
+                else:
+                    result = monitor_db.remove_monitored_stock(stock_id)
+                    delete_msg = "已成功删除监测"
+
                 if result:
                     # 清理session state
                     if 'deleting_stock_id' in st.session_state:
                         del st.session_state.deleting_stock_id
                     
-                    st.success("已成功删除监测")
+                    st.success(delete_msg)
                     st.balloons()
                     time.sleep(0.8)  # 短暂延迟，让用户看到成功消息
                     st.rerun()
                 else:
-                    st.error("删除失败：股票不存在或已被删除")
+                    st.error(delete_msg if source_type == "portfolio" else "删除失败：股票不存在或已被删除")
                     time.sleep(1)
                     if 'deleting_stock_id' in st.session_state:
                         del st.session_state.deleting_stock_id

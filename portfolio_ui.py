@@ -20,6 +20,14 @@ def display_portfolio_manager():
     """显示持仓管理主界面"""
     inject_global_theme()
     configure_plotly_template()
+
+    # 启动时仅执行一次三端持仓回填对齐
+    if not st.session_state.get("portfolio_sync_reconciled", False):
+        try:
+            st.session_state.portfolio_sync_reconcile_result = portfolio_manager.reconcile_portfolio_sync_on_startup()
+            st.session_state.portfolio_sync_reconciled = True
+        except Exception as e:
+            st.warning(f"持仓联动初始化失败：{e}")
     
     st.markdown("## 持仓定时分析")
     st.markdown("---")
@@ -66,8 +74,7 @@ def display_portfolio_stocks():
     with col1:
         st.metric("持仓股票数", len(stocks))
     with col2:
-        auto_monitor_count = sum(1 for s in stocks if s.get("auto_monitor"))
-        st.metric("启用自动监测", auto_monitor_count)
+        st.metric("联动同步", "始终开启")
     with col3:
         total_cost = sum(
             s.get("cost_price", 0) * s.get("quantity", 0) 
@@ -92,7 +99,6 @@ def display_stock_card(stock: Dict):
     cost_price = stock.get("cost_price")
     quantity = stock.get("quantity")
     note = stock.get("note", "")
-    auto_monitor = stock.get("auto_monitor", True)
     created_at = stock.get("created_at", "")
     
     # 创建卡片
@@ -112,10 +118,7 @@ def display_stock_card(stock: Dict):
                 st.caption("未设置持仓")
         
         with col3:
-            if auto_monitor:
-                st.success("自动监测")
-            else:
-                st.info("不监测")
+            st.success("联动同步")
         
         with col4:
             col_edit, col_del = st.columns(2)
@@ -152,7 +155,6 @@ def display_stock_card(stock: Dict):
                 
                 with col_b:
                     new_note = st.text_area("备注", value=note, height=80)
-                    new_auto_monitor = st.checkbox("自动同步到监测", value=auto_monitor)
                 
                 col_submit, col_cancel = st.columns(2)
                 with col_submit:
@@ -161,8 +163,7 @@ def display_stock_card(stock: Dict):
                             stock_id,  # 使用stock_id而不是code
                             cost_price=new_cost if new_cost > 0 else None,
                             quantity=new_quantity if new_quantity > 0 else None,
-                            note=new_note,
-                            auto_monitor=new_auto_monitor
+                            note=new_note
                         )
                         del st.session_state[f"editing_{code}"]
                         st.success("更新成功！")
@@ -210,7 +211,7 @@ def display_add_stock_form():
             )
         
         note = st.text_area("备注", height=80, placeholder="可选，记录买入理由等信息")
-        auto_monitor = st.checkbox("分析后自动同步到监测", value=True)
+        st.caption("该持仓将自动联动到 AI盯盘 与 实时监测（始终开启）")
         
         if st.form_submit_button("添加股票", type="primary"):
             if not code:
@@ -222,8 +223,7 @@ def display_add_stock_form():
                         name=name.strip() if name else None,
                         cost_price=cost_price if cost_price > 0 else None,
                         quantity=quantity if quantity > 0 else None,
-                        note=note.strip() if note else None,
-                        auto_monitor=auto_monitor
+                        note=note.strip() if note else None
                     )
                     if success:
                         st.success(message)
@@ -366,7 +366,7 @@ def display_batch_analysis():
                             f"失败 {smart.get('failed', 0)} 条"
                         )
                         if sync_result.get("skipped", 0) > 0:
-                            st.warning(f"已跳过 {sync_result.get('skipped', 0)} 只未启用自动监测或无有效数据的股票")
+                            st.warning(f"已跳过 {sync_result.get('skipped', 0)} 只无有效数据的股票")
                             failed_reasons = sync_result.get("failed_reasons", [])[:5]
                             if failed_reasons:
                                 st.markdown("同步失败/跳过原因：")
