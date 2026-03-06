@@ -10,6 +10,7 @@ import akshare as ak
 import pandas as pd
 from typing import Dict, Optional
 from datetime import datetime, timedelta
+from tushare_utils import create_tushare_pro
 
 
 class SmartMonitorDataFetcher:
@@ -52,20 +53,7 @@ class SmartMonitorDataFetcher:
         
         if tushare_token:
             try:
-                import tushare as ts
-                ts.set_token(tushare_token)
-                # 使用配置的 URL，默认为官方接口
-                tushare_url = os.getenv('TUSHARE_URL', 'https://api.tushare.pro')
-                
-                try:
-                    # 尝试使用 server 参数（较新版本支持）
-                    self.ts_pro = ts.pro_api(server=tushare_url)
-                except TypeError:
-                    # 兼容旧版本：手动设置 URL
-                    self.ts_pro = ts.pro_api()
-                    if hasattr(self.ts_pro, '_DataApi__http_url'):
-                        self.ts_pro._DataApi__http_url = tushare_url
-                
+                self.ts_pro, tushare_url = create_tushare_pro(token=tushare_token)
                 self.logger.info(f"Tushare备用数据源初始化成功，地址: {tushare_url}")
             except Exception as e:
                 self.logger.warning(f"Tushare初始化失败: {e}")
@@ -73,6 +61,38 @@ class SmartMonitorDataFetcher:
 
         else:
             self.logger.info("未配置Tushare Token，仅使用AKShare数据源")
+
+    def _stock_code_to_ts_code(self, stock_code: str) -> Optional[str]:
+        """将A股代码转换为Tushare代码。"""
+        if stock_code.startswith('6'):
+            return f"{stock_code}.SH"
+        if stock_code.startswith(('0', '3')):
+            return f"{stock_code}.SZ"
+        return None
+
+    def _resolve_stock_name(self, stock_code: str) -> str:
+        """解析股票名称，AKShare失败时降级到Tushare。"""
+        try:
+            info_df = ak.stock_individual_info_em(symbol=stock_code)
+            if info_df is not None and not info_df.empty:
+                info_dict = dict(zip(info_df['item'], info_df['value']))
+                stock_name = info_dict.get('股票简称')
+                if stock_name:
+                    return stock_name
+        except Exception as e:
+            self.logger.warning(f"AKShare获取股票名称失败 {stock_code}: {type(e).__name__}: {str(e)[:80]}")
+
+        if self.ts_pro:
+            try:
+                ts_code = self._stock_code_to_ts_code(stock_code)
+                if ts_code:
+                    stock_basic = self.ts_pro.stock_basic(ts_code=ts_code, fields='name')
+                    if stock_basic is not None and not stock_basic.empty:
+                        return stock_basic.iloc[0]['name']
+            except Exception as e:
+                self.logger.warning(f"Tushare获取股票名称失败 {stock_code}: {type(e).__name__}: {str(e)[:80]}")
+
+        return stock_code
     
     def get_realtime_quote(self, stock_code: str, retry: int = 1) -> Optional[Dict]:
         """
@@ -102,12 +122,7 @@ class SmartMonitorDataFetcher:
         # 方法2: 组合使用AKShare分钟行情 + 基本信息
         for attempt in range(retry):
             try:
-                # 1.1 获取股票基本信息（名称）
-                info_df = ak.stock_individual_info_em(symbol=stock_code)
-                stock_name = 'N/A'
-                if not info_df.empty:
-                    info_dict = dict(zip(info_df['item'], info_df['value']))
-                    stock_name = info_dict.get('股票简称', 'N/A')
+                stock_name = self._resolve_stock_name(stock_code)
                 
                 # 1.2 获取分钟级实时行情
                 min_df = ak.stock_zh_a_hist_min_em(symbol=stock_code, period='1', adjust='')

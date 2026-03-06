@@ -9,6 +9,7 @@ import io
 import warnings
 from datetime import datetime, timedelta
 import akshare as ak
+from data_source_manager import data_source_manager
 
 warnings.filterwarnings('ignore')
 
@@ -87,6 +88,35 @@ class QStockNewsDataFetcher:
     def _is_chinese_stock(self, symbol):
         """判断是否为中国股票"""
         return symbol.isdigit() and len(symbol) == 6
+
+    def _resolve_stock_name(self, symbol):
+        """解析股票名称，优先AkShare，失败时降级到Tushare。"""
+        try:
+            df_info = ak.stock_zh_a_spot_em()
+            if df_info is not None and not df_info.empty:
+                match = df_info[df_info['代码'] == symbol]
+                if not match.empty:
+                    stock_name = match.iloc[0]['名称']
+                    print(f"   找到股票名称: {stock_name}")
+                    return stock_name
+        except Exception as e:
+            print(f"   [Akshare] 获取股票名称失败: {e}")
+
+        if data_source_manager.tushare_available:
+            try:
+                ts_code = data_source_manager._convert_to_ts_code(symbol)
+                df = data_source_manager.tushare_api.stock_basic(
+                    ts_code=ts_code,
+                    fields='ts_code,name',
+                )
+                if df is not None and not df.empty:
+                    stock_name = df.iloc[0]['name']
+                    print(f"   [Tushare] 找到股票名称: {stock_name}")
+                    return stock_name
+            except Exception as e:
+                print(f"   [Tushare] 获取股票名称失败: {e}")
+
+        return None
     
     def _get_news_data(self, symbol):
         """获取新闻数据（使用akshare）"""
@@ -130,16 +160,7 @@ class QStockNewsDataFetcher:
             # 方法2: 如果没有获取到，尝试获取新浪财经新闻
             if not news_items:
                 try:
-                    # stock_zh_a_spot_em() - 获取股票信息，包含代码和名称
-                    df_info = ak.stock_zh_a_spot_em()
-                    
-                    # 查找股票名称
-                    stock_name = None
-                    if df_info is not None and not df_info.empty:
-                        match = df_info[df_info['代码'] == symbol]
-                        if not match.empty:
-                            stock_name = match.iloc[0]['名称']
-                            print(f"   找到股票名称: {stock_name}")
+                    stock_name = self._resolve_stock_name(symbol)
                     
                     # 使用股票名称搜索新闻
                     if stock_name:
