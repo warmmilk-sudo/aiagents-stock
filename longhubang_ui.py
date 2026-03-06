@@ -13,10 +13,9 @@ import base64
 
 from longhubang_engine import LonghubangEngine
 from longhubang_pdf import LonghubangPDFGenerator
-import config
 
 
-def display_longhubang():
+def display_longhubang(lightweight_model=None, reasoning_model=None):
     """显示智瞰龙虎主界面"""
     
     st.markdown("""
@@ -91,7 +90,7 @@ def display_longhubang():
     ])
     
     with tab1:
-        display_analysis_tab()
+        display_analysis_tab(lightweight_model, reasoning_model)
     
     with tab2:
         display_history_tab()
@@ -100,12 +99,12 @@ def display_longhubang():
         display_statistics_tab()
 
 
-def display_analysis_tab():
+def display_analysis_tab(lightweight_model=None, reasoning_model=None):
     """显示分析标签页"""
     
     # 检查是否触发批量分析（不立即删除标志）
     if st.session_state.get('longhubang_batch_trigger'):
-        run_longhubang_batch_analysis()
+        run_longhubang_batch_analysis(lightweight_model, reasoning_model)
         return
     
     st.subheader("🔍 龙虎榜综合分析")
@@ -157,12 +156,20 @@ def display_analysis_tab():
         if 'longhubang_result' in st.session_state:
             del st.session_state.longhubang_result
         
-        # 准备参数（使用.env中配置的默认模型）
+        # 准备参数（使用当前会话的双模型选择）
         if analysis_mode == "指定日期":
             date_str = selected_date.strftime('%Y-%m-%d')
-            run_longhubang_analysis(date=date_str)
+            run_longhubang_analysis(
+                date=date_str,
+                lightweight_model=lightweight_model,
+                reasoning_model=reasoning_model,
+            )
         else:
-            run_longhubang_analysis(days=days)
+            run_longhubang_analysis(
+                days=days,
+                lightweight_model=lightweight_model,
+                reasoning_model=reasoning_model,
+            )
     
     # 显示分析结果
     if 'longhubang_result' in st.session_state:
@@ -174,11 +181,9 @@ def display_analysis_tab():
             st.error(f"❌ 分析失败: {result.get('error', '未知错误')}")
 
 
-def run_longhubang_analysis(model=None, date=None, days=1):
+def run_longhubang_analysis(model=None, date=None, days=1,
+                            lightweight_model=None, reasoning_model=None):
     """运行龙虎榜分析"""
-    import config
-    model = model or config.DEFAULT_MODEL_NAME
-    
     # 进度显示
     progress_bar = st.progress(0)
     status_text = st.empty()
@@ -187,7 +192,11 @@ def run_longhubang_analysis(model=None, date=None, days=1):
         status_text.text("🚀 初始化分析引擎...")
         progress_bar.progress(5)
         
-        engine = LonghubangEngine(model=model)
+        engine = LonghubangEngine(
+            model=model,
+            lightweight_model=lightweight_model,
+            reasoning_model=reasoning_model,
+        )
         
         status_text.text("📊 正在获取龙虎榜数据...")
         progress_bar.progress(15)
@@ -454,7 +463,7 @@ def display_scoring_ranking(result):
             showlegend=False,
             height=400
         )
-        st.plotly_chart(fig1, config={'displayModeBar': False}, use_container_width=True)
+        st.plotly_chart(fig1, config={'displayModeBar': False}, width='stretch')
     
     with col2:
         # 五维评分雷达图（显示批量分析数量的股票）
@@ -502,7 +511,7 @@ def display_scoring_ranking(result):
                     x=0.5
                 )
             )
-            st.plotly_chart(fig2, config={'displayModeBar': False}, use_container_width=True)
+            st.plotly_chart(fig2, config={'displayModeBar': False}, width='stretch')
     
     st.markdown("---")
     
@@ -696,7 +705,7 @@ def display_visualizations(result):
             labels={'name': '股票名称', 'net_inflow': '净流入金额(元)'}
         )
         fig.update_layout(xaxis_tickangle=-45)
-        st.plotly_chart(fig, config={'displayModeBar': False}, use_container_width=True)
+        st.plotly_chart(fig, config={'displayModeBar': False}, width='stretch')
     
     # 热门概念图表
     if summary.get('hot_concepts'):
@@ -711,7 +720,7 @@ def display_visualizations(result):
             names='概念',
             title='热门概念出现次数分布'
         )
-        st.plotly_chart(fig, config={'displayModeBar': False}, use_container_width=True)
+        st.plotly_chart(fig, config={'displayModeBar': False}, width='stretch')
 
 
 def display_pdf_export_section(result):
@@ -1258,7 +1267,7 @@ def display_statistics_tab():
         st.error(f"❌ 加载统计数据失败: {str(e)}")
 
 
-def run_longhubang_batch_analysis():
+def run_longhubang_batch_analysis(lightweight_model=None, reasoning_model=None):
     """执行龙虎榜TOP股票批量分析（遵循统一调用规范）"""
     
     st.markdown("## 🚀 龙虎榜TOP股票批量分析")
@@ -1390,7 +1399,8 @@ def run_longhubang_batch_analysis():
                             'sentiment': False,
                             'news': False
                         },
-                        selected_model=config.DEFAULT_MODEL_NAME
+                        selected_lightweight_model=lightweight_model,
+                        selected_reasoning_model=reasoning_model,
                     )
                     
                     results.append({
@@ -1421,7 +1431,8 @@ def run_longhubang_batch_analysis():
                             'sentiment': False,
                             'news': False
                         },
-                        selected_model=config.DEFAULT_MODEL_NAME
+                        selected_lightweight_model=lightweight_model,
+                        selected_reasoning_model=reasoning_model,
                     )
                     return {"code": code, "result": result}
                 except Exception as e:

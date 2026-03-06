@@ -11,13 +11,12 @@ from typing import Dict, Any, List
 from datetime import datetime, timedelta
 import time
 import logging
-import config
 
 
 class LonghubangEngine:
     """龙虎榜综合分析引擎"""
     
-    def __init__(self, model=None, db_path='longhubang.db'):
+    def __init__(self, model=None, lightweight_model=None, reasoning_model=None, db_path='longhubang.db'):
         """
         初始化分析引擎
         
@@ -27,7 +26,11 @@ class LonghubangEngine:
         """
         self.data_fetcher = LonghubangDataFetcher()
         self.database = LonghubangDatabase(db_path)
-        self.agents = LonghubangAgents(model=model)
+        self.agents = LonghubangAgents(
+            model=model,
+            lightweight_model=lightweight_model,
+            reasoning_model=reasoning_model,
+        )
         self.scoring = LonghubangScoring()
         # 初始化日志
         self.logger = logging.getLogger(__name__)

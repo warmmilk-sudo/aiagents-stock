@@ -1,12 +1,9 @@
-"""
-模型配置文件
-包含所有可用的AI模型选项
-支持通过 .env 中的 DEFAULT_MODEL_NAME 自定义默认模型
-"""
+"""模型配置文件"""
+
 import config
 
-# 预置模型列表（用户可以在UI中选择）
-_preset_models = {
+
+_PRESET_MODELS = {
     "deepseek-chat": "DeepSeek Chat",
     "deepseek-reasoner": "DeepSeek Reasoner (推理增强)",
     "qwen-plus": "qwen-plus (阿里百炼)",
@@ -26,26 +23,39 @@ _preset_models = {
     "step3": "阶跃星辰(硅基流动)",
 }
 
-# 获取 .env 中配置的默认模型名称
-_default_model = config.DEFAULT_MODEL_NAME
 
-# 如果 .env 中配置的默认模型不在预置列表中，自动将其加入列表首位
-if _default_model and _default_model not in _preset_models:
-    _preset_models = {_default_model: f"{_default_model} (自定义默认)"} | _preset_models
+def _normalize_model_name(model_name):
+    if model_name is None:
+        return None
+    normalized = str(model_name).strip()
+    return normalized or None
 
-# 确保默认模型的显示名称带有 "(默认)" 标记
-if _default_model in _preset_models:
-    original_label = _preset_models[_default_model]
-    if "(默认)" not in original_label:
-        _preset_models[_default_model] = f"{original_label} (默认)"
 
-# 导出模型选项字典，确保默认模型排在第一位
-model_options = {}
-if _default_model in _preset_models:
-    model_options[_default_model] = _preset_models[_default_model]
-for k, v in _preset_models.items():
-    if k not in model_options:
-        model_options[k] = v
+def _label_for_model(model_name):
+    return _PRESET_MODELS.get(model_name, f"{model_name} (自定义)")
 
-# 导出默认模型名称，供其他模块使用
-default_model_name = _default_model
+
+def get_model_options(*additional_models):
+    ordered_models = []
+
+    for model_name in (
+        config.LIGHTWEIGHT_MODEL_NAME,
+        config.REASONING_MODEL_NAME,
+        *additional_models,
+    ):
+        normalized = _normalize_model_name(model_name)
+        if normalized and normalized not in ordered_models:
+            ordered_models.append(normalized)
+
+    options = {}
+    for model_name in ordered_models:
+        options[model_name] = _label_for_model(model_name)
+
+    for model_name, label in _PRESET_MODELS.items():
+        if model_name not in options:
+            options[model_name] = label
+
+    return options
+
+
+model_options = get_model_options()

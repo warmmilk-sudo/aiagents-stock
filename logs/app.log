@@ -1,0 +1,1388 @@
+2026-03-05 10:55:02 [database] WARNING - JSON反序列化失败: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)
+2026-03-05 10:59:39 [httpx] INFO - HTTP Request: POST https://ark.cn-beijing.volces.com/api/v3/chat/completions "HTTP/1.1 200 OK"
+2026-03-05 10:59:40 [httpx] INFO - HTTP Request: POST https://ark.cn-beijing.volces.com/api/v3/chat/completions "HTTP/1.1 200 OK"
+2026-03-05 10:59:45 [httpx] INFO - HTTP Request: POST https://ark.cn-beijing.volces.com/api/v3/chat/completions "HTTP/1.1 200 OK"
+2026-03-05 11:00:50 [httpx] INFO - HTTP Request: POST https://ark.cn-beijing.volces.com/api/v3/chat/completions "HTTP/1.1 200 OK"
+2026-03-05 11:00:51 [httpx] INFO - HTTP Request: POST https://ark.cn-beijing.volces.com/api/v3/chat/completions "HTTP/1.1 200 OK"
+2026-03-05 11:00:59 [httpx] INFO - HTTP Request: POST https://ark.cn-beijing.volces.com/api/v3/chat/completions "HTTP/1.1 200 OK"
+2026-03-05 11:02:15 [httpx] INFO - HTTP Request: POST https://ark.cn-beijing.volces.com/api/v3/chat/completions "HTTP/1.1 200 OK"
+2026-03-05 11:02:18 [httpx] INFO - HTTP Request: POST https://ark.cn-beijing.volces.com/api/v3/chat/completions "HTTP/1.1 200 OK"
+2026-03-05 11:02:29 [httpx] INFO - HTTP Request: POST https://ark.cn-beijing.volces.com/api/v3/chat/completions "HTTP/1.1 200 OK"
+2026-03-05 11:03:02 [openai._base_client] INFO - Retrying request to /chat/completions in 0.447756 seconds
+2026-03-05 11:03:52 [httpx] INFO - HTTP Request: POST https://ark.cn-beijing.volces.com/api/v3/chat/completions "HTTP/1.1 200 OK"
+2026-03-05 11:03:52 [httpx] INFO - HTTP Request: POST https://ark.cn-beijing.volces.com/api/v3/chat/completions "HTTP/1.1 200 OK"
+2026-03-05 11:04:01 [openai._base_client] INFO - Retrying request to /chat/completions in 0.754240 seconds
+2026-03-05 11:04:01 [openai._base_client] INFO - Retrying request to /chat/completions in 0.384736 seconds
+2026-03-05 11:04:01 [openai._base_client] INFO - Retrying request to /chat/completions in 0.495834 seconds
+2026-03-05 11:05:08 [httpx] INFO - HTTP Request: POST https://ark.cn-beijing.volces.com/api/v3/chat/completions "HTTP/1.1 200 OK"
+2026-03-05 11:05:09 [httpx] INFO - HTTP Request: POST https://ark.cn-beijing.volces.com/api/v3/chat/completions "HTTP/1.1 200 OK"
+2026-03-05 11:05:51 [httpx] INFO - HTTP Request: POST https://ark.cn-beijing.volces.com/api/v3/chat/completions "HTTP/1.1 200 OK"
+2026-03-05 11:06:22 [httpx] INFO - HTTP Request: POST https://ark.cn-beijing.volces.com/api/v3/chat/completions "HTTP/1.1 200 OK"
+2026-03-05 11:06:23 [httpx] INFO - HTTP Request: POST https://ark.cn-beijing.volces.com/api/v3/chat/completions "HTTP/1.1 200 OK"
+2026-03-05 11:06:58 [httpx] INFO - HTTP Request: POST https://ark.cn-beijing.volces.com/api/v3/chat/completions "HTTP/1.1 200 OK"
+2026-03-05 11:08:04 [httpx] INFO - HTTP Request: POST https://ark.cn-beijing.volces.com/api/v3/chat/completions "HTTP/1.1 200 OK"
+2026-03-05 11:08:13 [httpx] INFO - HTTP Request: POST https://ark.cn-beijing.volces.com/api/v3/chat/completions "HTTP/1.1 200 OK"
+2026-03-05 11:08:21 [httpx] INFO - HTTP Request: POST https://ark.cn-beijing.volces.com/api/v3/chat/completions "HTTP/1.1 200 OK"
+2026-03-05 11:08:27 [httpx] INFO - HTTP Request: POST https://ark.cn-beijing.volces.com/api/v3/chat/completions "HTTP/1.1 200 OK"
+2026-03-05 11:08:36 [httpx] INFO - HTTP Request: POST https://ark.cn-beijing.volces.com/api/v3/chat/completions "HTTP/1.1 200 OK"
+2026-03-05 11:09:27 [httpx] INFO - HTTP Request: POST https://ark.cn-beijing.volces.com/api/v3/chat/completions "HTTP/1.1 200 OK"
+2026-03-05 11:09:47 [httpx] INFO - HTTP Request: POST https://ark.cn-beijing.volces.com/api/v3/chat/completions "HTTP/1.1 200 OK"
+2026-03-05 11:33:39 [news_flow_agents] INFO - ✅ DeepSeek客户端初始化成功，模型: deepseek-v3-2-251201
+2026-03-05 11:33:39 [news_flow_agents] INFO - ✅ DeepSeek客户端初始化成功，模型: deepseek-v3-2-251201
+2026-03-05 11:33:39 [news_flow_db] INFO - ✅ 新闻流量数据库初始化完成
+2026-03-05 11:33:39 [news_flow_engine] INFO - ✅ 新闻流量引擎初始化完成
+2026-03-05 11:33:39 [news_flow_scheduler] INFO - [新闻流量] 调度器初始化完成
+2026-03-05 11:33:40 [news_flow_data] INFO - 正在获取 weibo 平台数据...
+2026-03-05 11:33:41 [news_flow_data] INFO - 正在获取 douyin 平台数据...
+2026-03-05 11:33:43 [news_flow_data] INFO - 正在获取 zhihu 平台数据...
+2026-03-05 11:33:44 [news_flow_data] INFO - 正在获取 bilibili 平台数据...
+2026-03-05 11:33:46 [news_flow_data] INFO - 正在获取 xiaohongshu 平台数据...
+2026-03-05 11:33:47 [news_flow_data] INFO - 正在获取 kuaishou 平台数据...
+2026-03-05 11:33:49 [news_flow_data] INFO - 正在获取 tieba 平台数据...
+2026-03-05 11:33:51 [news_flow_data] INFO - 正在获取 weixin 平台数据...
+2026-03-05 11:33:52 [news_flow_data] INFO - 正在获取 baidu 平台数据...
+2026-03-05 11:33:53 [news_flow_data] INFO - 正在获取 jinritoutiao 平台数据...
+2026-03-05 11:33:55 [news_flow_data] INFO - 正在获取 tenxunwang 平台数据...
+2026-03-05 11:33:56 [news_flow_data] INFO - 正在获取 netease 平台数据...
+2026-03-05 11:33:58 [news_flow_data] INFO - 正在获取 ifeng 平台数据...
+2026-03-05 11:33:59 [news_flow_data] INFO - 正在获取 sina 平台数据...
+2026-03-05 11:34:01 [news_flow_data] INFO - 正在获取 sina_finance 平台数据...
+2026-03-05 11:34:02 [news_flow_data] INFO - 正在获取 eastmoney 平台数据...
+2026-03-05 11:34:04 [news_flow_data] INFO - 正在获取 xueqiu 平台数据...
+2026-03-05 11:34:06 [news_flow_data] INFO - 正在获取 cls 平台数据...
+2026-03-05 11:34:08 [news_flow_data] INFO - 正在获取 wallstreetcn 平台数据...
+2026-03-05 11:34:10 [news_flow_data] INFO - 正在获取 tskr 平台数据...
+2026-03-05 11:34:11 [news_flow_data] INFO - 正在获取 sspai 平台数据...
+2026-03-05 11:34:12 [sector_strategy_db] INFO - [智策板块] 数据库初始化完成
+2026-03-05 11:34:12 [news_flow_data] INFO - 正在获取 juejin 平台数据...
+2026-03-05 12:46:54 [sector_strategy_db] INFO - [智策板块] 数据库初始化完成
+2026-03-05 12:46:54 [sector_strategy_db] INFO - [智策板块] 数据库初始化完成
+2026-03-06 02:31:43 [sector_strategy_db] INFO - [智策板块] 数据库初始化完成
+2026-03-06 02:47:05 [macro_cycle_engine] INFO - ============================================================
+2026-03-06 02:47:05 [macro_cycle_engine] INFO - 宏观周期分析系统启动
+2026-03-06 02:47:05 [macro_cycle_engine] INFO - ============================================================
+2026-03-06 02:47:05 [macro_cycle_engine] INFO - [阶段1] 宏观经济数据采集...
+2026-03-06 02:47:05 [macro_cycle_engine] INFO - 数据采集和格式化完成
+2026-03-06 02:47:05 [macro_cycle_engine] INFO - 数据文本长度: 15 字符
+2026-03-06 02:47:05 [macro_cycle_engine] INFO - [阶段2] AI智能体分析集群工作中...
+2026-03-06 02:47:05 [macro_cycle_engine] INFO - 1/4 康波周期分析师...
+2026-03-06 02:47:05 [macro_cycle_engine] INFO - 2/4 美林时钟分析师...
+2026-03-06 02:47:05 [macro_cycle_engine] INFO - 3/4 中国政策分析师...
+2026-03-06 02:47:05 [macro_cycle_engine] INFO - 4/4 首席宏观策略师综合研判...
+2026-03-06 02:47:05 [macro_cycle_engine] INFO - ============================================================
+2026-03-06 02:47:05 [macro_cycle_engine] INFO - 宏观周期分析完成
+2026-03-06 02:47:05 [macro_cycle_engine] INFO - ============================================================
+2026-03-06 10:57:32 [macro_cycle_engine] INFO - [宏观周期引擎] 初始化完成 (模型: test-model)
+2026-03-06 10:57:32 [macro_cycle_engine] INFO - ============================================================
+2026-03-06 10:57:32 [macro_cycle_engine] INFO - 宏观周期分析系统启动
+2026-03-06 10:57:32 [macro_cycle_engine] INFO - ============================================================
+2026-03-06 10:57:32 [macro_cycle_engine] INFO - [阶段1] 宏观经济数据采集...
+2026-03-06 10:57:32 [macro_cycle_engine] INFO - 数据采集和格式化完成
+2026-03-06 10:57:32 [macro_cycle_engine] INFO - 数据文本长度: 15 字符
+2026-03-06 10:57:32 [macro_cycle_engine] INFO - [阶段2] AI智能体分析集群工作中...
+2026-03-06 10:57:32 [macro_cycle_engine] INFO - 1/4 康波周期分析师...
+2026-03-06 10:57:32 [macro_cycle_engine] INFO - 2/4 美林时钟分析师...
+2026-03-06 10:57:32 [macro_cycle_engine] INFO - 3/4 中国政策分析师...
+2026-03-06 10:57:32 [macro_cycle_engine] INFO - 4/4 首席宏观策略师综合研判...
+2026-03-06 10:57:32 [macro_cycle_engine] INFO - ============================================================
+2026-03-06 10:57:32 [macro_cycle_engine] INFO - 宏观周期分析完成
+2026-03-06 10:57:32 [macro_cycle_engine] INFO - ============================================================
+2026-03-06 10:57:32 [sector_strategy_db] INFO - [智策板块] 数据库初始化完成
+2026-03-06 10:57:32 [sector_strategy_db] INFO - [智策板块] 数据库初始化完成
+2026-03-06 10:57:51 [database] WARNING - JSON反序列化失败: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)
+2026-03-06 10:57:51 [macro_cycle_engine] INFO - [宏观周期引擎] 初始化完成 (模型: test-model)
+2026-03-06 10:57:51 [macro_cycle_engine] INFO - ============================================================
+2026-03-06 10:57:51 [macro_cycle_engine] INFO - 宏观周期分析系统启动
+2026-03-06 10:57:51 [macro_cycle_engine] INFO - ============================================================
+2026-03-06 10:57:51 [macro_cycle_engine] INFO - [阶段1] 宏观经济数据采集...
+2026-03-06 10:57:51 [macro_cycle_engine] INFO - 数据采集和格式化完成
+2026-03-06 10:57:51 [macro_cycle_engine] INFO - 数据文本长度: 15 字符
+2026-03-06 10:57:51 [macro_cycle_engine] INFO - [阶段2] AI智能体分析集群工作中...
+2026-03-06 10:57:51 [macro_cycle_engine] INFO - 1/4 康波周期分析师...
+2026-03-06 10:57:51 [macro_cycle_engine] INFO - 2/4 美林时钟分析师...
+2026-03-06 10:57:51 [macro_cycle_engine] INFO - 3/4 中国政策分析师...
+2026-03-06 10:57:51 [macro_cycle_engine] INFO - 4/4 首席宏观策略师综合研判...
+2026-03-06 10:57:51 [macro_cycle_engine] INFO - ============================================================
+2026-03-06 10:57:51 [macro_cycle_engine] INFO - 宏观周期分析完成
+2026-03-06 10:57:51 [macro_cycle_engine] INFO - ============================================================
+2026-03-06 10:57:52 [sector_strategy_db] INFO - [智策板块] 数据库初始化完成
+2026-03-06 10:57:52 [sector_strategy_db] INFO - [智策板块] 数据库初始化完成
+2026-03-06 11:00:20 [database] WARNING - JSON反序列化失败: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)
+2026-03-06 11:00:20 [macro_cycle_engine] INFO - [宏观周期引擎] 初始化完成 (模型: test-model)
+2026-03-06 11:00:20 [macro_cycle_engine] INFO - ============================================================
+2026-03-06 11:00:20 [macro_cycle_engine] INFO - 宏观周期分析系统启动
+2026-03-06 11:00:20 [macro_cycle_engine] INFO - ============================================================
+2026-03-06 11:00:20 [macro_cycle_engine] INFO - [阶段1] 宏观经济数据采集...
+2026-03-06 11:00:20 [macro_cycle_engine] INFO - 数据采集和格式化完成
+2026-03-06 11:00:20 [macro_cycle_engine] INFO - 数据文本长度: 15 字符
+2026-03-06 11:00:20 [macro_cycle_engine] INFO - [阶段2] AI智能体分析集群工作中...
+2026-03-06 11:00:20 [macro_cycle_engine] INFO - 1/4 康波周期分析师...
+2026-03-06 11:00:20 [macro_cycle_engine] INFO - 2/4 美林时钟分析师...
+2026-03-06 11:00:20 [macro_cycle_engine] INFO - 3/4 中国政策分析师...
+2026-03-06 11:00:20 [macro_cycle_engine] INFO - 4/4 首席宏观策略师综合研判...
+2026-03-06 11:00:20 [macro_cycle_engine] INFO - ============================================================
+2026-03-06 11:00:20 [macro_cycle_engine] INFO - 宏观周期分析完成
+2026-03-06 11:00:20 [macro_cycle_engine] INFO - ============================================================
+2026-03-06 11:00:20 [sector_strategy_db] INFO - [智策板块] 数据库初始化完成
+2026-03-06 11:00:20 [sector_strategy_db] INFO - [智策板块] 数据库初始化完成
+2026-03-06 12:32:16 [news_flow_agents] INFO - AI模型客户端初始化成功，模型: deepseek-v3-2-251201
+2026-03-06 12:32:16 [database] WARNING - JSON反序列化失败: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)
+2026-03-06 12:32:16 [macro_cycle_engine] INFO - [宏观周期引擎] 初始化完成 (模型: test-model)
+2026-03-06 12:32:16 [macro_cycle_engine] INFO - ============================================================
+2026-03-06 12:32:16 [macro_cycle_engine] INFO - 宏观周期分析系统启动
+2026-03-06 12:32:16 [macro_cycle_engine] INFO - ============================================================
+2026-03-06 12:32:16 [macro_cycle_engine] INFO - [阶段1] 宏观经济数据采集...
+2026-03-06 12:32:16 [macro_cycle_engine] INFO - 数据采集和格式化完成
+2026-03-06 12:32:16 [macro_cycle_engine] INFO - 数据文本长度: 15 字符
+2026-03-06 12:32:16 [macro_cycle_engine] INFO - [阶段2] AI智能体分析集群工作中...
+2026-03-06 12:32:16 [macro_cycle_engine] INFO - 1/4 康波周期分析师...
+2026-03-06 12:32:16 [macro_cycle_engine] INFO - 2/4 美林时钟分析师...
+2026-03-06 12:32:16 [macro_cycle_engine] INFO - 3/4 中国政策分析师...
+2026-03-06 12:32:16 [macro_cycle_engine] INFO - 4/4 首席宏观策略师综合研判...
+2026-03-06 12:32:16 [macro_cycle_engine] INFO - ============================================================
+2026-03-06 12:32:16 [macro_cycle_engine] INFO - 宏观周期分析完成
+2026-03-06 12:32:16 [macro_cycle_engine] INFO - ============================================================
+2026-03-06 12:32:20 [news_flow_agents] INFO - AI模型客户端初始化成功，模型: test-model
+2026-03-06 12:32:20 [sector_strategy_db] INFO - [智策板块] 数据库初始化完成
+2026-03-06 12:32:20 [sector_strategy_db] INFO - [智策板块] 数据库初始化完成
+2026-03-06 12:32:47 [news_flow_agents] INFO - AI模型客户端初始化成功，模型: deepseek-v3-2-251201
+2026-03-06 12:32:48 [database] WARNING - JSON反序列化失败: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)
+2026-03-06 12:32:48 [macro_cycle_engine] INFO - [宏观周期引擎] 初始化完成 (模型: test-model)
+2026-03-06 12:32:48 [macro_cycle_engine] INFO - ============================================================
+2026-03-06 12:32:48 [macro_cycle_engine] INFO - 宏观周期分析系统启动
+2026-03-06 12:32:48 [macro_cycle_engine] INFO - ============================================================
+2026-03-06 12:32:48 [macro_cycle_engine] INFO - [阶段1] 宏观经济数据采集...
+2026-03-06 12:32:48 [macro_cycle_engine] INFO - 数据采集和格式化完成
+2026-03-06 12:32:48 [macro_cycle_engine] INFO - 数据文本长度: 15 字符
+2026-03-06 12:32:48 [macro_cycle_engine] INFO - [阶段2] AI智能体分析集群工作中...
+2026-03-06 12:32:48 [macro_cycle_engine] INFO - 1/4 康波周期分析师...
+2026-03-06 12:32:48 [macro_cycle_engine] INFO - 2/4 美林时钟分析师...
+2026-03-06 12:32:48 [macro_cycle_engine] INFO - 3/4 中国政策分析师...
+2026-03-06 12:32:48 [macro_cycle_engine] INFO - 4/4 首席宏观策略师综合研判...
+2026-03-06 12:32:48 [macro_cycle_engine] INFO - ============================================================
+2026-03-06 12:32:48 [macro_cycle_engine] INFO - 宏观周期分析完成
+2026-03-06 12:32:48 [macro_cycle_engine] INFO - ============================================================
+2026-03-06 12:32:53 [news_flow_agents] INFO - AI模型客户端初始化成功，模型: test-model
+2026-03-06 12:32:53 [sector_strategy_db] INFO - [智策板块] 数据库初始化完成
+2026-03-06 12:32:53 [sector_strategy_db] INFO - [智策板块] 数据库初始化完成
+2026-03-06 12:38:38 [news_flow_agents] INFO - AI模型客户端初始化成功，模型: deepseek-v3-2-251201
+2026-03-06 12:38:39 [database] WARNING - JSON反序列化失败: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)
+2026-03-06 12:38:39 [macro_cycle_engine] INFO - [宏观周期引擎] 初始化完成 (模型: test-model)
+2026-03-06 12:38:39 [macro_cycle_engine] INFO - ============================================================
+2026-03-06 12:38:39 [macro_cycle_engine] INFO - 宏观周期分析系统启动
+2026-03-06 12:38:39 [macro_cycle_engine] INFO - ============================================================
+2026-03-06 12:38:39 [macro_cycle_engine] INFO - [阶段1] 宏观经济数据采集...
+2026-03-06 12:38:39 [macro_cycle_engine] INFO - 数据采集和格式化完成
+2026-03-06 12:38:39 [macro_cycle_engine] INFO - 数据文本长度: 15 字符
+2026-03-06 12:38:39 [macro_cycle_engine] INFO - [阶段2] AI智能体分析集群工作中...
+2026-03-06 12:38:39 [macro_cycle_engine] INFO - 1/4 康波周期分析师...
+2026-03-06 12:38:39 [macro_cycle_engine] INFO - 2/4 美林时钟分析师...
+2026-03-06 12:38:39 [macro_cycle_engine] INFO - 3/4 中国政策分析师...
+2026-03-06 12:38:39 [macro_cycle_engine] INFO - 4/4 首席宏观策略师综合研判...
+2026-03-06 12:38:39 [macro_cycle_engine] INFO - ============================================================
+2026-03-06 12:38:39 [macro_cycle_engine] INFO - 宏观周期分析完成
+2026-03-06 12:38:39 [macro_cycle_engine] INFO - ============================================================
+2026-03-06 12:38:44 [news_flow_agents] INFO - AI模型客户端初始化成功，模型: test-model
+2026-03-06 12:38:44 [sector_strategy_db] INFO - [智策板块] 数据库初始化完成
+2026-03-06 12:38:44 [sector_strategy_db] INFO - [智策板块] 数据库初始化完成
+2026-03-06 15:11:41 [sector_strategy_db] INFO - [智策板块] 数据库初始化完成
+2026-03-06 15:12:08 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 15:12:08 [smart_monitor_db] INFO - 数据库初始化完成: smart_monitor.db
+2026-03-06 15:12:08 [smart_monitor_qmt] INFO - 使用模拟交易模式
+2026-03-06 15:12:08 [smart_monitor_qmt] INFO - 模拟连接成功: simulator
+2026-03-06 15:12:08 [smart_monitor_engine] INFO - 使用模拟交易模式
+2026-03-06 15:12:08 [smart_monitor_engine] INFO - 智能盯盘引擎初始化完成
+2026-03-06 15:12:08 [smart_monitor_db] INFO - 数据库初始化完成: smart_monitor.db
+2026-03-06 15:12:08 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 15:12:08 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 601969
+2026-03-06 15:12:09 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 601969，共60条
+2026-03-06 15:12:09 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 15:12:09 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 300724
+2026-03-06 15:12:09 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 300724，共60条
+2026-03-06 15:12:09 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 15:12:09 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 600610
+2026-03-06 15:12:09 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 600610，共60条
+2026-03-06 15:12:09 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 15:12:09 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 002639
+2026-03-06 15:12:09 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 002639，共60条
+2026-03-06 15:12:22 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 15:12:22 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 601969
+2026-03-06 15:12:22 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 601969，共60条
+2026-03-06 15:12:22 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 15:12:22 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 300724
+2026-03-06 15:12:22 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 300724，共60条
+2026-03-06 15:12:22 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 15:12:22 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 600610
+2026-03-06 15:12:22 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 600610，共60条
+2026-03-06 15:12:22 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 15:12:22 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 002639
+2026-03-06 15:12:22 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 002639，共60条
+2026-03-06 15:13:07 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 15:13:07 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 601969
+2026-03-06 15:13:07 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 601969，共60条
+2026-03-06 15:13:07 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 15:13:07 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 300724
+2026-03-06 15:13:07 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 300724，共60条
+2026-03-06 15:13:07 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 15:13:07 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 600610
+2026-03-06 15:13:07 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 600610，共60条
+2026-03-06 15:13:07 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 15:13:07 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 002639
+2026-03-06 15:13:07 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 002639，共60条
+2026-03-06 16:54:05 [sector_strategy_db] INFO - [智策板块] 数据库初始化完成
+2026-03-06 16:54:09 [smart_monitor_db] INFO - 数据库初始化完成: smart_monitor.db
+2026-03-06 16:54:09 [smart_monitor_db] INFO - 更新监控任务: 000158
+2026-03-06 16:54:09 [smart_monitor_db] INFO - 数据库初始化完成: smart_monitor.db
+2026-03-06 16:54:09 [smart_monitor_db] INFO - 更新监控任务: 002236
+2026-03-06 16:54:09 [smart_monitor_db] INFO - 数据库初始化完成: smart_monitor.db
+2026-03-06 16:54:09 [smart_monitor_db] INFO - 更新监控任务: 300724
+2026-03-06 16:54:09 [smart_monitor_db] INFO - 数据库初始化完成: smart_monitor.db
+2026-03-06 16:54:09 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 16:54:09 [smart_monitor_db] INFO - 数据库初始化完成: smart_monitor.db
+2026-03-06 16:54:09 [smart_monitor_qmt] INFO - 使用模拟交易模式
+2026-03-06 16:54:09 [smart_monitor_qmt] INFO - 模拟连接成功: simulator
+2026-03-06 16:54:09 [smart_monitor_engine] INFO - 使用模拟交易模式
+2026-03-06 16:54:09 [smart_monitor_engine] INFO - 智能盯盘引擎初始化完成
+2026-03-06 16:54:09 [smart_monitor_db] INFO - 数据库初始化完成: smart_monitor.db
+2026-03-06 16:54:09 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 16:54:09 [smart_monitor_data] INFO - 优先使用Tushare获取 002236 实时行情...
+2026-03-06 16:54:09 [smart_monitor_data] ERROR - Tushare获取失败 002236: ERROR.
+2026-03-06 16:54:09 [smart_monitor_data] INFO - [OK] AKShare成功获取 002236 (大华股份) 实时行情
+2026-03-06 16:54:09 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 16:54:09 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 002236
+2026-03-06 16:54:09 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 002236，共60条
+2026-03-06 16:54:10 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 16:54:10 [smart_monitor_data] INFO - 优先使用Tushare获取 000158 实时行情...
+2026-03-06 16:54:10 [smart_monitor_data] ERROR - Tushare获取失败 000158: ERROR.
+2026-03-06 16:54:10 [smart_monitor_data] INFO - [OK] AKShare成功获取 000158 (常山北明) 实时行情
+2026-03-06 16:54:10 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 16:54:10 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 000158
+2026-03-06 16:54:10 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 000158，共60条
+2026-03-06 16:54:10 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 16:54:10 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 601969
+2026-03-06 16:54:10 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 601969，共60条
+2026-03-06 16:54:10 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 16:54:10 [smart_monitor_data] INFO - 优先使用Tushare获取 300724 实时行情...
+2026-03-06 16:54:11 [smart_monitor_data] ERROR - Tushare获取失败 300724: ERROR.
+2026-03-06 16:54:11 [smart_monitor_data] ERROR - AKShare获取失败 300724（已重试1次）
+2026-03-06 16:54:11 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 16:54:11 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 300724
+2026-03-06 16:54:11 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 300724，共60条
+2026-03-06 16:54:11 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 16:54:11 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 600610
+2026-03-06 16:54:11 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 600610，共60条
+2026-03-06 16:54:11 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 16:54:11 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 002639
+2026-03-06 16:54:11 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 002639，共60条
+2026-03-06 16:54:14 [news_flow_agents] INFO - AI模型客户端初始化成功，模型: ep-m-20260305001521-gqlkw
+2026-03-06 16:54:14 [news_flow_agents] INFO - AI模型客户端初始化成功，模型: ep-m-20260305001521-gqlkw
+2026-03-06 16:54:14 [news_flow_db] INFO - ✅ 新闻流量数据库初始化完成
+2026-03-06 16:54:14 [news_flow_engine] INFO - ✅ 新闻流量引擎初始化完成
+2026-03-06 16:54:14 [news_flow_scheduler] INFO - [新闻流量] 调度器初始化完成
+2026-03-06 16:54:14 [news_flow_data] INFO - 正在获取 weibo 平台数据...
+2026-03-06 16:54:14 [news_flow_data] INFO - 正在获取 douyin 平台数据...
+2026-03-06 16:54:15 [news_flow_data] INFO - 正在获取 zhihu 平台数据...
+2026-03-06 16:54:15 [news_flow_data] INFO - 正在获取 bilibili 平台数据...
+2026-03-06 16:54:15 [news_flow_data] INFO - 正在获取 xiaohongshu 平台数据...
+2026-03-06 16:54:16 [news_flow_data] INFO - 正在获取 kuaishou 平台数据...
+2026-03-06 16:54:16 [news_flow_data] INFO - 正在获取 tieba 平台数据...
+2026-03-06 16:54:17 [news_flow_data] INFO - 正在获取 weixin 平台数据...
+2026-03-06 16:54:17 [news_flow_data] INFO - 正在获取 baidu 平台数据...
+2026-03-06 16:54:17 [news_flow_data] INFO - 正在获取 jinritoutiao 平台数据...
+2026-03-06 16:54:18 [news_flow_data] INFO - 正在获取 tenxunwang 平台数据...
+2026-03-06 16:54:18 [news_flow_data] INFO - 正在获取 netease 平台数据...
+2026-03-06 16:54:19 [news_flow_data] INFO - 正在获取 ifeng 平台数据...
+2026-03-06 16:54:19 [news_flow_data] INFO - 正在获取 sina 平台数据...
+2026-03-06 16:54:20 [news_flow_data] INFO - 正在获取 sina_finance 平台数据...
+2026-03-06 16:54:20 [news_flow_data] INFO - 正在获取 eastmoney 平台数据...
+2026-03-06 16:54:20 [news_flow_data] INFO - 正在获取 xueqiu 平台数据...
+2026-03-06 16:54:21 [news_flow_data] INFO - 正在获取 cls 平台数据...
+2026-03-06 16:54:21 [news_flow_data] INFO - 正在获取 wallstreetcn 平台数据...
+2026-03-06 16:54:21 [news_flow_data] INFO - 正在获取 tskr 平台数据...
+2026-03-06 16:54:22 [news_flow_data] INFO - 正在获取 sspai 平台数据...
+2026-03-06 16:54:22 [news_flow_data] INFO - 正在获取 juejin 平台数据...
+2026-03-06 16:54:35 [news_flow_data] INFO - 正在获取 weibo 平台数据...
+2026-03-06 16:54:35 [news_flow_data] INFO - 正在获取 douyin 平台数据...
+2026-03-06 16:54:35 [news_flow_data] INFO - 正在获取 zhihu 平台数据...
+2026-03-06 16:54:36 [news_flow_data] INFO - 正在获取 bilibili 平台数据...
+2026-03-06 16:54:36 [news_flow_data] INFO - 正在获取 xiaohongshu 平台数据...
+2026-03-06 16:54:37 [news_flow_data] INFO - 正在获取 kuaishou 平台数据...
+2026-03-06 16:54:37 [news_flow_data] INFO - 正在获取 tieba 平台数据...
+2026-03-06 16:54:37 [news_flow_data] INFO - 正在获取 weixin 平台数据...
+2026-03-06 16:54:38 [news_flow_data] INFO - 正在获取 baidu 平台数据...
+2026-03-06 16:54:38 [news_flow_data] INFO - 正在获取 jinritoutiao 平台数据...
+2026-03-06 16:54:39 [news_flow_data] INFO - 正在获取 tenxunwang 平台数据...
+2026-03-06 16:54:39 [news_flow_data] INFO - 正在获取 netease 平台数据...
+2026-03-06 16:54:39 [news_flow_data] INFO - 正在获取 ifeng 平台数据...
+2026-03-06 16:54:40 [news_flow_data] INFO - 正在获取 sina 平台数据...
+2026-03-06 16:54:40 [news_flow_data] INFO - 正在获取 sina_finance 平台数据...
+2026-03-06 16:54:41 [news_flow_data] INFO - 正在获取 eastmoney 平台数据...
+2026-03-06 16:54:41 [news_flow_data] INFO - 正在获取 xueqiu 平台数据...
+2026-03-06 16:54:41 [news_flow_data] INFO - 正在获取 cls 平台数据...
+2026-03-06 16:54:42 [news_flow_data] INFO - 正在获取 wallstreetcn 平台数据...
+2026-03-06 16:54:42 [news_flow_data] INFO - 正在获取 tskr 平台数据...
+2026-03-06 16:54:43 [news_flow_data] INFO - 正在获取 sspai 平台数据...
+2026-03-06 16:54:43 [news_flow_data] INFO - 正在获取 juejin 平台数据...
+2026-03-06 16:54:43 [news_flow_engine] INFO - 🚀 开始完整分析...
+2026-03-06 16:54:43 [news_flow_engine] INFO - 🚀 开始快速分析...
+2026-03-06 16:54:43 [news_flow_engine] INFO - 📊 获取新闻数据...
+2026-03-06 16:54:43 [news_flow_data] INFO - 正在获取 weibo 平台数据...
+2026-03-06 16:54:44 [news_flow_data] INFO - 正在获取 douyin 平台数据...
+2026-03-06 16:54:44 [news_flow_data] INFO - 正在获取 zhihu 平台数据...
+2026-03-06 16:54:44 [news_flow_data] INFO - 正在获取 bilibili 平台数据...
+2026-03-06 16:54:45 [news_flow_data] INFO - 正在获取 xiaohongshu 平台数据...
+2026-03-06 16:54:45 [news_flow_data] INFO - 正在获取 kuaishou 平台数据...
+2026-03-06 16:54:46 [news_flow_data] INFO - 正在获取 tieba 平台数据...
+2026-03-06 16:54:46 [news_flow_data] INFO - 正在获取 weixin 平台数据...
+2026-03-06 16:54:46 [news_flow_data] INFO - 正在获取 baidu 平台数据...
+2026-03-06 16:54:47 [news_flow_data] INFO - 正在获取 jinritoutiao 平台数据...
+2026-03-06 16:54:47 [news_flow_data] INFO - 正在获取 tenxunwang 平台数据...
+2026-03-06 16:54:48 [news_flow_data] INFO - 正在获取 netease 平台数据...
+2026-03-06 16:54:48 [news_flow_data] INFO - 正在获取 ifeng 平台数据...
+2026-03-06 16:54:49 [news_flow_data] INFO - 正在获取 sina 平台数据...
+2026-03-06 16:54:49 [news_flow_data] INFO - 正在获取 sina_finance 平台数据...
+2026-03-06 16:54:49 [news_flow_data] INFO - 正在获取 eastmoney 平台数据...
+2026-03-06 16:54:50 [news_flow_data] INFO - 正在获取 xueqiu 平台数据...
+2026-03-06 16:54:50 [news_flow_data] INFO - 正在获取 cls 平台数据...
+2026-03-06 16:54:51 [news_flow_data] INFO - 正在获取 wallstreetcn 平台数据...
+2026-03-06 16:54:51 [news_flow_data] INFO - 正在获取 tskr 平台数据...
+2026-03-06 16:54:51 [news_flow_data] INFO - 正在获取 sspai 平台数据...
+2026-03-06 16:54:52 [news_flow_data] INFO - 正在获取 juejin 平台数据...
+2026-03-06 16:54:52 [news_flow_engine] INFO - 🔍 提取股票相关新闻...
+2026-03-06 16:54:52 [news_flow_engine] INFO - 🔥 分析热门话题...
+2026-03-06 16:54:52 [jieba] DEBUG - Building prefix dict from the default dictionary ...
+2026-03-06 16:54:53 [jieba] DEBUG - Dumping model to file cache C:\Users\HYGEA\AppData\Local\Temp\jieba.cache
+2026-03-06 16:54:53 [jieba] DEBUG - Loading model cost 0.403 seconds.
+2026-03-06 16:54:53 [jieba] DEBUG - Prefix dict has been built successfully.
+2026-03-06 16:54:53 [news_flow_engine] INFO - 📈 计算流量得分...
+2026-03-06 16:54:53 [news_flow_engine] INFO - 🔬 运行流量模型...
+2026-03-06 16:54:53 [news_flow_engine] INFO - 💭 分析市场情绪...
+2026-03-06 16:54:53 [news_flow_engine] INFO - 💾 保存分析结果...
+2026-03-06 16:54:53 [news_flow_db] INFO - ✅ 保存流量快照成功，ID: 17
+2026-03-06 16:54:53 [news_flow_engine] INFO - ✅ 快速分析完成，耗时 9.32 秒
+2026-03-06 16:54:53 [news_flow_engine] INFO - 🤖 运行AI分析...
+2026-03-06 16:54:53 [news_flow_agents] INFO - 🤖 开始AI分析...
+2026-03-06 16:54:53 [news_flow_agents] INFO -   📊 分析板块影响...
+2026-03-06 16:55:43 [httpx] INFO - HTTP Request: POST https://ark.cn-beijing.volces.com/api/v3/chat/completions "HTTP/1.1 200 OK"
+2026-03-06 16:55:43 [httpx] INFO - HTTP Request: POST https://ark.cn-beijing.volces.com/api/v3/chat/completions "HTTP/1.1 200 OK"
+2026-03-06 16:55:43 [news_flow_agents] ERROR - JSON解析失败: Extra data: line 7 column 1 (char 148)
+2026-03-06 16:55:43 [news_flow_agents] ERROR - JSON解析失败: Extra data: line 7 column 1 (char 148)
+2026-03-06 16:55:43 [news_flow_agents] INFO -   📈 生成股票推荐...
+2026-03-06 16:55:43 [news_flow_agents] INFO -   📈 生成股票推荐...
+2026-03-06 16:56:20 [httpx] INFO - HTTP Request: POST https://ark.cn-beijing.volces.com/api/v3/chat/completions "HTTP/1.1 200 OK"
+2026-03-06 16:56:20 [httpx] INFO - HTTP Request: POST https://ark.cn-beijing.volces.com/api/v3/chat/completions "HTTP/1.1 200 OK"
+2026-03-06 16:56:20 [news_flow_agents] INFO -   ⚠️ 评估风险...
+2026-03-06 16:56:20 [news_flow_agents] INFO -   ⚠️ 评估风险...
+2026-03-06 16:56:21 [news_flow_agents] INFO - AI模型客户端初始化成功，模型: ep-m-20260305001521-gqlkw
+2026-03-06 16:56:21 [news_flow_agents] INFO - AI模型客户端初始化成功，模型: ep-m-20260305001521-gqlkw
+2026-03-06 16:56:21 [news_flow_agents] INFO - AI模型客户端初始化成功，模型: ep-m-20260305001521-gqlkw
+2026-03-06 16:56:21 [news_flow_agents] INFO - AI模型客户端初始化成功，模型: ep-m-20260305001521-gqlkw
+2026-03-06 16:56:21 [news_flow_db] INFO - ✅ 新闻流量数据库初始化完成
+2026-03-06 16:56:21 [news_flow_db] INFO - ✅ 新闻流量数据库初始化完成
+2026-03-06 16:56:21 [news_flow_engine] INFO - ✅ 新闻流量引擎初始化完成
+2026-03-06 16:56:21 [news_flow_engine] INFO - ✅ 新闻流量引擎初始化完成
+2026-03-06 16:56:21 [news_flow_scheduler] INFO - [新闻流量] 调度器初始化完成
+2026-03-06 16:56:21 [news_flow_scheduler] INFO - [新闻流量] 调度器初始化完成
+2026-03-06 16:56:21 [news_flow_data] INFO - 正在获取 weibo 平台数据...
+2026-03-06 16:56:21 [news_flow_data] INFO - 正在获取 weibo 平台数据...
+2026-03-06 16:56:22 [news_flow_data] INFO - 正在获取 douyin 平台数据...
+2026-03-06 16:56:22 [news_flow_data] INFO - 正在获取 douyin 平台数据...
+2026-03-06 16:56:22 [news_flow_data] INFO - 正在获取 zhihu 平台数据...
+2026-03-06 16:56:22 [news_flow_data] INFO - 正在获取 zhihu 平台数据...
+2026-03-06 16:56:22 [news_flow_data] INFO - 正在获取 bilibili 平台数据...
+2026-03-06 16:56:22 [news_flow_data] INFO - 正在获取 bilibili 平台数据...
+2026-03-06 16:56:23 [news_flow_data] INFO - 正在获取 xiaohongshu 平台数据...
+2026-03-06 16:56:23 [news_flow_data] INFO - 正在获取 xiaohongshu 平台数据...
+2026-03-06 16:56:23 [news_flow_data] INFO - 正在获取 kuaishou 平台数据...
+2026-03-06 16:56:23 [news_flow_data] INFO - 正在获取 kuaishou 平台数据...
+2026-03-06 16:56:24 [news_flow_data] INFO - 正在获取 tieba 平台数据...
+2026-03-06 16:56:24 [news_flow_data] INFO - 正在获取 tieba 平台数据...
+2026-03-06 16:56:24 [news_flow_data] INFO - 正在获取 weixin 平台数据...
+2026-03-06 16:56:24 [news_flow_data] INFO - 正在获取 weixin 平台数据...
+2026-03-06 16:56:24 [news_flow_data] INFO - 正在获取 baidu 平台数据...
+2026-03-06 16:56:24 [news_flow_data] INFO - 正在获取 baidu 平台数据...
+2026-03-06 16:56:25 [news_flow_data] INFO - 正在获取 jinritoutiao 平台数据...
+2026-03-06 16:56:25 [news_flow_data] INFO - 正在获取 jinritoutiao 平台数据...
+2026-03-06 16:56:25 [news_flow_data] INFO - 正在获取 tenxunwang 平台数据...
+2026-03-06 16:56:25 [news_flow_data] INFO - 正在获取 tenxunwang 平台数据...
+2026-03-06 16:56:26 [news_flow_data] INFO - 正在获取 netease 平台数据...
+2026-03-06 16:56:26 [news_flow_data] INFO - 正在获取 netease 平台数据...
+2026-03-06 16:56:26 [news_flow_data] INFO - 正在获取 ifeng 平台数据...
+2026-03-06 16:56:26 [news_flow_data] INFO - 正在获取 ifeng 平台数据...
+2026-03-06 16:56:26 [news_flow_data] INFO - 正在获取 sina 平台数据...
+2026-03-06 16:56:26 [news_flow_data] INFO - 正在获取 sina 平台数据...
+2026-03-06 16:56:27 [news_flow_data] INFO - 正在获取 sina_finance 平台数据...
+2026-03-06 16:56:27 [news_flow_data] INFO - 正在获取 sina_finance 平台数据...
+2026-03-06 16:56:27 [news_flow_data] INFO - 正在获取 eastmoney 平台数据...
+2026-03-06 16:56:27 [news_flow_data] INFO - 正在获取 eastmoney 平台数据...
+2026-03-06 16:56:27 [news_flow_data] INFO - 正在获取 xueqiu 平台数据...
+2026-03-06 16:56:27 [news_flow_data] INFO - 正在获取 xueqiu 平台数据...
+2026-03-06 16:56:28 [news_flow_data] INFO - 正在获取 cls 平台数据...
+2026-03-06 16:56:28 [news_flow_data] INFO - 正在获取 cls 平台数据...
+2026-03-06 16:56:28 [news_flow_data] INFO - 正在获取 wallstreetcn 平台数据...
+2026-03-06 16:56:28 [news_flow_data] INFO - 正在获取 wallstreetcn 平台数据...
+2026-03-06 16:56:29 [news_flow_data] INFO - 正在获取 tskr 平台数据...
+2026-03-06 16:56:29 [news_flow_data] INFO - 正在获取 tskr 平台数据...
+2026-03-06 16:56:29 [news_flow_data] INFO - 正在获取 sspai 平台数据...
+2026-03-06 16:56:29 [news_flow_data] INFO - 正在获取 sspai 平台数据...
+2026-03-06 16:56:29 [news_flow_data] INFO - 正在获取 juejin 平台数据...
+2026-03-06 16:56:29 [news_flow_data] INFO - 正在获取 juejin 平台数据...
+2026-03-06 16:56:37 [httpx] INFO - HTTP Request: POST https://ark.cn-beijing.volces.com/api/v3/chat/completions "HTTP/1.1 200 OK"
+2026-03-06 16:56:37 [httpx] INFO - HTTP Request: POST https://ark.cn-beijing.volces.com/api/v3/chat/completions "HTTP/1.1 200 OK"
+2026-03-06 16:56:37 [news_flow_agents] INFO -   💡 生成投资建议...
+2026-03-06 16:56:37 [news_flow_agents] INFO -   💡 生成投资建议...
+2026-03-06 16:57:09 [httpx] INFO - HTTP Request: POST https://ark.cn-beijing.volces.com/api/v3/chat/completions "HTTP/1.1 200 OK"
+2026-03-06 16:57:09 [httpx] INFO - HTTP Request: POST https://ark.cn-beijing.volces.com/api/v3/chat/completions "HTTP/1.1 200 OK"
+2026-03-06 16:57:09 [news_flow_agents] INFO - ✅ AI分析完成，耗时 136.47 秒
+2026-03-06 16:57:09 [news_flow_agents] INFO - ✅ AI分析完成，耗时 136.47 秒
+2026-03-06 16:57:09 [news_flow_engine] INFO - 🔍 开始多板块深度分析...
+2026-03-06 16:57:09 [news_flow_engine] INFO - 🔍 开始多板块深度分析...
+2026-03-06 16:57:09 [news_flow_agents] INFO - 🔍 开始分析 5 个热门板块: ['AI人工智能', '低空经济', '消费', '金融', '军工']
+2026-03-06 16:57:09 [news_flow_agents] INFO - 🔍 开始分析 5 个热门板块: ['AI人工智能', '低空经济', '消费', '金融', '军工']
+2026-03-06 16:57:09 [news_flow_agents] INFO -   📊 分析板块: AI人工智能
+2026-03-06 16:57:09 [news_flow_agents] INFO -   📊 分析板块: AI人工智能
+2026-03-06 16:58:27 [httpx] INFO - HTTP Request: POST https://ark.cn-beijing.volces.com/api/v3/chat/completions "HTTP/1.1 200 OK"
+2026-03-06 16:58:27 [httpx] INFO - HTTP Request: POST https://ark.cn-beijing.volces.com/api/v3/chat/completions "HTTP/1.1 200 OK"
+2026-03-06 16:58:27 [news_flow_agents] ERROR - JSON解析失败: Extra data: line 42 column 1 (char 1536)
+2026-03-06 16:58:27 [news_flow_agents] ERROR - JSON解析失败: Extra data: line 42 column 1 (char 1536)
+2026-03-06 16:58:27 [news_flow_agents] INFO -   📊 分析板块: 低空经济
+2026-03-06 16:58:27 [news_flow_agents] INFO -   📊 分析板块: 低空经济
+2026-03-06 16:59:30 [httpx] INFO - HTTP Request: POST https://ark.cn-beijing.volces.com/api/v3/chat/completions "HTTP/1.1 200 OK"
+2026-03-06 16:59:30 [httpx] INFO - HTTP Request: POST https://ark.cn-beijing.volces.com/api/v3/chat/completions "HTTP/1.1 200 OK"
+2026-03-06 16:59:30 [news_flow_agents] ERROR - JSON解析失败: Expecting property name enclosed in double quotes: line 7 column 7 (char 242)
+2026-03-06 16:59:30 [news_flow_agents] ERROR - JSON解析失败: Expecting property name enclosed in double quotes: line 7 column 7 (char 242)
+2026-03-06 16:59:30 [news_flow_agents] INFO -   📊 分析板块: 消费
+2026-03-06 16:59:30 [news_flow_agents] INFO -   📊 分析板块: 消费
+2026-03-06 17:00:29 [httpx] INFO - HTTP Request: POST https://ark.cn-beijing.volces.com/api/v3/chat/completions "HTTP/1.1 200 OK"
+2026-03-06 17:00:29 [httpx] INFO - HTTP Request: POST https://ark.cn-beijing.volces.com/api/v3/chat/completions "HTTP/1.1 200 OK"
+2026-03-06 17:00:29 [news_flow_agents] INFO -   📊 分析板块: 金融
+2026-03-06 17:00:29 [news_flow_agents] INFO -   📊 分析板块: 金融
+2026-03-06 17:01:46 [httpx] INFO - HTTP Request: POST https://ark.cn-beijing.volces.com/api/v3/chat/completions "HTTP/1.1 200 OK"
+2026-03-06 17:01:46 [httpx] INFO - HTTP Request: POST https://ark.cn-beijing.volces.com/api/v3/chat/completions "HTTP/1.1 200 OK"
+2026-03-06 17:01:46 [httpx] INFO - HTTP Request: POST https://ark.cn-beijing.volces.com/api/v3/chat/completions "HTTP/1.1 200 OK"
+2026-03-06 17:01:46 [news_flow_agents] ERROR - JSON解析失败: Extra data: line 43 column 1 (char 1547)
+2026-03-06 17:01:46 [news_flow_agents] ERROR - JSON解析失败: Extra data: line 43 column 1 (char 1547)
+2026-03-06 17:01:46 [news_flow_agents] ERROR - JSON解析失败: Extra data: line 43 column 1 (char 1547)
+2026-03-06 17:01:46 [news_flow_agents] INFO -   📊 分析板块: 军工
+2026-03-06 17:01:46 [news_flow_agents] INFO -   📊 分析板块: 军工
+2026-03-06 17:01:46 [news_flow_agents] INFO -   📊 分析板块: 军工
+2026-03-06 17:02:43 [httpx] INFO - HTTP Request: POST https://ark.cn-beijing.volces.com/api/v3/chat/completions "HTTP/1.1 200 OK"
+2026-03-06 17:02:43 [httpx] INFO - HTTP Request: POST https://ark.cn-beijing.volces.com/api/v3/chat/completions "HTTP/1.1 200 OK"
+2026-03-06 17:02:43 [httpx] INFO - HTTP Request: POST https://ark.cn-beijing.volces.com/api/v3/chat/completions "HTTP/1.1 200 OK"
+2026-03-06 17:02:43 [news_flow_agents] ERROR - JSON解析失败: Extra data: line 40 column 1 (char 1230)
+2026-03-06 17:02:43 [news_flow_agents] ERROR - JSON解析失败: Extra data: line 40 column 1 (char 1230)
+2026-03-06 17:02:43 [news_flow_agents] ERROR - JSON解析失败: Extra data: line 40 column 1 (char 1230)
+2026-03-06 17:02:43 [news_flow_agents] INFO - ✅ 多板块分析完成，耗时 334.23 秒
+2026-03-06 17:02:43 [news_flow_agents] INFO - ✅ 多板块分析完成，耗时 334.23 秒
+2026-03-06 17:02:43 [news_flow_agents] INFO - ✅ 多板块分析完成，耗时 334.23 秒
+2026-03-06 17:02:43 [news_flow_engine] ERROR - ❌ 完整分析失败: Error binding parameter 10: type 'NewsFlowModel' is not supported
+2026-03-06 17:02:43 [news_flow_engine] ERROR - ❌ 完整分析失败: Error binding parameter 10: type 'NewsFlowModel' is not supported
+2026-03-06 17:02:43 [news_flow_engine] ERROR - ❌ 完整分析失败: Error binding parameter 10: type 'NewsFlowModel' is not supported
+2026-03-06 17:03:36 [smart_monitor_db] INFO - 数据库初始化完成: smart_monitor.db
+2026-03-06 17:03:36 [smart_monitor_db] INFO - 数据库初始化完成: smart_monitor.db
+2026-03-06 17:03:36 [smart_monitor_db] INFO - 数据库初始化完成: smart_monitor.db
+2026-03-06 17:03:36 [smart_monitor_db] INFO - 数据库初始化完成: smart_monitor.db
+2026-03-06 17:03:36 [smart_monitor_db] INFO - 更新监控任务: 000158
+2026-03-06 17:03:36 [smart_monitor_db] INFO - 更新监控任务: 000158
+2026-03-06 17:03:36 [smart_monitor_db] INFO - 更新监控任务: 000158
+2026-03-06 17:03:36 [smart_monitor_db] INFO - 更新监控任务: 000158
+2026-03-06 17:03:36 [smart_monitor_db] INFO - 数据库初始化完成: smart_monitor.db
+2026-03-06 17:03:36 [smart_monitor_db] INFO - 数据库初始化完成: smart_monitor.db
+2026-03-06 17:03:36 [smart_monitor_db] INFO - 数据库初始化完成: smart_monitor.db
+2026-03-06 17:03:36 [smart_monitor_db] INFO - 数据库初始化完成: smart_monitor.db
+2026-03-06 17:03:36 [smart_monitor_db] INFO - 更新监控任务: 002236
+2026-03-06 17:03:36 [smart_monitor_db] INFO - 更新监控任务: 002236
+2026-03-06 17:03:36 [smart_monitor_db] INFO - 更新监控任务: 002236
+2026-03-06 17:03:36 [smart_monitor_db] INFO - 更新监控任务: 002236
+2026-03-06 17:03:36 [smart_monitor_db] INFO - 数据库初始化完成: smart_monitor.db
+2026-03-06 17:03:36 [smart_monitor_db] INFO - 数据库初始化完成: smart_monitor.db
+2026-03-06 17:03:36 [smart_monitor_db] INFO - 数据库初始化完成: smart_monitor.db
+2026-03-06 17:03:36 [smart_monitor_db] INFO - 数据库初始化完成: smart_monitor.db
+2026-03-06 17:03:36 [smart_monitor_db] INFO - 更新监控任务: 300724
+2026-03-06 17:03:36 [smart_monitor_db] INFO - 更新监控任务: 300724
+2026-03-06 17:03:36 [smart_monitor_db] INFO - 更新监控任务: 300724
+2026-03-06 17:03:36 [smart_monitor_db] INFO - 更新监控任务: 300724
+2026-03-06 17:03:36 [smart_monitor_db] INFO - 数据库初始化完成: smart_monitor.db
+2026-03-06 17:03:36 [smart_monitor_db] INFO - 数据库初始化完成: smart_monitor.db
+2026-03-06 17:03:36 [smart_monitor_db] INFO - 数据库初始化完成: smart_monitor.db
+2026-03-06 17:03:36 [smart_monitor_db] INFO - 数据库初始化完成: smart_monitor.db
+2026-03-06 17:03:46 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:03:46 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:03:46 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:03:46 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:03:46 [smart_monitor_db] INFO - 数据库初始化完成: smart_monitor.db
+2026-03-06 17:03:46 [smart_monitor_db] INFO - 数据库初始化完成: smart_monitor.db
+2026-03-06 17:03:46 [smart_monitor_db] INFO - 数据库初始化完成: smart_monitor.db
+2026-03-06 17:03:46 [smart_monitor_db] INFO - 数据库初始化完成: smart_monitor.db
+2026-03-06 17:03:46 [smart_monitor_qmt] INFO - 使用模拟交易模式
+2026-03-06 17:03:46 [smart_monitor_qmt] INFO - 使用模拟交易模式
+2026-03-06 17:03:46 [smart_monitor_qmt] INFO - 使用模拟交易模式
+2026-03-06 17:03:46 [smart_monitor_qmt] INFO - 使用模拟交易模式
+2026-03-06 17:03:46 [smart_monitor_qmt] INFO - 模拟连接成功: simulator
+2026-03-06 17:03:46 [smart_monitor_qmt] INFO - 模拟连接成功: simulator
+2026-03-06 17:03:46 [smart_monitor_qmt] INFO - 模拟连接成功: simulator
+2026-03-06 17:03:46 [smart_monitor_qmt] INFO - 模拟连接成功: simulator
+2026-03-06 17:03:46 [smart_monitor_engine] INFO - 使用模拟交易模式
+2026-03-06 17:03:46 [smart_monitor_engine] INFO - 使用模拟交易模式
+2026-03-06 17:03:46 [smart_monitor_engine] INFO - 使用模拟交易模式
+2026-03-06 17:03:46 [smart_monitor_engine] INFO - 使用模拟交易模式
+2026-03-06 17:03:46 [smart_monitor_engine] INFO - 智能盯盘引擎初始化完成
+2026-03-06 17:03:46 [smart_monitor_engine] INFO - 智能盯盘引擎初始化完成
+2026-03-06 17:03:46 [smart_monitor_engine] INFO - 智能盯盘引擎初始化完成
+2026-03-06 17:03:46 [smart_monitor_engine] INFO - 智能盯盘引擎初始化完成
+2026-03-06 17:03:46 [smart_monitor_db] INFO - 数据库初始化完成: smart_monitor.db
+2026-03-06 17:03:46 [smart_monitor_db] INFO - 数据库初始化完成: smart_monitor.db
+2026-03-06 17:03:46 [smart_monitor_db] INFO - 数据库初始化完成: smart_monitor.db
+2026-03-06 17:03:46 [smart_monitor_db] INFO - 数据库初始化完成: smart_monitor.db
+2026-03-06 17:03:46 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:03:46 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:03:46 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:03:46 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:03:46 [smart_monitor_data] INFO - 优先使用Tushare获取 002236 实时行情...
+2026-03-06 17:03:46 [smart_monitor_data] INFO - 优先使用Tushare获取 002236 实时行情...
+2026-03-06 17:03:46 [smart_monitor_data] INFO - 优先使用Tushare获取 002236 实时行情...
+2026-03-06 17:03:46 [smart_monitor_data] INFO - 优先使用Tushare获取 002236 实时行情...
+2026-03-06 17:03:46 [smart_monitor_data] ERROR - Tushare获取失败 002236: ERROR.
+2026-03-06 17:03:46 [smart_monitor_data] ERROR - Tushare获取失败 002236: ERROR.
+2026-03-06 17:03:46 [smart_monitor_data] ERROR - Tushare获取失败 002236: ERROR.
+2026-03-06 17:03:46 [smart_monitor_data] ERROR - Tushare获取失败 002236: ERROR.
+2026-03-06 17:03:46 [smart_monitor_data] ERROR - AKShare获取失败 002236（已重试1次）
+2026-03-06 17:03:46 [smart_monitor_data] ERROR - AKShare获取失败 002236（已重试1次）
+2026-03-06 17:03:46 [smart_monitor_data] ERROR - AKShare获取失败 002236（已重试1次）
+2026-03-06 17:03:46 [smart_monitor_data] ERROR - AKShare获取失败 002236（已重试1次）
+2026-03-06 17:03:46 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:03:46 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:03:46 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:03:46 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:03:46 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 002236
+2026-03-06 17:03:46 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 002236
+2026-03-06 17:03:46 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 002236
+2026-03-06 17:03:46 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 002236
+2026-03-06 17:03:46 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 002236，共60条
+2026-03-06 17:03:46 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 002236，共60条
+2026-03-06 17:03:46 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 002236，共60条
+2026-03-06 17:03:46 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 002236，共60条
+2026-03-06 17:03:46 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:03:46 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:03:46 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:03:46 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:03:46 [smart_monitor_data] INFO - 优先使用Tushare获取 000158 实时行情...
+2026-03-06 17:03:46 [smart_monitor_data] INFO - 优先使用Tushare获取 000158 实时行情...
+2026-03-06 17:03:46 [smart_monitor_data] INFO - 优先使用Tushare获取 000158 实时行情...
+2026-03-06 17:03:46 [smart_monitor_data] INFO - 优先使用Tushare获取 000158 实时行情...
+2026-03-06 17:03:46 [smart_monitor_data] ERROR - Tushare获取失败 000158: ERROR.
+2026-03-06 17:03:46 [smart_monitor_data] ERROR - Tushare获取失败 000158: ERROR.
+2026-03-06 17:03:46 [smart_monitor_data] ERROR - Tushare获取失败 000158: ERROR.
+2026-03-06 17:03:46 [smart_monitor_data] ERROR - Tushare获取失败 000158: ERROR.
+2026-03-06 17:03:46 [smart_monitor_data] ERROR - AKShare获取失败 000158（已重试1次）
+2026-03-06 17:03:46 [smart_monitor_data] ERROR - AKShare获取失败 000158（已重试1次）
+2026-03-06 17:03:46 [smart_monitor_data] ERROR - AKShare获取失败 000158（已重试1次）
+2026-03-06 17:03:46 [smart_monitor_data] ERROR - AKShare获取失败 000158（已重试1次）
+2026-03-06 17:03:46 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:03:46 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:03:46 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:03:46 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:03:46 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 000158
+2026-03-06 17:03:46 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 000158
+2026-03-06 17:03:46 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 000158
+2026-03-06 17:03:46 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 000158
+2026-03-06 17:03:47 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 000158，共60条
+2026-03-06 17:03:47 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 000158，共60条
+2026-03-06 17:03:47 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 000158，共60条
+2026-03-06 17:03:47 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 000158，共60条
+2026-03-06 17:03:47 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:03:47 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:03:47 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:03:47 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:03:47 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 601969
+2026-03-06 17:03:47 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 601969
+2026-03-06 17:03:47 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 601969
+2026-03-06 17:03:47 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 601969
+2026-03-06 17:03:47 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 601969，共60条
+2026-03-06 17:03:47 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 601969，共60条
+2026-03-06 17:03:47 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 601969，共60条
+2026-03-06 17:03:47 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 601969，共60条
+2026-03-06 17:03:47 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:03:47 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:03:47 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:03:47 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:03:47 [smart_monitor_data] INFO - 优先使用Tushare获取 300724 实时行情...
+2026-03-06 17:03:47 [smart_monitor_data] INFO - 优先使用Tushare获取 300724 实时行情...
+2026-03-06 17:03:47 [smart_monitor_data] INFO - 优先使用Tushare获取 300724 实时行情...
+2026-03-06 17:03:47 [smart_monitor_data] INFO - 优先使用Tushare获取 300724 实时行情...
+2026-03-06 17:03:47 [smart_monitor_data] ERROR - Tushare获取失败 300724: ERROR.
+2026-03-06 17:03:47 [smart_monitor_data] ERROR - Tushare获取失败 300724: ERROR.
+2026-03-06 17:03:47 [smart_monitor_data] ERROR - Tushare获取失败 300724: ERROR.
+2026-03-06 17:03:47 [smart_monitor_data] ERROR - Tushare获取失败 300724: ERROR.
+2026-03-06 17:03:47 [smart_monitor_data] ERROR - AKShare获取失败 300724（已重试1次）
+2026-03-06 17:03:47 [smart_monitor_data] ERROR - AKShare获取失败 300724（已重试1次）
+2026-03-06 17:03:47 [smart_monitor_data] ERROR - AKShare获取失败 300724（已重试1次）
+2026-03-06 17:03:47 [smart_monitor_data] ERROR - AKShare获取失败 300724（已重试1次）
+2026-03-06 17:03:47 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:03:47 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:03:47 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:03:47 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:03:47 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 300724
+2026-03-06 17:03:47 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 300724
+2026-03-06 17:03:47 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 300724
+2026-03-06 17:03:47 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 300724
+2026-03-06 17:03:47 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 300724，共60条
+2026-03-06 17:03:47 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 300724，共60条
+2026-03-06 17:03:47 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 300724，共60条
+2026-03-06 17:03:47 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 300724，共60条
+2026-03-06 17:03:47 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:03:47 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:03:47 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:03:47 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:03:47 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 600610
+2026-03-06 17:03:47 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 600610
+2026-03-06 17:03:47 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 600610
+2026-03-06 17:03:47 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 600610
+2026-03-06 17:03:47 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 600610，共60条
+2026-03-06 17:03:47 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 600610，共60条
+2026-03-06 17:03:47 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 600610，共60条
+2026-03-06 17:03:47 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 600610，共60条
+2026-03-06 17:03:47 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:03:47 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:03:47 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:03:47 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:03:47 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 002639
+2026-03-06 17:03:47 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 002639
+2026-03-06 17:03:47 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 002639
+2026-03-06 17:03:47 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 002639
+2026-03-06 17:03:47 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 002639，共60条
+2026-03-06 17:03:47 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 002639，共60条
+2026-03-06 17:03:47 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 002639，共60条
+2026-03-06 17:03:47 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 002639，共60条
+2026-03-06 17:04:36 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:36 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:36 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:36 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:36 [smart_monitor_data] INFO - 优先使用Tushare获取 002236 实时行情...
+2026-03-06 17:04:36 [smart_monitor_data] INFO - 优先使用Tushare获取 002236 实时行情...
+2026-03-06 17:04:36 [smart_monitor_data] INFO - 优先使用Tushare获取 002236 实时行情...
+2026-03-06 17:04:36 [smart_monitor_data] INFO - 优先使用Tushare获取 002236 实时行情...
+2026-03-06 17:04:36 [smart_monitor_data] ERROR - Tushare获取失败 002236: ERROR.
+2026-03-06 17:04:36 [smart_monitor_data] ERROR - Tushare获取失败 002236: ERROR.
+2026-03-06 17:04:36 [smart_monitor_data] ERROR - Tushare获取失败 002236: ERROR.
+2026-03-06 17:04:36 [smart_monitor_data] ERROR - Tushare获取失败 002236: ERROR.
+2026-03-06 17:04:36 [smart_monitor_data] ERROR - AKShare获取失败 002236（已重试1次）
+2026-03-06 17:04:36 [smart_monitor_data] ERROR - AKShare获取失败 002236（已重试1次）
+2026-03-06 17:04:36 [smart_monitor_data] ERROR - AKShare获取失败 002236（已重试1次）
+2026-03-06 17:04:36 [smart_monitor_data] ERROR - AKShare获取失败 002236（已重试1次）
+2026-03-06 17:04:36 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:36 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:36 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:36 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:36 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 002236
+2026-03-06 17:04:36 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 002236
+2026-03-06 17:04:36 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 002236
+2026-03-06 17:04:36 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 002236
+2026-03-06 17:04:36 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 002236，共60条
+2026-03-06 17:04:36 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 002236，共60条
+2026-03-06 17:04:36 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 002236，共60条
+2026-03-06 17:04:36 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 002236，共60条
+2026-03-06 17:04:36 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:36 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:36 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:36 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:36 [smart_monitor_data] INFO - 优先使用Tushare获取 000158 实时行情...
+2026-03-06 17:04:36 [smart_monitor_data] INFO - 优先使用Tushare获取 000158 实时行情...
+2026-03-06 17:04:36 [smart_monitor_data] INFO - 优先使用Tushare获取 000158 实时行情...
+2026-03-06 17:04:36 [smart_monitor_data] INFO - 优先使用Tushare获取 000158 实时行情...
+2026-03-06 17:04:36 [smart_monitor_data] ERROR - Tushare获取失败 000158: ERROR.
+2026-03-06 17:04:36 [smart_monitor_data] ERROR - Tushare获取失败 000158: ERROR.
+2026-03-06 17:04:36 [smart_monitor_data] ERROR - Tushare获取失败 000158: ERROR.
+2026-03-06 17:04:36 [smart_monitor_data] ERROR - Tushare获取失败 000158: ERROR.
+2026-03-06 17:04:36 [smart_monitor_data] ERROR - AKShare获取失败 000158（已重试1次）
+2026-03-06 17:04:36 [smart_monitor_data] ERROR - AKShare获取失败 000158（已重试1次）
+2026-03-06 17:04:36 [smart_monitor_data] ERROR - AKShare获取失败 000158（已重试1次）
+2026-03-06 17:04:36 [smart_monitor_data] ERROR - AKShare获取失败 000158（已重试1次）
+2026-03-06 17:04:36 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:36 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:36 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:36 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:36 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 000158
+2026-03-06 17:04:36 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 000158
+2026-03-06 17:04:36 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 000158
+2026-03-06 17:04:36 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 000158
+2026-03-06 17:04:37 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 000158，共60条
+2026-03-06 17:04:37 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 000158，共60条
+2026-03-06 17:04:37 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 000158，共60条
+2026-03-06 17:04:37 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 000158，共60条
+2026-03-06 17:04:37 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:37 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:37 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:37 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:37 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 601969
+2026-03-06 17:04:37 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 601969
+2026-03-06 17:04:37 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 601969
+2026-03-06 17:04:37 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 601969
+2026-03-06 17:04:37 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 601969，共60条
+2026-03-06 17:04:37 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 601969，共60条
+2026-03-06 17:04:37 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 601969，共60条
+2026-03-06 17:04:37 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 601969，共60条
+2026-03-06 17:04:37 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:37 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:37 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:37 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:37 [smart_monitor_data] INFO - 优先使用Tushare获取 300724 实时行情...
+2026-03-06 17:04:37 [smart_monitor_data] INFO - 优先使用Tushare获取 300724 实时行情...
+2026-03-06 17:04:37 [smart_monitor_data] INFO - 优先使用Tushare获取 300724 实时行情...
+2026-03-06 17:04:37 [smart_monitor_data] INFO - 优先使用Tushare获取 300724 实时行情...
+2026-03-06 17:04:37 [smart_monitor_data] ERROR - Tushare获取失败 300724: ERROR.
+2026-03-06 17:04:37 [smart_monitor_data] ERROR - Tushare获取失败 300724: ERROR.
+2026-03-06 17:04:37 [smart_monitor_data] ERROR - Tushare获取失败 300724: ERROR.
+2026-03-06 17:04:37 [smart_monitor_data] ERROR - Tushare获取失败 300724: ERROR.
+2026-03-06 17:04:37 [smart_monitor_data] ERROR - AKShare获取失败 300724（已重试1次）
+2026-03-06 17:04:37 [smart_monitor_data] ERROR - AKShare获取失败 300724（已重试1次）
+2026-03-06 17:04:37 [smart_monitor_data] ERROR - AKShare获取失败 300724（已重试1次）
+2026-03-06 17:04:37 [smart_monitor_data] ERROR - AKShare获取失败 300724（已重试1次）
+2026-03-06 17:04:37 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:37 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:37 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:37 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:37 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 300724
+2026-03-06 17:04:37 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 300724
+2026-03-06 17:04:37 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 300724
+2026-03-06 17:04:37 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 300724
+2026-03-06 17:04:37 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 300724，共60条
+2026-03-06 17:04:37 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 300724，共60条
+2026-03-06 17:04:37 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 300724，共60条
+2026-03-06 17:04:37 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 300724，共60条
+2026-03-06 17:04:37 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:37 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:37 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:37 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:37 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 600610
+2026-03-06 17:04:37 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 600610
+2026-03-06 17:04:37 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 600610
+2026-03-06 17:04:37 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 600610
+2026-03-06 17:04:37 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 600610，共60条
+2026-03-06 17:04:37 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 600610，共60条
+2026-03-06 17:04:37 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 600610，共60条
+2026-03-06 17:04:37 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 600610，共60条
+2026-03-06 17:04:37 [smart_monitor_engine] INFO - [002639] 监控线程已启动
+2026-03-06 17:04:37 [smart_monitor_engine] INFO - [002639] 监控已启动（仅交易时段），间隔: 408秒 
+2026-03-06 17:04:37 [smart_monitor_engine] INFO - [002639] 监控线程已启动
+2026-03-06 17:04:37 [smart_monitor_engine] INFO - [002639] 监控已启动（仅交易时段），间隔: 408秒 
+2026-03-06 17:04:37 [smart_monitor_engine] INFO - [002639] 监控线程已启动
+2026-03-06 17:04:37 [smart_monitor_engine] INFO - [002639] 监控已启动（仅交易时段），间隔: 408秒 
+2026-03-06 17:04:37 [smart_monitor_engine] INFO - [002639] 监控线程已启动
+2026-03-06 17:04:37 [smart_monitor_engine] INFO - [002639] 开始分析...
+2026-03-06 17:04:37 [smart_monitor_engine] INFO - [002639] 监控已启动（仅交易时段），间隔: 408秒 
+2026-03-06 17:04:37 [smart_monitor_engine] INFO - [002639] 开始分析...
+2026-03-06 17:04:37 [smart_monitor_engine] INFO - [002639] 开始分析...
+2026-03-06 17:04:37 [smart_monitor_engine] INFO - [002639] 开始分析...
+2026-03-06 17:04:37 [smart_monitor_db] INFO - 更新监控任务: 002639
+2026-03-06 17:04:37 [smart_monitor_db] INFO - 更新监控任务: 002639
+2026-03-06 17:04:37 [smart_monitor_db] INFO - 更新监控任务: 002639
+2026-03-06 17:04:37 [smart_monitor_db] INFO - 更新监控任务: 002639
+2026-03-06 17:04:37 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:37 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:37 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:37 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:37 [smart_monitor_data] INFO - 优先使用Tushare获取 002236 实时行情...
+2026-03-06 17:04:37 [smart_monitor_data] INFO - 优先使用Tushare获取 002236 实时行情...
+2026-03-06 17:04:37 [smart_monitor_data] INFO - 优先使用Tushare获取 002236 实时行情...
+2026-03-06 17:04:37 [smart_monitor_data] INFO - 优先使用Tushare获取 002236 实时行情...
+2026-03-06 17:04:37 [smart_monitor_engine] INFO - [002639] 当前时段: 盘后
+2026-03-06 17:04:37 [smart_monitor_engine] INFO - [002639] 当前时段: 盘后
+2026-03-06 17:04:37 [smart_monitor_engine] INFO - [002639] 当前时段: 盘后
+2026-03-06 17:04:37 [smart_monitor_engine] INFO - [002639] 当前时段: 盘后
+2026-03-06 17:04:37 [smart_monitor_engine] INFO - [002639] 非交易时段，跳过分析
+2026-03-06 17:04:37 [smart_monitor_engine] INFO - [002639] 非交易时段，跳过分析
+2026-03-06 17:04:37 [smart_monitor_engine] INFO - [002639] 非交易时段，跳过分析
+2026-03-06 17:04:37 [smart_monitor_engine] INFO - [002639] 非交易时段，跳过分析
+2026-03-06 17:04:37 [smart_monitor_data] ERROR - Tushare获取失败 002236: ERROR.
+2026-03-06 17:04:37 [smart_monitor_data] ERROR - Tushare获取失败 002236: ERROR.
+2026-03-06 17:04:37 [smart_monitor_data] ERROR - Tushare获取失败 002236: ERROR.
+2026-03-06 17:04:37 [smart_monitor_data] ERROR - Tushare获取失败 002236: ERROR.
+2026-03-06 17:04:38 [smart_monitor_data] ERROR - AKShare获取失败 002236（已重试1次）
+2026-03-06 17:04:38 [smart_monitor_data] ERROR - AKShare获取失败 002236（已重试1次）
+2026-03-06 17:04:38 [smart_monitor_data] ERROR - AKShare获取失败 002236（已重试1次）
+2026-03-06 17:04:38 [smart_monitor_data] ERROR - AKShare获取失败 002236（已重试1次）
+2026-03-06 17:04:38 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:38 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:38 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:38 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:38 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 002236
+2026-03-06 17:04:38 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 002236
+2026-03-06 17:04:38 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 002236
+2026-03-06 17:04:38 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 002236
+2026-03-06 17:04:38 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 002236，共60条
+2026-03-06 17:04:38 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 002236，共60条
+2026-03-06 17:04:38 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 002236，共60条
+2026-03-06 17:04:38 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 002236，共60条
+2026-03-06 17:04:38 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:38 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:38 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:38 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:38 [smart_monitor_data] INFO - 优先使用Tushare获取 000158 实时行情...
+2026-03-06 17:04:38 [smart_monitor_data] INFO - 优先使用Tushare获取 000158 实时行情...
+2026-03-06 17:04:38 [smart_monitor_data] INFO - 优先使用Tushare获取 000158 实时行情...
+2026-03-06 17:04:38 [smart_monitor_data] INFO - 优先使用Tushare获取 000158 实时行情...
+2026-03-06 17:04:38 [smart_monitor_data] ERROR - Tushare获取失败 000158: ERROR.
+2026-03-06 17:04:38 [smart_monitor_data] ERROR - Tushare获取失败 000158: ERROR.
+2026-03-06 17:04:38 [smart_monitor_data] ERROR - Tushare获取失败 000158: ERROR.
+2026-03-06 17:04:38 [smart_monitor_data] ERROR - Tushare获取失败 000158: ERROR.
+2026-03-06 17:04:38 [smart_monitor_data] ERROR - AKShare获取失败 000158（已重试1次）
+2026-03-06 17:04:38 [smart_monitor_data] ERROR - AKShare获取失败 000158（已重试1次）
+2026-03-06 17:04:38 [smart_monitor_data] ERROR - AKShare获取失败 000158（已重试1次）
+2026-03-06 17:04:38 [smart_monitor_data] ERROR - AKShare获取失败 000158（已重试1次）
+2026-03-06 17:04:38 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:38 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:38 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:38 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:38 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 000158
+2026-03-06 17:04:38 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 000158
+2026-03-06 17:04:38 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 000158
+2026-03-06 17:04:38 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 000158
+2026-03-06 17:04:38 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 000158，共60条
+2026-03-06 17:04:38 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 000158，共60条
+2026-03-06 17:04:38 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 000158，共60条
+2026-03-06 17:04:38 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 000158，共60条
+2026-03-06 17:04:38 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:38 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:38 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:38 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:38 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 601969
+2026-03-06 17:04:38 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 601969
+2026-03-06 17:04:38 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 601969
+2026-03-06 17:04:38 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 601969
+2026-03-06 17:04:38 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 601969，共60条
+2026-03-06 17:04:38 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 601969，共60条
+2026-03-06 17:04:38 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 601969，共60条
+2026-03-06 17:04:38 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 601969，共60条
+2026-03-06 17:04:38 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:38 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:38 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:38 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:38 [smart_monitor_data] INFO - 优先使用Tushare获取 300724 实时行情...
+2026-03-06 17:04:38 [smart_monitor_data] INFO - 优先使用Tushare获取 300724 实时行情...
+2026-03-06 17:04:38 [smart_monitor_data] INFO - 优先使用Tushare获取 300724 实时行情...
+2026-03-06 17:04:38 [smart_monitor_data] INFO - 优先使用Tushare获取 300724 实时行情...
+2026-03-06 17:04:38 [smart_monitor_data] ERROR - Tushare获取失败 300724: ERROR.
+2026-03-06 17:04:38 [smart_monitor_data] ERROR - Tushare获取失败 300724: ERROR.
+2026-03-06 17:04:38 [smart_monitor_data] ERROR - Tushare获取失败 300724: ERROR.
+2026-03-06 17:04:38 [smart_monitor_data] ERROR - Tushare获取失败 300724: ERROR.
+2026-03-06 17:04:38 [smart_monitor_data] ERROR - AKShare获取失败 300724（已重试1次）
+2026-03-06 17:04:38 [smart_monitor_data] ERROR - AKShare获取失败 300724（已重试1次）
+2026-03-06 17:04:38 [smart_monitor_data] ERROR - AKShare获取失败 300724（已重试1次）
+2026-03-06 17:04:38 [smart_monitor_data] ERROR - AKShare获取失败 300724（已重试1次）
+2026-03-06 17:04:38 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:38 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:38 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:38 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:38 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 300724
+2026-03-06 17:04:38 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 300724
+2026-03-06 17:04:38 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 300724
+2026-03-06 17:04:38 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 300724
+2026-03-06 17:04:39 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 300724，共60条
+2026-03-06 17:04:39 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 300724，共60条
+2026-03-06 17:04:39 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 300724，共60条
+2026-03-06 17:04:39 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 300724，共60条
+2026-03-06 17:04:39 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:39 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:39 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:39 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:39 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 600610
+2026-03-06 17:04:39 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 600610
+2026-03-06 17:04:39 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 600610
+2026-03-06 17:04:39 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 600610
+2026-03-06 17:04:39 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 600610，共60条
+2026-03-06 17:04:39 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 600610，共60条
+2026-03-06 17:04:39 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 600610，共60条
+2026-03-06 17:04:39 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 600610，共60条
+2026-03-06 17:04:39 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:39 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:39 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:39 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:04:39 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 002639
+2026-03-06 17:04:39 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 002639
+2026-03-06 17:04:39 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 002639
+2026-03-06 17:04:39 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 002639
+2026-03-06 17:04:39 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 002639，共60条
+2026-03-06 17:04:39 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 002639，共60条
+2026-03-06 17:04:39 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 002639，共60条
+2026-03-06 17:04:39 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 002639，共60条
+2026-03-06 17:05:26 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:26 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:26 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:26 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:26 [smart_monitor_data] INFO - 优先使用Tushare获取 002236 实时行情...
+2026-03-06 17:05:26 [smart_monitor_data] INFO - 优先使用Tushare获取 002236 实时行情...
+2026-03-06 17:05:26 [smart_monitor_data] INFO - 优先使用Tushare获取 002236 实时行情...
+2026-03-06 17:05:26 [smart_monitor_data] INFO - 优先使用Tushare获取 002236 实时行情...
+2026-03-06 17:05:26 [smart_monitor_data] ERROR - Tushare获取失败 002236: ERROR.
+2026-03-06 17:05:26 [smart_monitor_data] ERROR - Tushare获取失败 002236: ERROR.
+2026-03-06 17:05:26 [smart_monitor_data] ERROR - Tushare获取失败 002236: ERROR.
+2026-03-06 17:05:26 [smart_monitor_data] ERROR - Tushare获取失败 002236: ERROR.
+2026-03-06 17:05:26 [smart_monitor_data] ERROR - AKShare获取失败 002236（已重试1次）
+2026-03-06 17:05:26 [smart_monitor_data] ERROR - AKShare获取失败 002236（已重试1次）
+2026-03-06 17:05:26 [smart_monitor_data] ERROR - AKShare获取失败 002236（已重试1次）
+2026-03-06 17:05:26 [smart_monitor_data] ERROR - AKShare获取失败 002236（已重试1次）
+2026-03-06 17:05:26 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:26 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:26 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:26 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:26 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 002236
+2026-03-06 17:05:26 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 002236
+2026-03-06 17:05:26 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 002236
+2026-03-06 17:05:26 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 002236
+2026-03-06 17:05:26 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 002236，共60条
+2026-03-06 17:05:26 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 002236，共60条
+2026-03-06 17:05:26 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 002236，共60条
+2026-03-06 17:05:26 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 002236，共60条
+2026-03-06 17:05:26 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:26 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:26 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:26 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:26 [smart_monitor_data] INFO - 优先使用Tushare获取 000158 实时行情...
+2026-03-06 17:05:26 [smart_monitor_data] INFO - 优先使用Tushare获取 000158 实时行情...
+2026-03-06 17:05:26 [smart_monitor_data] INFO - 优先使用Tushare获取 000158 实时行情...
+2026-03-06 17:05:26 [smart_monitor_data] INFO - 优先使用Tushare获取 000158 实时行情...
+2026-03-06 17:05:27 [smart_monitor_data] ERROR - Tushare获取失败 000158: ERROR.
+2026-03-06 17:05:27 [smart_monitor_data] ERROR - Tushare获取失败 000158: ERROR.
+2026-03-06 17:05:27 [smart_monitor_data] ERROR - Tushare获取失败 000158: ERROR.
+2026-03-06 17:05:27 [smart_monitor_data] ERROR - Tushare获取失败 000158: ERROR.
+2026-03-06 17:05:27 [smart_monitor_data] ERROR - AKShare获取失败 000158（已重试1次）
+2026-03-06 17:05:27 [smart_monitor_data] ERROR - AKShare获取失败 000158（已重试1次）
+2026-03-06 17:05:27 [smart_monitor_data] ERROR - AKShare获取失败 000158（已重试1次）
+2026-03-06 17:05:27 [smart_monitor_data] ERROR - AKShare获取失败 000158（已重试1次）
+2026-03-06 17:05:27 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:27 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:27 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:27 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:27 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 000158
+2026-03-06 17:05:27 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 000158
+2026-03-06 17:05:27 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 000158
+2026-03-06 17:05:27 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 000158
+2026-03-06 17:05:27 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 000158，共60条
+2026-03-06 17:05:27 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 000158，共60条
+2026-03-06 17:05:27 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 000158，共60条
+2026-03-06 17:05:27 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 000158，共60条
+2026-03-06 17:05:27 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:27 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:27 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:27 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:27 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 601969
+2026-03-06 17:05:27 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 601969
+2026-03-06 17:05:27 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 601969
+2026-03-06 17:05:27 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 601969
+2026-03-06 17:05:27 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 601969，共60条
+2026-03-06 17:05:27 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 601969，共60条
+2026-03-06 17:05:27 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 601969，共60条
+2026-03-06 17:05:27 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 601969，共60条
+2026-03-06 17:05:27 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:27 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:27 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:27 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:27 [smart_monitor_data] INFO - 优先使用Tushare获取 300724 实时行情...
+2026-03-06 17:05:27 [smart_monitor_data] INFO - 优先使用Tushare获取 300724 实时行情...
+2026-03-06 17:05:27 [smart_monitor_data] INFO - 优先使用Tushare获取 300724 实时行情...
+2026-03-06 17:05:27 [smart_monitor_data] INFO - 优先使用Tushare获取 300724 实时行情...
+2026-03-06 17:05:27 [smart_monitor_data] ERROR - Tushare获取失败 300724: ERROR.
+2026-03-06 17:05:27 [smart_monitor_data] ERROR - Tushare获取失败 300724: ERROR.
+2026-03-06 17:05:27 [smart_monitor_data] ERROR - Tushare获取失败 300724: ERROR.
+2026-03-06 17:05:27 [smart_monitor_data] ERROR - Tushare获取失败 300724: ERROR.
+2026-03-06 17:05:27 [smart_monitor_data] ERROR - AKShare获取失败 300724（已重试1次）
+2026-03-06 17:05:27 [smart_monitor_data] ERROR - AKShare获取失败 300724（已重试1次）
+2026-03-06 17:05:27 [smart_monitor_data] ERROR - AKShare获取失败 300724（已重试1次）
+2026-03-06 17:05:27 [smart_monitor_data] ERROR - AKShare获取失败 300724（已重试1次）
+2026-03-06 17:05:27 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:27 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:27 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:27 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:27 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 300724
+2026-03-06 17:05:27 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 300724
+2026-03-06 17:05:27 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 300724
+2026-03-06 17:05:27 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 300724
+2026-03-06 17:05:27 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 300724，共60条
+2026-03-06 17:05:27 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 300724，共60条
+2026-03-06 17:05:27 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 300724，共60条
+2026-03-06 17:05:27 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 300724，共60条
+2026-03-06 17:05:27 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:27 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:27 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:27 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:27 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 600610
+2026-03-06 17:05:27 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 600610
+2026-03-06 17:05:27 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 600610
+2026-03-06 17:05:27 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 600610
+2026-03-06 17:05:28 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 600610，共60条
+2026-03-06 17:05:28 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 600610，共60条
+2026-03-06 17:05:28 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 600610，共60条
+2026-03-06 17:05:28 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 600610，共60条
+2026-03-06 17:05:28 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:28 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:28 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:28 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:28 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 002639
+2026-03-06 17:05:28 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 002639
+2026-03-06 17:05:28 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 002639
+2026-03-06 17:05:28 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 002639
+2026-03-06 17:05:28 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 002639，共60条
+2026-03-06 17:05:28 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 002639，共60条
+2026-03-06 17:05:28 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 002639，共60条
+2026-03-06 17:05:28 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 002639，共60条
+2026-03-06 17:05:28 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:28 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:28 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:28 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:28 [smart_monitor_data] INFO - 优先使用Tushare获取 002236 实时行情...
+2026-03-06 17:05:28 [smart_monitor_data] INFO - 优先使用Tushare获取 002236 实时行情...
+2026-03-06 17:05:28 [smart_monitor_data] INFO - 优先使用Tushare获取 002236 实时行情...
+2026-03-06 17:05:28 [smart_monitor_data] INFO - 优先使用Tushare获取 002236 实时行情...
+2026-03-06 17:05:28 [smart_monitor_data] ERROR - Tushare获取失败 002236: ERROR.
+2026-03-06 17:05:28 [smart_monitor_data] ERROR - Tushare获取失败 002236: ERROR.
+2026-03-06 17:05:28 [smart_monitor_data] ERROR - Tushare获取失败 002236: ERROR.
+2026-03-06 17:05:28 [smart_monitor_data] ERROR - Tushare获取失败 002236: ERROR.
+2026-03-06 17:05:28 [smart_monitor_data] ERROR - AKShare获取失败 002236（已重试1次）
+2026-03-06 17:05:28 [smart_monitor_data] ERROR - AKShare获取失败 002236（已重试1次）
+2026-03-06 17:05:28 [smart_monitor_data] ERROR - AKShare获取失败 002236（已重试1次）
+2026-03-06 17:05:28 [smart_monitor_data] ERROR - AKShare获取失败 002236（已重试1次）
+2026-03-06 17:05:28 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:28 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:28 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:28 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:28 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 002236
+2026-03-06 17:05:28 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 002236
+2026-03-06 17:05:28 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 002236
+2026-03-06 17:05:28 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 002236
+2026-03-06 17:05:28 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 002236，共60条
+2026-03-06 17:05:28 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 002236，共60条
+2026-03-06 17:05:28 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 002236，共60条
+2026-03-06 17:05:28 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 002236，共60条
+2026-03-06 17:05:28 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:28 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:28 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:28 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:28 [smart_monitor_data] INFO - 优先使用Tushare获取 000158 实时行情...
+2026-03-06 17:05:28 [smart_monitor_data] INFO - 优先使用Tushare获取 000158 实时行情...
+2026-03-06 17:05:28 [smart_monitor_data] INFO - 优先使用Tushare获取 000158 实时行情...
+2026-03-06 17:05:28 [smart_monitor_data] INFO - 优先使用Tushare获取 000158 实时行情...
+2026-03-06 17:05:28 [smart_monitor_data] ERROR - Tushare获取失败 000158: ERROR.
+2026-03-06 17:05:28 [smart_monitor_data] ERROR - Tushare获取失败 000158: ERROR.
+2026-03-06 17:05:28 [smart_monitor_data] ERROR - Tushare获取失败 000158: ERROR.
+2026-03-06 17:05:28 [smart_monitor_data] ERROR - Tushare获取失败 000158: ERROR.
+2026-03-06 17:05:28 [smart_monitor_data] ERROR - AKShare获取失败 000158（已重试1次）
+2026-03-06 17:05:28 [smart_monitor_data] ERROR - AKShare获取失败 000158（已重试1次）
+2026-03-06 17:05:28 [smart_monitor_data] ERROR - AKShare获取失败 000158（已重试1次）
+2026-03-06 17:05:28 [smart_monitor_data] ERROR - AKShare获取失败 000158（已重试1次）
+2026-03-06 17:05:28 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:28 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:28 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:28 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:28 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 000158
+2026-03-06 17:05:28 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 000158
+2026-03-06 17:05:28 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 000158
+2026-03-06 17:05:28 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 000158
+2026-03-06 17:05:28 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 000158，共60条
+2026-03-06 17:05:28 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 000158，共60条
+2026-03-06 17:05:28 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 000158，共60条
+2026-03-06 17:05:28 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 000158，共60条
+2026-03-06 17:05:28 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:28 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:28 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:28 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:28 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 601969
+2026-03-06 17:05:28 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 601969
+2026-03-06 17:05:28 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 601969
+2026-03-06 17:05:28 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 601969
+2026-03-06 17:05:29 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 601969，共60条
+2026-03-06 17:05:29 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 601969，共60条
+2026-03-06 17:05:29 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 601969，共60条
+2026-03-06 17:05:29 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 601969，共60条
+2026-03-06 17:05:29 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:29 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:29 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:29 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:29 [smart_monitor_data] INFO - 优先使用Tushare获取 300724 实时行情...
+2026-03-06 17:05:29 [smart_monitor_data] INFO - 优先使用Tushare获取 300724 实时行情...
+2026-03-06 17:05:29 [smart_monitor_data] INFO - 优先使用Tushare获取 300724 实时行情...
+2026-03-06 17:05:29 [smart_monitor_data] INFO - 优先使用Tushare获取 300724 实时行情...
+2026-03-06 17:05:29 [smart_monitor_data] ERROR - Tushare获取失败 300724: ERROR.
+2026-03-06 17:05:29 [smart_monitor_data] ERROR - Tushare获取失败 300724: ERROR.
+2026-03-06 17:05:29 [smart_monitor_data] ERROR - Tushare获取失败 300724: ERROR.
+2026-03-06 17:05:29 [smart_monitor_data] ERROR - Tushare获取失败 300724: ERROR.
+2026-03-06 17:05:29 [smart_monitor_data] ERROR - AKShare获取失败 300724（已重试1次）
+2026-03-06 17:05:29 [smart_monitor_data] ERROR - AKShare获取失败 300724（已重试1次）
+2026-03-06 17:05:29 [smart_monitor_data] ERROR - AKShare获取失败 300724（已重试1次）
+2026-03-06 17:05:29 [smart_monitor_data] ERROR - AKShare获取失败 300724（已重试1次）
+2026-03-06 17:05:29 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:29 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:29 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:29 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:29 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 300724
+2026-03-06 17:05:29 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 300724
+2026-03-06 17:05:29 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 300724
+2026-03-06 17:05:29 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 300724
+2026-03-06 17:05:29 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 300724，共60条
+2026-03-06 17:05:29 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 300724，共60条
+2026-03-06 17:05:29 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 300724，共60条
+2026-03-06 17:05:29 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 300724，共60条
+2026-03-06 17:05:29 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:29 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:29 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:29 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:29 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 600610
+2026-03-06 17:05:29 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 600610
+2026-03-06 17:05:29 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 600610
+2026-03-06 17:05:29 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 600610
+2026-03-06 17:05:29 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 600610，共60条
+2026-03-06 17:05:29 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 600610，共60条
+2026-03-06 17:05:29 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 600610，共60条
+2026-03-06 17:05:29 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 600610，共60条
+2026-03-06 17:05:29 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:29 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:29 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:29 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:29 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 002639
+2026-03-06 17:05:29 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 002639
+2026-03-06 17:05:29 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 002639
+2026-03-06 17:05:29 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 002639
+2026-03-06 17:05:29 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 002639，共60条
+2026-03-06 17:05:29 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 002639，共60条
+2026-03-06 17:05:29 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 002639，共60条
+2026-03-06 17:05:29 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 002639，共60条
+2026-03-06 17:05:46 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:46 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:46 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:46 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:46 [smart_monitor_data] INFO - 优先使用Tushare获取 002236 实时行情...
+2026-03-06 17:05:46 [smart_monitor_data] INFO - 优先使用Tushare获取 002236 实时行情...
+2026-03-06 17:05:46 [smart_monitor_data] INFO - 优先使用Tushare获取 002236 实时行情...
+2026-03-06 17:05:46 [smart_monitor_data] INFO - 优先使用Tushare获取 002236 实时行情...
+2026-03-06 17:05:46 [smart_monitor_data] ERROR - Tushare获取失败 002236: ERROR.
+2026-03-06 17:05:46 [smart_monitor_data] ERROR - Tushare获取失败 002236: ERROR.
+2026-03-06 17:05:46 [smart_monitor_data] ERROR - Tushare获取失败 002236: ERROR.
+2026-03-06 17:05:46 [smart_monitor_data] ERROR - Tushare获取失败 002236: ERROR.
+2026-03-06 17:05:46 [smart_monitor_data] ERROR - AKShare获取失败 002236（已重试1次）
+2026-03-06 17:05:46 [smart_monitor_data] ERROR - AKShare获取失败 002236（已重试1次）
+2026-03-06 17:05:46 [smart_monitor_data] ERROR - AKShare获取失败 002236（已重试1次）
+2026-03-06 17:05:46 [smart_monitor_data] ERROR - AKShare获取失败 002236（已重试1次）
+2026-03-06 17:05:46 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:46 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:46 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:46 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:46 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 002236
+2026-03-06 17:05:46 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 002236
+2026-03-06 17:05:46 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 002236
+2026-03-06 17:05:46 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 002236
+2026-03-06 17:05:46 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 002236，共60条
+2026-03-06 17:05:46 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 002236，共60条
+2026-03-06 17:05:46 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 002236，共60条
+2026-03-06 17:05:46 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 002236，共60条
+2026-03-06 17:05:46 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:46 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:46 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:46 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:46 [smart_monitor_data] INFO - 优先使用Tushare获取 000158 实时行情...
+2026-03-06 17:05:46 [smart_monitor_data] INFO - 优先使用Tushare获取 000158 实时行情...
+2026-03-06 17:05:46 [smart_monitor_data] INFO - 优先使用Tushare获取 000158 实时行情...
+2026-03-06 17:05:46 [smart_monitor_data] INFO - 优先使用Tushare获取 000158 实时行情...
+2026-03-06 17:05:47 [smart_monitor_data] ERROR - Tushare获取失败 000158: ERROR.
+2026-03-06 17:05:47 [smart_monitor_data] ERROR - Tushare获取失败 000158: ERROR.
+2026-03-06 17:05:47 [smart_monitor_data] ERROR - Tushare获取失败 000158: ERROR.
+2026-03-06 17:05:47 [smart_monitor_data] ERROR - Tushare获取失败 000158: ERROR.
+2026-03-06 17:05:47 [smart_monitor_data] ERROR - AKShare获取失败 000158（已重试1次）
+2026-03-06 17:05:47 [smart_monitor_data] ERROR - AKShare获取失败 000158（已重试1次）
+2026-03-06 17:05:47 [smart_monitor_data] ERROR - AKShare获取失败 000158（已重试1次）
+2026-03-06 17:05:47 [smart_monitor_data] ERROR - AKShare获取失败 000158（已重试1次）
+2026-03-06 17:05:47 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:47 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:47 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:47 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:47 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 000158
+2026-03-06 17:05:47 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 000158
+2026-03-06 17:05:47 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 000158
+2026-03-06 17:05:47 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 000158
+2026-03-06 17:05:47 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 000158，共60条
+2026-03-06 17:05:47 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 000158，共60条
+2026-03-06 17:05:47 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 000158，共60条
+2026-03-06 17:05:47 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 000158，共60条
+2026-03-06 17:05:47 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:47 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:47 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:47 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:47 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 601969
+2026-03-06 17:05:47 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 601969
+2026-03-06 17:05:47 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 601969
+2026-03-06 17:05:47 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 601969
+2026-03-06 17:05:47 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 601969，共60条
+2026-03-06 17:05:47 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 601969，共60条
+2026-03-06 17:05:47 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 601969，共60条
+2026-03-06 17:05:47 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 601969，共60条
+2026-03-06 17:05:47 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:47 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:47 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:47 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:47 [smart_monitor_data] INFO - 优先使用Tushare获取 300724 实时行情...
+2026-03-06 17:05:47 [smart_monitor_data] INFO - 优先使用Tushare获取 300724 实时行情...
+2026-03-06 17:05:47 [smart_monitor_data] INFO - 优先使用Tushare获取 300724 实时行情...
+2026-03-06 17:05:47 [smart_monitor_data] INFO - 优先使用Tushare获取 300724 实时行情...
+2026-03-06 17:05:47 [smart_monitor_data] ERROR - Tushare获取失败 300724: ERROR.
+2026-03-06 17:05:47 [smart_monitor_data] ERROR - Tushare获取失败 300724: ERROR.
+2026-03-06 17:05:47 [smart_monitor_data] ERROR - Tushare获取失败 300724: ERROR.
+2026-03-06 17:05:47 [smart_monitor_data] ERROR - Tushare获取失败 300724: ERROR.
+2026-03-06 17:05:47 [smart_monitor_data] ERROR - AKShare获取失败 300724（已重试1次）
+2026-03-06 17:05:47 [smart_monitor_data] ERROR - AKShare获取失败 300724（已重试1次）
+2026-03-06 17:05:47 [smart_monitor_data] ERROR - AKShare获取失败 300724（已重试1次）
+2026-03-06 17:05:47 [smart_monitor_data] ERROR - AKShare获取失败 300724（已重试1次）
+2026-03-06 17:05:47 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:47 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:47 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:47 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:47 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 300724
+2026-03-06 17:05:47 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 300724
+2026-03-06 17:05:47 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 300724
+2026-03-06 17:05:47 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 300724
+2026-03-06 17:05:47 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 300724，共60条
+2026-03-06 17:05:47 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 300724，共60条
+2026-03-06 17:05:47 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 300724，共60条
+2026-03-06 17:05:47 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 300724，共60条
+2026-03-06 17:05:47 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:47 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:47 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:47 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:47 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 600610
+2026-03-06 17:05:47 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 600610
+2026-03-06 17:05:47 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 600610
+2026-03-06 17:05:47 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 600610
+2026-03-06 17:05:47 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 600610，共60条
+2026-03-06 17:05:47 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 600610，共60条
+2026-03-06 17:05:47 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 600610，共60条
+2026-03-06 17:05:47 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 600610，共60条
+2026-03-06 17:05:47 [smart_monitor_engine] INFO - [002639] 监控线程已退出
+2026-03-06 17:05:47 [smart_monitor_engine] INFO - [002639] 监控线程已退出
+2026-03-06 17:05:47 [smart_monitor_engine] INFO - [002639] 监控线程已退出
+2026-03-06 17:05:47 [smart_monitor_engine] INFO - [002639] 监控线程已退出
+2026-03-06 17:05:47 [smart_monitor_engine] INFO - [002639] 监控已停止
+2026-03-06 17:05:47 [smart_monitor_engine] INFO - [002639] 监控已停止
+2026-03-06 17:05:47 [smart_monitor_engine] INFO - [002639] 监控已停止
+2026-03-06 17:05:47 [smart_monitor_engine] INFO - [002639] 监控已停止
+2026-03-06 17:05:47 [smart_monitor_db] INFO - 更新监控任务: 002639
+2026-03-06 17:05:47 [smart_monitor_db] INFO - 更新监控任务: 002639
+2026-03-06 17:05:47 [smart_monitor_db] INFO - 更新监控任务: 002639
+2026-03-06 17:05:47 [smart_monitor_db] INFO - 更新监控任务: 002639
+2026-03-06 17:05:48 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:48 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:48 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:48 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:48 [smart_monitor_data] INFO - 优先使用Tushare获取 002236 实时行情...
+2026-03-06 17:05:48 [smart_monitor_data] INFO - 优先使用Tushare获取 002236 实时行情...
+2026-03-06 17:05:48 [smart_monitor_data] INFO - 优先使用Tushare获取 002236 实时行情...
+2026-03-06 17:05:48 [smart_monitor_data] INFO - 优先使用Tushare获取 002236 实时行情...
+2026-03-06 17:05:48 [smart_monitor_data] ERROR - Tushare获取失败 002236: ERROR.
+2026-03-06 17:05:48 [smart_monitor_data] ERROR - Tushare获取失败 002236: ERROR.
+2026-03-06 17:05:48 [smart_monitor_data] ERROR - Tushare获取失败 002236: ERROR.
+2026-03-06 17:05:48 [smart_monitor_data] ERROR - Tushare获取失败 002236: ERROR.
+2026-03-06 17:05:48 [smart_monitor_data] ERROR - AKShare获取失败 002236（已重试1次）
+2026-03-06 17:05:48 [smart_monitor_data] ERROR - AKShare获取失败 002236（已重试1次）
+2026-03-06 17:05:48 [smart_monitor_data] ERROR - AKShare获取失败 002236（已重试1次）
+2026-03-06 17:05:48 [smart_monitor_data] ERROR - AKShare获取失败 002236（已重试1次）
+2026-03-06 17:05:48 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:48 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:48 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:48 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:48 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 002236
+2026-03-06 17:05:48 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 002236
+2026-03-06 17:05:48 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 002236
+2026-03-06 17:05:48 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 002236
+2026-03-06 17:05:48 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 002236，共60条
+2026-03-06 17:05:48 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 002236，共60条
+2026-03-06 17:05:48 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 002236，共60条
+2026-03-06 17:05:48 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 002236，共60条
+2026-03-06 17:05:48 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:48 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:48 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:48 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:48 [smart_monitor_data] INFO - 优先使用Tushare获取 000158 实时行情...
+2026-03-06 17:05:48 [smart_monitor_data] INFO - 优先使用Tushare获取 000158 实时行情...
+2026-03-06 17:05:48 [smart_monitor_data] INFO - 优先使用Tushare获取 000158 实时行情...
+2026-03-06 17:05:48 [smart_monitor_data] INFO - 优先使用Tushare获取 000158 实时行情...
+2026-03-06 17:05:48 [smart_monitor_data] ERROR - Tushare获取失败 000158: ERROR.
+2026-03-06 17:05:48 [smart_monitor_data] ERROR - Tushare获取失败 000158: ERROR.
+2026-03-06 17:05:48 [smart_monitor_data] ERROR - Tushare获取失败 000158: ERROR.
+2026-03-06 17:05:48 [smart_monitor_data] ERROR - Tushare获取失败 000158: ERROR.
+2026-03-06 17:05:48 [smart_monitor_data] ERROR - AKShare获取失败 000158（已重试1次）
+2026-03-06 17:05:48 [smart_monitor_data] ERROR - AKShare获取失败 000158（已重试1次）
+2026-03-06 17:05:48 [smart_monitor_data] ERROR - AKShare获取失败 000158（已重试1次）
+2026-03-06 17:05:48 [smart_monitor_data] ERROR - AKShare获取失败 000158（已重试1次）
+2026-03-06 17:05:48 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:48 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:48 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:48 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:48 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 000158
+2026-03-06 17:05:48 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 000158
+2026-03-06 17:05:48 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 000158
+2026-03-06 17:05:48 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 000158
+2026-03-06 17:05:48 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 000158，共60条
+2026-03-06 17:05:48 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 000158，共60条
+2026-03-06 17:05:48 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 000158，共60条
+2026-03-06 17:05:48 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 000158，共60条
+2026-03-06 17:05:48 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:48 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:48 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:48 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:48 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 601969
+2026-03-06 17:05:48 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 601969
+2026-03-06 17:05:48 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 601969
+2026-03-06 17:05:48 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 601969
+2026-03-06 17:05:48 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 601969，共60条
+2026-03-06 17:05:48 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 601969，共60条
+2026-03-06 17:05:48 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 601969，共60条
+2026-03-06 17:05:48 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 601969，共60条
+2026-03-06 17:05:48 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:48 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:48 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:48 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:48 [smart_monitor_data] INFO - 优先使用Tushare获取 300724 实时行情...
+2026-03-06 17:05:48 [smart_monitor_data] INFO - 优先使用Tushare获取 300724 实时行情...
+2026-03-06 17:05:48 [smart_monitor_data] INFO - 优先使用Tushare获取 300724 实时行情...
+2026-03-06 17:05:48 [smart_monitor_data] INFO - 优先使用Tushare获取 300724 实时行情...
+2026-03-06 17:05:49 [smart_monitor_data] ERROR - Tushare获取失败 300724: ERROR.
+2026-03-06 17:05:49 [smart_monitor_data] ERROR - Tushare获取失败 300724: ERROR.
+2026-03-06 17:05:49 [smart_monitor_data] ERROR - Tushare获取失败 300724: ERROR.
+2026-03-06 17:05:49 [smart_monitor_data] ERROR - Tushare获取失败 300724: ERROR.
+2026-03-06 17:05:49 [smart_monitor_data] ERROR - AKShare获取失败 300724（已重试1次）
+2026-03-06 17:05:49 [smart_monitor_data] ERROR - AKShare获取失败 300724（已重试1次）
+2026-03-06 17:05:49 [smart_monitor_data] ERROR - AKShare获取失败 300724（已重试1次）
+2026-03-06 17:05:49 [smart_monitor_data] ERROR - AKShare获取失败 300724（已重试1次）
+2026-03-06 17:05:49 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:49 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:49 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:49 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:49 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 300724
+2026-03-06 17:05:49 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 300724
+2026-03-06 17:05:49 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 300724
+2026-03-06 17:05:49 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 300724
+2026-03-06 17:05:49 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 300724，共60条
+2026-03-06 17:05:49 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 300724，共60条
+2026-03-06 17:05:49 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 300724，共60条
+2026-03-06 17:05:49 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 300724，共60条
+2026-03-06 17:05:49 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:49 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:49 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:49 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:49 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 600610
+2026-03-06 17:05:49 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 600610
+2026-03-06 17:05:49 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 600610
+2026-03-06 17:05:49 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 600610
+2026-03-06 17:05:49 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 600610，共60条
+2026-03-06 17:05:49 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 600610，共60条
+2026-03-06 17:05:49 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 600610，共60条
+2026-03-06 17:05:49 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 600610，共60条
+2026-03-06 17:05:49 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:49 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:49 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:49 [smart_monitor_data] INFO - Tushare优先数据源初始化成功
+2026-03-06 17:05:49 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 002639
+2026-03-06 17:05:49 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 002639
+2026-03-06 17:05:49 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 002639
+2026-03-06 17:05:49 [smart_monitor_kline] INFO - 降级使用Tushare获取K线数据 002639
+2026-03-06 17:05:50 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 002639，共60条
+2026-03-06 17:05:50 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 002639，共60条
+2026-03-06 17:05:50 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 002639，共60条
+2026-03-06 17:05:50 [smart_monitor_kline] INFO - ✅ Tushare获取K线数据成功 002639，共60条

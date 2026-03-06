@@ -15,7 +15,7 @@ from portfolio_manager import portfolio_manager
 from portfolio_scheduler import portfolio_scheduler
 
 
-def display_portfolio_manager():
+def display_portfolio_manager(lightweight_model=None, reasoning_model=None):
     """显示持仓管理主界面"""
     
     st.markdown("## 📊 持仓定时分析")
@@ -33,7 +33,7 @@ def display_portfolio_manager():
         display_portfolio_stocks()
     
     with tab2:
-        display_batch_analysis()
+        display_batch_analysis(lightweight_model, reasoning_model)
     
     with tab3:
         display_scheduler_management()
@@ -229,7 +229,7 @@ def display_add_stock_form():
                     st.error(f"添加失败: {str(e)}")
 
 
-def display_batch_analysis():
+def display_batch_analysis(lightweight_model=None, reasoning_model=None):
     """显示批量分析功能"""
     
     st.markdown("### 🔄 批量分析持仓股票")
@@ -308,7 +308,9 @@ def display_batch_analysis():
                 result = portfolio_manager.batch_analyze_portfolio(
                     mode=analysis_mode,
                     max_workers=max_workers,
-                    progress_callback=update_progress
+                    progress_callback=update_progress,
+                    lightweight_model=lightweight_model,
+                    reasoning_model=reasoning_model,
                 )
                 
                 # 清除进度显示

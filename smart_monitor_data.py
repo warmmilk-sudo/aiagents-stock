@@ -54,10 +54,23 @@ class SmartMonitorDataFetcher:
             try:
                 import tushare as ts
                 ts.set_token(tushare_token)
-                self.ts_pro = ts.pro_api()
-                self.logger.info("Tushare备用数据源初始化成功")
+                # 使用配置的 URL，默认为官方接口
+                tushare_url = os.getenv('TUSHARE_URL', 'https://api.tushare.pro')
+                
+                try:
+                    # 尝试使用 server 参数（较新版本支持）
+                    self.ts_pro = ts.pro_api(server=tushare_url)
+                except TypeError:
+                    # 兼容旧版本：手动设置 URL
+                    self.ts_pro = ts.pro_api()
+                    if hasattr(self.ts_pro, '_DataApi__http_url'):
+                        self.ts_pro._DataApi__http_url = tushare_url
+                
+                self.logger.info(f"Tushare备用数据源初始化成功，地址: {tushare_url}")
             except Exception as e:
                 self.logger.warning(f"Tushare初始化失败: {e}")
+
+
         else:
             self.logger.info("未配置Tushare Token，仅使用AKShare数据源")
     

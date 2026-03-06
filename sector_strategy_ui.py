@@ -37,7 +37,7 @@ def _parse_json_field(value, default):
         return default
 
 
-def display_sector_strategy():
+def display_sector_strategy(lightweight_model=None, reasoning_model=None):
     """显示智策板块分析主界面"""
     
     st.markdown("""
@@ -53,13 +53,13 @@ def display_sector_strategy():
     tab1, tab2 = st.tabs(["📊 智策分析", "📋 历史报告"])
     
     with tab1:
-        display_analysis_tab()
+        display_analysis_tab(lightweight_model, reasoning_model)
     
     with tab2:
         display_history_tab()
 
 
-def display_analysis_tab():
+def display_analysis_tab(lightweight_model=None, reasoning_model=None):
     """显示分析标签页"""
     
     # 定时任务设置区域
@@ -127,13 +127,16 @@ def display_analysis_tab():
     
     st.markdown("---")
     
-    # 开始分析（使用.env中配置的默认模型）
+    # 开始分析（使用当前会话的双模型选择）
     if analyze_button:
         # 清除之前的结果
         if 'sector_strategy_result' in st.session_state:
             del st.session_state.sector_strategy_result
         
-        run_sector_strategy_analysis()
+        run_sector_strategy_analysis(
+            lightweight_model=lightweight_model,
+            reasoning_model=reasoning_model,
+        )
     
     # 显示分析结果
     if 'sector_strategy_result' in st.session_state:
@@ -247,11 +250,8 @@ def display_report_detail(report_id):
     st.info("当前版本仅提供报告摘要，详细页面已移除。")
 
 
-def run_sector_strategy_analysis(model=None):
+def run_sector_strategy_analysis(model=None, lightweight_model=None, reasoning_model=None):
     """运行智策分析"""
-    import config
-    model = model or config.DEFAULT_MODEL_NAME
-    
     # 进度显示
     progress_bar = st.progress(0)
     status_text = st.empty()
@@ -279,7 +279,11 @@ def run_sector_strategy_analysis(model=None):
         status_text.text("🤖 AI智能体团队正在分析，预计需要10分钟...")
         progress_bar.progress(40)
         
-        engine = SectorStrategyEngine(model=model)
+        engine = SectorStrategyEngine(
+            model=model,
+            lightweight_model=lightweight_model,
+            reasoning_model=reasoning_model,
+        )
         result = engine.run_comprehensive_analysis(data)
         # 传递缓存元信息到结果以便页面提示
         if data.get("from_cache") or data.get("cache_warning"):
@@ -721,7 +725,7 @@ def display_visualizations(predictions):
                      title='板块多空信心度对比')
         
         fig.update_layout(height=400)
-    st.plotly_chart(fig, use_container_width=True, config={'responsive': True}, key="sector_confidence")
+    st.plotly_chart(fig, width='stretch', config={'responsive': True}, key="sector_confidence")
     
     st.markdown("---")
     
@@ -758,7 +762,7 @@ def display_visualizations(predictions):
                         title='板块热度分布图')
         
         fig.update_layout(height=400)
-    st.plotly_chart(fig, use_container_width=True, config={'responsive': True}, key="sector_heat")
+    st.plotly_chart(fig, width='stretch', config={'responsive': True}, key="sector_heat")
 
 
 def display_pdf_export_section(result):

@@ -10,7 +10,7 @@ from macro_cycle_engine import MacroCycleEngine
 from macro_cycle_pdf import MacroCyclePDFGenerator, generate_macro_cycle_markdown
 
 
-def display_macro_cycle():
+def display_macro_cycle(lightweight_model=None, reasoning_model=None):
     """显示宏观周期分析主界面"""
     st.markdown("""
     <div style="background: linear-gradient(135deg, #0f0c29 0%, #302b63 50%, #24243e 100%); 
@@ -29,13 +29,13 @@ def display_macro_cycle():
     tab1, tab2 = st.tabs(["📊 周期分析", "📚 理论介绍"])
 
     with tab1:
-        display_analysis_tab()
+        display_analysis_tab(lightweight_model, reasoning_model)
 
     with tab2:
         display_theory_tab()
 
 
-def display_analysis_tab():
+def display_analysis_tab(lightweight_model=None, reasoning_model=None):
     """显示分析标签页"""
     # 简介
     st.markdown("""
@@ -73,7 +73,10 @@ def display_analysis_tab():
         if 'macro_cycle_result' in st.session_state:
             del st.session_state.macro_cycle_result
 
-        run_macro_cycle_analysis()
+        run_macro_cycle_analysis(
+            lightweight_model=lightweight_model,
+            reasoning_model=reasoning_model,
+        )
 
     # 显示结果
     if 'macro_cycle_result' in st.session_state:
@@ -84,10 +87,8 @@ def display_analysis_tab():
             st.error(f"❌ 分析失败: {result.get('error', '未知错误')}")
 
 
-def run_macro_cycle_analysis():
+def run_macro_cycle_analysis(lightweight_model=None, reasoning_model=None):
     """运行宏观周期分析"""
-    import config
-    model = config.DEFAULT_MODEL_NAME
 
     progress_bar = st.progress(0)
     status_text = st.empty()
@@ -97,7 +98,10 @@ def run_macro_cycle_analysis():
         status_text.text(text)
 
     try:
-        engine = MacroCycleEngine(model=model)
+        engine = MacroCycleEngine(
+            lightweight_model=lightweight_model,
+            reasoning_model=reasoning_model,
+        )
         result = engine.run_full_analysis(progress_callback=progress_callback)
 
         if result.get("success"):

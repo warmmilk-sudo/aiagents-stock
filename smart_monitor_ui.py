@@ -10,6 +10,7 @@ import logging
 import os
 from typing import Dict
 from dotenv import load_dotenv
+import config
 
 from smart_monitor_engine import SmartMonitorEngine
 from smart_monitor_db import SmartMonitorDB
@@ -20,7 +21,7 @@ from config_manager import config_manager  # 使用主程序的配置管理器
 load_dotenv()
 
 
-def smart_monitor_ui():
+def smart_monitor_ui(lightweight_model=None, reasoning_model=None):
     """AI盯盘主界面"""
     
     st.title("🤖 AI盯盘 - AI决策交易系统")
@@ -140,16 +141,29 @@ def smart_monitor_ui():
     
     st.markdown("---")
     
+    if lightweight_model is None:
+        lightweight_model = st.session_state.get('selected_lightweight_model', config.LIGHTWEIGHT_MODEL_NAME)
+    if reasoning_model is None:
+        reasoning_model = st.session_state.get('selected_reasoning_model', config.REASONING_MODEL_NAME)
+
     # 初始化组件（自动从配置读取）
     if 'engine' not in st.session_state:
         try:
             # SmartMonitorEngine会自动从config_manager读取配置
-            st.session_state.engine = SmartMonitorEngine()
+            st.session_state.engine = SmartMonitorEngine(
+                lightweight_model=lightweight_model,
+                reasoning_model=reasoning_model,
+            )
             st.session_state.db = SmartMonitorDB()
         except Exception as e:
             st.error(f"初始化失败: {e}")
             st.error("请先在'环境配置'中完成基础配置")
             return
+    else:
+        st.session_state.engine.set_model_overrides(
+            lightweight_model=lightweight_model,
+            reasoning_model=reasoning_model,
+        )
     
     # 创建标签页
     tabs = st.tabs([
@@ -809,7 +823,7 @@ def _render_task_kline_and_decisions(task: Dict, db: SmartMonitorDB, engine):
                 )
                 
                 # 显示图表
-                st.plotly_chart(fig, use_container_width=True, config={'responsive': True})
+                st.plotly_chart(fig, width='stretch', config={'responsive': True})
                 
                 st.caption(f"📅 数据时间范围：{kline_data['日期'].min()} ~ {kline_data['日期'].max()}")
             else:

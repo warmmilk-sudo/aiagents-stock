@@ -6,17 +6,18 @@
 
 import streamlit as st
 from datetime import datetime, timedelta
+import config
 from main_force_analysis import MainForceAnalyzer
 from main_force_pdf_generator import display_report_download_section
 from main_force_history_ui import display_batch_history
 import pandas as pd
 
-def display_main_force_selector():
+def display_main_force_selector(lightweight_model=None, reasoning_model=None):
     """显示主力选股界面"""
 
     # 检查是否触发批量分析（不立即删除标志）
     if st.session_state.get('main_force_batch_trigger'):
-        run_main_force_batch_analysis()
+        run_main_force_batch_analysis(lightweight_model, reasoning_model)
         return
 
     # 检查是否查看历史记录
@@ -129,13 +130,16 @@ def display_main_force_selector():
 
     st.markdown("---")
 
-    # 开始分析按钮（使用.env中配置的默认模型）
+    # 开始分析按钮（使用当前会话的双模型选择）
     if st.button("🚀 开始主力选股", type="primary", width='content'):
 
         with st.spinner("正在获取数据并分析，这可能需要几分钟..."):
 
-            # 创建分析器（使用默认模型）
-            analyzer = MainForceAnalyzer()
+            # 创建分析器（使用当前会话模型选择）
+            analyzer = MainForceAnalyzer(
+                lightweight_model=lightweight_model,
+                reasoning_model=reasoning_model,
+            )
 
             # 运行分析
             result = analyzer.run_full_analysis(
@@ -478,7 +482,7 @@ def format_number(value, unit='', suffix=''):
         return str(value)
 
 
-def run_main_force_batch_analysis():
+def run_main_force_batch_analysis(lightweight_model=None, reasoning_model=None):
     """执行主力选股TOP股票批量分析（遵循统一调用规范）"""
     import time
     import re
@@ -603,8 +607,10 @@ def run_main_force_batch_analysis():
             'sentiment': False,  # 禁用以提升速度
             'news': False  # 禁用以提升速度
         }
-        import config
-        selected_model = config.DEFAULT_MODEL_NAME
+        if lightweight_model is None:
+            lightweight_model = st.session_state.get('selected_lightweight_model', config.LIGHTWEIGHT_MODEL_NAME)
+        if reasoning_model is None:
+            reasoning_model = st.session_state.get('selected_reasoning_model', config.REASONING_MODEL_NAME)
         period = '1y'
 
         # 创建进度显示
@@ -629,7 +635,8 @@ def run_main_force_batch_analysis():
                         symbol=code,
                         period=period,
                         enabled_analysts_config=enabled_analysts_config,
-                        selected_model=selected_model
+                        selected_lightweight_model=lightweight_model,
+                        selected_reasoning_model=reasoning_model,
                     )
 
                     results.append(result)
@@ -655,7 +662,8 @@ def run_main_force_batch_analysis():
                         symbol=code,
                         period=period,
                         enabled_analysts_config=enabled_analysts_config,
-                        selected_model=selected_model
+                        selected_lightweight_model=lightweight_model,
+                        selected_reasoning_model=reasoning_model,
                     )
                     print(f"  完成分析: {code}")
                     return result

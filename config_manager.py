@@ -26,9 +26,15 @@ class ConfigManager:
                 "required": False,
                 "type": "text"
             },
-            "DEFAULT_MODEL_NAME": {
+            "LIGHTWEIGHT_MODEL_NAME": {
                 "value": "deepseek-chat",
-                "description": "AI模型名称（支持OpenAI兼容模型）",
+                "description": "轻量模型名称（技术/情绪/新闻/批量筛选等任务）",
+                "required": False,
+                "type": "text"
+            },
+            "REASONING_MODEL_NAME": {
+                "value": "deepseek-reasoner",
+                "description": "推理模型名称（基本面/风险/宏观/龙虎榜等任务）",
                 "required": False,
                 "type": "text"
             },
@@ -86,6 +92,19 @@ class ConfigManager:
                 "required": False,
                 "type": "text"
             },
+            "TDX_ENABLED": {
+                "value": "false",
+                "description": "启用TDX数据源（推荐，需运行TDX API服务）",
+                "required": False,
+                "type": "boolean"
+            },
+            "TDX_BASE_URL": {
+                "value": "http://127.0.0.1:8181",
+                "description": "TDX API服务地址",
+                "required": False,
+                "type": "text"
+            },
+
             "MINIQMT_ENABLED": {
                 "value": "false",
                 "description": "启用MiniQMT量化交易",
@@ -140,6 +159,7 @@ class ConfigManager:
                 "required": False,
                 "type": "password"
             },
+
             "EMAIL_TO": {
                 "value": "",
                 "description": "收件人邮箱",
@@ -171,6 +191,12 @@ class ConfigManager:
                 "required": False,
                 "type": "text"
             },
+            "DATA_PERIOD": {
+                "value": "1y",
+                "description": "默认股票获取周期（如：1mo, 3mo, 6mo, 1y）",
+                "required": False,
+                "type": "text"
+            }
         }
     
     def read_env(self) -> Dict[str, str]:
@@ -226,7 +252,8 @@ class ConfigManager:
             lines.append("# ========== DeepSeek API配置 ==========")
             lines.append(f'DEEPSEEK_API_KEY="{config.get("DEEPSEEK_API_KEY", "")}"')
             lines.append(f'DEEPSEEK_BASE_URL="{config.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")}"')
-            lines.append(f'DEFAULT_MODEL_NAME="{config.get("DEFAULT_MODEL_NAME", "deepseek-chat")}"')
+            lines.append(f'LIGHTWEIGHT_MODEL_NAME="{config.get("LIGHTWEIGHT_MODEL_NAME", "deepseek-chat")}"')
+            lines.append(f'REASONING_MODEL_NAME="{config.get("REASONING_MODEL_NAME", "deepseek-reasoner")}"')
             lines.append(f'ADMIN_PASSWORD="{config.get("ADMIN_PASSWORD", "")}"')
             lines.append(f'ADMIN_PASSWORD_HASH="{config.get("ADMIN_PASSWORD_HASH", "")}"')
             lines.append(f'LOGIN_MAX_ATTEMPTS="{config.get("LOGIN_MAX_ATTEMPTS", "5")}"')
@@ -240,6 +267,13 @@ class ConfigManager:
             lines.append("# ========== Tushare数据接口（可选）==========")
             lines.append(f'TUSHARE_TOKEN="{config.get("TUSHARE_TOKEN", "")}"')
             lines.append(f'TUSHARE_URL="{config.get("TUSHARE_URL", "https://api.tushare.pro")}"')
+            lines.append("")
+            
+            # 基础数据配置
+            lines.append("# ========== 全局基础分析配置 ==========")
+            lines.append(f'DATA_PERIOD="{config.get("DATA_PERIOD", "1y")}"')
+            lines.append(f'TDX_ENABLED="{config.get("TDX_ENABLED", "false")}"')
+            lines.append(f'TDX_BASE_URL="{config.get("TDX_BASE_URL", "http://127.0.0.1:8181")}"')
             lines.append("")
             
             # MiniQMT配置

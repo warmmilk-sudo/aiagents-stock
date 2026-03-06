@@ -8,12 +8,14 @@ from typing import Dict, List, Optional
 from datetime import datetime, time
 import pytz
 import config
+from model_routing import ModelTier, resolve_model_name
 
 
 class SmartMonitorDeepSeek:
     """A股智能盯盘 - DeepSeek AI决策引擎"""
 
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str, model: str = None,
+                 lightweight_model: str = None, reasoning_model: str = None):
         """
         初始化DeepSeek客户端
         
@@ -21,12 +23,23 @@ class SmartMonitorDeepSeek:
             api_key: DeepSeek API密钥
         """
         self.api_key = api_key
+        self.model = model
+        self.lightweight_model = lightweight_model
+        self.reasoning_model = reasoning_model
         self.base_url = config.DEEPSEEK_BASE_URL
         self.headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
         }
         self.logger = logging.getLogger(__name__)
+
+    def set_model_overrides(self, model: str = None,
+                            lightweight_model: str = None,
+                            reasoning_model: str = None) -> None:
+        """更新当前会话的模型覆盖配置。"""
+        self.model = model
+        self.lightweight_model = lightweight_model
+        self.reasoning_model = reasoning_model
 
     def is_trading_time(self) -> bool:
         """
@@ -155,10 +168,19 @@ class SmartMonitorDeepSeek:
         """
         import requests
         
-        model = model or config.DEFAULT_MODEL_NAME
+        model_to_use = resolve_model_name(
+            tier=ModelTier.REASONING,
+            explicit_model=model,
+            forced_model=self.model,
+            lightweight_model=self.lightweight_model,
+            reasoning_model=self.reasoning_model,
+        )
+
+        if "reasoner" in model_to_use.lower() and max_tokens <= 2000:
+            max_tokens = 8000
         
         payload = {
-            "model": model,
+            "model": model_to_use,
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens

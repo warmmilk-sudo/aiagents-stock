@@ -12,6 +12,7 @@ import logging
 import os
 from dotenv import load_dotenv
 from sector_strategy_db import SectorStrategyDatabase
+from tushare_utils import create_tushare_pro
 
 # 加载环境变量
 load_dotenv()
@@ -31,6 +32,8 @@ class SectorStrategyDataFetcher:
         # 初始化数据库和日志
         self.database = SectorStrategyDatabase()
         self.logger = logging.getLogger(__name__)
+        self._tushare_api = None
+        self._tushare_url = None
         
         # 配置日志
         if not self.logger.handlers:
@@ -300,28 +303,26 @@ class SectorStrategyDataFetcher:
     def _get_north_money_flow(self):
         """获取北向资金流向（优先使用Tushare，失败时使用Akshare）"""
         # 优先使用Tushare获取沪深港通资金流向
-        self.ts_pro = None
         tushare_token = os.getenv('TUSHARE_TOKEN', '')
         try:
             # 初始化Tushare（如果尚未初始化）
-            if not hasattr(self, '_tushare_api'):
-                TUSHARE_TOKEN = os.getenv('TUSHARE_TOKEN', '')
-                if TUSHARE_TOKEN:
+            if self._tushare_api is None:
+                if tushare_token:
                     try:
-                        import tushare as ts
-                        ts.set_token(tushare_token)
-                        self.ts_pro = ts.pro_api()
-                        print("    [Tushare] ✅ 初始化成功")
+                        self._tushare_api, self._tushare_url = create_tushare_pro(
+                            token=tushare_token,
+                        )
+                        if self._tushare_api:
+                            print(f"    [Tushare] 初始化成功，地址: {self._tushare_url}")
                     except Exception as e:
                         print(f"    [Tushare] 初始化失败: {e}")
                         self._tushare_api = None
                 else:
                     print("    [Tushare] 未配置Token")
-                    self._tushare_api = None
             
             
             # 如果Tushare可用，获取数据
-            if hasattr(self, '_tushare_api') and self._tushare_api:
+            if self._tushare_api:
                 print("    [Tushare] 正在获取沪深港通资金流向...")
                 
                 # 获取最近30天的数据
@@ -334,7 +335,7 @@ class SectorStrategyDataFetcher:
                 )
                 
                 if df is not None and not df.empty:
-                    print("    [Tushare] ✅ 成功获取数据")
+                    print("    [Tushare] 成功获取数据")
                     
                     # 按日期降序排列，获取最新数据
                     df = df.sort_values('trade_date', ascending=False)
@@ -360,7 +361,7 @@ class SectorStrategyDataFetcher:
                     
                     return north_flow
                 else:
-                    print("    [Tushare] ❌ 未获取到数据")
+                    print("    [Tushare] 未获取到数据")
             else:
                 print("    [Tushare] 不可用")
         except Exception as e:
@@ -372,7 +373,7 @@ class SectorStrategyDataFetcher:
             df = self._safe_request(ak.stock_hsgt_fund_flow_summary_em)
             
             if df is not None and not df.empty:
-                print("    [Akshare] ✅ 成功获取数据")
+                print("    [Akshare] 成功获取数据")
                 
                 # 获取最新数据
                 latest = df.iloc[0]
@@ -396,12 +397,12 @@ class SectorStrategyDataFetcher:
                 
                 return north_flow
             else:
-                print("    [Akshare] ❌ 未获取到数据")
+                print("    [Akshare] 未获取到数据")
         except Exception as e:
             print(f"    [Akshare] 获取北向资金失败: {e}")
         
         # 所有数据源都失败
-        print("    ❌ 所有数据源均获取失败")
+        print("    [ERROR] 所有数据源均获取失败")
         return {}
     
     def _get_financial_news(self):

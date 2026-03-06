@@ -2,22 +2,42 @@ import openai
 import json
 from typing import Dict, List, Any, Optional
 import config
+from model_routing import ModelTier, describe_model_selection, resolve_model_name
 
 class DeepSeekClient:
     """DeepSeek API客户端"""
     
-    def __init__(self, model=None):
-        self.model = model or config.DEFAULT_MODEL_NAME
+    def __init__(self, model=None, lightweight_model=None, reasoning_model=None):
+        # 兼容旧接口：model 表示强制所有任务统一使用一个模型
+        self.model = model
+        self.lightweight_model = lightweight_model
+        self.reasoning_model = reasoning_model
         self.client = openai.OpenAI(
             api_key=config.DEEPSEEK_API_KEY,
             base_url=config.DEEPSEEK_BASE_URL
         )
+        self.model_selection = describe_model_selection(
+            forced_model=self.model,
+            lightweight_model=self.lightweight_model,
+            reasoning_model=self.reasoning_model,
+        )
         
-    def call_api(self, messages: List[Dict[str, str]], model: Optional[str] = None, 
-                 temperature: float = 0.7, max_tokens: int = 2000) -> str:
+    def call_api(
+        self,
+        messages: List[Dict[str, str]],
+        model: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: int = 2000,
+        tier: Optional[ModelTier] = None,
+    ) -> str:
         """调用DeepSeek API"""
-        # 使用实例的模型，如果没有传入则使用默认模型
-        model_to_use = model or self.model
+        model_to_use = resolve_model_name(
+            tier=tier,
+            explicit_model=model,
+            forced_model=self.model,
+            lightweight_model=self.lightweight_model,
+            reasoning_model=self.reasoning_model,
+        )
         
         # 对于 reasoner 模型，自动增加 max_tokens
         if "reasoner" in model_to_use.lower() and max_tokens <= 2000:
@@ -94,7 +114,7 @@ class DeepSeekClient:
             {"role": "user", "content": prompt}
         ]
         
-        return self.call_api(messages)
+        return self.call_api(messages, tier=ModelTier.LIGHTWEIGHT)
     
     def fundamental_analysis(self, stock_info: Dict, financial_data: Dict = None, quarterly_data: Dict = None) -> str:
         """基本面分析"""
@@ -235,7 +255,7 @@ class DeepSeekClient:
             {"role": "user", "content": prompt}
         ]
         
-        return self.call_api(messages)
+        return self.call_api(messages, tier=ModelTier.REASONING)
     
     def fund_flow_analysis(self, stock_info: Dict, indicators: Dict, fund_flow_data: Dict = None) -> str:
         """资金面分析"""
@@ -349,7 +369,7 @@ class DeepSeekClient:
             {"role": "user", "content": prompt}
         ]
         
-        return self.call_api(messages, max_tokens=3000)
+        return self.call_api(messages, max_tokens=3000, tier=ModelTier.LIGHTWEIGHT)
     
     def comprehensive_discussion(self, technical_report: str, fundamental_report: str, 
                                fund_flow_report: str, stock_info: Dict) -> str:
@@ -388,7 +408,7 @@ class DeepSeekClient:
             {"role": "user", "content": prompt}
         ]
         
-        return self.call_api(messages, max_tokens=6000)
+        return self.call_api(messages, max_tokens=6000, tier=ModelTier.REASONING)
     
     def final_decision(self, comprehensive_discussion: str, stock_info: Dict, 
                       indicators: Dict) -> Dict[str, Any]:
@@ -441,7 +461,12 @@ class DeepSeekClient:
             {"role": "user", "content": prompt}
         ]
         
-        response = self.call_api(messages, temperature=0.3, max_tokens=4000)
+        response = self.call_api(
+            messages,
+            temperature=0.3,
+            max_tokens=4000,
+            tier=ModelTier.LIGHTWEIGHT,
+        )
         
         try:
             # 尝试解析JSON响应

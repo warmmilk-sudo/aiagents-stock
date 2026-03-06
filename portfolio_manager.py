@@ -17,14 +17,16 @@ import config
 class PortfolioManager:
     """持仓管理器类"""
     
-    def __init__(self, model=None):
+    def __init__(self, model=None, lightweight_model=None, reasoning_model=None):
         """
         初始化持仓管理器
         
         Args:
-            model: AI模型名称，默认从 .env 的 DEFAULT_MODEL_NAME 读取
+            model: 强制所有任务统一使用同一个模型
         """
-        self.model = model or config.DEFAULT_MODEL_NAME
+        self.model = model
+        self.lightweight_model = lightweight_model
+        self.reasoning_model = reasoning_model
         self.db = portfolio_db
     
     # ==================== 持仓股票管理 ====================
@@ -121,8 +123,11 @@ class PortfolioManager:
     
     # ==================== 单只股票分析 ====================
     
-    def analyze_single_stock(self, stock_code: str, period="1y", 
-                            selected_agents: List[str] = None) -> Dict:
+    def analyze_single_stock(self, stock_code: str, period="1y",
+                            selected_agents: List[str] = None,
+                            model: str = None,
+                            lightweight_model: str = None,
+                            reasoning_model: str = None) -> Dict:
         """
         分析单只股票（复用app.py中的分析逻辑）
         
@@ -162,12 +167,30 @@ class PortfolioManager:
                     'news': 'news' in selected_agents
                 }
             
+            forced_model = model
+            effective_lightweight_model = lightweight_model
+            effective_reasoning_model = reasoning_model
+
+            if forced_model is None:
+                if effective_lightweight_model is None and effective_reasoning_model is None:
+                    forced_model = self.model
+                    if forced_model is None:
+                        effective_lightweight_model = self.lightweight_model
+                        effective_reasoning_model = self.reasoning_model
+                else:
+                    if effective_lightweight_model is None:
+                        effective_lightweight_model = self.lightweight_model
+                    if effective_reasoning_model is None:
+                        effective_reasoning_model = self.reasoning_model
+
             # 调用首页的分析函数
             result = analyze_single_stock_for_batch(
                 symbol=stock_code,
                 period=period,
                 enabled_analysts_config=enabled_analysts_config,
-                selected_model=self.model
+                selected_model=forced_model,
+                selected_lightweight_model=effective_lightweight_model,
+                selected_reasoning_model=effective_reasoning_model,
             )
             
             # 检查结果
@@ -192,7 +215,10 @@ class PortfolioManager:
     
     def batch_analyze_sequential(self, stock_codes: List[str], period="1y",
                                  selected_agents: List[str] = None,
-                                 progress_callback=None) -> Dict:
+                                 progress_callback=None,
+                                 model: str = None,
+                                 lightweight_model: str = None,
+                                 reasoning_model: str = None) -> Dict:
         """
         顺序批量分析（逐只分析）
         
@@ -220,7 +246,14 @@ class PortfolioManager:
                 progress_callback(i, len(stock_codes), code, "analyzing")
             
             try:
-                result = self.analyze_single_stock(code, period, selected_agents)
+                result = self.analyze_single_stock(
+                    code,
+                    period,
+                    selected_agents,
+                    model=model,
+                    lightweight_model=lightweight_model,
+                    reasoning_model=reasoning_model,
+                )
                 
                 if result.get("success"):
                     results.append({
@@ -267,7 +300,10 @@ class PortfolioManager:
     def batch_analyze_parallel(self, stock_codes: List[str], period="1y",
                                selected_agents: List[str] = None,
                                max_workers: int = 3,
-                               progress_callback=None) -> Dict:
+                               progress_callback=None,
+                               model: str = None,
+                               lightweight_model: str = None,
+                               reasoning_model: str = None) -> Dict:
         """
         并行批量分析（多线程）
         
@@ -293,7 +329,15 @@ class PortfolioManager:
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             # 提交所有任务
             future_to_code = {
-                executor.submit(self.analyze_single_stock, code, period, selected_agents): code
+                executor.submit(
+                    self.analyze_single_stock,
+                    code,
+                    period,
+                    selected_agents,
+                    model,
+                    lightweight_model,
+                    reasoning_model,
+                ): code
                 for code in stock_codes
             }
             
@@ -352,7 +396,10 @@ class PortfolioManager:
     def batch_analyze_portfolio(self, mode="sequential", period="1y",
                                 selected_agents: List[str] = None,
                                 max_workers: int = 3,
-                                progress_callback=None) -> Dict:
+                                progress_callback=None,
+                                model: str = None,
+                                lightweight_model: str = None,
+                                reasoning_model: str = None) -> Dict:
         """
         批量分析所有持仓股票
         
@@ -379,9 +426,26 @@ class PortfolioManager:
         
         # 根据模式选择分析方法
         if mode == "parallel":
-            return self.batch_analyze_parallel(stock_codes, period, selected_agents, max_workers, progress_callback)
+            return self.batch_analyze_parallel(
+                stock_codes,
+                period,
+                selected_agents,
+                max_workers,
+                progress_callback,
+                model=model,
+                lightweight_model=lightweight_model,
+                reasoning_model=reasoning_model,
+            )
         else:
-            return self.batch_analyze_sequential(stock_codes, period, selected_agents, progress_callback)
+            return self.batch_analyze_sequential(
+                stock_codes,
+                period,
+                selected_agents,
+                progress_callback,
+                model=model,
+                lightweight_model=lightweight_model,
+                reasoning_model=reasoning_model,
+            )
     
     # ==================== 分析结果保存 ====================
     

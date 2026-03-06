@@ -34,7 +34,7 @@ def display_profit_growth():
     
     with col_monitor:
         st.write("")  # 占位
-        if st.button("📊 策略监控", type="primary", use_container_width=True):
+        if st.button("📊 策略监控", type="primary", width='stretch'):
             st.session_state.show_profit_growth_monitor = True
             st.rerun()
     
@@ -85,7 +85,7 @@ def display_profit_growth():
     st.markdown("---")
     
     # 开始选股按钮
-    if st.button("🚀 开始净利增长选股", type="primary", use_container_width=True):
+    if st.button("🚀 开始净利增长选股", type="primary", width='stretch'):
         
         with st.spinner("正在获取数据，请稍候..."):
             # 创建选股器
@@ -116,7 +116,7 @@ def display_profit_growth():
         
         # 发送钉钉通知
         st.markdown("---")
-        if st.button("📲 发送钉钉通知", type="secondary", use_container_width=True):
+        if st.button("📲 发送钉钉通知", type="secondary", width='stretch'):
             send_dingtalk_notification(stocks_df)
 
 
@@ -196,7 +196,7 @@ def add_stock_to_monitor_button(stock_code: str, stock_name: str, price: float =
     
     button_key = f"add_monitor_{stock_code}"
     
-    if st.button(f"➕ 加入策略监控", key=button_key, use_container_width=True):
+    if st.button(f"➕ 加入策略监控", key=button_key, width='stretch'):
         
         # 获取价格
         if price is None:
@@ -262,7 +262,7 @@ def display_monitoring_list(stocks: List[Dict]):
                 st.markdown(f"**加入时间**: {stock['add_time']}")
             
             with col3:
-                if st.button("🗑️ 移除", key=f"remove_{stock['stock_code']}", use_container_width=True):
+                if st.button("🗑️ 移除", key=f"remove_{stock['stock_code']}", width='stretch'):
                     success, msg = profit_growth_monitor.remove_stock(stock['stock_code'], "手动移除")
                     if success:
                         st.success(msg)

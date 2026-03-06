@@ -4,18 +4,24 @@
 """
 
 from deepseek_client import DeepSeekClient
+from model_routing import ModelTier
 from typing import Dict, Any
 import time
-import config
 
 
 class SectorStrategyAgents:
     """板块策略AI智能体集合"""
     
-    def __init__(self, model=None):
-        self.model = model or config.DEFAULT_MODEL_NAME
-        self.deepseek_client = DeepSeekClient(model=self.model)
-        print(f"[智策] AI智能体系统初始化 (模型: {self.model})")
+    def __init__(self, model=None, lightweight_model=None, reasoning_model=None):
+        self.model = model
+        self.lightweight_model = lightweight_model
+        self.reasoning_model = reasoning_model
+        self.deepseek_client = DeepSeekClient(
+            model=model,
+            lightweight_model=lightweight_model,
+            reasoning_model=reasoning_model,
+        )
+        print(f"[智策] AI智能体系统初始化 (模型配置: {self.deepseek_client.model_selection})")
     
     def macro_strategist_agent(self, market_data: Dict, news_data: list) -> Dict[str, Any]:
         """
@@ -109,7 +115,11 @@ class SectorStrategyAgents:
             {"role": "user", "content": prompt}
         ]
         
-        analysis = self.deepseek_client.call_api(messages, max_tokens=4000)
+        analysis = self.deepseek_client.call_api(
+            messages,
+            max_tokens=4000,
+            tier=ModelTier.REASONING,
+        )
         
         print("  ✓ 宏观策略师分析完成")
         
@@ -221,7 +231,11 @@ class SectorStrategyAgents:
             {"role": "user", "content": prompt}
         ]
         
-        analysis = self.deepseek_client.call_api(messages, max_tokens=4000)
+        analysis = self.deepseek_client.call_api(
+            messages,
+            max_tokens=4000,
+            tier=ModelTier.REASONING,
+        )
         
         print("  ✓ 板块诊断师分析完成")
         
@@ -348,7 +362,11 @@ class SectorStrategyAgents:
             {"role": "user", "content": prompt}
         ]
         
-        analysis = self.deepseek_client.call_api(messages, max_tokens=4000)
+        analysis = self.deepseek_client.call_api(
+            messages,
+            max_tokens=4000,
+            tier=ModelTier.LIGHTWEIGHT,
+        )
         
         print("  ✓ 资金流向分析师分析完成")
         
@@ -488,7 +506,11 @@ class SectorStrategyAgents:
             {"role": "user", "content": prompt}
         ]
         
-        analysis = self.deepseek_client.call_api(messages, max_tokens=4000)
+        analysis = self.deepseek_client.call_api(
+            messages,
+            max_tokens=4000,
+            tier=ModelTier.LIGHTWEIGHT,
+        )
         
         print("  ✓ 市场情绪解码员分析完成")
         

@@ -9,20 +9,25 @@ from typing import Dict, Any
 import time
 import json
 import logging
-import config
 
 
 class MacroCycleEngine:
     """宏观周期综合研判引擎"""
 
-    def __init__(self, model=None):
-        self.model = model or config.DEFAULT_MODEL_NAME
-        self.agents = MacroCycleAgents(model=self.model)
+    def __init__(self, model=None, lightweight_model=None, reasoning_model=None):
+        self.model = model
+        self.lightweight_model = lightweight_model
+        self.reasoning_model = reasoning_model
+        self.agents = MacroCycleAgents(
+            model=model,
+            lightweight_model=lightweight_model,
+            reasoning_model=reasoning_model,
+        )
         self.data_fetcher = MacroCycleDataFetcher()
         self.logger = logging.getLogger(__name__)
         if not self.logger.handlers:
             logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(levelname)s %(name)s: %(message)s')
-        print(f"[宏观周期引擎] 初始化完成 (模型: {self.model})")
+        print(f"[宏观周期引擎] 初始化完成 (模型配置: {self.agents.deepseek_client.model_selection})")
 
     def run_full_analysis(self, progress_callback=None) -> Dict[str, Any]:
         """

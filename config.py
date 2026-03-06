@@ -8,8 +8,12 @@ load_dotenv(override=True)
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
 
-# 默认AI模型名称（支持任何OpenAI兼容的模型）
-DEFAULT_MODEL_NAME = os.getenv("DEFAULT_MODEL_NAME", "deepseek-chat")
+# 双模型配置（支持任何OpenAI兼容的模型）
+LIGHTWEIGHT_MODEL_NAME = os.getenv("LIGHTWEIGHT_MODEL_NAME", "deepseek-chat") or "deepseek-chat"
+REASONING_MODEL_NAME = os.getenv("REASONING_MODEL_NAME", "deepseek-reasoner") or "deepseek-reasoner"
+
+# 兼容旧代码：未迁移调用仍可读取，但不再对应独立环境变量
+DEFAULT_MODEL_NAME = LIGHTWEIGHT_MODEL_NAME
 
 # 其他配置
 TUSHARE_TOKEN = os.getenv("TUSHARE_TOKEN", "")
@@ -36,7 +40,7 @@ ICP_NUMBER = os.getenv("ICP_NUMBER", "京ICP备2026007346号")
 ICP_LINK = os.getenv("ICP_LINK", "https://beian.miit.gov.cn/")
 
 # 股票数据源配置
-DEFAULT_PERIOD = "1y"  # 默认获取1年数据
+DATA_PERIOD = os.getenv("DATA_PERIOD", "1y")  # 默认获取1年数据
 DEFAULT_INTERVAL = "1d"  # 默认日线数据
 
 # MiniQMT量化交易配置

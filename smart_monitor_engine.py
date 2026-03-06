@@ -21,7 +21,8 @@ class SmartMonitorEngine:
     """智能盯盘引擎"""
     
     def __init__(self, deepseek_api_key: str = None, qmt_account_id: str = None,
-                 use_simulator: bool = None):
+                 use_simulator: bool = None, model: str = None,
+                 lightweight_model: str = None, reasoning_model: str = None):
         """
         初始化智能盯盘引擎
         
@@ -47,9 +48,18 @@ class SmartMonitorEngine:
             # 如果MINIQMT_ENABLED=false，则使用模拟器
             miniqmt_enabled = config.get('MINIQMT_ENABLED', 'false').lower() == 'true'
             use_simulator = not miniqmt_enabled
+
+        self.model = model
+        self.lightweight_model = lightweight_model
+        self.reasoning_model = reasoning_model
         
         # 初始化各个模块
-        self.deepseek = SmartMonitorDeepSeek(deepseek_api_key)
+        self.deepseek = SmartMonitorDeepSeek(
+            deepseek_api_key,
+            model=model,
+            lightweight_model=lightweight_model,
+            reasoning_model=reasoning_model,
+        )
         self.data_fetcher = SmartMonitorDataFetcher()
         self.db = SmartMonitorDB()
         self.notification = notification_service  # 使用主程序的通知服务
@@ -79,6 +89,19 @@ class SmartMonitorEngine:
         self.stop_flags = {}
         
         self.logger.info("智能盯盘引擎初始化完成")
+
+    def set_model_overrides(self, model: str = None,
+                            lightweight_model: str = None,
+                            reasoning_model: str = None) -> None:
+        """更新当前会话中后续分析使用的模型。"""
+        self.model = model
+        self.lightweight_model = lightweight_model
+        self.reasoning_model = reasoning_model
+        self.deepseek.set_model_overrides(
+            model=model,
+            lightweight_model=lightweight_model,
+            reasoning_model=reasoning_model,
+        )
     
     def analyze_stock(self, stock_code: str, auto_trade: bool = False,
                      notify: bool = True, has_position: bool = False,

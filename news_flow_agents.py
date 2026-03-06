@@ -8,6 +8,8 @@ import logging
 import time
 from datetime import datetime
 from typing import Dict, List, Optional
+from deepseek_client import DeepSeekClient
+from model_routing import ModelTier
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -16,24 +18,28 @@ logger = logging.getLogger(__name__)
 class NewsFlowAgents:
     """新闻流量智能分析代理"""
     
-    def __init__(self, model: str = None):
+    def __init__(self, model: str = None, lightweight_model: str = None, reasoning_model: str = None):
         """
         初始化代理
         
         Args:
-            model: 使用的模型，默认从 .env 的 DEFAULT_MODEL_NAME 读取
+            model: 强制所有任务统一使用同一个模型
         """
-        import config
-        self.model = model or config.DEFAULT_MODEL_NAME
+        self.model = model
+        self.lightweight_model = lightweight_model
+        self.reasoning_model = reasoning_model
         self.deepseek_client = None
         self._init_client()
     
     def _init_client(self):
         """初始化DeepSeek客户端"""
         try:
-            from deepseek_client import DeepSeekClient
-            self.deepseek_client = DeepSeekClient(model=self.model)
-            logger.info(f"✅ DeepSeek客户端初始化成功，模型: {self.model}")
+            self.deepseek_client = DeepSeekClient(
+                model=self.model,
+                lightweight_model=self.lightweight_model,
+                reasoning_model=self.reasoning_model,
+            )
+            logger.info(f"✅ DeepSeek客户端初始化成功，模型配置: {self.deepseek_client.model_selection}")
         except Exception as e:
             logger.error(f"❌ DeepSeek客户端初始化失败: {e}")
             self.deepseek_client = None
@@ -130,7 +136,12 @@ class NewsFlowAgents:
                 {"role": "user", "content": prompt}
             ]
             
-            response = self.deepseek_client.call_api(messages, temperature=0.5, max_tokens=2000)
+            response = self.deepseek_client.call_api(
+                messages,
+                temperature=0.5,
+                max_tokens=2000,
+                tier=ModelTier.LIGHTWEIGHT,
+            )
             
             # 解析JSON
             result = self._parse_json_response(response)
@@ -232,7 +243,12 @@ class NewsFlowAgents:
                 {"role": "user", "content": prompt}
             ]
             
-            response = self.deepseek_client.call_api(messages, temperature=0.6, max_tokens=2000)
+            response = self.deepseek_client.call_api(
+                messages,
+                temperature=0.6,
+                max_tokens=2000,
+                tier=ModelTier.REASONING,
+            )
             result = self._parse_json_response(response)
             
             if result:
@@ -312,7 +328,12 @@ class NewsFlowAgents:
                 {"role": "user", "content": prompt}
             ]
             
-            response = self.deepseek_client.call_api(messages, temperature=0.4, max_tokens=1500)
+            response = self.deepseek_client.call_api(
+                messages,
+                temperature=0.4,
+                max_tokens=1500,
+                tier=ModelTier.LIGHTWEIGHT,
+            )
             result = self._parse_json_response(response)
             
             if result:
@@ -421,7 +442,12 @@ class NewsFlowAgents:
                 {"role": "user", "content": prompt}
             ]
             
-            response = self.deepseek_client.call_api(messages, temperature=0.5, max_tokens=2000)
+            response = self.deepseek_client.call_api(
+                messages,
+                temperature=0.5,
+                max_tokens=2000,
+                tier=ModelTier.LIGHTWEIGHT,
+            )
             result = self._parse_json_response(response)
             
             analysis_time = time.time() - start_time
@@ -593,7 +619,12 @@ class NewsFlowAgents:
                 {"role": "user", "content": prompt}
             ]
             
-            response = self.deepseek_client.call_api(messages, temperature=0.5, max_tokens=2000)
+            response = self.deepseek_client.call_api(
+                messages,
+                temperature=0.5,
+                max_tokens=2000,
+                tier=ModelTier.REASONING,
+            )
             result = self._parse_json_response(response)
             
             if result:

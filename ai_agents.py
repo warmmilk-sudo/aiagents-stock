@@ -1,14 +1,20 @@
 from deepseek_client import DeepSeekClient
+from model_routing import ModelTier
 from typing import Dict, Any
 import time
-import config
 
 class StockAnalysisAgents:
     """股票分析AI智能体集合"""
     
-    def __init__(self, model=None):
-        self.model = model or config.DEFAULT_MODEL_NAME
-        self.deepseek_client = DeepSeekClient(model=self.model)
+    def __init__(self, model=None, lightweight_model=None, reasoning_model=None):
+        self.model = model
+        self.lightweight_model = lightweight_model
+        self.reasoning_model = reasoning_model
+        self.deepseek_client = DeepSeekClient(
+            model=model,
+            lightweight_model=lightweight_model,
+            reasoning_model=reasoning_model,
+        )
         
     def technical_analyst_agent(self, stock_info: Dict, stock_data: Any, indicators: Dict) -> Dict[str, Any]:
         """技术面分析智能体"""
@@ -206,7 +212,11 @@ class StockAnalysisAgents:
             {"role": "user", "content": risk_prompt}
         ]
         
-        analysis = self.deepseek_client.call_api(messages, max_tokens=6000)
+        analysis = self.deepseek_client.call_api(
+            messages,
+            max_tokens=6000,
+            tier=ModelTier.REASONING,
+        )
         
         return {
             "agent_name": "风险管理师",
@@ -294,7 +304,11 @@ class StockAnalysisAgents:
             {"role": "user", "content": sentiment_prompt}
         ]
         
-        analysis = self.deepseek_client.call_api(messages, max_tokens=4000)
+        analysis = self.deepseek_client.call_api(
+            messages,
+            max_tokens=4000,
+            tier=ModelTier.LIGHTWEIGHT,
+        )
         
         return {
             "agent_name": "市场情绪分析师",
@@ -394,7 +408,11 @@ class StockAnalysisAgents:
             {"role": "user", "content": news_prompt}
         ]
         
-        analysis = self.deepseek_client.call_api(messages, max_tokens=4000)
+        analysis = self.deepseek_client.call_api(
+            messages,
+            max_tokens=4000,
+            tier=ModelTier.LIGHTWEIGHT,
+        )
         
         return {
             "agent_name": "新闻分析师",
@@ -530,7 +548,11 @@ class StockAnalysisAgents:
             {"role": "user", "content": discussion_prompt}
         ]
         
-        discussion_result = self.deepseek_client.call_api(messages, max_tokens=6000)
+        discussion_result = self.deepseek_client.call_api(
+            messages,
+            max_tokens=6000,
+            tier=ModelTier.REASONING,
+        )
         
         print("✅ 团队讨论完成")
         return discussion_result

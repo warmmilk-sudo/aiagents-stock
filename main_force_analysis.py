@@ -11,18 +11,24 @@ from main_force_selector import main_force_selector
 from stock_data import StockDataFetcher
 from ai_agents import StockAnalysisAgents
 from deepseek_client import DeepSeekClient
+from model_routing import ModelTier
 import time
 import json
-import config
 
 class MainForceAnalyzer:
     """主力选股分析器 - 批量整体分析"""
     
-    def __init__(self, model=None):
+    def __init__(self, model=None, lightweight_model=None, reasoning_model=None):
         self.selector = main_force_selector
         self.fetcher = StockDataFetcher()
-        self.model = model or config.DEFAULT_MODEL_NAME
-        self.agents = StockAnalysisAgents(model=self.model)
+        self.model = model
+        self.lightweight_model = lightweight_model
+        self.reasoning_model = reasoning_model
+        self.agents = StockAnalysisAgents(
+            model=model,
+            lightweight_model=lightweight_model,
+            reasoning_model=reasoning_model,
+        )
         self.deepseek_client = self.agents.deepseek_client
         self.raw_stocks = None
         self.final_recommendations = []
@@ -226,7 +232,11 @@ class MainForceAnalyzer:
             {"role": "user", "content": prompt}
         ]
         
-        analysis = self.deepseek_client.call_api(messages, max_tokens=4000)
+        analysis = self.deepseek_client.call_api(
+            messages,
+            max_tokens=4000,
+            tier=ModelTier.LIGHTWEIGHT,
+        )
         
         print("  ✅ 资金流向整体分析完成")
         time.sleep(1)
@@ -280,7 +290,11 @@ class MainForceAnalyzer:
             {"role": "user", "content": prompt}
         ]
         
-        analysis = self.deepseek_client.call_api(messages, max_tokens=4000)
+        analysis = self.deepseek_client.call_api(
+            messages,
+            max_tokens=4000,
+            tier=ModelTier.LIGHTWEIGHT,
+        )
         
         print("  ✅ 行业板块整体分析完成")
         time.sleep(1)
@@ -334,7 +348,11 @@ class MainForceAnalyzer:
             {"role": "user", "content": prompt}
         ]
         
-        analysis = self.deepseek_client.call_api(messages, max_tokens=4000)
+        analysis = self.deepseek_client.call_api(
+            messages,
+            max_tokens=4000,
+            tier=ModelTier.LIGHTWEIGHT,
+        )
         
         print("  ✅ 财务基本面整体分析完成")
         time.sleep(1)
@@ -478,7 +496,11 @@ class MainForceAnalyzer:
                 {"role": "user", "content": prompt}
             ]
             
-            response = self.deepseek_client.call_api(messages, max_tokens=4000)
+            response = self.deepseek_client.call_api(
+                messages,
+                max_tokens=4000,
+                tier=ModelTier.LIGHTWEIGHT,
+            )
             
             # 解析JSON响应
             import re

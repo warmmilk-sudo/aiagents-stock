@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 import time
 
 
-def display_news_flow_monitor():
+def display_news_flow_monitor(lightweight_model=None, reasoning_model=None):
     """显示新闻流量监测主界面"""
     st.title("📰 新闻流量监测")
     
@@ -52,7 +52,7 @@ def display_news_flow_monitor():
         display_dashboard()
     
     with tabs[1]:
-        display_realtime_monitor()
+        display_realtime_monitor(lightweight_model, reasoning_model)
     
     with tabs[2]:
         display_alert_center()
@@ -344,7 +344,7 @@ def display_wordcloud_and_top_news():
         st.error(f"加载新闻失败: {e}")
 
 
-def display_realtime_monitor():
+def display_realtime_monitor(lightweight_model=None, reasoning_model=None):
     """显示实时监测"""
     st.subheader("🔥 实时监测")
     
@@ -390,7 +390,12 @@ def display_realtime_monitor():
                 status_text.text("📊 获取多平台新闻数据...")
                 progress_bar.progress(10)
                 
-                result = news_flow_engine.run_full_analysis(category=cat, include_ai=True)
+                result = news_flow_engine.run_full_analysis(
+                    category=cat,
+                    include_ai=True,
+                    lightweight_model=lightweight_model,
+                    reasoning_model=reasoning_model,
+                )
                 
                 progress_bar.progress(100)
                 status_text.empty()

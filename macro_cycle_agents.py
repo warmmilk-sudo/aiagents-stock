@@ -4,18 +4,24 @@
 """
 
 from deepseek_client import DeepSeekClient
+from model_routing import ModelTier
 from typing import Dict, Any
 import time
-import config
 
 
 class MacroCycleAgents:
     """宏观周期AI智能体集合"""
 
-    def __init__(self, model=None):
-        self.model = model or config.DEFAULT_MODEL_NAME
-        self.deepseek_client = DeepSeekClient(model=self.model)
-        print(f"[宏观周期] AI智能体系统初始化 (模型: {self.model})")
+    def __init__(self, model=None, lightweight_model=None, reasoning_model=None):
+        self.model = model
+        self.lightweight_model = lightweight_model
+        self.reasoning_model = reasoning_model
+        self.deepseek_client = DeepSeekClient(
+            model=model,
+            lightweight_model=lightweight_model,
+            reasoning_model=reasoning_model,
+        )
+        print(f"[宏观周期] AI智能体系统初始化 (模型配置: {self.deepseek_client.model_selection})")
 
     def kondratieff_wave_agent(self, macro_data_text: str) -> Dict[str, Any]:
         """
@@ -104,7 +110,11 @@ class MacroCycleAgents:
             {"role": "user", "content": prompt}
         ]
 
-        analysis = self.deepseek_client.call_api(messages, max_tokens=6000)
+        analysis = self.deepseek_client.call_api(
+            messages,
+            max_tokens=6000,
+            tier=ModelTier.REASONING,
+        )
         print("  ✓ 康波周期分析师分析完成")
 
         return {
@@ -217,7 +227,11 @@ class MacroCycleAgents:
             {"role": "user", "content": prompt}
         ]
 
-        analysis = self.deepseek_client.call_api(messages, max_tokens=6000)
+        analysis = self.deepseek_client.call_api(
+            messages,
+            max_tokens=6000,
+            tier=ModelTier.REASONING,
+        )
         print("  ✓ 美林时钟分析师分析完成")
 
         return {
@@ -320,7 +334,11 @@ class MacroCycleAgents:
             {"role": "user", "content": prompt}
         ]
 
-        analysis = self.deepseek_client.call_api(messages, max_tokens=5000)
+        analysis = self.deepseek_client.call_api(
+            messages,
+            max_tokens=5000,
+            tier=ModelTier.REASONING,
+        )
         print("  ✓ 中国政策分析师分析完成")
 
         return {
@@ -435,7 +453,11 @@ class MacroCycleAgents:
             {"role": "user", "content": prompt}
         ]
 
-        analysis = self.deepseek_client.call_api(messages, max_tokens=6000)
+        analysis = self.deepseek_client.call_api(
+            messages,
+            max_tokens=6000,
+            tier=ModelTier.REASONING,
+        )
         print("  ✓ 首席宏观策略师综合研判完成")
 
         return {

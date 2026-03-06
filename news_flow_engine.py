@@ -3,6 +3,7 @@
 基于"流量为王"理念的短线炒股指导系统
 整合数据获取、流量模型、情绪分析、AI分析、预警系统
 """
+import json
 import logging
 import time
 from datetime import datetime, timedelta
@@ -65,6 +66,19 @@ class NewsFlowEngine:
             self.db = news_flow_db
         except Exception as e:
             logger.error(f"数据库模块初始化失败: {e}")
+
+    def _get_request_agents(self, model: str = None,
+                            lightweight_model: str = None,
+                            reasoning_model: str = None):
+        if model is None and lightweight_model is None and reasoning_model is None:
+            return self.agents
+
+        from news_flow_agents import NewsFlowAgents
+        return NewsFlowAgents(
+            model=model,
+            lightweight_model=lightweight_model,
+            reasoning_model=reasoning_model,
+        )
     
     def run_quick_analysis(self, platforms: List[str] = None, 
                            category: str = None) -> Dict:
@@ -177,9 +191,12 @@ class NewsFlowEngine:
             logger.error(f"❌ 快速分析失败: {e}")
             return {'success': False, 'error': str(e)}
     
-    def run_full_analysis(self, platforms: List[str] = None, 
+    def run_full_analysis(self, platforms: List[str] = None,
                           category: str = None,
-                          include_ai: bool = True) -> Dict:
+                          include_ai: bool = True,
+                          model: str = None,
+                          lightweight_model: str = None,
+                          reasoning_model: str = None) -> Dict:
         """
         运行完整分析（含AI）
         
@@ -208,10 +225,16 @@ class NewsFlowEngine:
             
             # 2. AI智能分析
             ai_analysis = None
+            local_agents = self._get_request_agents(
+                model=model,
+                lightweight_model=lightweight_model,
+                reasoning_model=reasoning_model,
+            )
+
             if include_ai:
-                if not self.agents:
+                if not local_agents:
                     logger.warning("⚠️ AI代理模块未初始化")
-                elif not self.agents.is_available():
+                elif not local_agents.is_available():
                     logger.warning("⚠️ DeepSeek API不可用，请检查API密钥配置")
                 else:
                     logger.info("🤖 运行AI分析...")
@@ -220,7 +243,7 @@ class NewsFlowEngine:
                     sentiment_data = quick_result.get('sentiment_data', {})
                     
                     # 基础AI分析
-                    ai_analysis = self.agents.run_full_analysis(
+                    ai_analysis = local_agents.run_full_analysis(
                         quick_result['hot_topics'],
                         quick_result['stock_news'],
                         quick_result['flow_data'],
@@ -231,7 +254,7 @@ class NewsFlowEngine:
                     
                     # 多板块深度分析（多次调用DeepSeek）
                     logger.info("🔍 开始多板块深度分析...")
-                    multi_sector_analysis = self.agents.run_multi_sector_analysis(
+                    multi_sector_analysis = local_agents.run_multi_sector_analysis(
                         quick_result['hot_topics'],
                         quick_result['stock_news']
                     )
@@ -240,6 +263,12 @@ class NewsFlowEngine:
                     if ai_analysis and multi_sector_analysis.get('success'):
                         ai_analysis['multi_sector'] = multi_sector_analysis
                     
+                    model_selection = getattr(
+                        getattr(local_agents, 'deepseek_client', None),
+                        'model_selection',
+                        None,
+                    )
+
                     # 保存AI分析结果
                     if ai_analysis and self.db and quick_result.get('snapshot_id'):
                         ai_record = {
@@ -250,7 +279,7 @@ class NewsFlowEngine:
                             'advice': ai_analysis.get('investment_advice', {}).get('advice', '观望'),
                             'confidence': ai_analysis.get('investment_advice', {}).get('confidence', 50),
                             'summary': ai_analysis.get('investment_advice', {}).get('summary', ''),
-                            'model_used': getattr(self, 'model', 'unknown'),
+                            'model_used': json.dumps(model_selection, ensure_ascii=False) if model_selection else 'unknown',
                             'analysis_time': ai_analysis.get('analysis_time', 0),
                         }
                         self.db.save_ai_analysis(quick_result['snapshot_id'], ai_record)

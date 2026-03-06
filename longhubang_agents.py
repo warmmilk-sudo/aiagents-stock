@@ -4,18 +4,24 @@
 """
 
 from deepseek_client import DeepSeekClient
+from model_routing import ModelTier
 from typing import Dict, Any, List
 import time
-import config
 
 
 class LonghubangAgents:
     """龙虎榜AI分析师集合"""
     
-    def __init__(self, model=None):
-        self.model = model or config.DEFAULT_MODEL_NAME
-        self.deepseek_client = DeepSeekClient(model=self.model)
-        print(f"[智瞰龙虎] AI分析师系统初始化 (模型: {self.model})")
+    def __init__(self, model=None, lightweight_model=None, reasoning_model=None):
+        self.model = model
+        self.lightweight_model = lightweight_model
+        self.reasoning_model = reasoning_model
+        self.deepseek_client = DeepSeekClient(
+            model=model,
+            lightweight_model=lightweight_model,
+            reasoning_model=reasoning_model,
+        )
+        print(f"[智瞰龙虎] AI分析师系统初始化 (模型配置: {self.deepseek_client.model_selection})")
     
     def youzi_behavior_analyst(self, longhubang_data: str, summary: Dict) -> Dict[str, Any]:
         """
@@ -103,7 +109,11 @@ class LonghubangAgents:
             {"role": "user", "content": prompt}
         ]
         
-        analysis = self.deepseek_client.call_api(messages, max_tokens=4000)
+        analysis = self.deepseek_client.call_api(
+            messages,
+            max_tokens=4000,
+            tier=ModelTier.REASONING,
+        )
         
         print("  ✓ 游资行为分析师分析完成")
         
@@ -204,7 +214,11 @@ class LonghubangAgents:
             {"role": "user", "content": prompt}
         ]
         
-        analysis = self.deepseek_client.call_api(messages, max_tokens=4000)
+        analysis = self.deepseek_client.call_api(
+            messages,
+            max_tokens=4000,
+            tier=ModelTier.REASONING,
+        )
         
         print("  ✓ 个股潜力分析师分析完成")
         
@@ -304,7 +318,11 @@ class LonghubangAgents:
             {"role": "user", "content": prompt}
         ]
         
-        analysis = self.deepseek_client.call_api(messages, max_tokens=4000)
+        analysis = self.deepseek_client.call_api(
+            messages,
+            max_tokens=4000,
+            tier=ModelTier.REASONING,
+        )
         
         print("  ✓ 题材追踪分析师分析完成")
         
@@ -399,7 +417,11 @@ class LonghubangAgents:
             {"role": "user", "content": prompt}
         ]
         
-        analysis = self.deepseek_client.call_api(messages, max_tokens=4000)
+        analysis = self.deepseek_client.call_api(
+            messages,
+            max_tokens=4000,
+            tier=ModelTier.REASONING,
+        )
         
         print("  ✓ 风险控制专家分析完成")
         
@@ -494,7 +516,11 @@ class LonghubangAgents:
             {"role": "user", "content": prompt}
         ]
         
-        analysis = self.deepseek_client.call_api(messages, max_tokens=5000)
+        analysis = self.deepseek_client.call_api(
+            messages,
+            max_tokens=5000,
+            tier=ModelTier.REASONING,
+        )
         
         print("  ✓ 首席策略师分析完成")
         
