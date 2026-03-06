@@ -264,8 +264,44 @@ st.markdown("""
             padding: 0 1rem;
         }
     }
+    
+    .site-filing {
+        padding: 0.4rem 0;
+        text-align: center;
+        font-size: 0.78rem;
+        color: rgba(255, 255, 255, 0.6);
+    }
+    .site-filing a {
+        color: rgba(255, 255, 255, 0.6);
+        text-decoration: none;
+    }
+    .site-filing a:hover {
+        color: white;
+        text-decoration: underline;
+    }
 </style>
 """, unsafe_allow_html=True)
+
+def render_site_filing() -> None:
+    """Render ICP filing info at the bottom of the page."""
+    import html
+    icp_number = (config.ICP_NUMBER or "").strip()
+    if not icp_number:
+        return
+
+    icp_link = (getattr(config, "ICP_LINK", "") or "").strip()
+    safe_icp_number = html.escape(icp_number)
+
+    if icp_link:
+        safe_icp_link = html.escape(icp_link, quote=True)
+        content = (
+            f'<a href="{safe_icp_link}" target="_blank" '
+            f'rel="noopener noreferrer">{safe_icp_number}</a>'
+        )
+    else:
+        content = f"<span>{safe_icp_number}</span>"
+
+    st.markdown(f'<div class="site-filing">{content}</div>', unsafe_allow_html=True)
 
 def main():
     # 顶部标题栏
@@ -427,6 +463,13 @@ def main():
         show_current_model_info()
         st.session_state.selected_model = config.DEFAULT_MODEL_NAME
 
+        if config.ADMIN_PASSWORD or getattr(config, "ADMIN_PASSWORD_HASH", ""):
+            if st.button("退出登录", width='stretch', key="nav_logout"):
+                st.session_state.authenticated = False
+                st.session_state.pop("authenticated_at", None)
+                st.session_state.pop("login_password_input", None)
+                st.rerun()
+
         st.markdown("---")
 
         # 系统状态面板
@@ -492,6 +535,8 @@ def main():
             - 📚 [股票知识讲解合集](https://www.bilibili.com/video/BV1Y2FGzzEeS/)
             - 🧠 [投资认知提升合集](https://www.bilibili.com/video/BV1ugBMBAEbW)
             """)
+
+        render_site_filing()
 
     # 检查是否显示历史记录
     if 'show_history' in st.session_state and st.session_state.show_history:
@@ -2221,6 +2266,89 @@ def display_config_manager():
 
         st.info("💡 如何获取DeepSeek API密钥？\n\n1. 访问 https://platform.deepseek.com\n2. 注册/登录账号\n3. 进入API密钥管理页面\n4. 创建新的API密钥\n5. 复制密钥并粘贴到上方输入框")
 
+        st.markdown("---")
+        st.markdown("### 网站备案配置")
+
+        icp_number_info = config_info["ICP_NUMBER"]
+        current_icp_number = st.session_state.temp_config.get("ICP_NUMBER", "")
+        new_icp_number = st.text_input(
+            f"📝 {icp_number_info['description']}",
+            value=current_icp_number,
+            placeholder="例如：京ICP备12345678号",
+            key="input_icp_number"
+        )
+        st.session_state.temp_config["ICP_NUMBER"] = new_icp_number.strip()
+
+        icp_link_info = config_info.get(
+            "ICP_LINK",
+            {"description": "备案号跳转地址（留空则仅显示文本）"}
+        )
+        current_icp_link = st.session_state.temp_config.get(
+            "ICP_LINK",
+            "https://beian.miit.gov.cn/"
+        )
+        new_icp_link = st.text_input(
+            f"🔗 {icp_link_info['description']}",
+            value=current_icp_link,
+            placeholder="https://beian.miit.gov.cn/",
+            key="input_icp_link"
+        )
+        st.session_state.temp_config["ICP_LINK"] = new_icp_link.strip()
+
+        if st.session_state.temp_config["ICP_NUMBER"]:
+            st.success("✅ 备案号将显示在页面底部")
+        else:
+            st.info("ℹ️ 备案号为空时将不显示")
+
+        st.markdown("---")
+        st.markdown("### 管理员登录配置")
+
+        admin_password_info = config_info["ADMIN_PASSWORD"]
+        current_admin_password = st.session_state.temp_config.get("ADMIN_PASSWORD", "")
+        new_admin_password = st.text_input(
+            f"🔑 {admin_password_info['description']}",
+            value=current_admin_password,
+            type="password",
+            key="input_admin_password"
+        )
+        st.session_state.temp_config["ADMIN_PASSWORD"] = new_admin_password
+
+        admin_password_hash_info = config_info.get(
+            "ADMIN_PASSWORD_HASH",
+            {"description": "管理员密码哈希（推荐，优先于明文密码）"}
+        )
+        current_admin_password_hash = st.session_state.temp_config.get("ADMIN_PASSWORD_HASH", "")
+        new_admin_password_hash = st.text_input(
+            f"🔐 {admin_password_hash_info['description']}",
+            value=current_admin_password_hash,
+            type="password",
+            placeholder="pbkdf2_sha256$迭代次数$salt_hex$hash_hex",
+            key="input_admin_password_hash"
+        )
+        st.session_state.temp_config["ADMIN_PASSWORD_HASH"] = new_admin_password_hash.strip()
+        st.caption("💡 设置哈希后将优先使用哈希校验，建议同时清空明文管理员密码。")
+
+        login_max_attempts = st.text_input(
+            "登录最大失败次数",
+            value=st.session_state.temp_config.get("LOGIN_MAX_ATTEMPTS", "5"),
+            key="input_login_max_attempts"
+        )
+        st.session_state.temp_config["LOGIN_MAX_ATTEMPTS"] = login_max_attempts.strip()
+
+        login_lockout_seconds = st.text_input(
+            "登录锁定时长（秒）",
+            value=st.session_state.temp_config.get("LOGIN_LOCKOUT_SECONDS", "300"),
+            key="input_login_lockout_seconds"
+        )
+        st.session_state.temp_config["LOGIN_LOCKOUT_SECONDS"] = login_lockout_seconds.strip()
+
+        admin_session_ttl_seconds = st.text_input(
+            "管理员会话有效期（秒）",
+            value=st.session_state.temp_config.get("ADMIN_SESSION_TTL_SECONDS", "28800"),
+            key="input_admin_session_ttl_seconds"
+        )
+        st.session_state.temp_config["ADMIN_SESSION_TTL_SECONDS"] = admin_session_ttl_seconds.strip()
+
     with tab2:
         st.markdown("### Tushare数据接口（可选）")
         st.markdown("Tushare提供更丰富的A股财务数据，配置后可以获取更详细的财务分析。")
@@ -2236,6 +2364,16 @@ def display_config_manager():
             key="input_tushare_token"
         )
         st.session_state.temp_config["TUSHARE_TOKEN"] = new_tushare
+
+        tushare_url_info = config_info.get("TUSHARE_URL", {"description": "Tushare API地址"})
+        current_tushare_url = st.session_state.temp_config.get("TUSHARE_URL", "https://api.tushare.pro")
+        new_tushare_url = st.text_input(
+            f"🌐 {tushare_url_info['description']}",
+            value=current_tushare_url,
+            help="一般无需修改",
+            key="input_tushare_url"
+        )
+        st.session_state.temp_config["TUSHARE_URL"] = new_tushare_url
 
         if new_tushare:
             st.success("✅ Tushare Token已设置")
@@ -2781,5 +2919,110 @@ def display_detailed_cards(results, period):
     except Exception as e:
         st.error(f"显示详细信息时出错: {str(e)}")
 
+def _show_login_page():
+    """管理员密码登录页面"""
+    st.markdown("""
+    <style>
+    .login-container {
+        max-width: 420px;
+        margin: 8vh auto;
+        padding: 2.5rem 2rem;
+        background: linear-gradient(135deg, rgba(255,255,255,0.95) 0%, rgba(255,255,255,0.98) 100%);
+        border-radius: 16px;
+        border: 1px solid rgba(0,0,0,0.08);
+        box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+    }
+    .login-title {
+        text-align: center;
+        font-size: 1.6rem;
+        font-weight: 700;
+        background: linear-gradient(135deg, #667eea, #764ba2);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        margin-bottom: 0.5rem;
+    }
+    .login-subtitle {
+        text-align: center;
+        color: #555;
+        font-size: 0.85rem;
+        margin-bottom: 1.5rem;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+    col1, col2, col3 = st.columns([1, 1.2, 1])
+    with col2:
+        st.markdown('<div class="login-container">', unsafe_allow_html=True)
+        st.markdown('<p class="login-title">🔐 系统登录</p>', unsafe_allow_html=True)
+        st.markdown('<p class="login-subtitle">复合多AI智能体股票团队分析系统</p>', unsafe_allow_html=True)
+
+        now_ts = int(time.time())
+        lock_until = int(st.session_state.get("login_lock_until", 0))
+        is_locked = now_ts < lock_until
+        if is_locked:
+            remain = lock_until - now_ts
+            st.error(f"尝试次数过多，请 {remain} 秒后重试")
+
+        password = st.text_input(
+            "管理员密码",
+            type="password",
+            placeholder="请输入管理员密码",
+            key="login_password_input",
+            disabled=is_locked,
+        )
+
+        if st.button("登 录", type="primary", width='stretch', disabled=is_locked):
+            if _verify_admin_password(password):
+                st.session_state.authenticated = True
+                st.session_state.authenticated_at = int(time.time())
+                st.session_state.login_fail_count = 0
+                st.session_state.login_lock_until = 0
+                st.rerun()
+            else:
+                fail_count = int(st.session_state.get("login_fail_count", 0)) + 1
+                st.session_state.login_fail_count = fail_count
+                if fail_count >= max(config.LOGIN_MAX_ATTEMPTS, 1):
+                    st.session_state.login_lock_until = int(time.time()) + max(config.LOGIN_LOCKOUT_SECONDS, 1)
+                    st.session_state.login_fail_count = 0
+                st.error("密码错误，请重试")
+
+        st.markdown('</div>', unsafe_allow_html=True)
+
+
+def _verify_admin_password(input_password: str) -> bool:
+    """Verify admin password using hash (preferred) or plain text (compatible)."""
+    pwd = input_password or ""
+    hash_value = (getattr(config, "ADMIN_PASSWORD_HASH", "") or "").strip()
+    if hash_value:
+        # Format: pbkdf2_sha256$<iterations>$<salt_hex>$<hash_hex>
+        try:
+            algo, iter_text, salt_hex, digest_hex = hash_value.split("$", 3)
+            if algo != "pbkdf2_sha256":
+                return False
+            iterations = int(iter_text)
+            salt = bytes.fromhex(salt_hex)
+            expected = bytes.fromhex(digest_hex)
+            import hashlib
+            import hmac
+            computed = hashlib.pbkdf2_hmac("sha256", pwd.encode("utf-8"), salt, iterations)
+            return hmac.compare_digest(computed, expected)
+        except Exception:
+            return False
+
+    plain = (config.ADMIN_PASSWORD or "").strip()
+    import hmac
+    return bool(plain) and hmac.compare_digest(pwd, plain)
+
 if __name__ == "__main__":
+    # 管理员密码门控
+    if config.ADMIN_PASSWORD or getattr(config, "ADMIN_PASSWORD_HASH", ""):
+        if st.session_state.get("authenticated", False):
+            authed_at = int(st.session_state.get("authenticated_at", 0))
+            ttl = max(getattr(config, "ADMIN_SESSION_TTL_SECONDS", 28800), 60)
+            if authed_at <= 0 or int(time.time()) - authed_at > ttl:
+                st.session_state.authenticated = False
+                st.session_state.pop("authenticated_at", None)
+        if not st.session_state.get("authenticated", False):
+            _show_login_page()
+            st.stop()
     main()

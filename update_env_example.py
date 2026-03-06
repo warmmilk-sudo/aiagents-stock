@@ -10,19 +10,48 @@ env_example_content = """# =====================================================
 # 3. 敏感信息（如API密钥、密码）请妥善保管，不要提交到版本控制
 # ============================================================
 
-# ========== DeepSeek API配置 ==========
-# DeepSeek API密钥（必填）
-# 获取地址：https://platform.deepseek.com/api_keys
-DEEPSEEK_API_KEY=your_actual_deepseek_api_key_here
+# ========== AI模型 API配置 ==========
+# AI模型 API密钥（必填）
+AI_MODEL_API_KEY=your_actual_ai_model_api_key_here
 
-# DeepSeek API基础URL（可选，使用默认值即可）
-DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
+# AI模型 API基础URL（可选，使用默认值即可）
+AI_MODEL_BASE_URL=https://api.deepseek.com/v1
+
+# 三类模型配置（可选）
+AI_MODEL_LIGHTWEIGHT_NAME=deepseek-chat
+AI_MODEL_LONG_CONTEXT_NAME=qwen-long
+AI_MODEL_REASONING_NAME=deepseek-reasoner
+DEFAULT_MODEL_NAME=deepseek-chat
+
+
+# ========== 网站备案配置 ==========
+# 网站底部显示的ICP备案号（为空则不显示）
+ICP_NUMBER=京ICP备2026007346号
+ICP_LINK=https://beian.miit.gov.cn/
+
+
+# ========== 管理员登录配置 ==========
+# 管理员前台登录密码（为空则免密，直接进入系统）
+ADMIN_PASSWORD=
+
+# （推荐）管理员密码哈希（比明文密码优先级更高）。格式为 pbkdf2_sha256$iterations$salt_hex$hash_hex
+ADMIN_PASSWORD_HASH=
+
+# 安全：最大登录失败重试次数，及锁定时间（秒）
+LOGIN_MAX_ATTEMPTS=5
+LOGIN_LOCKOUT_SECONDS=300
+
+# 登录会话过期时间（秒），默认8小时
+ADMIN_SESSION_TTL_SECONDS=28800
 
 
 # ========== Tushare数据接口（可选）==========
 # Tushare Token（可选，用于获取更多金融数据）
 # 获取地址：https://tushare.pro/register
 TUSHARE_TOKEN=
+
+# Tushare API接口地址（一般无需修改）
+TUSHARE_URL=https://api.tushare.pro
 
 
 # ========== MiniQMT量化交易配置（可选）==========
