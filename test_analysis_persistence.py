@@ -1,26 +1,31 @@
 import tempfile
 import unittest
 
-from database import StockAnalysisDatabase
-from macro_cycle_db import MacroCycleDatabase
 from monitor_db import StockMonitorDatabase
 from portfolio_db import PortfolioDB
 from portfolio_manager import PortfolioManager
 from smart_monitor_db import SmartMonitorDB
-from sector_strategy_engine import SectorStrategyEngine
+
+try:
+    from macro_cycle_db import MacroCycleDatabase
+except ModuleNotFoundError:
+    MacroCycleDatabase = None
+
+try:
+    from sector_strategy_engine import SectorStrategyEngine
+except ModuleNotFoundError:
+    SectorStrategyEngine = None
 
 
-class PortfolioHistoryBackfillTests(unittest.TestCase):
+class PortfolioHistoryPersistenceTests(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
         base = self.temp_dir.name
         self.portfolio_db = PortfolioDB(f"{base}/portfolio.db")
-        self.global_history_db = StockAnalysisDatabase(f"{base}/global.db")
         self.realtime_monitor_db = StockMonitorDatabase(f"{base}/monitor.db")
         self.smart_monitor_db = SmartMonitorDB(f"{base}/smart.db")
         self.manager = PortfolioManager(
             portfolio_store=self.portfolio_db,
-            global_history_store=self.global_history_db,
             realtime_monitor_store=self.realtime_monitor_db,
             smart_monitor_store=self.smart_monitor_db,
         )
@@ -67,7 +72,7 @@ class PortfolioHistoryBackfillTests(unittest.TestCase):
         self.assertIn("进场区间", fallback_summary)
         self.assertIn("止盈", fallback_summary)
 
-    def test_legacy_backfill_creates_one_full_report_once(self):
+    def test_history_queries_only_return_full_reports(self):
         stock_id = self._add_stock("600519")
         self.portfolio_db.save_analysis(
             stock_id=stock_id,
@@ -79,15 +84,23 @@ class PortfolioHistoryBackfillTests(unittest.TestCase):
             entry_max=101.0,
             take_profit=112.0,
             stop_loss=95.0,
-            summary="旧版摘要",
+            summary="不完整记录",
             analysis_source="portfolio_batch_analysis",
             has_full_report=False,
         )
-
-        self.manager.analyze_single_stock = lambda code: {
-            "success": True,
-            "stock_info": {"symbol": code, "name": f"Stock{code}", "current_price": 101.5},
-            "agents_results": {
+        self.portfolio_db.save_analysis(
+            stock_id=stock_id,
+            rating="买入",
+            confidence=8.2,
+            current_price=101.5,
+            target_price=115.0,
+            entry_min=100.0,
+            entry_max=102.0,
+            take_profit=115.0,
+            stop_loss=96.0,
+            summary="建议分批建仓。",
+            stock_info={"symbol": "600519", "name": "Stock600519", "current_price": 101.5},
+            agents_results={
                 "technical": {
                     "agent_name": "技术分析师",
                     "agent_role": "技术",
@@ -96,8 +109,8 @@ class PortfolioHistoryBackfillTests(unittest.TestCase):
                     "timestamp": "2026-03-07 10:00:00",
                 }
             },
-            "discussion_result": "团队讨论认为回撤可控。",
-            "final_decision": {
+            discussion_result="团队讨论认为回撤可控。",
+            final_decision={
                 "rating": "买入",
                 "confidence_level": 8.2,
                 "entry_range": "100.0-102.0",
@@ -105,22 +118,22 @@ class PortfolioHistoryBackfillTests(unittest.TestCase):
                 "stop_loss": "96.0元",
                 "operation_advice": "建议分批建仓。",
             },
-        }
+            analysis_source="portfolio_batch_analysis",
+            has_full_report=True,
+        )
 
-        first_result = self.manager.backfill_legacy_history_details()
-        self.assertEqual(first_result["candidates"], 1)
-        self.assertEqual(first_result["created"], 1)
-        full_history = self.portfolio_db.get_analysis_history(stock_id, limit=10, include_legacy=False)
+        full_history = self.portfolio_db.get_analysis_history(stock_id, limit=10)
         self.assertEqual(len(full_history), 1)
-        self.assertEqual(full_history[0]["analysis_source"], "legacy_backfill")
+        self.assertEqual(full_history[0]["analysis_source"], "portfolio_batch_analysis")
         self.assertTrue(full_history[0]["has_full_report"])
         self.assertEqual(full_history[0]["stock_info"]["symbol"], "600519")
 
-        second_result = self.manager.backfill_legacy_history_details()
-        self.assertEqual(second_result["created"], 0)
-        self.assertEqual(len(self.portfolio_db.get_analysis_history(stock_id, limit=20, include_legacy=True)), 2)
+        latest = self.portfolio_db.get_latest_analysis(stock_id)
+        self.assertIsNotNone(latest)
+        self.assertEqual(latest["summary"], "建议分批建仓。")
 
 
+@unittest.skipIf(MacroCycleDatabase is None, "macro cycle dependencies unavailable")
 class MacroCyclePersistenceTests(unittest.TestCase):
     def test_macro_cycle_database_roundtrip(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -151,6 +164,7 @@ class MacroCyclePersistenceTests(unittest.TestCase):
             self.assertIsNone(db.get_latest_report())
 
 
+@unittest.skipIf(SectorStrategyEngine is None, "sector strategy dependencies unavailable")
 class SectorStrategySummaryTests(unittest.TestCase):
     def test_generate_report_summary_uses_structured_predictions(self):
         engine = SectorStrategyEngine.__new__(SectorStrategyEngine)

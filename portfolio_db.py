@@ -109,14 +109,6 @@ class PortfolioDB:
                 )
             ''')
 
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS portfolio_metadata (
-                    config_key TEXT PRIMARY KEY,
-                    config_value TEXT,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
-
             analysis_columns = {
                 "stock_info_json": "TEXT",
                 "agents_results_json": "TEXT",
@@ -124,7 +116,6 @@ class PortfolioDB:
                 "final_decision_json": "TEXT",
                 "analysis_period": "TEXT DEFAULT '1y'",
                 "analysis_source": "TEXT DEFAULT 'portfolio_batch_analysis'",
-                "legacy_backfilled_from": "INTEGER",
                 "has_full_report": "INTEGER DEFAULT 0",
             }
             for column, definition in analysis_columns.items():
@@ -418,7 +409,6 @@ class PortfolioDB:
                      final_decision: Optional[Dict] = None,
                      analysis_period: str = "1y",
                      analysis_source: str = "portfolio_batch_analysis",
-                     legacy_backfilled_from: Optional[int] = None,
                      has_full_report: Optional[bool] = None) -> int:
         """
         保存分析历史记录
@@ -455,8 +445,8 @@ class PortfolioDB:
                 (portfolio_stock_id, analysis_time, rating, confidence, current_price,
                  target_price, entry_min, entry_max, take_profit, stop_loss, summary,
                  stock_info_json, agents_results_json, discussion_result, final_decision_json,
-                 analysis_period, analysis_source, legacy_backfilled_from, has_full_report)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 analysis_period, analysis_source, has_full_report)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 stock_id,
                 analysis_time or datetime.now(),
@@ -475,7 +465,6 @@ class PortfolioDB:
                 self._serialize_json(final_decision),
                 analysis_period,
                 analysis_source,
-                legacy_backfilled_from,
                 1 if full_report_flag else 0,
             ))
             
@@ -488,41 +477,6 @@ class PortfolioDB:
             print(f"[ERROR] 保存分析历史失败: {e}")
             conn.rollback()
             raise
-        finally:
-            conn.close()
-
-    def get_metadata(self, key: str, default: Optional[str] = None) -> Optional[str]:
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        try:
-            cursor.execute(
-                '''
-                SELECT config_value
-                FROM portfolio_metadata
-                WHERE config_key = ?
-                ''',
-                (key,),
-            )
-            row = cursor.fetchone()
-            return row["config_value"] if row else default
-        finally:
-            conn.close()
-
-    def set_metadata(self, key: str, value: Optional[str]):
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        try:
-            cursor.execute(
-                '''
-                INSERT INTO portfolio_metadata (config_key, config_value, updated_at)
-                VALUES (?, ?, ?)
-                ON CONFLICT(config_key) DO UPDATE SET
-                    config_value = excluded.config_value,
-                    updated_at = excluded.updated_at
-                ''',
-                (key, value, datetime.now()),
-            )
-            conn.commit()
         finally:
             conn.close()
 
@@ -543,7 +497,7 @@ class PortfolioDB:
         finally:
             conn.close()
     
-    def get_analysis_history(self, stock_id: int, limit: int = 10, include_legacy: bool = True) -> List[Dict]:
+    def get_analysis_history(self, stock_id: int, limit: int = 10) -> List[Dict]:
         """
         获取股票的分析历史记录
         
@@ -561,20 +515,18 @@ class PortfolioDB:
             cursor.execute('''
                 SELECT * FROM portfolio_analysis_history 
                 WHERE portfolio_stock_id = ?
+                AND COALESCE(has_full_report, 0) = 1
                 ORDER BY analysis_time DESC
                 LIMIT ?
             ''', (stock_id, limit))
             
             rows = cursor.fetchall()
-            history = [self._deserialize_analysis_row(row) for row in rows]
-            if include_legacy:
-                return history
-            return [row for row in history if row.get("has_full_report")]
+            return [self._deserialize_analysis_row(row) for row in rows]
             
         finally:
             conn.close()
     
-    def get_latest_analysis_history(self, stock_id: int, limit: int = 10, include_legacy: bool = True) -> List[Dict]:
+    def get_latest_analysis_history(self, stock_id: int, limit: int = 10) -> List[Dict]:
         """
         获取股票的最新分析历史记录（按时间倒序）
         
@@ -587,9 +539,9 @@ class PortfolioDB:
         Returns:
             分析历史记录列表（按时间倒序）
         """
-        return self.get_analysis_history(stock_id, limit, include_legacy=include_legacy)
+        return self.get_analysis_history(stock_id, limit)
     
-    def get_latest_analysis(self, stock_id: int, include_legacy: bool = True) -> Optional[Dict]:
+    def get_latest_analysis(self, stock_id: int) -> Optional[Dict]:
         """
         获取股票的最新一次分析记录
         
@@ -606,39 +558,14 @@ class PortfolioDB:
             cursor.execute('''
                 SELECT * FROM portfolio_analysis_history 
                 WHERE portfolio_stock_id = ?
+                AND COALESCE(has_full_report, 0) = 1
                 ORDER BY analysis_time DESC
+                LIMIT 1
             ''', (stock_id,))
             
-            rows = cursor.fetchall()
-            history = [self._deserialize_analysis_row(row) for row in rows]
-            if not include_legacy:
-                history = [row for row in history if row.get("has_full_report")]
-            return history[0] if history else None
+            row = cursor.fetchone()
+            return self._deserialize_analysis_row(row) if row else None
             
-        finally:
-            conn.close()
-
-    def get_legacy_backfill_candidates(self) -> List[Dict]:
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        try:
-            cursor.execute('''
-                SELECT s.*, MIN(h.id) AS legacy_record_id
-                FROM portfolio_stocks s
-                INNER JOIN portfolio_analysis_history h
-                    ON s.id = h.portfolio_stock_id
-                WHERE COALESCE(h.has_full_report, 0) = 0
-                  AND NOT EXISTS (
-                      SELECT 1
-                      FROM portfolio_analysis_history h2
-                      WHERE h2.portfolio_stock_id = s.id
-                        AND COALESCE(h2.has_full_report, 0) = 1
-                  )
-                GROUP BY s.id
-                ORDER BY s.created_at DESC
-            ''')
-            rows = cursor.fetchall()
-            return [dict(row) for row in rows]
         finally:
             conn.close()
     
@@ -732,7 +659,7 @@ class PortfolioDB:
                     h.entry_min, h.entry_max, h.take_profit, h.stop_loss,
                     h.analysis_time, h.summary, h.stock_info_json, h.agents_results_json,
                     h.discussion_result, h.final_decision_json, h.analysis_period,
-                    h.analysis_source, h.legacy_backfilled_from, h.has_full_report
+                    h.analysis_source, h.has_full_report
                 FROM portfolio_stocks s
                 LEFT JOIN (
                     SELECT h1.*
@@ -740,10 +667,12 @@ class PortfolioDB:
                     INNER JOIN (
                         SELECT portfolio_stock_id, MAX(analysis_time) as max_time
                         FROM portfolio_analysis_history
+                        WHERE COALESCE(has_full_report, 0) = 1
                         GROUP BY portfolio_stock_id
                     ) h2
                     ON h1.portfolio_stock_id = h2.portfolio_stock_id 
                     AND h1.analysis_time = h2.max_time
+                    WHERE COALESCE(h1.has_full_report, 0) = 1
                 ) h ON s.id = h.portfolio_stock_id
                 ORDER BY s.created_at DESC
             ''')

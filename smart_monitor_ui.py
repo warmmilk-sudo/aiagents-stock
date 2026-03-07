@@ -960,13 +960,13 @@ def _render_task_kline_and_decisions(task: Dict, db: SmartMonitorDB, engine):
                             <p style="margin: 0;">
                                 <strong>{action_name}</strong> · {execution_text}
                             </p>
-                            <p style="margin: 5px 0; font-size: 0.85em; color: gray;">
+                            <p class="ui-meta-text" style="margin: 5px 0; color: gray;">
                                 {decision_time}
                             </p>
-                            <p style="margin: 5px 0; font-size: 0.9em;">
+                            <p class="ui-body-text" style="margin: 5px 0;">
                                 <strong>置信度:</strong> {confidence}%
                             </p>
-                            <p style="margin: 5px 0; font-size: 0.9em;">
+                            <p class="ui-body-text" style="margin: 5px 0;">
                                 <strong>推理:</strong> {reasoning[:100]}{'...' if len(reasoning) > 100 else ''}
                             </p>
                         </div>

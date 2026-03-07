@@ -1,7 +1,6 @@
 import tempfile
 import unittest
 
-from database import StockAnalysisDatabase
 from monitor_db import StockMonitorDatabase
 from portfolio_db import PortfolioDB
 from portfolio_manager import PortfolioManager
@@ -14,12 +13,10 @@ class PortfolioIntegrationTests(unittest.TestCase):
         base = self.temp_dir.name
 
         self.portfolio_db = PortfolioDB(f"{base}/portfolio.db")
-        self.global_history_db = StockAnalysisDatabase(f"{base}/global.db")
         self.realtime_monitor_db = StockMonitorDatabase(f"{base}/monitor.db")
         self.smart_monitor_db = SmartMonitorDB(f"{base}/smart.db")
         self.manager = PortfolioManager(
             portfolio_store=self.portfolio_db,
-            global_history_store=self.global_history_db,
             realtime_monitor_store=self.realtime_monitor_db,
             smart_monitor_store=self.smart_monitor_db,
         )
@@ -41,39 +38,14 @@ class PortfolioIntegrationTests(unittest.TestCase):
         self.assertIsNotNone(stock_id)
         return stock_id
 
-    def test_migrate_global_history_to_portfolio_history_is_idempotent(self):
-        stock_id = self._add_stock("600519")
-        record_id = self.global_history_db.save_analysis(
-            symbol="600519",
-            stock_name="Stock600519",
-            period="1y",
-            stock_info={"symbol": "600519", "name": "Stock600519", "current_price": 123.45},
-            agents_results={"technical": "ok"},
-            discussion_result={"summary": "ok"},
-            final_decision={
-                "rating": "买入",
-                "confidence_level": 8.5,
-                "entry_range": "120.0-125.0",
-                "take_profit": "135.0元",
-                "stop_loss": "118.0元",
-                "operation_advice": "继续跟踪",
-            },
-        )
-        original = self.global_history_db.get_record_by_id(record_id)
-
-        result = self.manager.migrate_global_history_to_portfolio_history()
-        self.assertEqual(result["migrated"], 1)
-        self.assertEqual(result["deleted"], 1)
-        self.assertEqual(self.global_history_db.get_record_count(), 0)
-
-        history = self.portfolio_db.get_analysis_history(stock_id, limit=10)
-        self.assertEqual(len(history), 1)
-        self.assertEqual(history[0]["analysis_time"], original["analysis_date"])
-        self.assertEqual(history[0]["rating"], "买入")
-
-        result_again = self.manager.migrate_global_history_to_portfolio_history()
-        self.assertEqual(result_again["migrated"], 0)
-        self.assertEqual(len(self.portfolio_db.get_analysis_history(stock_id, limit=10)), 1)
+    def test_reconcile_portfolio_integrations_only_syncs_downstream(self):
+        self._add_stock("600519")
+        result = self.manager.reconcile_portfolio_integrations()
+        self.assertIn("smart_monitor_sync", result)
+        self.assertIn("realtime_monitor_sync", result)
+        self.assertIn("cleanup", result)
+        self.assertNotIn("history_migration", result)
+        self.assertNotIn("legacy_backfill", result)
 
     def test_add_and_update_stock_syncs_to_smart_monitor(self):
         stock_id = self._add_stock("000001", cost_price=10.5, quantity=200)
@@ -124,7 +96,6 @@ class PortfolioIntegrationTests(unittest.TestCase):
 
         result = self.manager.persist_analysis_results(analysis_results, sync_realtime_monitor=True)
         self.assertEqual(len(result["saved_ids"]), 1)
-        self.assertEqual(self.global_history_db.get_record_count(), 0)
 
         history = self.portfolio_db.get_analysis_history(stock_id, limit=10)
         self.assertEqual(len(history), 1)
@@ -148,9 +119,10 @@ class PortfolioIntegrationTests(unittest.TestCase):
             take_profit=170.0,
             stop_loss=144.0,
             summary="新分析",
+            has_full_report=True,
         )
         sync_result = self.manager.sync_latest_analysis_to_realtime_monitor(["300750"])
-        self.assertEqual(sync_result["updated"], 1)
+        self.assertEqual(sync_result["total"], 1)
 
         monitors = [
             stock for stock in self.realtime_monitor_db.get_monitored_stocks()
@@ -171,6 +143,7 @@ class PortfolioIntegrationTests(unittest.TestCase):
             take_profit=240.0,
             stop_loss=210.0,
             summary="测试清理",
+            has_full_report=True,
         )
         self.manager.sync_latest_analysis_to_realtime_monitor(["002594"])
 

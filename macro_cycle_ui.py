@@ -207,11 +207,11 @@ def display_analysis_results(result, show_export=True, key_prefix="macro"):
         chief = agents.get("chief", {})
         if chief:
             st.markdown("""
-                <div style="background: linear-gradient(135deg, #2563eb 0%, #4f46e5 100%); 
+                <div class="metric-card macro-hero-card" style="background: linear-gradient(135deg, #2563eb 0%, #4f46e5 100%); 
                         padding: 1.2rem; border-radius: 12px; margin-bottom: 1rem;
                         color: white;">
                 <h3 style="margin: 0; color: white;">首席宏观策略师 — 综合研判</h3>
-                <p style="margin: 0.3rem 0 0 0; opacity: 0.9; font-size: 0.95rem;">
+                <p class="ui-body-text" style="margin: 0.3rem 0 0 0; opacity: 0.9;">
                     整合康波周期 + 美林投资时钟 + 中国政策三维分析，给出最终投资策略
                 </p>
             </div>
@@ -225,11 +225,11 @@ def display_analysis_results(result, show_export=True, key_prefix="macro"):
         kondratieff = agents.get("kondratieff", {})
         if kondratieff:
             st.markdown("""
-                <div style="background: linear-gradient(135deg, #0f766e 0%, #1d4ed8 100%); 
+                <div class="metric-card macro-hero-card" style="background: linear-gradient(135deg, #0f766e 0%, #1d4ed8 100%); 
                         padding: 1.2rem; border-radius: 12px; margin-bottom: 1rem;
                         color: white;">
                 <h3 style="margin: 0; color: white;">康波周期分析师 — 60年长周期定位</h3>
-                <p style="margin: 0.3rem 0 0 0; opacity: 0.9; font-size: 0.95rem;">
+                <p class="ui-body-text" style="margin: 0.3rem 0 0 0; opacity: 0.9;">
                     基于康德拉季耶夫长波理论，判断当前处于第五轮信息技术康波的哪个阶段
                 </p>
             </div>
@@ -243,11 +243,11 @@ def display_analysis_results(result, show_export=True, key_prefix="macro"):
         merrill = agents.get("merrill", {})
         if merrill:
             st.markdown("""
-                <div style="background: linear-gradient(135deg, #d97706 0%, #92400e 100%); 
+                <div class="metric-card macro-hero-card" style="background: linear-gradient(135deg, #d97706 0%, #92400e 100%); 
                         padding: 1.2rem; border-radius: 12px; margin-bottom: 1rem;
                         color: white;">
                 <h3 style="margin: 0; color: white;">美林投资时钟分析师 — 中短周期定位</h3>
-                <p style="margin: 0.3rem 0 0 0; opacity: 0.9; font-size: 0.95rem;">
+                <p class="ui-body-text" style="margin: 0.3rem 0 0 0; opacity: 0.9;">
                     基于经济增长+通胀+政策三维度，判断当前处于美林时钟的哪个象限
                 </p>
             </div>
@@ -261,11 +261,11 @@ def display_analysis_results(result, show_export=True, key_prefix="macro"):
         policy = agents.get("policy", {})
         if policy:
             st.markdown("""
-                <div style="background: linear-gradient(135deg, #475569 0%, #1e293b 100%); 
+                <div class="metric-card macro-hero-card" style="background: linear-gradient(135deg, #475569 0%, #1e293b 100%); 
                         padding: 1.2rem; border-radius: 12px; margin-bottom: 1rem;
                         color: white;">
                 <h3 style="margin: 0; color: white;">中国政策分析师 — 政策第三维度</h3>
-                <p style="margin: 0.3rem 0 0 0; opacity: 0.9; font-size: 0.95rem;">
+                <p class="ui-body-text" style="margin: 0.3rem 0 0 0; opacity: 0.9;">
                     深度分析货币政策、财政政策、产业政策、房地产政策对周期和投资的影响
                 </p>
             </div>

@@ -107,10 +107,142 @@ def collapse_sidebar():
 # 自定义CSS样式 - 极简专业版 (Dark Mode Adapted)
 st.markdown("""
 <style>
+    :root {
+        --font-size-body: 0.95rem;
+        --font-size-caption: 0.82rem;
+        --font-size-h1: 1.95rem;
+        --font-size-h2: 1.6rem;
+        --font-size-h3: 1.18rem;
+        --font-size-h4: 1rem;
+        --font-size-h5: 0.92rem;
+        --font-size-h6: 0.88rem;
+        --font-size-metric-label: 0.82rem;
+        --font-size-metric-value: 1.18rem;
+        --font-size-metric-delta: 0.82rem;
+        --line-height-body: 1.6;
+        --line-height-heading: 1.3;
+        --space-1: 0.25rem;
+        --space-2: 0.45rem;
+        --space-3: 0.7rem;
+        --space-4: 1rem;
+        --space-5: 1.35rem;
+    }
+
     /* 全局极简风格 */
+    html, body, [data-testid="stAppViewContainer"] {
+        font-size: 15px;
+    }
     .block-container {
-        padding-top: 2rem;
-        padding-bottom: 2rem;
+        padding-top: 1.6rem;
+        padding-bottom: 1.8rem;
+    }
+
+    /* 统一字号层级 */
+    div[data-testid="stMarkdownContainer"] p,
+    div[data-testid="stMarkdownContainer"] li,
+    div[data-testid="stMarkdownContainer"] label,
+    [data-testid="stText"],
+    [data-testid="stCaptionContainer"] p,
+    .stCaption {
+        line-height: var(--line-height-body);
+    }
+    div[data-testid="stMarkdownContainer"] p,
+    div[data-testid="stMarkdownContainer"] li,
+    [data-testid="stText"] {
+        font-size: var(--font-size-body);
+        margin: 0 0 var(--space-2) 0;
+    }
+    div[data-testid="stMarkdownContainer"] ul,
+    div[data-testid="stMarkdownContainer"] ol {
+        margin: 0 0 var(--space-3) 0;
+        padding-left: 1.15rem;
+    }
+    [data-testid="stCaptionContainer"] p,
+    .stCaption,
+    .ui-meta-text {
+        font-size: var(--font-size-caption) !important;
+    }
+    div[data-testid="stHeading"] {
+        margin: 0 0 var(--space-2) 0;
+    }
+    div[data-testid="stMarkdownContainer"] h1,
+    div[data-testid="stHeading"] h1 {
+        font-size: var(--font-size-h1) !important;
+        line-height: var(--line-height-heading);
+        font-weight: 700;
+        margin: 0 0 var(--space-3) 0;
+    }
+    div[data-testid="stMarkdownContainer"] h2,
+    div[data-testid="stHeading"] h2,
+    .page-title,
+    .login-title {
+        font-size: var(--font-size-h2) !important;
+        line-height: var(--line-height-heading);
+        font-weight: 600;
+        margin: 0 0 var(--space-2) 0;
+    }
+    div[data-testid="stMarkdownContainer"] h3,
+    div[data-testid="stHeading"] h3,
+    .agent-card h3,
+    .decision-card h3,
+    .warning-card h3 {
+        font-size: var(--font-size-h3) !important;
+        line-height: var(--line-height-heading);
+        font-weight: 600;
+        margin: 0 0 var(--space-2) 0;
+    }
+    div[data-testid="stMarkdownContainer"] h4,
+    div[data-testid="stHeading"] h4,
+    .agent-card h4,
+    .decision-card h4,
+    .warning-card h4 {
+        font-size: var(--font-size-h4) !important;
+        line-height: var(--line-height-heading);
+        font-weight: 600;
+        margin: 0 0 var(--space-1) 0;
+    }
+    div[data-testid="stMarkdownContainer"] h5,
+    div[data-testid="stHeading"] h5 {
+        font-size: var(--font-size-h5) !important;
+        line-height: var(--line-height-heading);
+        font-weight: 600;
+        margin: 0 0 var(--space-1) 0;
+    }
+    div[data-testid="stMarkdownContainer"] h6,
+    div[data-testid="stHeading"] h6 {
+        font-size: var(--font-size-h6) !important;
+        line-height: var(--line-height-heading);
+        font-weight: 600;
+        margin: 0 0 var(--space-1) 0;
+    }
+    .login-subtitle,
+    .ui-body-text {
+        font-size: var(--font-size-body);
+        line-height: var(--line-height-body);
+    }
+    .login-subtitle {
+        color: rgba(255,255,255,0.6);
+        text-align: center;
+        margin: 0 0 var(--space-5) 0;
+    }
+    div[data-testid="stMetricLabel"] p,
+    div[data-testid="stMetricLabel"] label {
+        font-size: var(--font-size-metric-label) !important;
+        line-height: 1.4;
+    }
+    div[data-testid="stMetric"] {
+        padding: 0.1rem 0;
+    }
+    div[data-testid="stMetric"] > div {
+        gap: var(--space-1);
+    }
+    div[data-testid="stMetricValue"] {
+        font-size: var(--font-size-metric-value) !important;
+        line-height: 1.2;
+    }
+    div[data-testid="stMetricDelta"] {
+        font-size: var(--font-size-metric-delta) !important;
+        line-height: 1.3;
     }
     
     /* 弱化 Streamlit 默认头部 */
@@ -126,8 +258,12 @@ st.markdown("""
         padding: 0;
         border-bottom: 1px solid var(--secondary-background-color);
     }
+    .stTabs [data-baseweb="tab-panel"] {
+        padding-top: var(--space-4);
+    }
     .stTabs [data-baseweb="tab"] {
         height: 3rem;
+        font-size: 0.94rem;
         font-weight: 500;
         color: rgba(255,255,255,0.6);
         background: transparent;
@@ -147,17 +283,48 @@ st.markdown("""
         border: 1px solid rgba(255,255,255,0.1);
         border-radius: 8px;
         padding: 1.25rem;
-        margin: 0.75rem 0;
+        margin: var(--space-3) 0;
         box-shadow: 0 1px 3px rgba(0,0,0,0.2);
     }
     .agent-card { border-left: 4px solid #3b82f6; }
     .decision-card { border-left: 4px solid #2563eb; }
     .warning-card { border-left: 4px solid #f59e0b; }
+    .agent-card p,
+    .metric-card p,
+    .decision-card p,
+    .warning-card p,
+    .agent-card li,
+    .metric-card li,
+    .decision-card li,
+    .warning-card li {
+        font-size: var(--font-size-body) !important;
+        line-height: var(--line-height-body);
+        margin: 0.25rem 0 0 0;
+    }
+    .agent-card strong,
+    .metric-card strong,
+    .decision-card strong,
+    .warning-card strong {
+        font-weight: 600;
+    }
+    .macro-hero-card {
+        border: none;
+        box-shadow: none;
+    }
+    .macro-hero-card h3 {
+        color: white !important;
+    }
+    .macro-hero-card p {
+        color: rgba(255,255,255,0.9);
+    }
     
     /* 表单控件极简设计 */
     .stTextInput>div>div>input, .stSelectbox>div>div>div {
         border-radius: 6px;
         border: 1px solid rgba(255,255,255,0.2);
+    }
+    div[data-testid="stForm"] {
+        margin: 0 0 var(--space-4) 0;
     }
     
     /* 隐藏输入框的回车提示 */
@@ -171,11 +338,22 @@ st.markdown("""
         color: var(--text-color);
         border: 1px solid rgba(255,255,255,0.2);
         border-radius: 6px;
+        font-size: 0.94rem;
         font-weight: 500;
         transition: all 0.2s;
     }
     .stButton>button:hover {
         border-color: var(--primary-color);
+    }
+    div[data-testid="stButton"] {
+        margin: 0;
+    }
+    div[data-testid="stAlert"] {
+        margin: var(--space-2) 0;
+    }
+    [data-testid="stAlertContentMarkdown"] p,
+    [data-testid="stAlertContentMarkdown"] li {
+        margin-bottom: 0;
     }
 
     /* 侧边栏纵向紧凑 */
@@ -205,7 +383,18 @@ st.markdown("""
         border: 1px solid rgba(255,255,255,0.1);
         border-radius: 6px;
         color: var(--text-color);
+        font-size: 0.94rem;
         font-weight: 500;
+    }
+    div[data-testid="stExpander"] {
+        margin: var(--space-2) 0;
+    }
+    div[data-testid="stExpanderDetails"] {
+        padding-top: var(--space-2);
+    }
+    hr {
+        margin: var(--space-4) 0;
+        border-color: rgba(148,163,184,0.18);
     }
     
     .dataframe {
@@ -234,12 +423,28 @@ st.markdown("""
         color: rgba(255,255,255,0.8);
         text-decoration: underline;
     }
-        color: #64748b;
-        text-decoration: underline;
-    }
     
     @media (max-width: 768px) {
-        .block-container { padding-top: 1rem; }
+        .block-container {
+            padding-top: 1rem;
+            padding-bottom: 1.2rem;
+        }
+        :root {
+            --font-size-h1: 1.72rem;
+            --font-size-h2: 1.42rem;
+            --font-size-h3: 1.1rem;
+            --font-size-h4: 0.98rem;
+            --font-size-body: 0.92rem;
+            --font-size-caption: 0.8rem;
+        }
+        .stTabs [data-baseweb="tab"] {
+            height: 2.8rem;
+            padding: 0 0.7rem;
+        }
+        .agent-card, .metric-card, .decision-card, .warning-card {
+            padding: 1rem;
+            margin: var(--space-2) 0;
+        }
     }
 </style>
 """, unsafe_allow_html=True)
@@ -347,7 +552,7 @@ def main():
     # 顶部标题栏
     st.markdown("""
     <div style="text-align: center; margin-bottom: 1.25rem;">
-        <h2 style="font-weight: 600; font-size: 1.6rem; margin-bottom: 0; color: var(--text-color);">%s</h2>
+        <h2 class="page-title" style="color: var(--text-color);">%s</h2>
     </div>
     """ % get_current_view_title(), unsafe_allow_html=True)
 
@@ -2692,8 +2897,8 @@ def _show_login_page():
     col1, col2, col3 = st.columns([1, 1.5, 1])
     with col2:
         with st.container(border=True):
-            st.markdown('<p style="text-align: center; font-size: 1.4rem; font-weight: 600; margin-bottom: 0.5rem;">系统登录</p>', unsafe_allow_html=True)
-            st.markdown('<p style="text-align: center; color: rgba(255,255,255,0.6); font-size: 0.85rem; margin-bottom: 2rem;">复合多AI智能体股票团队分析系统</p>', unsafe_allow_html=True)
+            st.markdown('<p class="login-title" style="text-align: center;">系统登录</p>', unsafe_allow_html=True)
+            st.markdown('<p class="login-subtitle">复合多AI智能体股票团队分析系统</p>', unsafe_allow_html=True)
 
             now_ts = int(time.time())
             lock_until = int(st.session_state.get("login_lock_until", 0))

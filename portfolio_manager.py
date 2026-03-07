@@ -12,7 +12,6 @@ from datetime import datetime
 
 # 导入必要的模块
 from portfolio_db import portfolio_db
-from database import db as global_history_db
 from monitor_db import monitor_db as realtime_monitor_db
 from smart_monitor_db import SmartMonitorDB
 
@@ -24,7 +23,7 @@ class PortfolioManager:
     DEFAULT_REALTIME_MONITOR_CHECK_INTERVAL = 60
     
     def __init__(self, model=None, lightweight_model=None, reasoning_model=None,
-                 portfolio_store=None, global_history_store=None,
+                 portfolio_store=None,
                  realtime_monitor_store=None, smart_monitor_store=None):
         """
         初始化持仓管理器
@@ -36,7 +35,6 @@ class PortfolioManager:
         self.lightweight_model = lightweight_model
         self.reasoning_model = reasoning_model
         self.db = portfolio_store or portfolio_db
-        self.global_history_db = global_history_store or global_history_db
         self.realtime_monitor_db = realtime_monitor_store or realtime_monitor_db
         self.smart_monitor_db = smart_monitor_store or SmartMonitorDB()
 
@@ -397,7 +395,6 @@ class PortfolioManager:
         discussion_result: Optional[str] = None,
         analysis_period: str = "1y",
         analysis_source: str = "portfolio_batch_analysis",
-        legacy_backfilled_from: Optional[int] = None,
     ) -> Dict:
         """缁熶竴鏋勫缓鎸佷粨鍒嗘瀽鍘嗗彶钀藉簱鏁版嵁銆?"""
         rating = str(final_decision.get("rating", "鎸佹湁")).strip() or "鎸佹湁"
@@ -425,7 +422,6 @@ class PortfolioManager:
             "final_decision": final_decision,
             "analysis_period": analysis_period,
             "analysis_source": analysis_source,
-            "legacy_backfilled_from": legacy_backfilled_from,
             "has_full_report": bool(stock_info or agents_results or discussion_result or final_decision),
         }
 
@@ -560,140 +556,13 @@ class PortfolioManager:
             "realtime_monitor_deleted": cleaned_monitor,
         }
 
-    def migrate_global_history_to_portfolio_history(self) -> Dict[str, int]:
-        """将误写到全局历史的持仓分析记录迁移到持仓分析历史。"""
-        migrated = 0
-        deleted = 0
-        skipped = 0
-        stocks_by_code = {
-            stock["code"]: stock for stock in self.get_all_stocks()
-        }
-
-        if not stocks_by_code:
-            return {"migrated": 0, "deleted": 0, "skipped": 0}
-
-        for record in self.global_history_db.get_all_records():
-            symbol = self._normalize_stock_code(record.get("symbol", ""))
-            stock = stocks_by_code.get(symbol)
-            if not stock:
-                continue
-
-            detail = self.global_history_db.get_record_by_id(record["id"])
-            if not detail:
-                skipped += 1
-                continue
-
-            analysis_time = detail.get("analysis_date")
-            if not analysis_time:
-                skipped += 1
-                continue
-
-            if not self.db.analysis_exists(stock["id"], analysis_time):
-                payload = self._build_analysis_payload(
-                    detail.get("stock_info", {}),
-                    detail.get("final_decision", {}),
-                    agents_results=detail.get("agents_results", {}),
-                    discussion_result=detail.get("discussion_result", ""),
-                    analysis_period=detail.get("period", "1y"),
-                    analysis_source="global_history_migration",
-                )
-                self.db.save_analysis(
-                    stock_id=stock["id"],
-                    rating=payload["rating"],
-                    confidence=payload["confidence"],
-                    current_price=payload["current_price"],
-                    target_price=payload["target_price"],
-                    entry_min=payload["entry_min"],
-                    entry_max=payload["entry_max"],
-                    take_profit=payload["take_profit"],
-                    stop_loss=payload["stop_loss"],
-                    summary=payload["summary"],
-                    analysis_time=analysis_time,
-                    stock_info=payload["stock_info"],
-                    agents_results=payload["agents_results"],
-                    discussion_result=payload["discussion_result"],
-                    final_decision=payload["final_decision"],
-                    analysis_period=payload["analysis_period"],
-                    analysis_source=payload["analysis_source"],
-                    legacy_backfilled_from=payload["legacy_backfilled_from"],
-                    has_full_report=payload["has_full_report"],
-                )
-                migrated += 1
-
-            if self.global_history_db.delete_record(record["id"]):
-                deleted += 1
-
-        return {"migrated": migrated, "deleted": deleted, "skipped": skipped}
-
-    def backfill_legacy_history_details(self) -> Dict[str, int]:
-        """为缺少完整快照的旧持仓历史补一条当前完整报告。"""
-        backfill_complete = self.db.get_metadata("legacy_history_backfill_complete", "0") == "1"
-        candidates = self.db.get_legacy_backfill_candidates()
-
-        if backfill_complete and not candidates:
-            return {"candidates": 0, "created": 0, "failed": 0}
-
-        created = 0
-        failed = 0
-        for stock in candidates:
-            try:
-                result = self.analyze_single_stock(stock["code"])
-                if not result.get("success"):
-                    failed += 1
-                    continue
-
-                payload = self._build_analysis_payload(
-                    result.get("stock_info", {}),
-                    result.get("final_decision", {}),
-                    agents_results=result.get("agents_results", {}),
-                    discussion_result=result.get("discussion_result", ""),
-                    analysis_period="1y",
-                    analysis_source="legacy_backfill",
-                    legacy_backfilled_from=stock.get("legacy_record_id"),
-                )
-                self.db.save_analysis(
-                    stock_id=stock["id"],
-                    rating=payload["rating"],
-                    confidence=payload["confidence"],
-                    current_price=payload["current_price"],
-                    target_price=payload["target_price"],
-                    entry_min=payload["entry_min"],
-                    entry_max=payload["entry_max"],
-                    take_profit=payload["take_profit"],
-                    stop_loss=payload["stop_loss"],
-                    summary=payload["summary"],
-                    stock_info=payload["stock_info"],
-                    agents_results=payload["agents_results"],
-                    discussion_result=payload["discussion_result"],
-                    final_decision=payload["final_decision"],
-                    analysis_period=payload["analysis_period"],
-                    analysis_source=payload["analysis_source"],
-                    legacy_backfilled_from=payload["legacy_backfilled_from"],
-                    has_full_report=payload["has_full_report"],
-                )
-                created += 1
-            except Exception as e:
-                failed += 1
-                print(f"[ERROR] 旧持仓历史补全失败 ({stock['code']}): {e}")
-
-        if not self.db.get_legacy_backfill_candidates():
-            self.db.set_metadata("legacy_history_backfill_complete", "1")
-        else:
-            self.db.set_metadata("legacy_history_backfill_complete", "0")
-
-        return {"candidates": len(candidates), "created": created, "failed": failed}
-
     def reconcile_portfolio_integrations(self) -> Dict[str, Dict[str, int]]:
-        """执行持仓历史迁移与下游联动对账。"""
-        migration_result = self.migrate_global_history_to_portfolio_history()
-        backfill_result = self.backfill_legacy_history_details()
+        """执行持仓下游联动对账。"""
         smart_sync_result = self.sync_portfolio_to_smart_monitor()
         monitor_sync_result = self.sync_latest_analysis_to_realtime_monitor()
         cleanup_result = self.cleanup_managed_integrations()
 
         return {
-            "history_migration": migration_result,
-            "legacy_backfill": backfill_result,
             "smart_monitor_sync": smart_sync_result,
             "realtime_monitor_sync": monitor_sync_result,
             "cleanup": cleanup_result,
@@ -1114,7 +983,6 @@ class PortfolioManager:
                     final_decision=payload["final_decision"],
                     analysis_period=payload["analysis_period"],
                     analysis_source=payload["analysis_source"],
-                    legacy_backfilled_from=payload["legacy_backfilled_from"],
                     has_full_report=payload["has_full_report"],
                 )
                 saved_ids.append(analysis_id)

@@ -35,7 +35,7 @@ def display_portfolio_manager(lightweight_model=None, reasoning_model=None):
     try:
         portfolio_manager.reconcile_portfolio_integrations()
     except Exception as e:
-        st.warning(f"持仓联动修复执行失败: {e}")
+        st.warning(f"持仓同步检查执行失败: {e}")
     
     # 创建标签页
     tab1, tab2, tab3, tab4 = st.tabs([
@@ -106,7 +106,7 @@ def display_stock_card(stock: Dict, lightweight_model=None, reasoning_model=None
     quantity = stock.get("quantity")
     note = stock.get("note", "")
     auto_monitor = stock.get("auto_monitor", True)
-    latest_analysis = portfolio_manager.db.get_latest_analysis(stock_id, include_legacy=False)
+    latest_analysis = portfolio_manager.db.get_latest_analysis(stock_id)
     
     # 创建卡片
     with st.container():
@@ -703,12 +703,6 @@ def display_analysis_history():
         options=["全部"] + stock_codes,
         help="查看特定股票的分析历史"
     )
-    show_legacy = st.checkbox(
-        "显示旧版摘要记录",
-        value=False,
-        help="旧记录仅包含摘要，不含完整报告快照。默认隐藏，只展示可展开的完整历史报告。",
-    )
-    
     # 获取历史记录
     if selected_code == "全部":
         # 获取所有股票的最新历史
@@ -718,7 +712,6 @@ def display_analysis_history():
             history = portfolio_manager.db.get_latest_analysis_history(
                 stock_id,
                 limit=5,
-                include_legacy=show_legacy,
             )
             for h in history:
                 h["code"] = stock["code"]
@@ -735,7 +728,6 @@ def display_analysis_history():
             history_list = portfolio_manager.db.get_latest_analysis_history(
                 stock["id"],
                 limit=20,
-                include_legacy=show_legacy,
             )
             for h in history_list:
                 h["code"] = stock["code"]
@@ -748,9 +740,7 @@ def display_analysis_history():
         return
     
     # 显示历史记录
-    full_count = sum(1 for item in history_list if item.get("has_full_report"))
-    legacy_count = len(history_list) - full_count
-    st.caption(f"共 {len(history_list)} 条记录，其中完整报告 {full_count} 条，旧版摘要 {legacy_count} 条")
+    st.caption(f"共 {len(history_list)} 条记录")
     
     for record in history_list:
         display_history_record(record)
@@ -773,21 +763,17 @@ def display_history_record(record: Dict):
     summary = record.get("summary", "")
     analysis_source = record.get("analysis_source", "portfolio_batch_analysis")
     has_full_report = bool(record.get("has_full_report"))
-    legacy_backfilled_from = record.get("legacy_backfilled_from")
     
     source_map = {
         "portfolio_batch_analysis": "批量分析",
         "portfolio_single_analysis": "单股分析",
         "portfolio_scheduler": "定时分析",
-        "global_history_migration": "历史迁移",
-        "legacy_backfill": "旧记录补全",
     }
-    source_label = source_map.get(analysis_source, analysis_source)
-    record_tag = "完整报告" if has_full_report else "旧版摘要"
+    source_label = source_map.get(analysis_source, "历史分析")
     rating_color = get_recommendation_color(rating)
     
     with st.expander(
-        f"{code} {name} | {rating} | {analysis_time} | {record_tag}",
+        f"{code} {name} | {rating} | {analysis_time}",
         expanded=False
     ):
         st.markdown(
@@ -825,10 +811,6 @@ def display_history_record(record: Dict):
             st.info(summary)
 
         if not has_full_report:
-            notice = "该记录为旧版摘要，原始完整报告未保存。"
-            if legacy_backfilled_from:
-                notice += f" 已基于旧记录 {legacy_backfilled_from} 触发补全。"
-            st.warning(notice)
             return
 
         stock_info = record.get("stock_info_json") or record.get("stock_info") or {}
