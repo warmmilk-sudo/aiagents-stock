@@ -299,6 +299,7 @@ class PortfolioManager:
                 selected_model=forced_model,
                 selected_lightweight_model=effective_lightweight_model,
                 selected_reasoning_model=effective_reasoning_model,
+                save_to_global_history=False,
             )
             
             # 检查结果

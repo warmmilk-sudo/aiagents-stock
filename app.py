@@ -7,9 +7,10 @@ from datetime import datetime
 import time
 import base64
 import os
+from typing import Optional
 import config
 import streamlit.components.v1 as components
-from model_config import get_model_options
+from model_config import get_lightweight_model_options, get_reasoning_model_options
 
 from stock_data import StockDataFetcher
 from ai_agents import StockAnalysisAgents
@@ -139,10 +140,11 @@ st.markdown("""
     }
     
     .site-filing {
-        padding: 1rem 0;
+        padding-top: 1.25rem;
         text-align: center;
-        font-size: 0.75rem;
-        color: rgba(255,255,255,0.4);
+        font-size: 0.72rem;
+        line-height: 1.2;
+        color: rgba(255,255,255,0.42);
     }
     .site-filing a {
         color: rgba(255,255,255,0.4);
@@ -163,7 +165,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 def render_site_filing() -> None:
-    """Render ICP filing info at the bottom of the page."""
+    """Render ICP filing info as a small line of text."""
     import html
     icp_number = (config.ICP_NUMBER or "").strip()
     if not icp_number:
@@ -207,6 +209,33 @@ def get_selected_models():
         st.session_state.selected_reasoning_model,
     )
 
+NAV_VIEW_KEYS = [
+    "show_history",
+    "show_monitor",
+    "show_main_force",
+    "show_low_price_bull",
+    "show_small_cap",
+    "show_profit_growth",
+    "show_value_stock",
+    "show_sector_strategy",
+    "show_longhubang",
+    "show_smart_monitor",
+    "show_portfolio",
+    "show_news_flow",
+    "show_macro_cycle",
+    "show_config",
+]
+
+
+def activate_view(view_key: Optional[str] = None) -> None:
+    """Activate one main view and clear the others."""
+    for key in NAV_VIEW_KEYS:
+        if key == view_key:
+            st.session_state[key] = True
+        else:
+            st.session_state.pop(key, None)
+
+
 def main():
     # 顶部标题栏
     st.markdown("""
@@ -223,11 +252,21 @@ def main():
 
         # 单股分析（首页）
         if st.button("股票分析", width='stretch', key="nav_home", help="返回首页，进行单只股票的深度分析"):
-            # 清除所有功能页面标志
-            for key in ['show_history', 'show_monitor', 'show_config', 'show_main_force',
-                       'show_sector_strategy', 'show_longhubang', 'show_portfolio', 'show_low_price_bull', 'show_news_flow', 'show_macro_cycle', 'show_value_stock']:
-                if key in st.session_state:
-                    del st.session_state[key]
+            activate_view()
+
+        if st.button("历史记录", width='stretch', key="nav_history", help="查看历史分析记录"):
+            activate_view("show_history")
+
+        with st.expander("使用帮助"):
+            st.markdown("""
+            **输入格式**
+            - A股：6位数字，如 `600519`
+            - 港股：数字或 `HK` 前缀，如 `00700`、`HK00700`
+            - 美股：字母代码，如 `AAPL`
+
+            **AI 分析流程**
+            数据获取 -> 技术面/基本面/资金面分析 -> AI 整理 -> 团队决策
+            """)
 
         st.markdown("---")
 
@@ -236,114 +275,54 @@ def main():
             st.markdown("**根据不同策略筛选优质股票**")
 
             if st.button("主力选股", width='stretch', key="nav_main_force", help="基于主力资金流向的选股策略"):
-                st.session_state.show_main_force = True
-                for key in ['show_history', 'show_monitor', 'show_config', 'show_sector_strategy',
-                           'show_longhubang', 'show_portfolio', 'show_low_price_bull', 'show_news_flow']:
-                    if key in st.session_state:
-                        del st.session_state[key]
+                activate_view("show_main_force")
             
             if st.button("低价擒牛", width='stretch', key="nav_low_price_bull", help="低价高成长股票筛选策略"):
-                st.session_state.show_low_price_bull = True
-                for key in ['show_history', 'show_monitor', 'show_config', 'show_sector_strategy',
-                           'show_longhubang', 'show_portfolio', 'show_main_force', 'show_small_cap', 'show_profit_growth', 'show_news_flow']:
-                    if key in st.session_state:
-                        del st.session_state[key]
+                activate_view("show_low_price_bull")
             
             if st.button("小市值策略", width='stretch', key="nav_small_cap", help="小盘高成长股票筛选策略"):
-                st.session_state.show_small_cap = True
-                for key in ['show_history', 'show_monitor', 'show_config', 'show_sector_strategy',
-                           'show_longhubang', 'show_portfolio', 'show_main_force', 'show_low_price_bull', 'show_profit_growth', 'show_news_flow']:
-                    if key in st.session_state:
-                        del st.session_state[key]
+                activate_view("show_small_cap")
             
             if st.button("净利增长", width='stretch', key="nav_profit_growth", help="净利润增长稳健股票筛选策略"):
-                st.session_state.show_profit_growth = True
-                for key in ['show_history', 'show_monitor', 'show_config', 'show_sector_strategy',
-                           'show_longhubang', 'show_portfolio', 'show_main_force', 'show_low_price_bull', 'show_small_cap', 'show_news_flow', 'show_value_stock']:
-                    if key in st.session_state:
-                        del st.session_state[key]
+                activate_view("show_profit_growth")
 
             if st.button("低估值策略", width='stretch', key="nav_value_stock", help="低PE+低PB+高股息+低负债 价值投资筛选"):
-                st.session_state.show_value_stock = True
-                for key in ['show_history', 'show_monitor', 'show_config', 'show_sector_strategy',
-                           'show_longhubang', 'show_portfolio', 'show_main_force', 'show_low_price_bull', 'show_small_cap', 'show_profit_growth', 'show_news_flow', 'show_macro_cycle']:
-                    if key in st.session_state:
-                        del st.session_state[key]
+                activate_view("show_value_stock")
 
         # 策略分析
         with st.expander("策略分析", expanded=True):
             st.markdown("**AI驱动的板块和龙虎榜策略**")
 
             if st.button("智策板块", width='stretch', key="nav_sector_strategy", help="AI板块策略分析"):
-                st.session_state.show_sector_strategy = True
-                for key in ['show_history', 'show_monitor', 'show_config', 'show_main_force',
-                           'show_longhubang', 'show_portfolio', 'show_smart_monitor', 'show_low_price_bull', 'show_news_flow']:
-                    if key in st.session_state:
-                        del st.session_state[key]
+                activate_view("show_sector_strategy")
 
             if st.button("智瞰龙虎", width='stretch', key="nav_longhubang", help="龙虎榜深度分析"):
-                st.session_state.show_longhubang = True
-                for key in ['show_history', 'show_monitor', 'show_config', 'show_main_force',
-                           'show_sector_strategy', 'show_portfolio', 'show_smart_monitor', 'show_low_price_bull', 'show_news_flow']:
-                    if key in st.session_state:
-                        del st.session_state[key]
+                activate_view("show_longhubang")
             
             if st.button("新闻流量", width='stretch', key="nav_news_flow", help="新闻流量监测与短线指导"):
-                st.session_state.show_news_flow = True
-                for key in ['show_history', 'show_monitor', 'show_config', 'show_main_force',
-                           'show_sector_strategy', 'show_portfolio', 'show_smart_monitor', 'show_low_price_bull', 'show_longhubang', 'show_macro_cycle']:
-                    if key in st.session_state:
-                        del st.session_state[key]
+                activate_view("show_news_flow")
 
             if st.button("宏观周期", width='stretch', key="nav_macro_cycle", help="康波周期 × 美林投资时钟 × 政策分析"):
-                st.session_state.show_macro_cycle = True
-                for key in ['show_history', 'show_monitor', 'show_config', 'show_main_force',
-                           'show_sector_strategy', 'show_portfolio', 'show_smart_monitor', 'show_low_price_bull', 'show_longhubang', 'show_news_flow']:
-                    if key in st.session_state:
-                        del st.session_state[key]
+                activate_view("show_macro_cycle")
 
         # 投资管理
         with st.expander("投资管理", expanded=True):
             st.markdown("**持仓跟踪与实时监测**")
 
             if st.button("持仓分析", width='stretch', key="nav_portfolio", help="投资组合分析与定时跟踪"):
-                st.session_state.show_portfolio = True
-                for key in ['show_history', 'show_monitor', 'show_config', 'show_main_force',
-                           'show_sector_strategy', 'show_longhubang', 'show_smart_monitor', 'show_low_price_bull', 'show_news_flow']:
-                    if key in st.session_state:
-                        del st.session_state[key]
+                activate_view("show_portfolio")
 
             if st.button("AI盯盘", width='stretch', key="nav_smart_monitor", help="DeepSeek AI自动盯盘决策交易（支持A股T+1）"):
-                st.session_state.show_smart_monitor = True
-                for key in ['show_history', 'show_monitor', 'show_config', 'show_main_force',
-                           'show_sector_strategy', 'show_longhubang', 'show_portfolio', 'show_low_price_bull', 'show_news_flow']:
-                    if key in st.session_state:
-                        del st.session_state[key]
+                activate_view("show_smart_monitor")
 
             if st.button("实时监测", width='stretch', key="nav_monitor", help="价格监控与预警提醒"):
-                st.session_state.show_monitor = True
-                for key in ['show_history', 'show_main_force', 'show_longhubang', 'show_portfolio',
-                           'show_config', 'show_sector_strategy', 'show_smart_monitor', 'show_low_price_bull', 'show_news_flow']:
-                    if key in st.session_state:
-                        del st.session_state[key]
+                activate_view("show_monitor")
 
         st.markdown("---")
 
-        # 历史记录
-        if st.button("历史记录", width='stretch', key="nav_history", help="查看历史分析记录"):
-            st.session_state.show_history = True
-            for key in ['show_monitor', 'show_longhubang', 'show_portfolio', 'show_config',
-                       'show_main_force', 'show_sector_strategy', 'show_low_price_bull', 'show_news_flow']:
-                if key in st.session_state:
-                    del st.session_state[key]
-
         # 环境配置
         if st.button("环境配置", width='stretch', key="nav_config", help="系统设置与API配置"):
-            st.session_state.show_config = True
-            for key in ['show_history', 'show_monitor', 'show_main_force', 'show_sector_strategy',
-                       'show_longhubang', 'show_portfolio', 'show_low_price_bull', 'show_news_flow']:
-                if key in st.session_state:
-                    del st.session_state[key]
+            activate_view("show_config")
 
         st.markdown("---")
 
@@ -361,28 +340,31 @@ def main():
 
         st.markdown("---")
 
-        sidebar_model_options = get_model_options(
+        lightweight_model_options = get_lightweight_model_options(
             st.session_state.selected_lightweight_model,
+        )
+        reasoning_model_options = get_reasoning_model_options(
             st.session_state.selected_reasoning_model,
         )
-        sidebar_model_keys = list(sidebar_model_options.keys())
+        lightweight_model_keys = list(lightweight_model_options.keys())
+        reasoning_model_keys = list(reasoning_model_options.keys())
 
         st.selectbox(
             "轻量模型",
-            options=sidebar_model_keys,
-            index=sidebar_model_keys.index(st.session_state.selected_lightweight_model),
-            format_func=lambda model_name: sidebar_model_options.get(model_name, model_name),
+            options=lightweight_model_keys,
+            index=lightweight_model_keys.index(st.session_state.selected_lightweight_model),
+            format_func=lambda model_name: lightweight_model_options.get(model_name, model_name),
             key="selected_lightweight_model",
-            help="技术分析、情绪分析、新闻分析、批量筛选等默认使用此模型",
+            help="候选项完全来自 .env 中的轻量模型配置",
         )
 
         st.selectbox(
             "推理模型",
-            options=sidebar_model_keys,
-            index=sidebar_model_keys.index(st.session_state.selected_reasoning_model),
-            format_func=lambda model_name: sidebar_model_options.get(model_name, model_name),
+            options=reasoning_model_keys,
+            index=reasoning_model_keys.index(st.session_state.selected_reasoning_model),
+            format_func=lambda model_name: reasoning_model_options.get(model_name, model_name),
             key="selected_reasoning_model",
-            help="基本面、风险、宏观、龙虎榜、AI盯盘等默认使用此模型",
+            help="候选项完全来自 .env 中的推理模型配置",
         )
 
         st.caption(f"轻量任务当前使用: {st.session_state.selected_lightweight_model}")
@@ -417,43 +399,24 @@ def main():
         except:
             pass
 
-        st.markdown("---")
+        render_site_filing()
 
-        # 帮助信息
-        with st.expander("使用帮助"):
-            st.markdown("""
-            **输入格式**
-            - A股：6位数字 (如: 600519)
-            - 港股：数字或带HK前缀 (如: 00700, HK00700)
-            - 美股：字母代码 (如: AAPL)
-            
-            **AI分析流程**
-            数据获取 → 技术面/基本面/资金面分析 → AI整理 → 团队决策
-            """)
-            
     # 从配置获取数据获取周期
     period = getattr(config, "DATA_PERIOD", "1y")
     selected_lightweight_model, selected_reasoning_model = get_selected_models()
     
     # 检测是否进入任意子页面，以折叠侧边栏
-    active_views = [
-        'show_history', 'show_monitor', 'show_main_force', 'show_low_price_bull',
-        'show_small_cap', 'show_profit_growth', 'show_value_stock', 'show_sector_strategy',
-        'show_longhubang', 'show_smart_monitor', 'show_portfolio', 'show_news_flow', 'show_macro_cycle', 'show_config'
-    ]
-    if any(st.session_state.get(v, False) for v in active_views):
+    if any(st.session_state.get(v, False) for v in NAV_VIEW_KEYS):
         collapse_sidebar()
 
     # 检查是否显示历史记录
     if 'show_history' in st.session_state and st.session_state.show_history:
         display_history_records()
-        render_site_filing()
         return
 
     # 检查是否显示监测面板
     if 'show_monitor' in st.session_state and st.session_state.show_monitor:
         display_monitor_manager()
-        render_site_filing()
         return
 
     # 检查是否显示主力选股
@@ -462,35 +425,30 @@ def main():
             lightweight_model=selected_lightweight_model,
             reasoning_model=selected_reasoning_model,
         )
-        render_site_filing()
         return
     
     # 检查是否显示低价擒牛
     if 'show_low_price_bull' in st.session_state and st.session_state.show_low_price_bull:
         from low_price_bull_ui import display_low_price_bull
         display_low_price_bull()
-        render_site_filing()
         return
     
     # 检查是否显示小市值策略
     if 'show_small_cap' in st.session_state and st.session_state.show_small_cap:
         from small_cap_ui import display_small_cap
         display_small_cap()
-        render_site_filing()
         return
     
     # 检查是否显示净利增长策略
     if 'show_profit_growth' in st.session_state and st.session_state.show_profit_growth:
         from profit_growth_ui import display_profit_growth
         display_profit_growth()
-        render_site_filing()
         return
 
     # 检查是否显示低估值策略
     if 'show_value_stock' in st.session_state and st.session_state.show_value_stock:
         from value_stock_ui import display_value_stock
         display_value_stock()
-        render_site_filing()
         return
 
     # 检查是否显示智策板块
@@ -499,7 +457,6 @@ def main():
             lightweight_model=selected_lightweight_model,
             reasoning_model=selected_reasoning_model,
         )
-        render_site_filing()
         return
 
     # 检查是否显示智瞰龙虎
@@ -508,7 +465,6 @@ def main():
             lightweight_model=selected_lightweight_model,
             reasoning_model=selected_reasoning_model,
         )
-        render_site_filing()
         return
 
     # 检查是否显示AI盯盘
@@ -517,7 +473,6 @@ def main():
             lightweight_model=selected_lightweight_model,
             reasoning_model=selected_reasoning_model,
         )
-        render_site_filing()
         return
 
     # 检查是否显示持仓分析
@@ -527,7 +482,6 @@ def main():
             lightweight_model=selected_lightweight_model,
             reasoning_model=selected_reasoning_model,
         )
-        render_site_filing()
         return
 
     # 检查是否显示新闻流量监测
@@ -536,7 +490,6 @@ def main():
             lightweight_model=selected_lightweight_model,
             reasoning_model=selected_reasoning_model,
         )
-        render_site_filing()
         return
 
     # 检查是否显示宏观周期分析
@@ -546,13 +499,11 @@ def main():
             lightweight_model=selected_lightweight_model,
             reasoning_model=selected_reasoning_model,
         )
-        render_site_filing()
         return
     
     # 检查是否显示环境配置
     if 'show_config' in st.session_state and st.session_state.show_config:
         display_config_manager()
-        render_site_filing()
         return
 
     # 主界面
@@ -844,7 +795,8 @@ def parse_stock_list(stock_input):
 def analyze_single_stock_for_batch(symbol, period, enabled_analysts_config=None,
                                    selected_model=None,
                                    selected_lightweight_model=None,
-                                   selected_reasoning_model=None):
+                                   selected_reasoning_model=None,
+                                   save_to_global_history=True):
     """单个股票分析（用于批量分析）
 
     Args:
@@ -964,24 +916,24 @@ def analyze_single_stock_for_batch(symbol, period, enabled_analysts_config=None,
         # 9. 最终决策
         final_decision = agents.make_final_decision(discussion_result, stock_info, indicators)
 
-        # 保存到数据库
         saved_to_db = False
         db_error = None
-        try:
-            record_id = db.save_analysis(
-                symbol=stock_info.get('symbol', ''),
-                stock_name=stock_info.get('name', ''),
-                period=period,
-                stock_info=stock_info,
-                agents_results=agents_results,
-                discussion_result=discussion_result,
-                final_decision=final_decision
-            )
-            saved_to_db = True
-            print(f"{symbol} 成功保存到数据库，记录ID: {record_id}")
-        except Exception as e:
-            db_error = str(e)
-            print(f"{symbol} 保存到数据库失败: {db_error}")
+        if save_to_global_history:
+            try:
+                record_id = db.save_analysis(
+                    symbol=stock_info.get('symbol', ''),
+                    stock_name=stock_info.get('name', ''),
+                    period=period,
+                    stock_info=stock_info,
+                    agents_results=agents_results,
+                    discussion_result=discussion_result,
+                    final_decision=final_decision
+                )
+                saved_to_db = True
+                print(f"{symbol} 成功保存到数据库，记录ID: {record_id}")
+            except Exception as e:
+                db_error = str(e)
+                print(f"{symbol} 保存到数据库失败: {db_error}")
 
         return {
             "symbol": symbol,
@@ -1701,8 +1653,6 @@ def show_example_interface():
         - NVDA (英伟达)
         """)
 
-    st.info("提示：首次运行需要配置DeepSeek API Key，请在.env中设置DEEPSEEK_API_KEY")
-
     st.markdown("---")
     st.markdown("""
     ### 🌏 市场支持说明
@@ -2202,6 +2152,23 @@ def display_config_manager():
         )
         st.session_state.temp_config["LIGHTWEIGHT_MODEL_NAME"] = new_lightweight_model.strip()
 
+        lightweight_model_options_info = config_info.get(
+            "LIGHTWEIGHT_MODEL_OPTIONS",
+            {"description": "轻量模型下拉候选（逗号或换行分隔）"}
+        )
+        current_lightweight_model_options = st.session_state.temp_config.get(
+            "LIGHTWEIGHT_MODEL_OPTIONS",
+            ""
+        )
+        new_lightweight_model_options = st.text_area(
+            f"{lightweight_model_options_info['description']}",
+            value=current_lightweight_model_options,
+            height=80,
+            help="侧边栏轻量模型下拉候选，留空时仅保留当前轻量模型",
+            key="input_lightweight_model_options"
+        )
+        st.session_state.temp_config["LIGHTWEIGHT_MODEL_OPTIONS"] = new_lightweight_model_options.strip()
+
         reasoning_model_info = config_info["REASONING_MODEL_NAME"]
         current_reasoning_model = st.session_state.temp_config.get(
             "REASONING_MODEL_NAME",
@@ -2215,6 +2182,23 @@ def display_config_manager():
             key="input_reasoning_model_name"
         )
         st.session_state.temp_config["REASONING_MODEL_NAME"] = new_reasoning_model.strip()
+
+        reasoning_model_options_info = config_info.get(
+            "REASONING_MODEL_OPTIONS",
+            {"description": "推理模型下拉候选（逗号或换行分隔）"}
+        )
+        current_reasoning_model_options = st.session_state.temp_config.get(
+            "REASONING_MODEL_OPTIONS",
+            ""
+        )
+        new_reasoning_model_options = st.text_area(
+            f"{reasoning_model_options_info['description']}",
+            value=current_reasoning_model_options,
+            height=80,
+            help="侧边栏推理模型下拉候选，留空时仅保留当前推理模型",
+            key="input_reasoning_model_options"
+        )
+        st.session_state.temp_config["REASONING_MODEL_OPTIONS"] = new_reasoning_model_options.strip()
 
 
 
@@ -2919,4 +2903,3 @@ if __name__ == "__main__":
             _show_login_page()
             st.stop()
     main()
-    render_site_filing()

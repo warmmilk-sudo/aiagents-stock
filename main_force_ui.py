@@ -6,11 +6,31 @@
 
 import streamlit as st
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 import config
 from main_force_analysis import MainForceAnalyzer
 from main_force_pdf_generator import display_report_download_section
 from main_force_history_ui import display_batch_history
 import pandas as pd
+
+
+def build_main_force_display_context(analyzer=None):
+    """Build a lightweight, session-safe context for result rendering."""
+    if analyzer is not None:
+        snapshot = {
+            "raw_stocks": getattr(analyzer, "raw_stocks", None),
+            "fund_flow_analysis": getattr(analyzer, "fund_flow_analysis", ""),
+            "industry_analysis": getattr(analyzer, "industry_analysis", ""),
+            "fundamental_analysis": getattr(analyzer, "fundamental_analysis", ""),
+        }
+        st.session_state.main_force_result_context = snapshot
+        return SimpleNamespace(**snapshot)
+
+    snapshot = st.session_state.get("main_force_result_context")
+    if snapshot:
+        return SimpleNamespace(**snapshot)
+
+    return st.session_state.get("main_force_analyzer")
 
 def display_main_force_selector(lightweight_model=None, reasoning_model=None):
     """显示主力选股界面"""
@@ -154,6 +174,10 @@ def display_main_force_selector(lightweight_model=None, reasoning_model=None):
             # 保存结果到session_state
             st.session_state.main_force_result = result
             st.session_state.main_force_analyzer = analyzer
+            if result.get("success"):
+                build_main_force_display_context(analyzer)
+            else:
+                st.session_state.pop("main_force_result_context", None)
 
         # 显示结果
         if result['success']:
@@ -167,7 +191,7 @@ def display_main_force_selector(lightweight_model=None, reasoning_model=None):
         result = st.session_state.main_force_result
 
         if result['success']:
-            display_analysis_results(result, st.session_state.get('main_force_analyzer'))
+            display_analysis_results(result, build_main_force_display_context())
 
 def display_analysis_results(result: dict, analyzer):
     """显示分析结果"""
@@ -637,6 +661,7 @@ def run_main_force_batch_analysis(lightweight_model=None, reasoning_model=None):
                         enabled_analysts_config=enabled_analysts_config,
                         selected_lightweight_model=lightweight_model,
                         selected_reasoning_model=reasoning_model,
+                        save_to_global_history=False,
                     )
 
                     results.append(result)
@@ -664,6 +689,7 @@ def run_main_force_batch_analysis(lightweight_model=None, reasoning_model=None):
                         enabled_analysts_config=enabled_analysts_config,
                         selected_lightweight_model=lightweight_model,
                         selected_reasoning_model=reasoning_model,
+                        save_to_global_history=False,
                     )
                     print(f"  完成分析: {code}")
                     return result

@@ -1,354 +1,334 @@
-"""
-环境配置管理模块
-用于读取和保存.env配置文件
-"""
+"""Environment configuration manager."""
 
-import os
 from pathlib import Path
-from typing import Dict, Any
+from typing import Any, Dict
 
 
 class ConfigManager:
-    """配置管理器"""
-    
+    """Read, validate, and write `.env` configuration."""
+
     def __init__(self, env_file: str = ".env"):
         self.env_file = Path(env_file)
         self.default_config = {
             "DEEPSEEK_API_KEY": {
                 "value": "",
-                "description": "DeepSeek API密钥",
+                "description": "DeepSeek API 密钥",
                 "required": True,
-                "type": "password"
+                "type": "password",
             },
             "DEEPSEEK_BASE_URL": {
                 "value": "https://api.deepseek.com/v1",
-                "description": "DeepSeek API地址",
+                "description": "DeepSeek API 地址",
                 "required": False,
-                "type": "text"
+                "type": "text",
             },
             "LIGHTWEIGHT_MODEL_NAME": {
                 "value": "deepseek-chat",
                 "description": "轻量模型名称（技术/情绪/新闻/批量筛选等任务）",
                 "required": False,
-                "type": "text"
+                "type": "text",
+            },
+            "LIGHTWEIGHT_MODEL_OPTIONS": {
+                "value": "",
+                "description": "轻量模型下拉候选（逗号或换行分隔）",
+                "required": False,
+                "type": "text",
             },
             "REASONING_MODEL_NAME": {
                 "value": "deepseek-reasoner",
-                "description": "推理模型名称（基本面/风险/宏观/龙虎榜等任务）",
+                "description": "推理模型名称（基本面/风险/宏观/策略等任务）",
                 "required": False,
-                "type": "text"
+                "type": "text",
+            },
+            "REASONING_MODEL_OPTIONS": {
+                "value": "",
+                "description": "推理模型下拉候选（逗号或换行分隔）",
+                "required": False,
+                "type": "text",
             },
             "ADMIN_PASSWORD": {
                 "value": "",
-                "description": "管理员密码（为空则不需密码）",
+                "description": "管理员密码（为空则无需密码）",
                 "required": False,
-                "type": "password"
+                "type": "password",
             },
             "ADMIN_PASSWORD_HASH": {
                 "value": "",
-                "description": "管理员密码哈希（推荐，优先于明文密码）",
+                "description": "管理员密码哈希（优先于明文密码）",
                 "required": False,
-                "type": "password"
+                "type": "password",
             },
             "LOGIN_MAX_ATTEMPTS": {
                 "value": "5",
                 "description": "登录最大失败次数",
                 "required": False,
-                "type": "text"
+                "type": "text",
             },
             "LOGIN_LOCKOUT_SECONDS": {
                 "value": "300",
                 "description": "登录锁定时长（秒）",
                 "required": False,
-                "type": "text"
+                "type": "text",
             },
             "ADMIN_SESSION_TTL_SECONDS": {
                 "value": "28800",
                 "description": "管理员会话有效期（秒）",
                 "required": False,
-                "type": "text"
+                "type": "text",
             },
             "ICP_NUMBER": {
-                "value": "京ICP备2026007346号",
+                "value": "",
                 "description": "网站备案号（为空则不显示）",
                 "required": False,
-                "type": "text"
+                "type": "text",
             },
             "ICP_LINK": {
-                "value": "https://beian.miit.gov.cn/",
-                "description": "备案号跳转地址（留空则仅显示文本）",
+                "value": "",
+                "description": "备案号跳转地址",
                 "required": False,
-                "type": "text"
+                "type": "text",
             },
             "TUSHARE_TOKEN": {
                 "value": "",
-                "description": "Tushare数据接口Token（可选）",
+                "description": "Tushare Token",
                 "required": False,
-                "type": "password"
+                "type": "password",
             },
             "TUSHARE_URL": {
                 "value": "https://api.tushare.pro",
-                "description": "Tushare API地址",
+                "description": "Tushare API 地址",
                 "required": False,
-                "type": "text"
+                "type": "text",
             },
             "TDX_ENABLED": {
                 "value": "false",
-                "description": "启用TDX数据源（推荐，需运行TDX API服务）",
+                "description": "启用 TDX 数据源",
                 "required": False,
-                "type": "boolean"
+                "type": "boolean",
             },
             "TDX_BASE_URL": {
                 "value": "http://127.0.0.1:8181",
-                "description": "TDX API服务地址",
+                "description": "TDX API 地址",
                 "required": False,
-                "type": "text"
+                "type": "text",
             },
-
             "MINIQMT_ENABLED": {
                 "value": "false",
-                "description": "启用MiniQMT量化交易",
+                "description": "启用 MiniQMT 量化交易",
                 "required": False,
-                "type": "boolean"
+                "type": "boolean",
             },
             "MINIQMT_ACCOUNT_ID": {
                 "value": "",
-                "description": "MiniQMT账户ID",
+                "description": "MiniQMT 账户 ID",
                 "required": False,
-                "type": "text"
+                "type": "text",
             },
             "MINIQMT_HOST": {
                 "value": "127.0.0.1",
-                "description": "MiniQMT服务器地址",
+                "description": "MiniQMT 主机地址",
                 "required": False,
-                "type": "text"
+                "type": "text",
             },
             "MINIQMT_PORT": {
                 "value": "58610",
-                "description": "MiniQMT服务器端口",
+                "description": "MiniQMT 端口",
                 "required": False,
-                "type": "text"
+                "type": "text",
             },
             "EMAIL_ENABLED": {
                 "value": "false",
                 "description": "启用邮件通知",
                 "required": False,
-                "type": "boolean"
+                "type": "boolean",
             },
             "SMTP_SERVER": {
                 "value": "",
-                "description": "SMTP服务器地址",
+                "description": "SMTP 服务器",
                 "required": False,
-                "type": "text"
+                "type": "text",
             },
             "SMTP_PORT": {
                 "value": "587",
-                "description": "SMTP服务器端口",
+                "description": "SMTP 端口",
                 "required": False,
-                "type": "text"
+                "type": "text",
             },
             "EMAIL_FROM": {
                 "value": "",
-                "description": "发件人邮箱",
+                "description": "发件邮箱",
                 "required": False,
-                "type": "text"
+                "type": "text",
             },
             "EMAIL_PASSWORD": {
                 "value": "",
                 "description": "邮箱授权码",
                 "required": False,
-                "type": "password"
+                "type": "password",
             },
-
             "EMAIL_TO": {
                 "value": "",
-                "description": "收件人邮箱",
+                "description": "收件邮箱",
                 "required": False,
-                "type": "text"
+                "type": "text",
             },
             "WEBHOOK_ENABLED": {
                 "value": "false",
-                "description": "启用Webhook通知",
+                "description": "启用 Webhook 通知",
                 "required": False,
-                "type": "boolean"
+                "type": "boolean",
             },
             "WEBHOOK_TYPE": {
                 "value": "dingtalk",
-                "description": "Webhook类型（dingtalk/feishu）",
+                "description": "Webhook 类型",
                 "required": False,
                 "type": "select",
-                "options": ["dingtalk", "feishu"]
+                "options": ["dingtalk", "feishu"],
             },
             "WEBHOOK_URL": {
                 "value": "",
-                "description": "Webhook地址",
+                "description": "Webhook 地址",
                 "required": False,
-                "type": "text"
+                "type": "text",
             },
             "WEBHOOK_KEYWORD": {
                 "value": "aiagents通知",
-                "description": "Webhook自定义关键词（钉钉安全验证）",
+                "description": "Webhook 安全关键词",
                 "required": False,
-                "type": "text"
+                "type": "text",
             },
             "DATA_PERIOD": {
                 "value": "1y",
-                "description": "默认股票获取周期（如：1mo, 3mo, 6mo, 1y）",
+                "description": "默认股票数据周期",
                 "required": False,
-                "type": "text"
-            }
+                "type": "text",
+            },
         }
-    
+
     def read_env(self) -> Dict[str, str]:
-        """读取.env文件"""
-        config = {}
-        
-        if not self.env_file.exists():
-            # 如果文件不存在，返回默认配置的值
-            for key, info in self.default_config.items():
-                config[key] = info["value"]
-            return config
-        
-        try:
-            with open(self.env_file, 'r', encoding='utf-8') as f:
-                for line in f:
-                    line = line.strip()
-                    # 跳过空行和注释
-                    if not line or line.startswith('#'):
-                        continue
-                    
-                    # 解析键值对
-                    if '=' in line:
-                        key, value = line.split('=', 1)
+        """Read `.env` values and merge defaults."""
+        config: Dict[str, str] = {}
+
+        if self.env_file.exists():
+            try:
+                with open(self.env_file, "r", encoding="utf-8") as f:
+                    for raw_line in f:
+                        line = raw_line.strip()
+                        if not line or line.startswith("#") or "=" not in line:
+                            continue
+
+                        key, value = line.split("=", 1)
                         key = key.strip()
                         value = value.strip()
-                        
-                        # 移除引号
+
                         if value.startswith('"') and value.endswith('"'):
                             value = value[1:-1]
                         elif value.startswith("'") and value.endswith("'"):
                             value = value[1:-1]
-                        
+
                         config[key] = value
-        except Exception as e:
-            print(f"读取.env文件失败: {e}")
-        
-        # 确保所有默认配置项都存在
+            except Exception as e:
+                print(f"读取 .env 失败: {e}")
+
         for key, info in self.default_config.items():
-            if key not in config:
-                config[key] = info["value"]
-        
+            config.setdefault(key, info["value"])
+
         return config
-    
+
     def write_env(self, config: Dict[str, str]) -> bool:
-        """保存配置到.env文件"""
+        """Write managed configuration back to `.env`."""
         try:
-            lines = []
-            lines.append("# AI股票分析系统环境配置")
-            lines.append("# 由系统自动生成和管理")
-            lines.append("")
-            
-            # DeepSeek配置
-            lines.append("# ========== DeepSeek API配置 ==========")
-            lines.append(f'DEEPSEEK_API_KEY="{config.get("DEEPSEEK_API_KEY", "")}"')
-            lines.append(f'DEEPSEEK_BASE_URL="{config.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")}"')
-            lines.append(f'LIGHTWEIGHT_MODEL_NAME="{config.get("LIGHTWEIGHT_MODEL_NAME", "deepseek-chat")}"')
-            lines.append(f'REASONING_MODEL_NAME="{config.get("REASONING_MODEL_NAME", "deepseek-reasoner")}"')
-            lines.append(f'ADMIN_PASSWORD="{config.get("ADMIN_PASSWORD", "")}"')
-            lines.append(f'ADMIN_PASSWORD_HASH="{config.get("ADMIN_PASSWORD_HASH", "")}"')
-            lines.append(f'LOGIN_MAX_ATTEMPTS="{config.get("LOGIN_MAX_ATTEMPTS", "5")}"')
-            lines.append(f'LOGIN_LOCKOUT_SECONDS="{config.get("LOGIN_LOCKOUT_SECONDS", "300")}"')
-            lines.append(f'ADMIN_SESSION_TTL_SECONDS="{config.get("ADMIN_SESSION_TTL_SECONDS", "28800")}"')
-            lines.append(f'ICP_NUMBER="{config.get("ICP_NUMBER", "京ICP备2026007346号")}"')
-            lines.append(f'ICP_LINK="{config.get("ICP_LINK", "https://beian.miit.gov.cn/")}"')
-            lines.append("")
-            
-            # Tushare配置
-            lines.append("# ========== Tushare数据接口（可选）==========")
-            lines.append(f'TUSHARE_TOKEN="{config.get("TUSHARE_TOKEN", "")}"')
-            lines.append(f'TUSHARE_URL="{config.get("TUSHARE_URL", "https://api.tushare.pro")}"')
-            lines.append("")
-            
-            # 基础数据配置
-            lines.append("# ========== 全局基础分析配置 ==========")
-            lines.append(f'DATA_PERIOD="{config.get("DATA_PERIOD", "1y")}"')
-            lines.append(f'TDX_ENABLED="{config.get("TDX_ENABLED", "false")}"')
-            lines.append(f'TDX_BASE_URL="{config.get("TDX_BASE_URL", "http://127.0.0.1:8181")}"')
-            lines.append("")
-            
-            # MiniQMT配置
-            lines.append("# ========== MiniQMT量化交易配置（可选）==========")
-            lines.append(f'MINIQMT_ENABLED="{config.get("MINIQMT_ENABLED", "false")}"')
-            lines.append(f'MINIQMT_ACCOUNT_ID="{config.get("MINIQMT_ACCOUNT_ID", "")}"')
-            lines.append(f'MINIQMT_HOST="{config.get("MINIQMT_HOST", "127.0.0.1")}"')
-            lines.append(f'MINIQMT_PORT="{config.get("MINIQMT_PORT", "58610")}"')
-            lines.append("")
-            
-            # 邮件通知配置
-            lines.append("# ========== 邮件通知配置（可选）==========")
-            lines.append(f'EMAIL_ENABLED="{config.get("EMAIL_ENABLED", "false")}"')
-            lines.append(f'SMTP_SERVER="{config.get("SMTP_SERVER", "")}"')
-            lines.append(f'SMTP_PORT="{config.get("SMTP_PORT", "587")}"')
-            lines.append(f'EMAIL_FROM="{config.get("EMAIL_FROM", "")}"')
-            lines.append(f'EMAIL_PASSWORD="{config.get("EMAIL_PASSWORD", "")}"')
-            lines.append(f'EMAIL_TO="{config.get("EMAIL_TO", "")}"')
-            lines.append("")
-            
-            # Webhook通知配置
-            lines.append("# ========== Webhook通知配置（可选）==========")
-            lines.append(f'WEBHOOK_ENABLED="{config.get("WEBHOOK_ENABLED", "false")}"')
-            lines.append(f'WEBHOOK_TYPE="{config.get("WEBHOOK_TYPE", "dingtalk")}"')
-            lines.append(f'WEBHOOK_URL="{config.get("WEBHOOK_URL", "")}"')
-            lines.append(f'WEBHOOK_KEYWORD="{config.get("WEBHOOK_KEYWORD", "aiagents通知")}"')
-            
-            with open(self.env_file, 'w', encoding='utf-8') as f:
-                f.write('\n'.join(lines))
-            
+            lines = [
+                "# AI股票分析系统环境配置",
+                "# 由系统自动生成和管理",
+                "",
+                "# ========== DeepSeek API 配置 ==========",
+                f'DEEPSEEK_API_KEY="{config.get("DEEPSEEK_API_KEY", "")}"',
+                f'DEEPSEEK_BASE_URL="{config.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")}"',
+                f'LIGHTWEIGHT_MODEL_NAME="{config.get("LIGHTWEIGHT_MODEL_NAME", "deepseek-chat")}"',
+                f'LIGHTWEIGHT_MODEL_OPTIONS="{config.get("LIGHTWEIGHT_MODEL_OPTIONS", "")}"',
+                f'REASONING_MODEL_NAME="{config.get("REASONING_MODEL_NAME", "deepseek-reasoner")}"',
+                f'REASONING_MODEL_OPTIONS="{config.get("REASONING_MODEL_OPTIONS", "")}"',
+                f'ADMIN_PASSWORD="{config.get("ADMIN_PASSWORD", "")}"',
+                f'ADMIN_PASSWORD_HASH="{config.get("ADMIN_PASSWORD_HASH", "")}"',
+                f'LOGIN_MAX_ATTEMPTS="{config.get("LOGIN_MAX_ATTEMPTS", "5")}"',
+                f'LOGIN_LOCKOUT_SECONDS="{config.get("LOGIN_LOCKOUT_SECONDS", "300")}"',
+                f'ADMIN_SESSION_TTL_SECONDS="{config.get("ADMIN_SESSION_TTL_SECONDS", "28800")}"',
+                f'ICP_NUMBER="{config.get("ICP_NUMBER", "")}"',
+                f'ICP_LINK="{config.get("ICP_LINK", "")}"',
+                "",
+                "# ========== Tushare 配置 ==========",
+                f'TUSHARE_TOKEN="{config.get("TUSHARE_TOKEN", "")}"',
+                f'TUSHARE_URL="{config.get("TUSHARE_URL", "https://api.tushare.pro")}"',
+                "",
+                "# ========== 全局分析配置 ==========",
+                f'DATA_PERIOD="{config.get("DATA_PERIOD", "1y")}"',
+                f'TDX_ENABLED="{config.get("TDX_ENABLED", "false")}"',
+                f'TDX_BASE_URL="{config.get("TDX_BASE_URL", "http://127.0.0.1:8181")}"',
+                "",
+                "# ========== MiniQMT 配置 ==========",
+                f'MINIQMT_ENABLED="{config.get("MINIQMT_ENABLED", "false")}"',
+                f'MINIQMT_ACCOUNT_ID="{config.get("MINIQMT_ACCOUNT_ID", "")}"',
+                f'MINIQMT_HOST="{config.get("MINIQMT_HOST", "127.0.0.1")}"',
+                f'MINIQMT_PORT="{config.get("MINIQMT_PORT", "58610")}"',
+                "",
+                "# ========== 邮件通知配置 ==========",
+                f'EMAIL_ENABLED="{config.get("EMAIL_ENABLED", "false")}"',
+                f'SMTP_SERVER="{config.get("SMTP_SERVER", "")}"',
+                f'SMTP_PORT="{config.get("SMTP_PORT", "587")}"',
+                f'EMAIL_FROM="{config.get("EMAIL_FROM", "")}"',
+                f'EMAIL_PASSWORD="{config.get("EMAIL_PASSWORD", "")}"',
+                f'EMAIL_TO="{config.get("EMAIL_TO", "")}"',
+                "",
+                "# ========== Webhook 配置 ==========",
+                f'WEBHOOK_ENABLED="{config.get("WEBHOOK_ENABLED", "false")}"',
+                f'WEBHOOK_TYPE="{config.get("WEBHOOK_TYPE", "dingtalk")}"',
+                f'WEBHOOK_URL="{config.get("WEBHOOK_URL", "")}"',
+                f'WEBHOOK_KEYWORD="{config.get("WEBHOOK_KEYWORD", "aiagents通知")}"',
+            ]
+
+            with open(self.env_file, "w", encoding="utf-8") as f:
+                f.write("\n".join(lines))
+
             return True
         except Exception as e:
-            print(f"保存.env文件失败: {e}")
+            print(f"保存 .env 失败: {e}")
             return False
-    
+
     def get_config_info(self) -> Dict[str, Dict[str, Any]]:
-        """获取配置信息（包含描述、类型等）"""
+        """Return config metadata with current values."""
         current_values = self.read_env()
-        
         config_info = {}
+
         for key, info in self.default_config.items():
             config_info[key] = {
                 "value": current_values.get(key, info["value"]),
                 "description": info["description"],
                 "required": info["required"],
-                "type": info["type"]
+                "type": info["type"],
             }
-            # 如果有options字段，也包含进去
             if "options" in info:
                 config_info[key]["options"] = info["options"]
-        
+
         return config_info
-    
+
     def validate_config(self, config: Dict[str, str]) -> tuple[bool, str]:
-        """验证配置"""
-        # 检查必填项
+        """Validate current config values."""
         for key, info in self.default_config.items():
             if info["required"] and not config.get(key):
                 return False, f"必填项 {info['description']} 不能为空"
-        
-        # 验证API Key格式（简单检查长度）
-        if config.get("DEEPSEEK_API_KEY"):
-            api_key = config.get("DEEPSEEK_API_KEY", "")
-            if len(api_key) < 20:
-                return False, "DeepSeek API Key格式不正确（长度太短）"
-        
+
+        api_key = config.get("DEEPSEEK_API_KEY", "")
+        if api_key and len(api_key) < 20:
+            return False, "DeepSeek API Key 格式不正确（长度太短）"
+
         return True, "配置验证通过"
-    
+
     def reload_config(self):
-        """重新加载配置（重新加载.env文件）"""
+        """Reload `.env` into the process environment."""
         from dotenv import load_dotenv
-        # 强制覆盖已存在的环境变量
+
         load_dotenv(override=True)
 
 
-# 全局配置管理器实例
 config_manager = ConfigManager()
-

@@ -1,27 +1,15 @@
 import os
+
 from dotenv import load_dotenv
 
-# 加载环境变量（override=True 强制覆盖已存在的环境变量）
+
 load_dotenv(override=True)
 
-# DeepSeek API配置
-DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
-DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
 
-# 双模型配置（支持任何OpenAI兼容的模型）
-LIGHTWEIGHT_MODEL_NAME = os.getenv("LIGHTWEIGHT_MODEL_NAME", "deepseek-chat") or "deepseek-chat"
-REASONING_MODEL_NAME = os.getenv("REASONING_MODEL_NAME", "deepseek-reasoner") or "deepseek-reasoner"
+def _safe_str_env(key: str, default: str = "") -> str:
+    """Read a string env var and strip surrounding whitespace."""
+    return (os.getenv(key, default) or default).strip()
 
-# 兼容旧代码：未迁移调用仍可读取，但不再对应独立环境变量
-DEFAULT_MODEL_NAME = LIGHTWEIGHT_MODEL_NAME
-
-# 其他配置
-TUSHARE_TOKEN = os.getenv("TUSHARE_TOKEN", "")
-TUSHARE_URL = os.getenv("TUSHARE_URL", "https://api.tushare.pro")
-
-# 管理员密码（为空则不需要密码即可访问）
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
-ADMIN_PASSWORD_HASH = os.getenv("ADMIN_PASSWORD_HASH", "")
 
 def _safe_int_env(key: str, default: int) -> int:
     """Read int env safely; fallback to default on invalid values."""
@@ -30,29 +18,65 @@ def _safe_int_env(key: str, default: int) -> int:
     except (TypeError, ValueError):
         return default
 
-# 登录安全配置
+
+def _parse_model_options_env(key: str, fallback_model: str) -> list[str]:
+    """Parse comma or newline separated model options from env."""
+    raw_value = os.getenv(key, "")
+    options = []
+
+    for item in raw_value.replace("\n", ",").replace(";", ",").split(","):
+        normalized = item.strip()
+        if normalized and normalized not in options:
+            options.append(normalized)
+
+    fallback = (fallback_model or "").strip()
+    if fallback and fallback not in options:
+        options.insert(0, fallback)
+
+    return options
+
+
+DEEPSEEK_API_KEY = _safe_str_env("DEEPSEEK_API_KEY")
+DEEPSEEK_BASE_URL = _safe_str_env("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
+
+LIGHTWEIGHT_MODEL_NAME = _safe_str_env("LIGHTWEIGHT_MODEL_NAME", "deepseek-chat")
+REASONING_MODEL_NAME = _safe_str_env("REASONING_MODEL_NAME", "deepseek-reasoner")
+LIGHTWEIGHT_MODEL_OPTIONS = _parse_model_options_env(
+    "LIGHTWEIGHT_MODEL_OPTIONS",
+    LIGHTWEIGHT_MODEL_NAME,
+)
+REASONING_MODEL_OPTIONS = _parse_model_options_env(
+    "REASONING_MODEL_OPTIONS",
+    REASONING_MODEL_NAME,
+)
+
+# Backward compatible alias for older callers.
+DEFAULT_MODEL_NAME = LIGHTWEIGHT_MODEL_NAME
+
+TUSHARE_TOKEN = _safe_str_env("TUSHARE_TOKEN")
+TUSHARE_URL = _safe_str_env("TUSHARE_URL", "https://api.tushare.pro")
+
+ADMIN_PASSWORD = _safe_str_env("ADMIN_PASSWORD")
+ADMIN_PASSWORD_HASH = _safe_str_env("ADMIN_PASSWORD_HASH")
+
 LOGIN_MAX_ATTEMPTS = _safe_int_env("LOGIN_MAX_ATTEMPTS", 5)
 LOGIN_LOCKOUT_SECONDS = _safe_int_env("LOGIN_LOCKOUT_SECONDS", 300)
 ADMIN_SESSION_TTL_SECONDS = _safe_int_env("ADMIN_SESSION_TTL_SECONDS", 28800)
 
-# ICP 备案号
-ICP_NUMBER = os.getenv("ICP_NUMBER", "京ICP备2026007346号")
-ICP_LINK = os.getenv("ICP_LINK", "https://beian.miit.gov.cn/")
+ICP_NUMBER = _safe_str_env("ICP_NUMBER", "")
+ICP_LINK = _safe_str_env("ICP_LINK", "")
 
-# 股票数据源配置
-DATA_PERIOD = os.getenv("DATA_PERIOD", "1y")  # 默认获取1年数据
-DEFAULT_INTERVAL = "1d"  # 默认日线数据
+DATA_PERIOD = _safe_str_env("DATA_PERIOD", "1y")
+DEFAULT_INTERVAL = "1d"
 
-# MiniQMT量化交易配置
 MINIQMT_CONFIG = {
-    'enabled': os.getenv("MINIQMT_ENABLED", "false").lower() == "true",
-    'account_id': os.getenv("MINIQMT_ACCOUNT_ID", ""),
-    'host': os.getenv("MINIQMT_HOST", "127.0.0.1"),
-    'port': int(os.getenv("MINIQMT_PORT", "58610")),
+    "enabled": _safe_str_env("MINIQMT_ENABLED", "false").lower() == "true",
+    "account_id": _safe_str_env("MINIQMT_ACCOUNT_ID", ""),
+    "host": _safe_str_env("MINIQMT_HOST", "127.0.0.1"),
+    "port": _safe_int_env("MINIQMT_PORT", 58610),
 }
 
-# TDX股票数据API配置项目地址github.com/oficcejo/tdx-api
 TDX_CONFIG = {
-    'enabled': os.getenv("TDX_ENABLED", "false").lower() == "true",
-    'base_url': os.getenv("TDX_BASE_URL", "http://192.168.1.222:8181"),
+    "enabled": _safe_str_env("TDX_ENABLED", "false").lower() == "true",
+    "base_url": _safe_str_env("TDX_BASE_URL", "http://127.0.0.1:8181"),
 }

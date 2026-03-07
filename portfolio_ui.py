@@ -341,7 +341,7 @@ def display_batch_analysis(lightweight_model=None, reasoning_model=None):
                 
                 # 保存分析结果到数据库
                 saved_ids = portfolio_manager.save_analysis_results(result)
-                st.info(f"💾 已保存 {len(saved_ids)} 条分析记录到数据库")
+                st.info(f"💾 已保存 {len(saved_ids)} 条分析记录到“分析历史”")
                 
                 # 同步到监测
                 sync_result = None  # 初始化同步结果
