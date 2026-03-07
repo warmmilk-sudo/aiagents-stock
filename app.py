@@ -13,6 +13,7 @@ import streamlit.components.v1 as components
 from model_config import get_lightweight_model_options, get_reasoning_model_options
 
 from stock_data import StockDataFetcher
+from stock_data_cache import clear_stock_data_cache, extract_cache_meta, strip_cache_meta
 from ai_agents import StockAnalysisAgents
 from pdf_generator import display_pdf_export_section
 from database import db
@@ -133,8 +134,14 @@ st.markdown("""
         font-size: 15px;
     }
     .block-container {
-        padding-top: 1.6rem;
+        padding-top: 2.2rem;
         padding-bottom: 1.8rem;
+    }
+    .page-title-wrap {
+        text-align: center;
+        margin-bottom: 1.1rem;
+        padding-top: 0.3rem;
+        overflow: visible;
     }
 
     /* 统一字号层级 */
@@ -180,6 +187,10 @@ st.markdown("""
         line-height: var(--line-height-heading);
         font-weight: 600;
         margin: 0 0 var(--space-2) 0;
+    }
+    .page-title {
+        display: block;
+        padding: 0.1rem 0;
     }
     div[data-testid="stMarkdownContainer"] h3,
     div[data-testid="stHeading"] h3,
@@ -333,13 +344,22 @@ st.markdown("""
     }
     
     /* 按钮样式 */
-    .stButton>button {
+    .stButton>button,
+    .stDownloadButton>button,
+    button[data-testid^="baseButton-"] {
         background: var(--secondary-background-color);
         color: var(--text-color);
         border: 1px solid rgba(255,255,255,0.2);
         border-radius: 6px;
         font-size: 0.94rem;
         font-weight: 500;
+        min-height: 2.5rem;
+        padding: 0.42rem 0.95rem;
+        line-height: 1.2;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        vertical-align: middle;
         transition: all 0.2s;
     }
     .stButton>button:hover {
@@ -426,7 +446,7 @@ st.markdown("""
     
     @media (max-width: 768px) {
         .block-container {
-            padding-top: 1rem;
+            padding-top: 1.45rem;
             padding-bottom: 1.2rem;
         }
         :root {
@@ -551,7 +571,7 @@ def activate_view(view_key: Optional[str] = None) -> None:
 def main():
     # 顶部标题栏
     st.markdown("""
-    <div style="text-align: center; margin-bottom: 1.25rem;">
+    <div class="page-title-wrap">
         <h2 class="page-title" style="color: var(--text-color);">%s</h2>
     </div>
     """ % get_current_view_title(), unsafe_allow_html=True)
@@ -830,8 +850,8 @@ def main():
 
         with col3:
             if st.button("清除缓存", width='stretch'):
-                st.cache_data.clear()
-                st.success("缓存已清除")
+                cache_counts = clear_analysis_caches()
+                st.success(f"缓存已清除，本地个股缓存 {cache_counts.get('total', 0)} 条")
 
     else:
         # 批量股票分析界面
@@ -847,8 +867,8 @@ def main():
             analyze_button = st.button("开始批量分析", type="primary", width='stretch')
         with col2:
             if st.button("清除缓存", width='stretch'):
-                st.cache_data.clear()
-                st.success("缓存已清除")
+                cache_counts = clear_analysis_caches()
+                st.success(f"缓存已清除，本地个股缓存 {cache_counts.get('total', 0)} 条")
         with col3:
             if st.button("清除结果", width='stretch'):
                 if 'batch_analysis_results' in st.session_state:
@@ -991,6 +1011,9 @@ def main():
 
             # 重新获取股票数据用于显示图表
             stock_info_current, stock_data, indicators = get_stock_data(stock_info['symbol'], period)
+            render_stale_cache_notice("个股信息", stock_info_current)
+            render_stale_cache_notice("历史行情", stock_data)
+            stock_data = strip_cache_meta(stock_data)
 
             # 显示股票基本信息
             display_stock_info(stock_info, indicators)
@@ -1019,6 +1042,21 @@ def check_api_key():
         return bool(config.DEEPSEEK_API_KEY and config.DEEPSEEK_API_KEY.strip())
     except:
         return False
+
+
+def clear_analysis_caches():
+    """Clear Streamlit memory cache and persistent stock data cache."""
+    st.cache_data.clear()
+    return clear_stock_data_cache()
+
+
+def render_stale_cache_notice(label: str, payload) -> None:
+    """Show a warning when stale persistent cache is used."""
+    meta = extract_cache_meta(payload)
+    if not meta or not meta.get("stale"):
+        return
+    fetched_at = meta.get("fetched_at") or "未知时间"
+    st.warning(f"{label} 当前使用本地缓存数据，缓存时间：{fetched_at}。")
 
 @st.cache_data(ttl=300)  # 缓存5分钟
 def get_stock_data(symbol, period):
@@ -1119,9 +1157,13 @@ def analyze_single_stock_for_batch(symbol, period, enabled_analysts_config=None,
         if stock_data is None:
             return {"symbol": symbol, "error": "无法获取股票历史数据", "success": False}
 
+        stock_info = strip_cache_meta(stock_info)
+        stock_data = strip_cache_meta(stock_data)
+
         # 2. 获取财务数据
         fetcher = StockDataFetcher()
         financial_data = fetcher.get_financial_data(symbol)
+        financial_data = strip_cache_meta(financial_data)
 
         # 2.5 获取季报数据（仅A股）
         quarterly_data = None
@@ -1131,6 +1173,7 @@ def analyze_single_stock_for_batch(symbol, period, enabled_analysts_config=None,
                 from quarterly_report_data import QuarterlyReportDataFetcher
                 quarterly_fetcher = QuarterlyReportDataFetcher()
                 quarterly_data = quarterly_fetcher.get_quarterly_reports(symbol)
+                quarterly_data = strip_cache_meta(quarterly_data)
             except:
                 pass
 
@@ -1400,6 +1443,11 @@ def run_stock_analysis(symbol, period):
             st.error("无法获取股票历史数据")
             return
 
+        render_stale_cache_notice("个股信息", stock_info)
+        render_stale_cache_notice("历史行情", stock_data)
+        stock_info = strip_cache_meta(stock_info)
+        stock_data = strip_cache_meta(stock_data)
+
         # 显示股票基本信息
         display_stock_info(stock_info, indicators)
         progress_bar.progress(20)
@@ -1412,6 +1460,8 @@ def run_stock_analysis(symbol, period):
         status_text.text("正在获取财务数据...")
         fetcher = StockDataFetcher()  # 创建fetcher实例
         financial_data = fetcher.get_financial_data(symbol)
+        render_stale_cache_notice("财务数据", financial_data)
+        financial_data = strip_cache_meta(financial_data)
         progress_bar.progress(35)
 
         # 2.5 获取季报数据（仅在选择了基本面分析师且为A股时）
@@ -1423,6 +1473,8 @@ def run_stock_analysis(symbol, period):
                 from quarterly_report_data import QuarterlyReportDataFetcher
                 quarterly_fetcher = QuarterlyReportDataFetcher()
                 quarterly_data = quarterly_fetcher.get_quarterly_reports(symbol)
+                render_stale_cache_notice("季报数据", quarterly_data)
+                quarterly_data = strip_cache_meta(quarterly_data)
                 if quarterly_data and quarterly_data.get('data_success'):
                     income_count = quarterly_data.get('income_statement', {}).get('periods', 0) if quarterly_data.get('income_statement') else 0
                     balance_count = quarterly_data.get('balance_sheet', {}).get('periods', 0) if quarterly_data.get('balance_sheet') else 0

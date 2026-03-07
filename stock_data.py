@@ -8,43 +8,78 @@ import requests
 import json
 import pywencai
 from data_source_manager import data_source_manager
+from stock_data_cache import stock_data_cache_service
 
 class StockDataFetcher:
     """股票数据获取类"""
     
-    def __init__(self):
+    def __init__(self, cache_service=None):
         self.data = None
         self.info = None
         self.financial_data = None
         self.data_source_manager = data_source_manager
+        self.cache_service = cache_service or stock_data_cache_service
         
-    def get_stock_info(self, symbol):
+    def get_stock_info(self, symbol, max_age_seconds=300, allow_stale_on_failure=True, cache_first=True):
         """获取股票基本信息"""
         try:
-            # 处理中国A股
-            if self._is_chinese_stock(symbol):
-                return self._get_chinese_stock_info(symbol)
-            # 处理港股
-            elif self._is_hk_stock(symbol):
-                return self._get_hk_stock_info(symbol)
-            # 处理美股
-            else:
-                return self._get_us_stock_info(symbol)
+            return self.cache_service.get_stock_info(
+                symbol=symbol,
+                market=self._detect_market(symbol),
+                fetch_fn=lambda: self._fetch_stock_info_live(symbol),
+                max_age_seconds=max_age_seconds,
+                allow_stale_on_failure=allow_stale_on_failure,
+                cache_first=cache_first,
+            )
         except Exception as e:
             return {"error": f"获取股票信息失败: {str(e)}"}
     
-    def get_stock_data(self, symbol, period="1y", interval="1d"):
+    def get_stock_data(
+        self,
+        symbol,
+        period="1y",
+        interval="1d",
+        max_age_seconds=86400,
+        allow_stale_on_failure=True,
+        cache_first=True,
+        adjust="qfq",
+    ):
         """获取股票历史数据"""
         try:
-            if self._is_chinese_stock(symbol):
-                return self._get_chinese_stock_data(symbol, period)
-            elif self._is_hk_stock(symbol):
-                return self._get_hk_stock_data(symbol, period)
-            else:
-                return self._get_us_stock_data(symbol, period, interval)
+            return self.cache_service.get_stock_history(
+                symbol=symbol,
+                period=period,
+                interval=interval,
+                adjust=adjust,
+                fetch_fn=lambda: self._fetch_stock_data_live(symbol, period, interval, adjust),
+                max_age_seconds=max_age_seconds,
+                allow_stale_on_failure=allow_stale_on_failure,
+                cache_first=cache_first,
+            )
         except Exception as e:
             return {"error": f"获取股票数据失败: {str(e)}"}
     
+    def _detect_market(self, symbol):
+        if self._is_chinese_stock(symbol):
+            return "cn"
+        if self._is_hk_stock(symbol):
+            return "hk"
+        return "us"
+
+    def _fetch_stock_info_live(self, symbol):
+        if self._is_chinese_stock(symbol):
+            return self._get_chinese_stock_info(symbol)
+        if self._is_hk_stock(symbol):
+            return self._get_hk_stock_info(symbol)
+        return self._get_us_stock_info(symbol)
+
+    def _fetch_stock_data_live(self, symbol, period="1y", interval="1d", adjust="qfq"):
+        if self._is_chinese_stock(symbol):
+            return self._get_chinese_stock_data(symbol, period, adjust=adjust)
+        if self._is_hk_stock(symbol):
+            return self._get_hk_stock_data(symbol, period, adjust=adjust)
+        return self._get_us_stock_data(symbol, period, interval)
+
     def _is_chinese_stock(self, symbol):
         """判断是否为中国A股"""
         # 简单判断：包含数字且长度为6位的认为是中国A股
@@ -420,7 +455,7 @@ class StockDataFetcher:
         except Exception as e:
             return {"error": f"获取美股信息失败: {str(e)}"}
     
-    def _get_chinese_stock_data(self, symbol, period="1y"):
+    def _get_chinese_stock_data(self, symbol, period="1y", adjust="qfq"):
         """获取中国股票历史数据（支持akshare和tushare数据源自动切换）"""
         try:
             # 计算日期范围
@@ -439,7 +474,7 @@ class StockDataFetcher:
                 symbol=symbol,
                 start_date=start_date,
                 end_date=end_date,
-                adjust='qfq'
+                adjust=adjust
             )
             
             if df is not None and not df.empty:
@@ -468,7 +503,7 @@ class StockDataFetcher:
         except Exception as e:
             return {"error": f"获取中国股票数据失败: {str(e)}"}
     
-    def _get_hk_stock_data(self, symbol, period="1y"):
+    def _get_hk_stock_data(self, symbol, period="1y", adjust="qfq"):
         """获取港股历史数据"""
         try:
             # 规范化港股代码
@@ -489,7 +524,7 @@ class StockDataFetcher:
             
             # 获取港股历史数据
             df = ak.stock_hk_hist(symbol=hk_code, period="daily", 
-                                start_date=start_date, end_date=end_date, adjust="qfq")
+                                start_date=start_date, end_date=end_date, adjust=adjust)
             
             if df is not None and not df.empty:
                 # 重命名列以匹配标准格式
@@ -588,15 +623,24 @@ class StockDataFetcher:
         except Exception as e:
             return {"error": f"获取最新指标失败: {str(e)}"}
     
-    def get_financial_data(self, symbol):
+    def _fetch_financial_data_live(self, symbol):
+        if self._is_chinese_stock(symbol):
+            return self._get_chinese_financial_data(symbol)
+        if self._is_hk_stock(symbol):
+            return self._get_hk_financial_data(symbol)
+        return self._get_us_financial_data(symbol)
+
+    def get_financial_data(self, symbol, max_age_seconds=86400, allow_stale_on_failure=True, cache_first=True):
         """获取详细财务数据"""
         try:
-            if self._is_chinese_stock(symbol):
-                return self._get_chinese_financial_data(symbol)
-            elif self._is_hk_stock(symbol):
-                return self._get_hk_financial_data(symbol)
-            else:
-                return self._get_us_financial_data(symbol)
+            return self.cache_service.get_stock_financial(
+                symbol=symbol,
+                market=self._detect_market(symbol),
+                fetch_fn=lambda: self._fetch_financial_data_live(symbol),
+                max_age_seconds=max_age_seconds,
+                allow_stale_on_failure=allow_stale_on_failure,
+                cache_first=cache_first,
+            )
         except Exception as e:
             return {"error": f"获取财务数据失败: {str(e)}"}
     

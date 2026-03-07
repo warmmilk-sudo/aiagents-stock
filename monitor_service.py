@@ -166,7 +166,12 @@ class StockMonitorService:
     def _get_price_from_default_source(self, symbol: str) -> float:
         """从默认数据源获取价格"""
         try:
-            stock_info = self.fetcher.get_stock_info(symbol)
+            stock_info = self.fetcher.get_stock_info(
+                symbol,
+                max_age_seconds=30,
+                allow_stale_on_failure=True,
+                cache_first=True,
+            )
             current_price = stock_info.get('current_price')
             
             if current_price and current_price != 'N/A':

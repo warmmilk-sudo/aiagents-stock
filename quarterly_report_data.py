@@ -9,6 +9,7 @@ import io
 import warnings
 from datetime import datetime
 import akshare as ak
+from stock_data_cache import stock_data_cache_service
 
 warnings.filterwarnings('ignore')
 
@@ -34,12 +35,28 @@ _setup_stdout_encoding()
 class QuarterlyReportDataFetcher:
     """季报数据获取类（使用akshare数据源）"""
     
-    def __init__(self):
+    def __init__(self, cache_service=None):
         self.periods = 8  # 获取最近8期季报
         self.available = True
+        self.cache_service = cache_service or stock_data_cache_service
         print("✓ 季报数据获取器初始化成功（akshare数据源）")
     
-    def get_quarterly_reports(self, symbol):
+    def get_quarterly_reports(
+        self,
+        symbol,
+        max_age_seconds=604800,
+        allow_stale_on_failure=True,
+        cache_first=True,
+    ):
+        return self.cache_service.get_stock_quarterly(
+            symbol=symbol,
+            fetch_fn=lambda: self._fetch_quarterly_reports_live(symbol),
+            max_age_seconds=max_age_seconds,
+            allow_stale_on_failure=allow_stale_on_failure,
+            cache_first=cache_first,
+        )
+
+    def _fetch_quarterly_reports_live(self, symbol):
         """
         获取股票的季报数据
         

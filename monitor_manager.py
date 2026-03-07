@@ -17,6 +17,7 @@ from monitor_db import monitor_db
 from monitor_service import monitor_service
 from notification_service import notification_service
 from stock_data import StockDataFetcher
+from stock_data_cache import extract_cache_meta, strip_cache_meta
 from miniqmt_interface import miniqmt, get_miniqmt_status, QuantStrategyConfig
 from ui_shared import format_price, get_recommendation_color
 
@@ -106,11 +107,21 @@ def display_add_stock_section():
                 if st.button("🔍 获取股票信息"):
                     with st.spinner("正在获取股票信息..."):
                         fetcher = StockDataFetcher()
-                        stock_info = fetcher.get_stock_info(symbol)
+                        stock_info = fetcher.get_stock_info(
+                            symbol,
+                            max_age_seconds=30,
+                            allow_stale_on_failure=True,
+                            cache_first=True,
+                        )
                         
                         if "error" not in stock_info:
                             st.success("✅ 股票信息获取成功")
-                            st.session_state.temp_stock_info = stock_info
+                            cache_meta = extract_cache_meta(stock_info)
+                            if cache_meta and cache_meta.get("stale"):
+                                st.warning(
+                                    f"当前使用本地缓存数据，缓存时间：{cache_meta.get('fetched_at') or '未知时间'}"
+                                )
+                            st.session_state.temp_stock_info = strip_cache_meta(stock_info)
                         else:
                             st.error(f"❌ {stock_info['error']}")
         
