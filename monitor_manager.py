@@ -18,7 +18,7 @@ from monitor_service import monitor_service
 from notification_service import notification_service
 from stock_data import StockDataFetcher
 from miniqmt_interface import miniqmt, get_miniqmt_status, QuantStrategyConfig
-from ui_shared import NON_MARKET_PALETTE, get_recommendation_color
+from ui_shared import format_price, get_recommendation_color
 
 def display_monitor_manager():
     """显示监测管理主页面"""
@@ -190,25 +190,25 @@ def display_add_stock_section():
 def display_monitored_stocks():
     """显示监测股票列表 - 卡片式布局"""
     
-    st.markdown("### 📋 监测股票列表")
+    st.markdown("### 监测股票列表")
     
     stocks = monitor_db.get_monitored_stocks()
     
     if not stocks:
-        st.info("📭 暂无监测股票，请添加股票开始监测")
+        st.info("暂无监测股票，请添加股票开始监测")
         return
     
     # 筛选和搜索
     col1, col2, col3 = st.columns([2, 1, 1])
     
     with col1:
-        search_term = st.text_input("🔍 搜索股票", placeholder="输入股票代码或名称")
+        search_term = st.text_input("搜索股票", placeholder="输入股票代码或名称")
     
     with col2:
         rating_filter = st.selectbox("评级筛选", ["全部", "买入", "持有", "卖出"])
     
     with col3:
-        if st.button("🔄 刷新列表"):
+        if st.button("刷新列表"):
             st.rerun()
     
     # 筛选股票
@@ -220,18 +220,11 @@ def display_monitored_stocks():
         filtered_stocks = [s for s in filtered_stocks if s['rating'] == rating_filter]
     
     if not filtered_stocks:
-        st.warning("🔍 未找到匹配的股票")
+        st.warning("未找到匹配的股票")
         return
     
-    # 卡片式布局 - 每行显示2个卡片
-    for i in range(0, len(filtered_stocks), 2):
-        cols = st.columns(2)
-        
-        for j, col in enumerate(cols):
-            if i + j < len(filtered_stocks):
-                stock = filtered_stocks[i + j]
-                with col:
-                    display_stock_card(stock)
+    for stock in filtered_stocks:
+        display_stock_card(stock)
     
     # 显示编辑对话框
     if 'editing_stock_id' in st.session_state:
@@ -243,121 +236,110 @@ def display_monitored_stocks():
 
 def display_stock_card(stock: Dict):
     """显示单个股票监测卡片"""
-    
+
+    entry_range = stock.get("entry_range")
+    if entry_range and isinstance(entry_range, dict):
+        entry_text = (
+            f"{format_price(entry_range.get('min'), currency='¥')} - "
+            f"{format_price(entry_range.get('max'), currency='¥')}"
+        )
+    else:
+        entry_text = "未设置"
+
+    take_profit = stock.get("take_profit")
+    stop_loss = stock.get("stop_loss")
+    take_profit_text = format_price(take_profit, currency="¥") if take_profit else "未设置"
+    stop_loss_text = format_price(stop_loss, currency="¥") if stop_loss else "未设置"
+
+    current_price = stock.get("current_price")
+    if current_price and current_price != "N/A":
+        current_price_text = format_price(current_price, currency="¥")
+    else:
+        current_price_text = "等待更新"
+
+    last_checked_text = "从未检查"
+    if stock.get("last_checked"):
+        try:
+            last_checked = datetime.fromisoformat(stock["last_checked"])
+            last_checked_text = last_checked.strftime("%m-%d %H:%M")
+        except ValueError:
+            last_checked_text = str(stock["last_checked"])
+
+    notify_text = "通知开启" if stock.get("notification_enabled") else "通知关闭"
+    quant_text = "量化开启" if stock.get("quant_enabled", False) else "量化关闭"
+    rating = stock.get("rating", "未评级")
+    rating_color = get_recommendation_color(rating)
+
     with st.container():
-        # 卡片头部
-        st.markdown(f"""
-        <div style="
-            border: 1px solid #ddd;
-            border-radius: 10px;
-            padding: 15px;
-            margin: 10px 0;
-            background-color: #f9f9f9;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        ">
-        """, unsafe_allow_html=True)
-        
-        # 股票基本信息
-        col1, col2 = st.columns([2, 1])
-        
-        with col1:
-            st.markdown(f"**{stock['symbol']}** - {stock['name']}")
+        header_col, status_col = st.columns([4, 1.4])
+
+        with header_col:
+            st.markdown(f"**{stock['symbol']}** {stock['name']}")
             if stock.get('managed_by_portfolio'):
                 st.caption("来源: 持仓同步")
-            
-            rating_color = get_recommendation_color(stock['rating'])
-            st.markdown(f"评级: <span style='color: {rating_color}; font-weight: 600;'>{stock['rating']}</span>", unsafe_allow_html=True)
-        
-        with col2:
-            if stock['current_price'] and stock['current_price'] != 'N/A':
-                st.metric("当前价格", f"¥{stock['current_price']}")
-            else:
-                st.metric("当前价格", "等待更新")
-        
-        # 关键位置信息
-        st.markdown("**🎯 关键位置**")
-        
-        entry_range = stock.get('entry_range')
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            if entry_range and isinstance(entry_range, dict):
-                st.info(f"**进场区间**\n¥{entry_range.get('min', 0)} - ¥{entry_range.get('max', 0)}")
-            else:
-                st.warning("**进场区间**\n未设置")
-        
-        with col2:
-            if stock['take_profit']:
-                st.info(f"**止盈位**\n¥{stock['take_profit']}")
-            else:
-                st.info("**止盈位**\n未设置")
-        
-        with col3:
-            if stock['stop_loss']:
-                st.info(f"**止损位**\n¥{stock['stop_loss']}")
-            else:
-                st.info("**止损位**\n未设置")
-        
-        # 监测状态
-        st.markdown("**📊 监测状态**")
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            st.caption(f"监测间隔: {stock['check_interval']}分钟")
-        
-        with col2:
-            if stock['last_checked']:
-                last_checked = datetime.fromisoformat(stock['last_checked'])
-                st.caption(f"最后检查: {last_checked.strftime('%m-%d %H:%M')}")
-            else:
-                st.caption("最后检查: 从未检查")
-        
-        with col3:
-            status = "启用" if stock['notification_enabled'] else "禁用"
-            st.caption(f"通知: {status}")
-            
-            # 显示量化状态
-            if stock.get('quant_enabled', False):
-                st.caption("量化: 启用")
-            else:
-                st.caption("量化: 禁用")
-        
-        # 操作按钮
-        st.markdown("**🔧 操作**")
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            if st.button("🔄 更新", key=f"update_{stock['id']}"):
+
+            st.markdown(
+                f"评级: <span style='color: {rating_color}; font-weight: 600;'>{rating}</span>",
+                unsafe_allow_html=True,
+            )
+
+        with status_col:
+            st.caption("当前价格")
+            st.markdown(
+                f"<div style='text-align:right; font-weight:600;'>{current_price_text}</div>",
+                unsafe_allow_html=True,
+            )
+
+        info_col1, info_col2 = st.columns(2)
+
+        with info_col1:
+            st.caption(f"进场区间: {entry_text}")
+            st.caption(f"止盈位: {take_profit_text}")
+            st.caption(f"止损位: {stop_loss_text}")
+
+        with info_col2:
+            st.caption(f"监测间隔: {stock['check_interval']} 分钟")
+            st.caption(f"最后检查: {last_checked_text}")
+            st.caption(f"{notify_text} · {quant_text}")
+
+        action_col1, action_col2 = st.columns(2)
+
+        with action_col1:
+            if st.button("更新", key=f"update_{stock['id']}"):
                 if monitor_service.manual_update_stock(stock['id']):
-                    st.success("✅ 更新成功")
+                    st.success("更新成功")
                 else:
-                    st.error("❌ 更新失败")
-        
-        with col2:
-            if st.button("✏️ 编辑", key=f"edit_{stock['id']}"):
+                    st.error("更新失败")
+
+        with action_col2:
+            if st.button("编辑", key=f"edit_{stock['id']}"):
                 st.session_state.editing_stock_id = stock['id']
                 st.rerun()
-        
-        with col3:
-            # 切换通知状态
+
+        toggle_col, delete_col = st.columns(2)
+
+        with toggle_col:
             current_status = stock['notification_enabled']
             if current_status:
-                if st.button("🔕 禁用", key=f"notify_{stock['id']}"):
+                if st.button("关闭通知", key=f"notify_{stock['id']}"):
                     monitor_db.toggle_notification(stock['id'], False)
-                    st.success("✅ 已禁用通知")
+                    st.success("已关闭通知")
                     st.rerun()
             else:
-                if st.button("🔔 启用", key=f"notify_{stock['id']}"):
+                if st.button("开启通知", key=f"notify_{stock['id']}"):
                     monitor_db.toggle_notification(stock['id'], True)
-                    st.success("✅ 已启用通知")
+                    st.success("已开启通知")
                     st.rerun()
-        
-        with col4:
-            if st.button("🗑️ 删除", key=f"delete_{stock['id']}"):
+
+        with delete_col:
+            if st.button("删除", key=f"delete_{stock['id']}"):
                 st.session_state.deleting_stock_id = stock['id']
                 st.rerun()
-        
-        st.markdown("</div>", unsafe_allow_html=True)
+
+        st.markdown(
+            "<div style='margin:0.45rem 0 0.7rem 0; border-bottom:1px solid rgba(148,163,184,0.18);'></div>",
+            unsafe_allow_html=True,
+        )
 
 def display_edit_dialog(stock_id: int):
     """显示编辑股票对话框"""

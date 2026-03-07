@@ -46,7 +46,7 @@ def display_portfolio_manager(lightweight_model=None, reasoning_model=None):
     ])
     
     with tab1:
-        display_portfolio_stocks()
+        display_portfolio_stocks(lightweight_model, reasoning_model)
     
     with tab2:
         display_batch_analysis(lightweight_model, reasoning_model)
@@ -58,7 +58,7 @@ def display_portfolio_manager(lightweight_model=None, reasoning_model=None):
         display_analysis_history()
 
 
-def display_portfolio_stocks():
+def display_portfolio_stocks(lightweight_model=None, reasoning_model=None):
     """显示持仓股票列表和管理"""
     
     st.markdown("### 持仓股票管理")
@@ -93,10 +93,10 @@ def display_portfolio_stocks():
     
     # 显示股票列表（卡片式布局）
     for stock in stocks:
-        display_stock_card(stock)
+        display_stock_card(stock, lightweight_model, reasoning_model)
 
 
-def display_stock_card(stock: Dict):
+def display_stock_card(stock: Dict, lightweight_model=None, reasoning_model=None):
     """显示单个股票卡片"""
     
     stock_id = stock.get("id")  # 获取股票ID
@@ -106,46 +106,66 @@ def display_stock_card(stock: Dict):
     quantity = stock.get("quantity")
     note = stock.get("note", "")
     auto_monitor = stock.get("auto_monitor", True)
-    created_at = stock.get("created_at", "")
+    latest_analysis = portfolio_manager.db.get_latest_analysis(stock_id, include_legacy=False)
     
     # 创建卡片
     with st.container():
-        col1, col2, col3, col4 = st.columns([3, 2, 2, 2])
+        header_col, status_col = st.columns([4, 1.4])
         
-        with col1:
+        with header_col:
             st.markdown(f"**{code}** {name}")
             if note:
                 st.caption(f"备注: {note}")
+            if latest_analysis:
+                st.caption(f"最近分析: {latest_analysis.get('analysis_time', '')}")
         
-        with col2:
+        with status_col:
+            status_text = "自动监测" if auto_monitor else "不监测"
+            st.caption(status_text)
+
+        info_col1, info_col2 = st.columns(2)
+
+        with info_col1:
             if cost_price and quantity:
-                st.write(f"成本: {format_price(cost_price)}")
+                st.caption(f"成本: {format_price(cost_price)}")
                 st.caption(f"数量: {quantity}股")
             else:
                 st.caption("未设置持仓")
         
-        with col3:
-            if auto_monitor:
-                st.success("🔔 自动监测")
-            else:
-                st.info("🔕 不监测")
+        with info_col2:
+            if latest_analysis:
+                rating = latest_analysis.get("rating", "未知")
+                rating_color = get_recommendation_color(rating)
+                st.markdown(
+                    f"<span style='color:{rating_color}; font-weight:600;'>{rating}</span>",
+                    unsafe_allow_html=True,
+                )
+            elif auto_monitor:
+                st.caption("待分析")
+
+        action_col1, action_col2, action_col3 = st.columns(3)
+        with action_col1:
+            if st.button("分析", key=f"analyze_{code}", help="单独分析该持仓"):
+                run_single_stock_analysis(stock, lightweight_model, reasoning_model)
+        with action_col2:
+            if st.button("编辑", key=f"edit_{code}", help="编辑"):
+                st.session_state[f"editing_{code}"] = True
+                st.rerun()
+        with action_col3:
+            if st.button("删除", key=f"del_{code}", help="删除"):
+                success, msg = portfolio_manager.delete_stock(stock_id)  # 使用stock_id而不是code
+                if success:
+                    st.success(msg)
+                else:
+                    st.error(msg)
+                time.sleep(0.5)
+                st.rerun()
         
-        with col4:
-            col_edit, col_del = st.columns(2)
-            with col_edit:
-                if st.button("✏️", key=f"edit_{code}", help="编辑"):
-                    st.session_state[f"editing_{code}"] = True
-                    st.rerun()
-            with col_del:
-                if st.button("🗑️", key=f"del_{code}", help="删除"):
-                    success, msg = portfolio_manager.delete_stock(stock_id)  # 使用stock_id而不是code
-                    if success:
-                        st.success(msg)
-                    else:
-                        st.error(msg)
-                    time.sleep(0.5)
-                    st.rerun()
-        
+        if latest_analysis:
+            rating = latest_analysis.get("rating", "未知")
+            summary = latest_analysis.get("summary", "")
+            st.caption(f"最新摘要: {summary or '暂无摘要'}")
+
         # 编辑表单（如果处于编辑状态）
         if st.session_state.get(f"editing_{code}"):
             with st.form(key=f"edit_form_{code}"):
@@ -194,11 +214,61 @@ def display_stock_card(stock: Dict):
                         del st.session_state[f"editing_{code}"]
                         st.rerun()
         
-        st.markdown("---")
+        st.markdown("<div style='margin:0.45rem 0 0.7rem 0; border-bottom:1px solid rgba(148,163,184,0.18);'></div>", unsafe_allow_html=True)
+
+
+def run_single_stock_analysis(stock: Dict, lightweight_model=None, reasoning_model=None):
+    """执行单只持仓分析并保存到持仓历史。"""
+    code = stock.get("code", "")
+    name = stock.get("name", code)
+    if not code:
+        st.error("持仓股票缺少代码，无法分析。")
+        return
+
+    with st.spinner(f"正在分析 {code} {name} ..."):
+        result = portfolio_manager.analyze_single_stock(
+            code,
+            lightweight_model=lightweight_model,
+            reasoning_model=reasoning_model,
+        )
+
+    if not result.get("success"):
+        st.error(f"{code} 分析失败: {result.get('error', '未知错误')}")
+        return
+
+    wrapped_result = {
+        "success": True,
+        "results": [
+            {
+                "code": code,
+                "result": result,
+            }
+        ],
+    }
+    persistence_result = portfolio_manager.persist_analysis_results(
+        wrapped_result,
+        sync_realtime_monitor=True,
+        analysis_source="portfolio_single_analysis",
+        analysis_period="1y",
+    )
+    saved_count = len(persistence_result.get("saved_ids", []))
+    sync_result = persistence_result.get("sync_result") or {}
+
+    st.success(f"{code} 分析完成，已写入持仓分析历史 {saved_count} 条。")
+    if sync_result.get("total", 0) > 0:
+        st.info(
+            f"实时监测同步完成：新增 {sync_result.get('added', 0)}，更新 {sync_result.get('updated', 0)}。"
+        )
+    st.rerun()
 
 
 def display_add_stock_form():
     """显示添加股票表单"""
+    st.session_state.setdefault("portfolio_add_code", "")
+    st.session_state.setdefault("portfolio_add_cost_price", 0.0)
+    st.session_state.setdefault("portfolio_add_quantity", 0)
+    st.session_state.setdefault("portfolio_add_note", "")
+    st.session_state.setdefault("portfolio_add_auto_monitor", True)
     
     with st.form(key="add_stock_form"):
         col1, col2 = st.columns(2)
@@ -207,7 +277,8 @@ def display_add_stock_form():
             code = st.text_input(
                 "股票代码*", 
                 placeholder="例如: 600519、000001.SZ、00700.HK、AAPL",
-                help="必填，支持自动识别股票名称，兼容 SH/SZ/HK/US 后缀格式"
+                help="必填，支持自动识别股票名称，兼容 SH/SZ/HK/US 后缀格式",
+                key="portfolio_add_code",
             )
             st.caption("股票名称会在保存时根据股票代码自动识别。")
         
@@ -217,17 +288,19 @@ def display_add_stock_form():
                 min_value=0.0, 
                 step=0.001,
                 format="%.3f",
-                help="可选，用于计算收益"
+                help="可选，用于计算收益",
+                key="portfolio_add_cost_price",
             )
             quantity = st.number_input(
                 "持仓数量", 
                 min_value=0, 
                 step=100,
-                help="可选，单位：股"
+                help="可选，单位：股",
+                key="portfolio_add_quantity",
             )
         
-        note = st.text_area("备注", height=80, placeholder="可选，记录买入理由等信息")
-        auto_monitor = st.checkbox("分析后自动同步到监测", value=True)
+        note = st.text_area("备注", height=80, placeholder="可选，记录买入理由等信息", key="portfolio_add_note")
+        auto_monitor = st.checkbox("分析后自动同步到监测", key="portfolio_add_auto_monitor")
         
         if st.form_submit_button("➕ 添加股票", type="primary"):
             if not code:
@@ -245,6 +318,11 @@ def display_add_stock_form():
                     if not success:
                         st.error(msg)
                         return
+                    st.session_state["portfolio_add_code"] = ""
+                    st.session_state["portfolio_add_cost_price"] = 0.0
+                    st.session_state["portfolio_add_quantity"] = 0
+                    st.session_state["portfolio_add_note"] = ""
+                    st.session_state["portfolio_add_auto_monitor"] = True
                     st.success(msg)
                     time.sleep(0.5)
                     st.rerun()
@@ -699,6 +777,7 @@ def display_history_record(record: Dict):
     
     source_map = {
         "portfolio_batch_analysis": "批量分析",
+        "portfolio_single_analysis": "单股分析",
         "portfolio_scheduler": "定时分析",
         "global_history_migration": "历史迁移",
         "legacy_backfill": "旧记录补全",

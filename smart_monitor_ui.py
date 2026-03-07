@@ -16,7 +16,12 @@ from smart_monitor_engine import SmartMonitorEngine
 from smart_monitor_db import SmartMonitorDB
 from config_manager import config_manager  # 使用主程序的配置管理器
 from portfolio_manager import portfolio_manager
-from ui_shared import get_action_color, render_a_share_change_metric
+from ui_shared import (
+    format_price,
+    get_action_color,
+    get_market_color,
+    render_a_share_change_metric,
+)
 
 
 # 加载环境变量
@@ -471,84 +476,106 @@ def render_monitor_tasks():
                             profit_loss_pct = (profit_loss / cost_total) * 100
                 except Exception as e:
                     pass
-            
-            col1, col2, col3, col4, col5 = st.columns([2, 2, 1.5, 1, 1])
-            
-            with col1:
-                st.write(f"**{task['task_name']}**")
-                st.caption(f"{task['stock_code']} - 间隔{task['check_interval']}秒")
-                if task.get('managed_by_portfolio'):
-                    st.caption("来源: 持仓同步")
-            
-            with col2:
-                status = "已启用" if task['enabled'] else "已禁用"
-                auto_trade_status = "自动交易" if task['auto_trade'] else "仅监控"
-                trading_mode = "仅交易时段" if task.get('trading_hours_only', 1) else "全时段"
-                st.write(status)
-                st.caption(f"{auto_trade_status} | {trading_mode}")
-                
-                # 显示持仓状态
-                if has_position:
-                    st.caption(f"持仓: {position_quantity}股 @ {position_cost:.2f}元")
-            
-            with col3:
-                is_running = task['stock_code'] in engine.monitoring_threads
-                if is_running:
-                    st.success("▶️ 运行中")
-                else:
-                    st.info("⏸️ 未运行")
-                
-                # 显示盈亏
-                if has_position and current_price > 0:
-                    if profit_loss > 0:
-                        st.success(f"+{profit_loss:.2f}元 ({profit_loss_pct:+.2f}%)")
-                    elif profit_loss < 0:
-                        st.error(f"{profit_loss:.2f}元 ({profit_loss_pct:+.2f}%)")
-                    else:
-                        st.info("持平")
-            
-            with col4:
-                if is_running:
-                    if st.button("停止", key=f"stop_{task['id']}"):
-                        engine.stop_monitor(task['stock_code'])
-                        # 停止时更新数据库状态为禁用
-                        db.update_monitor_task(task['stock_code'], {'enabled': 0})
-                        st.success("已停止")
-                        st.rerun()
-                else:
-                    # 启动按钮始终可点击（只要任务未运行）
-                    if st.button("启动", key=f"start_{task['id']}"):
-                        # 启动监控
-                        engine.start_monitor(
-                            stock_code=task['stock_code'],
-                            check_interval=task['check_interval'],
-                            auto_trade=task['auto_trade'] == 1,
-                            notify=True,
-                            has_position=has_position == 1,
-                            position_cost=position_cost,
-                            position_quantity=position_quantity,
-                            trading_hours_only=task.get('trading_hours_only', 1) == 1
+
+            is_running = task['stock_code'] in engine.monitoring_threads
+            status = "已启用" if task['enabled'] else "已禁用"
+            auto_trade_status = "自动交易" if task['auto_trade'] else "仅监控"
+            trading_mode = "仅交易时段" if task.get('trading_hours_only', 1) else "全时段"
+            position_text = (
+                f"持仓: {position_quantity}股 @ {position_cost:.2f}元"
+                if has_position else
+                "当前无持仓记录"
+            )
+            if current_price > 0:
+                price_text = format_price(current_price, currency="¥")
+            else:
+                price_text = "等待行情"
+
+            with st.container():
+                header_col, status_col = st.columns([4, 1.4])
+
+                with header_col:
+                    st.markdown(f"**{task['task_name']}**")
+                    st.caption(f"{task['stock_code']} · 间隔 {task['check_interval']} 秒")
+                    if task.get('managed_by_portfolio'):
+                        st.caption("来源: 持仓同步")
+
+                with status_col:
+                    st.caption("运行状态")
+                    st.markdown(
+                        f"<div style='text-align:right; font-weight:600;'>{'运行中' if is_running else '未运行'}</div>",
+                        unsafe_allow_html=True,
+                    )
+
+                info_col1, info_col2 = st.columns(2)
+
+                with info_col1:
+                    st.caption(f"任务状态: {status}")
+                    st.caption(f"模式: {auto_trade_status} · {trading_mode}")
+                    st.caption(position_text)
+
+                with info_col2:
+                    st.caption(f"当前价格: {price_text}")
+                    if has_position and current_price > 0:
+                        profit_color = get_market_color(profit_loss)
+                        st.markdown(
+                            f"<span style='color:{profit_color}; font-weight:600;'>"
+                            f"浮动盈亏: {profit_loss:+.2f}元 ({profit_loss_pct:+.2f}%)"
+                            "</span>",
+                            unsafe_allow_html=True,
                         )
-                        # 启动时更新数据库状态为启用
-                        db.update_monitor_task(task['stock_code'], {'enabled': 1})
-                        st.success("已启动")
+                    elif has_position:
+                        st.caption("浮动盈亏: 等待行情")
+                    else:
+                        st.caption("浮动盈亏: 不适用")
+
+                action_col1, action_col2 = st.columns(2)
+
+                with action_col1:
+                    if is_running:
+                        if st.button("停止", key=f"stop_{task['id']}"):
+                            engine.stop_monitor(task['stock_code'])
+                            # 停止时更新数据库状态为禁用
+                            db.update_monitor_task(task['stock_code'], {'enabled': 0})
+                            st.success("已停止")
+                            st.rerun()
+                    else:
+                        # 启动按钮始终可点击（只要任务未运行）
+                        if st.button("启动", key=f"start_{task['id']}"):
+                            # 启动监控
+                            engine.start_monitor(
+                                stock_code=task['stock_code'],
+                                check_interval=task['check_interval'],
+                                auto_trade=task['auto_trade'] == 1,
+                                notify=True,
+                                has_position=has_position == 1,
+                                position_cost=position_cost,
+                                position_quantity=position_quantity,
+                                trading_hours_only=task.get('trading_hours_only', 1) == 1
+                            )
+                            # 启动时更新数据库状态为启用
+                            db.update_monitor_task(task['stock_code'], {'enabled': 1})
+                            st.success("已启动")
+                            st.rerun()
+
+                with action_col2:
+                    if st.button("删除", key=f"del_{task['id']}"):
+                        # 如果正在运行，先停止
+                        if task['stock_code'] in engine.monitoring_threads:
+                            engine.stop_monitor(task['stock_code'])
+
+                        db.delete_monitor_task(task['id'])
+                        st.success("已删除")
                         st.rerun()
-            
-            with col5:
-                if st.button("删除", key=f"del_{task['id']}"):
-                    # 如果正在运行，先停止
-                    if task['stock_code'] in engine.monitoring_threads:
-                        engine.stop_monitor(task['stock_code'])
-                    
-                    db.delete_monitor_task(task['id'])
-                    st.success("已删除")
-                    st.rerun()
-            
-            # K线图和AI决策详情（可展开）
-            with st.expander(f"K线图与AI决策 - {task['task_name']}", expanded=False):
-                _render_task_kline_and_decisions(task, db, engine)
-            
-            st.markdown("---")
+
+                # K线图和AI决策详情（可展开）
+                with st.expander(f"K线图与AI决策 - {task['task_name']}", expanded=False):
+                    _render_task_kline_and_decisions(task, db, engine)
+
+                st.markdown(
+                    "<div style='margin:0.45rem 0 0.7rem 0; border-bottom:1px solid rgba(148,163,184,0.18);'></div>",
+                    unsafe_allow_html=True,
+                )
 
 
 def render_position_management():
