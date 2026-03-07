@@ -12,6 +12,12 @@ from typing import Dict, Any
 import time
 import warnings
 import os
+import threading
+
+try:
+    from config import RISK_QUERY_TIMEOUT_SECONDS
+except Exception:
+    RISK_QUERY_TIMEOUT_SECONDS = 10
 
 # 屏蔽pywencai的Node.js警告信息（不影响功能）
 warnings.filterwarnings('ignore', category=DeprecationWarning)
@@ -22,9 +28,11 @@ os.environ['NODE_NO_WARNINGS'] = '1'  # 屏蔽Node.js警告
 class RiskDataFetcher:
     """风险数据获取类"""
     
-    def __init__(self):
+    def __init__(self, query_timeout: int | None = None, pause_seconds: float = 0.5):
         """初始化"""
-        pass
+        configured_timeout = query_timeout or RISK_QUERY_TIMEOUT_SECONDS
+        self.query_timeout = max(1, int(configured_timeout))
+        self.pause_seconds = max(0.0, float(pause_seconds))
     
     def get_risk_data(self, symbol: str) -> Dict[str, Any]:
         """
@@ -57,7 +65,7 @@ class RiskDataFetcher:
             else:
                 print(f"   暂无限售解禁数据")
             
-            time.sleep(1)  # 避免请求过快
+            self._sleep_between_queries()
             
             # 2. 获取大股东减持公告
             print("   查询大股东减持公告...")
@@ -68,7 +76,7 @@ class RiskDataFetcher:
             else:
                 print(f"   暂无大股东减持数据")
             
-            time.sleep(1)  # 避免请求过快
+            self._sleep_between_queries()
             
             # 3. 获取近期重要事件
             print("   查询近期重要事件...")
@@ -78,6 +86,17 @@ class RiskDataFetcher:
                 print(f"   获取到重要事件数据")
             else:
                 print(f"   暂无重要事件数据")
+
+            section_errors = []
+            for label, section_data in (
+                ("限售解禁", lifting_ban),
+                ("大股东减持", reduction),
+                ("重要事件", events),
+            ):
+                if section_data and section_data.get('error'):
+                    section_errors.append(f"{label}: {section_data['error']}")
+            if section_errors:
+                risk_data['error'] = "；".join(section_errors)
             
             # 如果至少有一个数据源成功，则认为获取成功
             if (lifting_ban and lifting_ban.get('has_data')) or \
@@ -93,6 +112,32 @@ class RiskDataFetcher:
             risk_data['error'] = str(e)
         
         return risk_data
+
+    def _sleep_between_queries(self) -> None:
+        """在查询之间短暂暂停，避免连续请求过快。"""
+        if self.pause_seconds > 0:
+            time.sleep(self.pause_seconds)
+
+    def _query_wencai(self, query: str):
+        """在后台线程中执行问财查询，防止单次请求长期阻塞主流程。"""
+        result_holder: Dict[str, Any] = {}
+
+        def _runner() -> None:
+            try:
+                result_holder['result'] = pywencai.get(query=query, loop=True)
+            except Exception as exc:
+                result_holder['error'] = exc
+
+        worker = threading.Thread(target=_runner, daemon=True, name="pywencai-risk-query")
+        worker.start()
+        worker.join(self.query_timeout)
+
+        if worker.is_alive():
+            raise TimeoutError(f"问财查询超时（>{self.query_timeout}s）: {query}")
+        if 'error' in result_holder:
+            raise result_holder['error']
+
+        return result_holder.get('result')
     
     def _get_lifting_ban_data(self, symbol: str) -> Dict[str, Any]:
         """获取限售解禁数据"""
@@ -100,7 +145,8 @@ class RiskDataFetcher:
             'has_data': False,
             'query': f"{symbol}限售解禁",
             'data': None,
-            'summary': None
+            'summary': None,
+            'error': None
         }
         
         try:
@@ -108,7 +154,7 @@ class RiskDataFetcher:
             query = f"{symbol}限售解禁"
             
             # 使用pywencai查询
-            response = pywencai.get(query=query, loop=True)
+            response = self._query_wencai(query)
             
             if response is None:
                 return result
@@ -163,7 +209,8 @@ class RiskDataFetcher:
             'has_data': False,
             'query': f"{symbol}大股东减持公告",
             'data': None,
-            'summary': None
+            'summary': None,
+            'error': None
         }
         
         try:
@@ -171,7 +218,7 @@ class RiskDataFetcher:
             query = f"{symbol}大股东减持公告"
             
             # 使用pywencai查询
-            response = pywencai.get(query=query, loop=True)
+            response = self._query_wencai(query)
             
             if response is None:
                 return result
@@ -226,7 +273,8 @@ class RiskDataFetcher:
             'has_data': False,
             'query': f"{symbol}近期重要事件",
             'data': None,
-            'summary': None
+            'summary': None,
+            'error': None
         }
         
         try:
@@ -234,7 +282,7 @@ class RiskDataFetcher:
             query = f"{symbol}近期重要事件"
             
             # 使用pywencai查询
-            response = pywencai.get(query=query, loop=True)
+            response = self._query_wencai(query)
             
             if response is None:
                 return result

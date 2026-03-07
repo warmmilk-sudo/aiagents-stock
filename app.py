@@ -1237,6 +1237,8 @@ def run_stock_analysis(symbol, period):
                         st.info(f"成功获取风险数据：{', '.join(risk_types)}")
                     else:
                         st.info("ℹ️ 暂无风险相关数据")
+                elif risk_data and risk_data.get('error'):
+                    st.warning(f"风险数据获取超时或失败，已跳过风险数据抓取：{risk_data['error']}")
                 else:
                     st.info("ℹ️ 暂无风险相关数据，将基于基本信息进行风险分析")
             except Exception as e:
