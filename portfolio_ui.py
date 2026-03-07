@@ -13,6 +13,13 @@ import time
 
 from portfolio_manager import portfolio_manager
 from portfolio_scheduler import portfolio_scheduler
+from ui_shared import (
+    get_recommendation_color,
+    render_agents_analysis_tabs,
+    render_final_decision,
+    render_stock_info_metrics,
+    render_team_discussion,
+)
 
 
 def format_price(value) -> str:
@@ -25,16 +32,17 @@ def format_price(value) -> str:
 
 def display_portfolio_manager(lightweight_model=None, reasoning_model=None):
     """显示持仓管理主界面"""
-    
-    st.markdown("## 📊 持仓定时分析")
-    st.markdown("---")
+    try:
+        portfolio_manager.reconcile_portfolio_integrations()
+    except Exception as e:
+        st.warning(f"持仓联动修复执行失败: {e}")
     
     # 创建标签页
     tab1, tab2, tab3, tab4 = st.tabs([
-        "📝 持仓管理", 
-        "🔄 批量分析", 
-        "⏰ 定时任务", 
-        "📈 分析历史"
+        "持仓管理",
+        "批量分析",
+        "定时任务",
+        "分析历史"
     ])
     
     with tab1:
@@ -53,7 +61,7 @@ def display_portfolio_manager(lightweight_model=None, reasoning_model=None):
 def display_portfolio_stocks():
     """显示持仓股票列表和管理"""
     
-    st.markdown("### 📝 持仓股票管理")
+    st.markdown("### 持仓股票管理")
     
     # 添加新股票表单
     with st.expander("➕ 添加持仓股票", expanded=False):
@@ -130,8 +138,11 @@ def display_stock_card(stock: Dict):
                     st.rerun()
             with col_del:
                 if st.button("🗑️", key=f"del_{code}", help="删除"):
-                    portfolio_manager.delete_stock(stock_id)  # 使用stock_id而不是code
-                    st.success(f"已删除 {code}")
+                    success, msg = portfolio_manager.delete_stock(stock_id)  # 使用stock_id而不是code
+                    if success:
+                        st.success(msg)
+                    else:
+                        st.error(msg)
                     time.sleep(0.5)
                     st.rerun()
         
@@ -163,7 +174,7 @@ def display_stock_card(stock: Dict):
                 col_submit, col_cancel = st.columns(2)
                 with col_submit:
                     if st.form_submit_button("保存", type="primary"):
-                        portfolio_manager.update_stock(
+                        success, msg = portfolio_manager.update_stock(
                             stock_id,  # 使用stock_id而不是code
                             cost_price=new_cost if new_cost > 0 else None,
                             quantity=new_quantity if new_quantity > 0 else None,
@@ -171,7 +182,10 @@ def display_stock_card(stock: Dict):
                             auto_monitor=new_auto_monitor
                         )
                         del st.session_state[f"editing_{code}"]
-                        st.success("更新成功！")
+                        if success:
+                            st.success(msg)
+                        else:
+                            st.error(msg)
                         time.sleep(0.5)
                         st.rerun()
                 
@@ -295,7 +309,7 @@ def display_batch_analysis(lightweight_model=None, reasoning_model=None):
         )
     
     # 立即分析按钮
-    if st.button("🚀 立即开始分析", type="primary", width='content'):
+    if st.button("立即开始分析", type="primary", width='content'):
         with st.spinner("正在批量分析持仓股票..."):
             # 显示进度
             progress_bar = st.progress(0)
@@ -327,7 +341,7 @@ def display_batch_analysis(lightweight_model=None, reasoning_model=None):
                 status_text.empty()
                 
                 # 显示结果
-                st.success(f"✅ 批量分析完成！")
+                st.success("批量分析完成。")
                 
                 col_r1, col_r2, col_r3, col_r4 = st.columns(4)
                 with col_r1:
@@ -339,87 +353,21 @@ def display_batch_analysis(lightweight_model=None, reasoning_model=None):
                 with col_r4:
                     st.metric("耗时", f"{result.get('elapsed_time', 0):.1f}秒")
                 
-                # 保存分析结果到数据库
-                saved_ids = portfolio_manager.save_analysis_results(result)
+                persistence_result = portfolio_manager.persist_analysis_results(
+                    result,
+                    sync_realtime_monitor=auto_sync,
+                    analysis_source="portfolio_batch_analysis",
+                    analysis_period="1y",
+                )
+                saved_ids = persistence_result["saved_ids"]
+                sync_result = persistence_result["sync_result"]
                 st.info(f"💾 已保存 {len(saved_ids)} 条分析记录到“分析历史”")
-                
-                # 同步到监测
-                sync_result = None  # 初始化同步结果
+
                 if auto_sync:
-                    with st.spinner("正在同步到监测列表..."):
-                        from monitor_db import monitor_db
-                        
-                        # 准备同步数据
-                        monitors_to_sync = []
-                        for item in result.get("results", []):
-                            # 检查分析是否成功
-                            if not item.get("result", {}).get("success"):
-                                continue
-                            
-                            code = item["code"]
-                            stock = portfolio_manager.db.get_stock_by_code(code)
-                            
-                            # 只同步启用了自动监测的股票
-                            if not stock or not stock.get("auto_monitor"):
-                                continue
-                            
-                            analysis_result = item["result"]
-                            stock_info = analysis_result.get("stock_info", {})
-                            final_decision = analysis_result.get("final_decision", {})
-                            
-                            # 从final_decision中提取数据
-                            rating = final_decision.get("rating", "持有")
-                            entry_range = final_decision.get("entry_range", "")
-                            take_profit_str = final_decision.get("take_profit", "")
-                            stop_loss_str = final_decision.get("stop_loss", "")
-                            
-                            # 解析进场区间（格式如"10.5-12.3"）
-                            entry_min, entry_max = None, None
-                            if entry_range and isinstance(entry_range, str) and "-" in entry_range:
-                                try:
-                                    parts = entry_range.split("-")
-                                    entry_min = float(parts[0].strip())
-                                    entry_max = float(parts[1].strip())
-                                except:
-                                    pass
-                            
-                            # 解析止盈止损（提取数字）
-                            import re
-                            take_profit, stop_loss = None, None
-                            if take_profit_str:
-                                try:
-                                    numbers = re.findall(r'\d+\.?\d*', str(take_profit_str))
-                                    if numbers:
-                                        take_profit = float(numbers[0])
-                                except:
-                                    pass
-                            
-                            if stop_loss_str:
-                                try:
-                                    numbers = re.findall(r'\d+\.?\d*', str(stop_loss_str))
-                                    if numbers:
-                                        stop_loss = float(numbers[0])
-                                except:
-                                    pass
-                            
-                            # 只有当所有必需字段都有效时才添加
-                            if entry_min and entry_max and take_profit and stop_loss:
-                                monitors_to_sync.append({
-                                    "code": code,
-                                    "name": stock_info.get("name", stock.get("name", "")),
-                                    "rating": rating,
-                                    "entry_min": entry_min,
-                                    "entry_max": entry_max,
-                                    "take_profit": take_profit,
-                                    "stop_loss": stop_loss
-                                })
-                        
-                        if monitors_to_sync:
-                            sync_result = monitor_db.batch_add_or_update_monitors(monitors_to_sync)
-                            st.info(f"📊 监测同步: 新增 {sync_result.get('added', 0)} 只, 更新 {sync_result.get('updated', 0)} 只")
-                        else:
-                            sync_result = {"added": 0, "updated": 0, "failed": 0, "total": 0}
-                            st.info("📊 无需同步监测列表（无启用自动监测的股票）")
+                    if sync_result and sync_result.get("total", 0) > 0:
+                        st.info(f"实时监测同步：新增 {sync_result.get('added', 0)} 只，更新 {sync_result.get('updated', 0)} 只。")
+                    else:
+                        st.info("没有可同步的实时监测项，可能缺少完整阈值或未启用自动监测。")
                 
                 # 发送通知
                 if send_notification:
@@ -460,15 +408,8 @@ def display_analysis_result_card(item: Dict):
         take_profit = final_decision.get("take_profit", "N/A")
         stop_loss = final_decision.get("stop_loss", "N/A")
         
-        # 评级颜色
-        if "强烈买入" in rating or "买入" in rating:
-            rating_color = "🟢"
-        elif "卖出" in rating:
-            rating_color = "🔴"
-        else:
-            rating_color = "🟡"
-        
-        with st.expander(f"{rating_color} {code} {stock_info.get('name', '')} - {rating} (信心度: {confidence})"):
+        advice = final_decision.get("operation_advice") or final_decision.get("advice", "")
+        with st.expander(f"{code} {stock_info.get('name', '')} | {rating} | 信心度 {confidence}"):
             col1, col2 = st.columns(2)
             
             with col1:
@@ -481,8 +422,6 @@ def display_analysis_result_card(item: Dict):
                 st.write(f"止盈位: {take_profit}")
                 st.write(f"止损位: {stop_loss}")
             
-            # 投资建议
-            advice = final_decision.get("advice", "")
             if advice:
                 st.markdown("**投资建议**")
                 st.info(advice)
@@ -490,7 +429,7 @@ def display_analysis_result_card(item: Dict):
     else:
         # 分析失败
         error = result.get("error", "未知错误")
-        with st.expander(f"🔴 {code} - 分析失败"):
+        with st.expander(f"{code} - 分析失败"):
             st.error(f"错误: {error}")
 
 
@@ -507,9 +446,9 @@ def display_scheduler_management():
     
     with col1:
         if is_running:
-            st.success("🟢 调度器运行中")
+            st.info("调度器运行中")
         else:
-            st.error("🔴 调度器已停止")
+            st.warning("调度器已停止")
     
     with col2:
         st.info(f"⏰ 定时数量: {len(schedule_times)}个")
@@ -524,7 +463,7 @@ def display_scheduler_management():
     st.markdown("---")
     
     # 显示所有定时时间点
-    st.markdown("#### 📋 已配置的定时时间")
+    st.markdown("#### 已配置的定时时间")
     
     if schedule_times:
         cols_per_row = 4
@@ -655,7 +594,7 @@ def display_scheduler_management():
                 st.rerun()
     
     with col_btn2:
-        if st.button("🚀 立即执行一次", type="primary", width='content'):
+        if st.button("立即执行一次", type="primary", width='content'):
             with st.spinner("正在执行持仓分析..."):
                 try:
                     portfolio_scheduler.run_analysis_now()
@@ -671,7 +610,7 @@ def display_scheduler_management():
 def display_analysis_history():
     """显示分析历史"""
     
-    st.markdown("### 📈 分析历史记录")
+    st.markdown("### 分析历史记录")
     
     stocks = portfolio_manager.get_all_stocks()
     
@@ -686,6 +625,11 @@ def display_analysis_history():
         options=["全部"] + stock_codes,
         help="查看特定股票的分析历史"
     )
+    show_legacy = st.checkbox(
+        "显示旧版摘要记录",
+        value=False,
+        help="旧记录仅包含摘要，不含完整报告快照。默认隐藏，只展示可展开的完整历史报告。",
+    )
     
     # 获取历史记录
     if selected_code == "全部":
@@ -693,7 +637,11 @@ def display_analysis_history():
         all_history = []
         for stock in stocks:
             stock_id = stock["id"]
-            history = portfolio_manager.db.get_latest_analysis_history(stock_id, limit=5)
+            history = portfolio_manager.db.get_latest_analysis_history(
+                stock_id,
+                limit=5,
+                include_legacy=show_legacy,
+            )
             for h in history:
                 h["code"] = stock["code"]
                 h["name"] = stock["name"]
@@ -707,7 +655,9 @@ def display_analysis_history():
         stock = next((s for s in stocks if s["code"] == selected_code), None)
         if stock:
             history_list = portfolio_manager.db.get_latest_analysis_history(
-                stock["id"], limit=20
+                stock["id"],
+                limit=20,
+                include_legacy=show_legacy,
             )
             for h in history_list:
                 h["code"] = stock["code"]
@@ -720,7 +670,9 @@ def display_analysis_history():
         return
     
     # 显示历史记录
-    st.markdown(f"共 {len(history_list)} 条记录")
+    full_count = sum(1 for item in history_list if item.get("has_full_report"))
+    legacy_count = len(history_list) - full_count
+    st.caption(f"共 {len(history_list)} 条记录，其中完整报告 {full_count} 条，旧版摘要 {legacy_count} 条")
     
     for record in history_list:
         display_history_record(record)
@@ -741,43 +693,72 @@ def display_history_record(record: Dict):
     take_profit = record.get("take_profit")
     stop_loss = record.get("stop_loss")
     summary = record.get("summary", "")
+    analysis_source = record.get("analysis_source", "portfolio_batch_analysis")
+    has_full_report = bool(record.get("has_full_report"))
+    legacy_backfilled_from = record.get("legacy_backfilled_from")
     
-    # 评级颜色
-    if "强烈买入" in rating or "买入" in rating:
-        rating_icon = "🟢"
-    elif "卖出" in rating:
-        rating_icon = "🔴"
-    else:
-        rating_icon = "🟡"
+    source_map = {
+        "portfolio_batch_analysis": "批量分析",
+        "portfolio_scheduler": "定时分析",
+        "global_history_migration": "历史迁移",
+        "legacy_backfill": "旧记录补全",
+    }
+    source_label = source_map.get(analysis_source, analysis_source)
+    record_tag = "完整报告" if has_full_report else "旧版摘要"
+    rating_color = get_recommendation_color(rating)
     
     with st.expander(
-        f"{rating_icon} {code} {name} - {rating} | {analysis_time}",
+        f"{code} {name} | {rating} | {analysis_time} | {record_tag}",
         expanded=False
     ):
+        st.markdown(
+            f"""
+            <div class="decision-card">
+                <strong style="color: {rating_color};">{rating}</strong>
+                <span style="margin-left: 12px;">来源: {source_label}</span>
+                <span style="margin-left: 12px;">置信度: {confidence}%</span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
         col1, col2, col3 = st.columns(3)
-        
         with col1:
-            st.markdown("**价格信息**")
-            if current_price:
-                st.write(f"当时价格: {format_price(current_price)}")
-            if target_price:
-                st.write(f"目标价: {format_price(target_price)}")
-
+            st.metric("当时价格", format_price(current_price) if current_price else "N/A")
         with col2:
-            st.markdown("**进场区间**")
-            if entry_min and entry_max:
-                st.write(f"{format_price(entry_min)} ~ {format_price(entry_max)}")
-
+            entry_text = (
+                f"{format_price(entry_min)} ~ {format_price(entry_max)}"
+                if entry_min is not None and entry_max is not None
+                else "N/A"
+            )
+            st.metric("进场区间", entry_text)
         with col3:
-            st.markdown("**风控位置**")
-            if take_profit:
-                st.write(f"止盈: {format_price(take_profit)}")
-            if stop_loss:
-                st.write(f"止损: {format_price(stop_loss)}")
-        
+            st.metric("目标价", format_price(target_price) if target_price else "N/A")
+
+        col4, col5 = st.columns(2)
+        with col4:
+            st.metric("止盈", format_price(take_profit) if take_profit else "N/A")
+        with col5:
+            st.metric("止损", format_price(stop_loss) if stop_loss else "N/A")
+
         if summary:
             st.markdown("**分析摘要**")
             st.info(summary)
-        
-        st.caption(f"置信度: {confidence}%")
+
+        if not has_full_report:
+            notice = "该记录为旧版摘要，原始完整报告未保存。"
+            if legacy_backfilled_from:
+                notice += f" 已基于旧记录 {legacy_backfilled_from} 触发补全。"
+            st.warning(notice)
+            return
+
+        stock_info = record.get("stock_info_json") or record.get("stock_info") or {}
+        agents_results = record.get("agents_results_json") or record.get("agents_results") or {}
+        discussion_result = record.get("discussion_result", "")
+        final_decision = record.get("final_decision_json") or record.get("final_decision") or {}
+
+        render_stock_info_metrics(stock_info, price_label="分析时价格")
+        render_agents_analysis_tabs(agents_results)
+        render_team_discussion(discussion_result)
+        render_final_decision(final_decision)
 

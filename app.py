@@ -25,26 +25,82 @@ from sector_strategy_ui import display_sector_strategy
 from longhubang_ui import display_longhubang
 from smart_monitor_ui import smart_monitor_ui
 from news_flow_ui import display_news_flow_monitor
+from ui_shared import (
+    get_recommendation_color,
+    render_a_share_change_metric,
+    render_agents_analysis_tabs as shared_render_agents_analysis_tabs,
+    render_final_decision as shared_render_final_decision,
+    render_stock_info_metrics as shared_render_stock_info_metrics,
+    render_team_discussion as shared_render_team_discussion,
+)
 
-# 页面配置
+# 页面配置（支持导航点击后单次强制收起侧边栏）
+collapse_once = bool(st.session_state.get("force_sidebar_collapse", False))
 st.set_page_config(
     page_title="复合多AI智能体股票团队分析系统",
-    page_icon="📈",
+    page_icon=None,
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed" if collapse_once else "expanded"
 )
+if collapse_once:
+    st.session_state["force_sidebar_collapse"] = False
 
 # 注入JS用于隐藏侧边栏
 def collapse_sidebar():
     """使用JS注入自动折叠侧边栏"""
     components.html("""
         <script>
-        const doc = window.parent.document;
-        const sidebar = doc.querySelector('[data-testid="stSidebar"]');
-        if (sidebar && sidebar.getAttribute("aria-expanded") === "true") {
-            const btn = doc.querySelector('[data-testid="stSidebarCollapseButton"]');
-            if (btn) btn.click();
-        }
+        (function () {
+            const parentWindow = window.parent || window;
+            const doc = parentWindow.document;
+
+            const findCollapseButton = () => {
+                const selectors = [
+                    '[data-testid="stSidebarCollapseButton"]',
+                    'button[aria-label="Close sidebar"]',
+                    'button[aria-label="Collapse sidebar"]',
+                    'button[aria-label="收起侧边栏"]',
+                    'button[title="Close sidebar"]',
+                    'button[title="Collapse sidebar"]',
+                    '[data-testid="collapsedControl"]'
+                ];
+                for (const selector of selectors) {
+                    const btn = doc.querySelector(selector);
+                    if (btn) return btn;
+                }
+                return null;
+            };
+
+            let attempts = 0;
+            const timer = setInterval(() => {
+                attempts += 1;
+                const sidebar = doc.querySelector('[data-testid="stSidebar"]');
+                const isExpanded = !!(sidebar && sidebar.getAttribute("aria-expanded") === "true");
+                const collapseBtn = findCollapseButton();
+
+                if (isExpanded && collapseBtn) {
+                    collapseBtn.click();
+                    clearInterval(timer);
+                    return;
+                }
+
+                // 兜底：触发 Streamlit 的常见侧边栏快捷键
+                if (isExpanded && attempts % 3 === 0) {
+                    const shortcuts = [
+                        new KeyboardEvent("keydown", {key: "s", ctrlKey: true, shiftKey: true, bubbles: true}),
+                        new KeyboardEvent("keydown", {key: "b", ctrlKey: true, bubbles: true}),
+                    ];
+                    for (const evt of shortcuts) {
+                        parentWindow.dispatchEvent(evt);
+                        doc.dispatchEvent(evt);
+                    }
+                }
+
+                if (attempts >= 20) {
+                    clearInterval(timer);
+                }
+            }, 60);
+        })();
         </script>
     """, height=0, width=0)
 
@@ -60,6 +116,8 @@ st.markdown("""
     /* 弱化 Streamlit 默认头部 */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
+    [data-testid="stAppDeployButton"] {display: none !important;}
+    [data-testid="stHeaderActionElements"] [data-testid="stAppDeployButton"] {display: none !important;}
     
     /* 干净的标签页 */
     .stTabs [data-baseweb="tab-list"] {
@@ -93,7 +151,7 @@ st.markdown("""
         box-shadow: 0 1px 3px rgba(0,0,0,0.2);
     }
     .agent-card { border-left: 4px solid #3b82f6; }
-    .decision-card { border-left: 4px solid #10b981; }
+    .decision-card { border-left: 4px solid #2563eb; }
     .warning-card { border-left: 4px solid #f59e0b; }
     
     /* 表单控件极简设计 */
@@ -118,6 +176,28 @@ st.markdown("""
     }
     .stButton>button:hover {
         border-color: var(--primary-color);
+    }
+
+    /* 侧边栏纵向紧凑 */
+    [data-testid="stSidebar"] .block-container {
+        padding-top: 0.8rem;
+        padding-bottom: 0.8rem;
+    }
+    [data-testid="stSidebar"] h3 {
+        margin: 0.2rem 0 0.45rem 0;
+    }
+    [data-testid="stSidebar"] .stButton>button {
+        min-height: 2rem;
+        padding-top: 0.2rem;
+        padding-bottom: 0.2rem;
+    }
+    [data-testid="stSidebar"] hr {
+        margin: 0.3rem 0;
+    }
+    [data-testid="stSidebar"] .streamlit-expanderHeader {
+        min-height: 2rem;
+        padding-top: 0.2rem;
+        padding-bottom: 0.2rem;
     }
     
     .streamlit-expanderHeader {
@@ -226,6 +306,31 @@ NAV_VIEW_KEYS = [
     "show_config",
 ]
 
+VIEW_TITLES = {
+    "show_history": "历史记录",
+    "show_monitor": "投资管理-实时监测",
+    "show_main_force": "选股板块-主力选股",
+    "show_low_price_bull": "选股板块-低价擒牛",
+    "show_small_cap": "选股板块-小市值策略",
+    "show_profit_growth": "选股板块-净利增长",
+    "show_value_stock": "选股板块-低估值策略",
+    "show_sector_strategy": "策略分析-智策板块",
+    "show_longhubang": "策略分析-智瞰龙虎",
+    "show_smart_monitor": "投资管理-AI盯盘",
+    "show_portfolio": "投资管理-持仓分析",
+    "show_news_flow": "策略分析-新闻流量",
+    "show_macro_cycle": "策略分析-宏观周期",
+    "show_config": "系统配置",
+}
+
+
+def get_current_view_title() -> str:
+    """返回当前主区域应显示的功能标题。"""
+    for key in NAV_VIEW_KEYS:
+        if st.session_state.get(key):
+            return VIEW_TITLES.get(key, "股票分析")
+    return "股票分析"
+
 
 def activate_view(view_key: Optional[str] = None) -> None:
     """Activate one main view and clear the others."""
@@ -234,16 +339,17 @@ def activate_view(view_key: Optional[str] = None) -> None:
             st.session_state[key] = True
         else:
             st.session_state.pop(key, None)
+    st.session_state["force_sidebar_collapse"] = True
+    st.rerun()
 
 
 def main():
     # 顶部标题栏
     st.markdown("""
-    <div style="text-align: center; margin-bottom: 2rem;">
-        <h2 style="font-weight: 600; font-size: 1.6rem; margin-bottom: 0.2rem; color: var(--text-color);">复合多AI智能体股票分析系统</h2>
-        <p style="color: rgba(255,255,255,0.6); font-size: 0.9rem;">基于专业量化策略的多Agent智能分析平台</p>
+    <div style="text-align: center; margin-bottom: 1.25rem;">
+        <h2 style="font-weight: 600; font-size: 1.6rem; margin-bottom: 0; color: var(--text-color);">%s</h2>
     </div>
-    """, unsafe_allow_html=True)
+    """ % get_current_view_title(), unsafe_allow_html=True)
 
     # 侧边栏
     with st.sidebar:
@@ -256,17 +362,6 @@ def main():
 
         if st.button("历史记录", width='stretch', key="nav_history", help="查看历史分析记录"):
             activate_view("show_history")
-
-        with st.expander("使用帮助"):
-            st.markdown("""
-            **输入格式**
-            - A股：6位数字，如 `600519`
-            - 港股：数字或 `HK` 前缀，如 `00700`、`HK00700`
-            - 美股：字母代码，如 `AAPL`
-
-            **AI 分析流程**
-            数据获取 -> 技术面/基本面/资金面分析 -> AI 整理 -> 团队决策
-            """)
 
         st.markdown("---")
 
@@ -320,23 +415,16 @@ def main():
 
         st.markdown("---")
 
-        # 环境配置
-        if st.button("环境配置", width='stretch', key="nav_config", help="系统设置与API配置"):
-            activate_view("show_config")
-
-        st.markdown("---")
-
         # 系统配置
         st.markdown("### 系统配置")
         ensure_model_session_state()
 
-        # API密钥检查
+        # API密钥检查（仅用于后续分析流程判断，不在侧边栏展示状态）
         api_key_status = check_api_key()
-        if api_key_status:
-            st.success("API已连接")
-        else:
-            st.error("API未配置")
-            st.caption("请在.env中配置API密钥")
+
+        # 环境配置（并入系统配置分组）
+        if st.button("环境配置", width='stretch', key="nav_config", help="系统设置与API配置"):
+            activate_view("show_config")
 
         st.markdown("---")
 
@@ -355,7 +443,7 @@ def main():
             index=lightweight_model_keys.index(st.session_state.selected_lightweight_model),
             format_func=lambda model_name: lightweight_model_options.get(model_name, model_name),
             key="selected_lightweight_model",
-            help="候选项完全来自 .env 中的轻量模型配置",
+            help="用于数据拉取、技术指标解读、资金面/新闻整理等轻量任务，速度优先。",
         )
 
         st.selectbox(
@@ -364,27 +452,15 @@ def main():
             index=reasoning_model_keys.index(st.session_state.selected_reasoning_model),
             format_func=lambda model_name: reasoning_model_options.get(model_name, model_name),
             key="selected_reasoning_model",
-            help="候选项完全来自 .env 中的推理模型配置",
+            help="用于多分析师讨论与最终投资决策生成等复杂推理任务，质量优先。",
         )
-
-        st.caption(f"轻量任务当前使用: {st.session_state.selected_lightweight_model}")
-        st.caption(f"推理任务当前使用: {st.session_state.selected_reasoning_model}")
-        st.caption("仅影响当前会话中新发起的分析")
-
-
-        if config.ADMIN_PASSWORD or getattr(config, "ADMIN_PASSWORD_HASH", ""):
-            if st.button("退出登录", width='stretch', key="nav_logout"):
-                st.session_state.authenticated = False
-                st.session_state.pop("authenticated_at", None)
-                st.session_state.pop("login_password_input", None)
-                st.rerun()
 
         st.markdown("---")
 
         # 系统状态面板
         st.markdown("### 系统状态")
 
-        monitor_status = "🟢 运行中" if monitor_service.running else "🔴 已停止"
+        monitor_status = "运行中" if monitor_service.running else "已停止"
         st.markdown(f"**监测服务**: {monitor_status}")
 
         try:
@@ -399,16 +475,20 @@ def main():
         except:
             pass
 
+        st.markdown("---")
+        if config.ADMIN_PASSWORD or getattr(config, "ADMIN_PASSWORD_HASH", ""):
+            if st.button("退出登录", width='stretch', key="nav_logout"):
+                st.session_state.authenticated = False
+                st.session_state.pop("authenticated_at", None)
+                st.session_state.pop("login_password_input", None)
+                st.rerun()
+
         render_site_filing()
 
     # 从配置获取数据获取周期
     period = getattr(config, "DATA_PERIOD", "1y")
     selected_lightweight_model, selected_reasoning_model = get_selected_models()
     
-    # 检测是否进入任意子页面，以折叠侧边栏
-    if any(st.session_state.get(v, False) for v in NAV_VIEW_KEYS):
-        collapse_sidebar()
-
     # 检查是否显示历史记录
     if 'show_history' in st.session_state and st.session_state.show_history:
         display_history_records()
@@ -1037,7 +1117,7 @@ def run_batch_analysis(stock_list, period, batch_mode="顺序分析"):
 
     else:
         # 顺序分析
-        status_text.text(f"📝 按顺序分析 {total} 只股票...")
+        status_text.text(f"按顺序分析 {total} 只股票...")
 
         for i, symbol in enumerate(stock_list, 1):
             status_text.text(f"[{i}/{total}] 正在分析 {symbol}...")
@@ -1286,7 +1366,7 @@ def run_stock_analysis(symbol, period):
         display_agents_analysis(agents_results)
 
         # 8. 团队讨论
-        status_text.text("🤝 分析团队正在讨论...")
+        status_text.text("分析团队正在讨论...")
         discussion_result = agents.conduct_team_discussion(agents_results, stock_info)
         progress_bar.progress(88)
 
@@ -1294,7 +1374,7 @@ def run_stock_analysis(symbol, period):
         display_team_discussion(discussion_result)
 
         # 9. 最终决策
-        status_text.text("📋 正在制定最终投资决策...")
+        status_text.text("正在制定最终投资决策...")
         final_decision = agents.make_final_decision(discussion_result, stock_info, indicators)
         progress_bar.progress(100)
 
@@ -1338,35 +1418,7 @@ def display_stock_info(stock_info, indicators):
     """显示股票基本信息"""
     st.subheader(f"{stock_info.get('name', 'N/A')} ({stock_info.get('symbol', 'N/A')})")
 
-    # 基本信息卡片
-    col1, col2, col3, col4, col5 = st.columns(5)
-
-    with col1:
-        current_price = stock_info.get('current_price', 'N/A')
-        st.metric("当前价格", f"{current_price}")
-
-    with col2:
-        change_percent = stock_info.get('change_percent', 'N/A')
-        if isinstance(change_percent, (int, float)):
-            st.metric("涨跌幅", f"{change_percent:.2f}%", f"{change_percent:.2f}%")
-        else:
-            st.metric("涨跌幅", f"{change_percent}")
-
-    with col3:
-        pe_ratio = stock_info.get('pe_ratio', 'N/A')
-        st.metric("市盈率", f"{pe_ratio}")
-
-    with col4:
-        pb_ratio = stock_info.get('pb_ratio', 'N/A')
-        st.metric("市净率", f"{pb_ratio}")
-
-    with col5:
-        market_cap = stock_info.get('market_cap', 'N/A')
-        if isinstance(market_cap, (int, float)):
-            market_cap_str = f"{market_cap/1e9:.2f}B" if market_cap > 1e9 else f"{market_cap/1e6:.2f}M"
-            st.metric("市值", market_cap_str)
-        else:
-            st.metric("市值", f"{market_cap}")
+    shared_render_stock_info_metrics(stock_info)
 
     # 技术指标
     if indicators and not isinstance(indicators, dict) or "error" not in indicators:
@@ -1421,7 +1473,11 @@ def display_stock_chart(stock_data, stock_info):
         high=stock_data['High'],
         low=stock_data['Low'],
         close=stock_data['Close'],
-        name="K线"
+        name="K线",
+        increasing_line_color="#d14b57",
+        increasing_fillcolor="#d14b57",
+        decreasing_line_color="#2f8f62",
+        decreasing_fillcolor="#2f8f62",
     ))
 
     # 添加移动平均线
@@ -1455,15 +1511,15 @@ def display_stock_chart(stock_data, stock_info):
             x=stock_data.index,
             y=stock_data['BB_upper'],
             name="布林上轨",
-            line=dict(color='red', width=1, dash='dash')
+            line=dict(color='#64748b', width=1, dash='dash')
         ))
         fig.add_trace(go.Scatter(
             x=stock_data.index,
             y=stock_data['BB_lower'],
             name="布林下轨",
-            line=dict(color='green', width=1, dash='dash'),
+            line=dict(color='#94a3b8', width=1, dash='dash'),
             fill='tonexty',
-            fillcolor='rgba(0,100,80,0.1)'
+            fillcolor='rgba(37,99,235,0.08)'
         ))
 
     fig.update_layout(
@@ -1501,110 +1557,15 @@ def display_stock_chart(stock_data, stock_info):
 
 def display_agents_analysis(agents_results):
     """显示各分析师报告"""
-    st.subheader("AI分析师团队报告")
-
-    # 创建标签页
-    tab_names = []
-    tab_contents = []
-
-    for agent_key, agent_result in agents_results.items():
-        agent_name = agent_result.get('agent_name', '未知分析师')
-        tab_names.append(agent_name)
-        tab_contents.append(agent_result)
-
-    tabs = st.tabs(tab_names)
-
-    for i, tab in enumerate(tabs):
-        with tab:
-            agent_result = tab_contents[i]
-
-            # 分析师信息
-            st.markdown(f"""
-            <div class="agent-card">
-                <h4>👨‍{agent_result.get('agent_name', '未知')}</h4>
-                <p><strong>职责：</strong>{agent_result.get('agent_role', '未知')}</p>
-                <p><strong>关注领域：</strong>{', '.join(agent_result.get('focus_areas', []))}</p>
-                <p><strong>分析时间：</strong>{agent_result.get('timestamp', '未知')}</p>
-            </div>
-            """, unsafe_allow_html=True)
-
-            # 分析报告
-            st.markdown("**📄 分析报告:**")
-            st.write(agent_result.get('analysis', '暂无分析'))
+    shared_render_agents_analysis_tabs(agents_results)
 
 def display_team_discussion(discussion_result):
     """显示团队讨论"""
-    st.subheader("🤝 分析团队讨论")
-
-    st.markdown("""
-    <div class="agent-card">
-        <h4>💭 团队综合讨论</h4>
-        <p>各位分析师正在就该股票进行深入讨论，整合不同维度的分析观点...</p>
-    </div>
-    """, unsafe_allow_html=True)
-
-    st.write(discussion_result)
+    shared_render_team_discussion(discussion_result)
 
 def display_final_decision(final_decision, stock_info, agents_results=None, discussion_result=None):
     """显示最终投资决策"""
-    st.subheader("📋 最终投资决策")
-
-    if isinstance(final_decision, dict) and "decision_text" not in final_decision:
-        # JSON格式的决策
-        col1, col2 = st.columns([1, 2])
-
-        with col1:
-            # 投资评级
-            rating = final_decision.get('rating', '未知')
-            rating_color = {"买入": "🟢", "持有": "🟡", "卖出": "🔴"}.get(rating, "⚪")
-
-            st.markdown(f"""
-            <div class="decision-card">
-                <h3 style="text-align: center;">{rating_color} {rating}</h3>
-                <h4 style="text-align: center;">投资评级</h4>
-            </div>
-            """, unsafe_allow_html=True)
-
-            # 关键指标
-            confidence = final_decision.get('confidence_level', 'N/A')
-            st.metric("信心度", f"{confidence}/10")
-
-            target_price = final_decision.get('target_price', 'N/A')
-            st.metric("目标价格", f"{target_price}")
-
-            position_size = final_decision.get('position_size', 'N/A')
-            st.metric("建议仓位", f"{position_size}")
-
-        with col2:
-            # 详细建议
-            st.markdown("**操作建议:**")
-            st.write(final_decision.get('operation_advice', '暂无建议'))
-
-            st.markdown("**📍 关键位置:**")
-            col2_1, col2_2 = st.columns(2)
-
-            with col2_1:
-                st.write(f"**进场区间:** {final_decision.get('entry_range', 'N/A')}")
-                st.write(f"**止盈位:** {final_decision.get('take_profit', 'N/A')}")
-
-            with col2_2:
-                st.write(f"**止损位:** {final_decision.get('stop_loss', 'N/A')}")
-                st.write(f"**持有周期:** {final_decision.get('holding_period', 'N/A')}")
-
-        # 风险提示
-        risk_warning = final_decision.get('risk_warning', '')
-        if risk_warning:
-            st.markdown(f"""
-            <div class="warning-card">
-                <h4>风险提示</h4>
-                <p>{risk_warning}</p>
-            </div>
-            """, unsafe_allow_html=True)
-
-    else:
-        # 文本格式的决策
-        decision_text = final_decision.get('decision_text', str(final_decision))
-        st.write(decision_text)
+    shared_render_final_decision(final_decision)
 
     # 添加PDF导出功能
     st.markdown("---")
@@ -1657,7 +1618,7 @@ def show_example_interface():
 
     st.markdown("---")
     st.markdown("""
-    ### 🌏 市场支持说明
+    ### 市场支持说明
     - **A股**：完整支持（技术分析、财务数据、资金流向、市场情绪、新闻数据qstock）
     - **港股**：部分支持（技术分析、21项财务指标）⭐️ 
     - **美股**：完整支持（技术分析、财务数据）
@@ -1674,7 +1635,7 @@ def display_history_records():
     records = db.get_all_records()
 
     if not records:
-        st.info("📭 暂无历史分析记录")
+        st.info("暂无历史分析记录")
         return
 
     st.write(f"共找到 {len(records)} 条分析记录")
@@ -1706,15 +1667,7 @@ def display_history_records():
     for record in filtered_records:
         # 根据评级设置颜色和图标
         rating = record.get('rating', '未知')
-        rating_color = {
-            "买入": "🟢",
-            "持有": "🟡",
-            "卖出": "🔴",
-            "强烈买入": "🟢",
-            "强烈卖出": "🔴"
-        }.get(rating, "⚪")
-
-        with st.expander(f"{rating_color} {record['stock_name']} ({record['symbol']}) - {record['analysis_date']}"):
+        with st.expander(f"{record['stock_name']} ({record['symbol']}) - {record['analysis_date']} | {rating}"):
             col1, col2, col3, col4 = st.columns([2, 2, 1, 1])
 
             with col1:
@@ -1727,11 +1680,11 @@ def display_history_records():
                 st.write(f"**投资评级:** **{rating}**")
 
             with col3:
-                if st.button("👀 查看详情", key=f"view_{record['id']}"):
+                if st.button("查看详情", key=f"view_{record['id']}"):
                     st.session_state.viewing_record_id = record['id']
 
             with col4:
-                if st.button("➕ 监测", key=f"add_monitor_{record['id']}"):
+                if st.button("加入监测", key=f"add_monitor_{record['id']}"):
                     st.session_state.add_to_monitor_id = record['id']
                     st.session_state.viewing_record_id = record['id']
 
@@ -1752,7 +1705,7 @@ def display_history_records():
 def display_add_to_monitor_dialog(record):
     """显示加入监测的对话框"""
     st.markdown("---")
-    st.subheader("➕ 加入监测")
+    st.subheader("加入监测")
 
     final_decision = record['final_decision']
 
@@ -1928,7 +1881,7 @@ def display_add_to_monitor_dialog(record):
 def display_record_detail(record_id):
     """显示单条记录的详细信息"""
     st.markdown("---")
-    st.subheader("📋 详细分析记录")
+    st.subheader("详细分析记录")
 
     record = db.get_record_by_id(record_id)
     if not record:
@@ -1948,119 +1901,25 @@ def display_record_detail(record_id):
     st.subheader("股票基本信息")
     stock_info = record['stock_info']
     if stock_info:
-        col1, col2, col3, col4, col5 = st.columns(5)
-
-        with col1:
-            current_price = stock_info.get('current_price', 'N/A')
-            st.metric("当前价格", f"{current_price}")
-
-        with col2:
-            change_percent = stock_info.get('change_percent', 'N/A')
-            if isinstance(change_percent, (int, float)):
-                st.metric("涨跌幅", f"{change_percent:.2f}%", f"{change_percent:.2f}%")
-            else:
-                st.metric("涨跌幅", f"{change_percent}")
-
-        with col3:
-            pe_ratio = stock_info.get('pe_ratio', 'N/A')
-            st.metric("市盈率", f"{pe_ratio}")
-
-        with col4:
-            pb_ratio = stock_info.get('pb_ratio', 'N/A')
-            st.metric("市净率", f"{pb_ratio}")
-
-        with col5:
-            market_cap = stock_info.get('market_cap', 'N/A')
-            if isinstance(market_cap, (int, float)):
-                market_cap_str = f"{market_cap/1e9:.2f}B" if market_cap > 1e9 else f"{market_cap/1e6:.2f}M"
-                st.metric("市值", market_cap_str)
-            else:
-                st.metric("市值", f"{market_cap}")
+        shared_render_stock_info_metrics(stock_info)
 
     # 各分析师报告
     st.subheader("AI分析师团队报告")
     agents_results = record['agents_results']
     if agents_results:
-        tab_names = []
-        tab_contents = []
-
-        for agent_key, agent_result in agents_results.items():
-            agent_name = agent_result.get('agent_name', '未知分析师')
-            tab_names.append(agent_name)
-            tab_contents.append(agent_result)
-
-        tabs = st.tabs(tab_names)
-
-        for i, tab in enumerate(tabs):
-            with tab:
-                agent_result = tab_contents[i]
-
-                st.markdown(f"""
-                <div class="agent-card">
-                    <h4>👨‍{agent_result.get('agent_name', '未知')}</h4>
-                    <p><strong>职责：</strong>{agent_result.get('agent_role', '未知')}</p>
-                    <p><strong>关注领域：</strong>{', '.join(agent_result.get('focus_areas', []))}</p>
-                </div>
-                """, unsafe_allow_html=True)
-
-                st.markdown("**📄 分析报告:**")
-                st.write(agent_result.get('analysis', '暂无分析'))
+        shared_render_agents_analysis_tabs(agents_results)
 
     # 团队讨论
-    st.subheader("🤝 分析团队讨论")
+    st.subheader("分析团队讨论")
     discussion_result = record['discussion_result']
     if discussion_result:
-        st.markdown("""
-        <div class="agent-card">
-            <h4>💭 团队综合讨论</h4>
-        </div>
-        """, unsafe_allow_html=True)
-        st.write(discussion_result)
+        shared_render_team_discussion(discussion_result)
 
     # 最终决策
-    st.subheader("📋 最终投资决策")
+    st.subheader("最终投资决策")
     final_decision = record['final_decision']
     if final_decision:
-        if isinstance(final_decision, dict) and "decision_text" not in final_decision:
-            col1, col2 = st.columns([1, 2])
-
-            with col1:
-                rating = final_decision.get('rating', '未知')
-                rating_color = {"买入": "🟢", "持有": "🟡", "卖出": "🔴"}.get(rating, "⚪")
-
-                st.markdown(f"""
-                <div class="decision-card">
-                    <h3 style="text-align: center;">{rating_color} {rating}</h3>
-                    <h4 style="text-align: center;">投资评级</h4>
-                </div>
-                """, unsafe_allow_html=True)
-
-                confidence = final_decision.get('confidence_level', 'N/A')
-                st.metric("信心度", f"{confidence}/10")
-
-                target_price = final_decision.get('target_price', 'N/A')
-                st.metric("目标价格", f"{target_price}")
-
-                position_size = final_decision.get('position_size', 'N/A')
-                st.metric("建议仓位", f"{position_size}")
-
-            with col2:
-                st.markdown("**操作建议:**")
-                st.write(final_decision.get('operation_advice', '暂无建议'))
-
-                st.markdown("**📍 关键位置:**")
-                col2_1, col2_2 = st.columns(2)
-
-                with col2_1:
-                    st.write(f"**进场区间:** {final_decision.get('entry_range', 'N/A')}")
-                    st.write(f"**止盈位:** {final_decision.get('take_profit', 'N/A')}")
-
-                with col2_2:
-                    st.write(f"**止损位:** {final_decision.get('stop_loss', 'N/A')}")
-                    st.write(f"**持有周期:** {final_decision.get('holding_period', 'N/A')}")
-        else:
-            decision_text = final_decision.get('decision_text', str(final_decision))
-            st.write(decision_text)
+        shared_render_final_decision(final_decision)
 
     # 加入监测功能
     st.markdown("---")
@@ -2074,7 +1933,7 @@ def display_record_detail(record_id):
         col1, col2 = st.columns([1, 3])
 
         with col1:
-            if st.button("➕ 加入监测", type="primary", width='stretch'):
+            if st.button("加入监测", type="primary", width='stretch'):
                 st.session_state.add_to_monitor_id = record_id
                 st.rerun()
 
@@ -2097,7 +1956,7 @@ def display_config_manager():
     config_info = config_manager.get_config_info()
 
     # 创建标签页
-    tab1, tab2, tab3, tab4 = st.tabs(["📝 基本配置", "数据源配置", "量化交易配置", "通知配置"])
+    tab1, tab2, tab3, tab4 = st.tabs(["基本配置", "数据源配置", "量化交易配置", "通知配置"])
 
     # 使用session_state保存临时配置
     if 'temp_config' not in st.session_state:
@@ -2112,7 +1971,7 @@ def display_config_manager():
         current_api_key = st.session_state.temp_config.get("DEEPSEEK_API_KEY", "")
 
         new_api_key = st.text_input(
-            f"🔑 {api_key_info['description']} {'*' if api_key_info['required'] else ''}",
+            f"{api_key_info['description']} {'*' if api_key_info['required'] else ''}",
             value=current_api_key,
             type="password",
             help="从 https://platform.deepseek.com 获取API密钥",
@@ -2129,7 +1988,7 @@ def display_config_manager():
         current_base_url = st.session_state.temp_config.get("DEEPSEEK_BASE_URL", "")
 
         new_base_url = st.text_input(
-            f"🌐 {base_url_info['description']}",
+            f"{base_url_info['description']}",
             value=current_base_url,
             help="一般无需修改，保持默认即可",
             key="input_deepseek_base_url"
@@ -2212,7 +2071,7 @@ def display_config_manager():
         icp_number_info = config_info["ICP_NUMBER"]
         current_icp_number = st.session_state.temp_config.get("ICP_NUMBER", "")
         new_icp_number = st.text_input(
-            f"📝 {icp_number_info['description']}",
+            f"{icp_number_info['description']}",
             value=current_icp_number,
             placeholder="例如：京ICP备12345678号",
             key="input_icp_number"
@@ -2228,7 +2087,7 @@ def display_config_manager():
             "https://beian.miit.gov.cn/"
         )
         new_icp_link = st.text_input(
-            f"🔗 {icp_link_info['description']}",
+            f"{icp_link_info['description']}",
             value=current_icp_link,
             placeholder="https://beian.miit.gov.cn/",
             key="input_icp_link"
@@ -2243,7 +2102,7 @@ def display_config_manager():
         admin_password_info = config_info["ADMIN_PASSWORD"]
         current_admin_password = st.session_state.temp_config.get("ADMIN_PASSWORD", "")
         new_admin_password = st.text_input(
-            f"🔑 {admin_password_info['description']}",
+            f"{admin_password_info['description']}",
             value=current_admin_password,
             type="password",
             key="input_admin_password"
@@ -2295,7 +2154,7 @@ def display_config_manager():
         current_tushare = st.session_state.temp_config.get("TUSHARE_TOKEN", "")
 
         new_tushare = st.text_input(
-            f"🎫 {tushare_info['description']}",
+            f"{tushare_info['description']}",
             value=current_tushare,
             type="password",
             help="从 https://tushare.pro 获取Token",
@@ -2306,7 +2165,7 @@ def display_config_manager():
         tushare_url_info = config_info.get("TUSHARE_URL", {"description": "Tushare API地址"})
         current_tushare_url = st.session_state.temp_config.get("TUSHARE_URL", "https://api.tushare.pro")
         new_tushare_url = st.text_input(
-            f"🌐 {tushare_url_info['description']}",
+            f"{tushare_url_info['description']}",
             value=current_tushare_url,
             help="一般无需修改",
             key="input_tushare_url"
@@ -2321,7 +2180,7 @@ def display_config_manager():
         current_tdx_enabled = st.session_state.temp_config.get("TDX_ENABLED", "false") == "true"
         
         new_tdx_enabled = st.checkbox(
-            f"✅ {tdx_enabled_info['description']}",
+            f"{tdx_enabled_info['description']}",
             value=current_tdx_enabled,
             key="input_tdx_enabled"
         )
@@ -2332,7 +2191,7 @@ def display_config_manager():
         current_tdx_url = st.session_state.temp_config.get("TDX_BASE_URL", "http://127.0.0.1:8181")
         
         new_tdx_url = st.text_input(
-            f"🌐 {tdx_url_info['description']}",
+            f"{tdx_url_info['description']}",
             value=current_tdx_url,
             disabled=not new_tdx_enabled,
             key="input_tdx_base_url"
@@ -2368,7 +2227,7 @@ def display_config_manager():
             current_account_id = st.session_state.temp_config.get("MINIQMT_ACCOUNT_ID", "")
 
             new_account_id = st.text_input(
-                f"🆔 {account_id_info['description']}",
+                f"{account_id_info['description']}",
                 value=current_account_id,
                 disabled=not new_enabled,
                 key="input_miniqmt_account_id"
@@ -2379,7 +2238,7 @@ def display_config_manager():
             current_host = st.session_state.temp_config.get("MINIQMT_HOST", "")
 
             new_host = st.text_input(
-                f"🖥️ {host_info['description']}",
+                f"{host_info['description']}",
                 value=current_host,
                 disabled=not new_enabled,
                 key="input_miniqmt_host"
@@ -2391,7 +2250,7 @@ def display_config_manager():
             current_port = st.session_state.temp_config.get("MINIQMT_PORT", "")
 
             new_port = st.text_input(
-                f"🔌 {port_info['description']}",
+                f"{port_info['description']}",
                 value=current_port,
                 disabled=not new_enabled,
                 key="input_miniqmt_port"
@@ -2410,7 +2269,7 @@ def display_config_manager():
         col_email, col_webhook = st.columns(2)
 
         with col_email:
-            st.markdown("#### 📧 邮件通知")
+            st.markdown("#### 邮件通知")
 
             # 邮件启用开关
             email_enabled_info = config_info.get("EMAIL_ENABLED", {"value": "false"})
@@ -2429,7 +2288,7 @@ def display_config_manager():
             current_smtp_server = st.session_state.temp_config.get("SMTP_SERVER", "")
 
             new_smtp_server = st.text_input(
-                f"📮 {smtp_server_info['description']}",
+                f"{smtp_server_info['description']}",
                 value=current_smtp_server,
                 disabled=not new_email_enabled,
                 placeholder="smtp.qq.com",
@@ -2442,7 +2301,7 @@ def display_config_manager():
             current_smtp_port = st.session_state.temp_config.get("SMTP_PORT", "587")
 
             new_smtp_port = st.text_input(
-                f"🔌 {smtp_port_info['description']}",
+                f"{smtp_port_info['description']}",
                 value=current_smtp_port,
                 disabled=not new_email_enabled,
                 placeholder="587 (TLS) 或 465 (SSL)",
@@ -2455,7 +2314,7 @@ def display_config_manager():
             current_email_from = st.session_state.temp_config.get("EMAIL_FROM", "")
 
             new_email_from = st.text_input(
-                f"📤 {email_from_info['description']}",
+                f"{email_from_info['description']}",
                 value=current_email_from,
                 disabled=not new_email_enabled,
                 placeholder="your-email@qq.com",
@@ -2482,7 +2341,7 @@ def display_config_manager():
             current_email_to = st.session_state.temp_config.get("EMAIL_TO", "")
 
             new_email_to = st.text_input(
-                f"📥 {email_to_info['description']}",
+                f"{email_to_info['description']}",
                 value=current_email_to,
                 disabled=not new_email_enabled,
                 placeholder="receiver@qq.com",
@@ -2495,7 +2354,7 @@ def display_config_manager():
 
 
         with col_webhook:
-            st.markdown("#### 📱 Webhook通知")
+            st.markdown("#### Webhook通知")
 
             # Webhook启用开关
             webhook_enabled_info = config_info.get("WEBHOOK_ENABLED", {"value": "false"})
@@ -2514,7 +2373,7 @@ def display_config_manager():
             current_webhook_type = st.session_state.temp_config.get("WEBHOOK_TYPE", "dingtalk")
 
             new_webhook_type = st.selectbox(
-                f"📲 {webhook_type_info['description']}",
+                f"{webhook_type_info['description']}",
                 options=webhook_type_info.get('options', ["dingtalk", "feishu"]),
                 index=0 if current_webhook_type == "dingtalk" else 1,
                 disabled=not new_webhook_enabled,
@@ -2527,7 +2386,7 @@ def display_config_manager():
             current_webhook_url = st.session_state.temp_config.get("WEBHOOK_URL", "")
 
             new_webhook_url = st.text_input(
-                f"🔗 {webhook_url_info['description']}",
+                f"{webhook_url_info['description']}",
                 value=current_webhook_url,
                 disabled=not new_webhook_enabled,
                 placeholder="https://oapi.dingtalk.com/robot/send?access_token=...",
@@ -2540,7 +2399,7 @@ def display_config_manager():
             current_webhook_keyword = st.session_state.temp_config.get("WEBHOOK_KEYWORD", "aiagents通知")
 
             new_webhook_keyword = st.text_input(
-                f"🔑 {webhook_keyword_info['description']}",
+                f"{webhook_keyword_info['description']}",
                 value=current_webhook_keyword,
                 disabled=not new_webhook_enabled or new_webhook_type != "dingtalk",
                 placeholder="aiagents通知",
@@ -2551,7 +2410,7 @@ def display_config_manager():
 
             # 测试连通按钮
             if new_webhook_enabled and new_webhook_url:
-                if st.button("🧪 测试Webhook连通", width='stretch', key="test_webhook_btn"):
+                if st.button("测试Webhook连通", width='stretch', key="test_webhook_btn"):
                     with st.spinner("正在发送测试消息..."):
                         # 临时更新配置
                         temp_env_backup = {}
@@ -2589,7 +2448,7 @@ def display_config_manager():
     col1, col2, col3, col4 = st.columns([1, 1, 1, 2])
 
     with col1:
-        if st.button("💾 保存配置", type="primary", width='stretch'):
+        if st.button("保存配置", type="primary", width='stretch'):
             # 验证配置
             is_valid, message = config_manager.validate_config(st.session_state.temp_config)
 
@@ -2646,15 +2505,15 @@ def display_batch_analysis_results(results, period):
     with col1:
         st.metric("总数", total)
     with col2:
-        st.metric("成功", len(success_results), delta=None, delta_color="normal")
+        st.metric("成功", len(success_results))
     with col3:
-        st.metric("失败", len(failed_results), delta=None, delta_color="inverse")
+        st.metric("失败", len(failed_results))
     with col4:
-        st.metric("已保存", saved_count, delta=None, delta_color="normal")
+        st.metric("已保存", saved_count)
 
     # 提示信息
     if saved_count > 0:
-        st.info(f"💾 已有 {saved_count} 只股票的分析结果保存到历史记录，可在侧边栏点击「历史记录」查看")
+        st.info(f"已有 {saved_count} 只股票的分析结果保存到历史记录，可在侧边栏点击“历史记录”查看。")
 
     st.markdown("---")
 
@@ -2696,7 +2555,7 @@ def display_comparison_table(results):
     """显示对比表格"""
     import pandas as pd
 
-    st.subheader("📋 股票对比表格")
+    st.subheader("股票对比表格")
 
     # 构建对比数据
     comparison_data = []
@@ -2788,7 +2647,7 @@ def display_comparison_table(results):
 def display_detailed_cards(results, period):
     """显示详细卡片视图"""
 
-    st.subheader("📇 详细分析卡片")
+    st.subheader("详细分析卡片")
 
     # 选择要查看的股票
     stock_options = [f"{r['stock_info']['symbol']} - {r['stock_info']['name']}" for r in results]
@@ -2866,6 +2725,17 @@ def _show_login_page():
                         st.session_state.login_lock_until = int(time.time()) + max(config.LOGIN_LOCKOUT_SECONDS, 1)
                         st.session_state.login_fail_count = 0
                     st.error("密码错误，请重试")
+
+
+def show_example_interface():
+    """Render a compact default prompt area on the home page."""
+    st.caption("输入股票代码后开始分析，支持 A 股、港股、美股。")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.code("000001\n600036\n600519", language="text")
+    with col2:
+        st.code("00700\nAAPL\nNVDA", language="text")
 
 
 def _verify_admin_password(input_password: str) -> bool:

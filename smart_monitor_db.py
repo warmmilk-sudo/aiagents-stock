@@ -49,6 +49,7 @@ class SmartMonitorDB:
                 position_cost REAL DEFAULT 0,
                 position_quantity INTEGER DEFAULT 0,
                 position_date TEXT,
+                managed_by_portfolio INTEGER DEFAULT 0,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(stock_code)
@@ -79,6 +80,11 @@ class SmartMonitorDB:
         # 添加交易时段监控字段
         try:
             cursor.execute("ALTER TABLE monitor_tasks ADD COLUMN trading_hours_only INTEGER DEFAULT 1")
+        except sqlite3.OperationalError:
+            pass
+
+        try:
+            cursor.execute("ALTER TABLE monitor_tasks ADD COLUMN managed_by_portfolio INTEGER DEFAULT 0")
         except sqlite3.OperationalError:
             pass
         
@@ -195,8 +201,8 @@ class SmartMonitorDB:
             (task_name, stock_code, stock_name, enabled, check_interval, 
              auto_trade, trading_hours_only, position_size_pct, stop_loss_pct, take_profit_pct,
              qmt_account_id, notify_email, notify_webhook,
-             has_position, position_cost, position_quantity, position_date)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             has_position, position_cost, position_quantity, position_date, managed_by_portfolio)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             task_data.get('task_name'),
             task_data.get('stock_code'),
@@ -214,7 +220,8 @@ class SmartMonitorDB:
             task_data.get('has_position', 0),
             task_data.get('position_cost', 0),
             task_data.get('position_quantity', 0),
-            task_data.get('position_date')
+            task_data.get('position_date'),
+            task_data.get('managed_by_portfolio', 0)
         ))
         
         task_id = cursor.lastrowid
@@ -241,23 +248,6 @@ class SmartMonitorDB:
         
         return [dict(row) for row in rows]
     
-    def update_monitor_task(self, task_id: int, updates: Dict):
-        """更新监控任务"""
-        conn = sqlite3.connect(self.db_file)
-        cursor = conn.cursor()
-        
-        set_clause = ', '.join([f"{k} = ?" for k in updates.keys()])
-        values = list(updates.values()) + [task_id]
-        
-        cursor.execute(f'''
-            UPDATE monitor_tasks 
-            SET {set_clause}, updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-        ''', values)
-        
-        conn.commit()
-        conn.close()
-    
     def update_monitor_task(self, stock_code: str, task_data: Dict):
         """更新监控任务"""
         conn = sqlite3.connect(self.db_file)
@@ -274,7 +264,15 @@ class SmartMonitorDB:
         if 'check_interval' in task_data:
             update_fields.append('check_interval = ?')
             values.append(task_data['check_interval'])
-        
+
+        if 'stock_name' in task_data:
+            update_fields.append('stock_name = ?')
+            values.append(task_data['stock_name'])
+
+        if 'enabled' in task_data:
+            update_fields.append('enabled = ?')
+            values.append(task_data['enabled'])
+
         if 'auto_trade' in task_data:
             update_fields.append('auto_trade = ?')
             values.append(task_data['auto_trade'])
@@ -286,7 +284,15 @@ class SmartMonitorDB:
         if 'position_size_pct' in task_data:
             update_fields.append('position_size_pct = ?')
             values.append(task_data['position_size_pct'])
-        
+
+        if 'stop_loss_pct' in task_data:
+            update_fields.append('stop_loss_pct = ?')
+            values.append(task_data['stop_loss_pct'])
+
+        if 'take_profit_pct' in task_data:
+            update_fields.append('take_profit_pct = ?')
+            values.append(task_data['take_profit_pct'])
+
         if 'has_position' in task_data:
             update_fields.append('has_position = ?')
             values.append(task_data['has_position'])
@@ -306,7 +312,19 @@ class SmartMonitorDB:
         if 'notify_email' in task_data:
             update_fields.append('notify_email = ?')
             values.append(task_data['notify_email'])
-        
+
+        if 'notify_webhook' in task_data:
+            update_fields.append('notify_webhook = ?')
+            values.append(task_data['notify_webhook'])
+
+        if 'managed_by_portfolio' in task_data:
+            update_fields.append('managed_by_portfolio = ?')
+            values.append(task_data['managed_by_portfolio'])
+
+        if not update_fields:
+            conn.close()
+            return False
+
         # 添加更新时间
         update_fields.append('updated_at = CURRENT_TIMESTAMP')
         
@@ -320,7 +338,59 @@ class SmartMonitorDB:
         conn.close()
         
         self.logger.info(f"更新监控任务: {stock_code}")
-    
+        return cursor.rowcount > 0
+
+    def get_monitor_task_by_code(self, stock_code: str, managed_only: Optional[bool] = None) -> Optional[Dict]:
+        """根据股票代码获取监控任务。"""
+        conn = sqlite3.connect(self.db_file)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+
+        sql = 'SELECT * FROM monitor_tasks WHERE stock_code = ?'
+        if managed_only is True:
+            sql += ' AND managed_by_portfolio = 1'
+        elif managed_only is False:
+            sql += ' AND managed_by_portfolio = 0'
+
+        cursor.execute(sql, (stock_code,))
+        row = cursor.fetchone()
+        conn.close()
+        return dict(row) if row else None
+
+    def upsert_monitor_task(self, task_data: Dict) -> int:
+        """按股票代码新增或更新监控任务。"""
+        stock_code = task_data.get('stock_code')
+        if not stock_code:
+            raise ValueError("stock_code 不能为空")
+
+        managed_sync = bool(task_data.get('managed_by_portfolio'))
+        existing = self.get_monitor_task_by_code(
+            stock_code,
+            managed_only=True if managed_sync else None,
+        )
+        if existing:
+            updates = {
+                'task_name': task_data.get('task_name', existing.get('task_name')),
+                'stock_name': task_data.get('stock_name', existing.get('stock_name')),
+                'has_position': task_data.get('has_position', existing.get('has_position', 0)),
+                'position_cost': task_data.get('position_cost', existing.get('position_cost', 0)),
+                'position_quantity': task_data.get('position_quantity', existing.get('position_quantity', 0)),
+                'position_date': task_data.get('position_date', existing.get('position_date')),
+                'managed_by_portfolio': task_data.get('managed_by_portfolio', existing.get('managed_by_portfolio', 0)),
+            }
+            if all(existing.get(key) == value for key, value in updates.items()):
+                return existing['id']
+            self.update_monitor_task(stock_code, updates)
+            return existing['id']
+
+        if managed_sync:
+            manual_task = self.get_monitor_task_by_code(stock_code, managed_only=False)
+            if manual_task:
+                self.logger.info(f"跳过持仓同步任务 {stock_code}，同代码手工任务已存在")
+                return manual_task['id']
+
+        return self.add_monitor_task(task_data)
+
     def delete_monitor_task(self, task_id: int):
         """删除监控任务"""
         conn = sqlite3.connect(self.db_file)
@@ -330,6 +400,21 @@ class SmartMonitorDB:
         
         conn.commit()
         conn.close()
+
+    def delete_monitor_task_by_code(self, stock_code: str, managed_only: bool = False) -> bool:
+        """按股票代码删除监控任务。"""
+        conn = sqlite3.connect(self.db_file)
+        cursor = conn.cursor()
+
+        sql = 'DELETE FROM monitor_tasks WHERE stock_code = ?'
+        if managed_only:
+            sql += ' AND managed_by_portfolio = 1'
+
+        cursor.execute(sql, (stock_code,))
+        deleted = cursor.rowcount > 0
+        conn.commit()
+        conn.close()
+        return deleted
     
     # ========== AI决策记录 ==========
     

@@ -13,115 +13,11 @@ from notification_service import notification_service
 from low_price_bull_monitor import low_price_bull_monitor
 from low_price_bull_service import low_price_bull_service
 
-
-def display_low_price_bull():
-    """显示低价擒牛选股界面"""
-    
-    # 检查是否显示监控面板
-    if st.session_state.get('show_low_price_monitor'):
-        from low_price_bull_monitor_ui import display_monitor_panel
-        display_monitor_panel()
-        
-        # 返回按钮
-        if st.button("🔙 返回选股", type="secondary"):
-            del st.session_state.show_low_price_monitor
-            st.rerun()
-        return
-    
-    st.markdown("顶部按钮区")
-    col_select, col_monitor = st.columns([3, 1])
-    
-    with col_select:
-        st.markdown("## 🐂 低价擒牛 - 低价高成长股票筛选")
-    
-    with col_monitor:
-        st.write("")  # 占位
-        if st.button("📊 策略监控", type="primary", width='content'):
-            st.session_state.show_low_price_monitor = True
-            st.rerun()
-    
-    st.markdown("---")
-    
-    st.markdown("""
-    ### 📋 选股策略说明
-    
-    **筛选条件**：
-    - ✅ 股价 < 10元
-    - ✅ 净利润增长率 ≥ 100%（净利润同比增长率）
-    - ✅ 非ST股票
-    - ✅ 非科创板
-    - ✅ 非创业板
-    - ✅ 沪深A股
-    - ✅ 按成交额由小至大排名
-    
-    **量化交易策略**：
-    - 💰 资金量：100万元
-    - 📅 持股周期：5天
-    - 💼 仓位控制：满仓
-    - 📊 个股最大持仓：4成（40%）
-    - 🎯 账户最大持股数：4只
-    - 🛒 单日最大买入数：2只
-    - 📈 买入时机：开盘买入
-    - 📉 卖出时机：MA5下穿MA20或持股满5天
-    """)
-    
-    st.markdown("---")
-    
-    # 参数设置
-    col1, col2 = st.columns([2, 1])
-    
-    with col1:
-        top_n = st.slider(
-            "筛选数量",
-            min_value=3,
-            max_value=10,
-            value=5,
-            step=1,
-            help="选择展示的股票数量"
-        )
-    
-    with col2:
-        st.info(f"💡 将筛选成交额最小的前{top_n}只股票")
-    
-    st.markdown("---")
-    
-    # 开始选股按钮
-    if st.button("🚀 开始低价擒牛选股", type="primary", width='content'):
-        
-        with st.spinner("正在获取数据，请稍候..."):
-            # 创建选股器
-            selector = LowPriceBullSelector()
-            
-            # 获取股票
-            success, stocks_df, message = selector.get_low_price_stocks(top_n=top_n)
-            
-            if success and stocks_df is not None:
-                # 保存结果
-                st.session_state.low_price_bull_stocks = stocks_df
-                st.session_state.low_price_bull_selector = selector
-                
-                st.success(f"✅ {message}")
-                
-                # 发送钉钉通知
-                send_dingtalk_notification(stocks_df, top_n)
-                
-                st.rerun()
-            else:
-                st.error(f"❌ {message}")
-    
-    # 显示选股结果
-    if 'low_price_bull_stocks' in st.session_state:
-        display_stock_results(
-            st.session_state.low_price_bull_stocks,
-            st.session_state.get('low_price_bull_selector')
-        )
-
-
 def display_stock_results(stocks_df: pd.DataFrame, selector):
     """显示选股结果"""
     
     st.markdown("---")
-    st.markdown("## 📊 选股结果")
+    st.markdown("## 选股结果")
     
     # 统计信息
     col1, col2, col3 = st.columns(3)
@@ -158,7 +54,7 @@ def display_stock_results(stocks_df: pd.DataFrame, selector):
     st.markdown("---")
     
     # 显示股票列表
-    st.markdown("### 📋 精选股票列表")
+    st.markdown("### 精选股票列表")
     
     for idx, row in stocks_df.iterrows():
         # 获取股票代码和简称
@@ -183,7 +79,7 @@ def display_stock_results(stocks_df: pd.DataFrame, selector):
     
     # 完整数据表格
     st.markdown("---")
-    st.markdown("### 📊 完整数据表格")
+    st.markdown("### 完整数据表格")
     
     # 选择关键列显示
     display_cols = ['股票代码', '股票简称']
@@ -221,7 +117,7 @@ def display_stock_results(stocks_df: pd.DataFrame, selector):
         # 下载按钮
         csv = stocks_df[final_cols].to_csv(index=False, encoding='utf-8-sig')
         st.download_button(
-            label="📥 下载股票列表CSV",
+            label="下载股票列表CSV",
             data=csv,
             file_name=f"low_price_bull_{datetime.now().strftime('%Y%m%d')}.csv",
             mime="text/csv"
@@ -280,7 +176,7 @@ def display_stock_detail(row: pd.Series):
         col2 = None
     
     with col1:
-        st.markdown("#### 📊 基本信息")
+        st.markdown("#### 基本信息")
         
         # 股票代码（必显示）
         code = row.get('股票代码', '')
@@ -315,7 +211,7 @@ def display_stock_detail(row: pd.Series):
     # 只有当有财务数据时才显示财务指标栏目
     if col2 is not None:
         with col2:
-            st.markdown("#### 💼 财务指标")
+            st.markdown("#### 财务指标")
             
             # 所属行业
             industry = row.get('所属行业', row.get('所属同花顺行业', None))
@@ -349,7 +245,7 @@ def display_stock_detail(row: pd.Series):
     
     # 添加监控按钮
     st.markdown("---")
-    st.markdown("#### 📊 策略监控")
+    st.markdown("#### 策略监控")
     
     from low_price_bull_monitor_ui import add_stock_to_monitor_button
     
@@ -374,26 +270,26 @@ def display_stock_detail(row: pd.Series):
 def display_strategy_simulation(stocks_df: pd.DataFrame, selector):
     """显示量化交易策略模拟"""
     
-    st.markdown("## 🎯 策略监控与模拟")
+    st.markdown("## 策略监控与模拟")
     
     st.info("""
     **监控说明**：
-    - 在上方股票列表中点击"➕ 加入策略监控"按钮即可加入
+    - 在上方股票列表中点击"加入策略监控"按钮即可加入
     - 监控条件：① 持股满5天第6天开盘提醒卖出 ② MA5下穿MA20提醒卖出
     - 扫描频率：每分钟扫描1次（可在监控面板配置）
     - 提醒卖出后自动移出监控列表
-    - 点击右上角"📊 策略监控"按钮查看监控面板
+    - 点击右上角"策略监控"按钮查看监控面板
     """)
     
     col1, col2 = st.columns(2)
     
     with col1:
-        if st.button("🎮 开始策略模拟", type="primary", width='content'):
+        if st.button("开始策略模拟", type="primary", width='content'):
             st.session_state.show_strategy_simulation = True
     
     with col2:
-        if st.button("🔗 连接MiniQMT实盘", type="secondary", width='content'):
-            st.warning("⚠️ MiniQMT实盘交易功能需要先配置环境变量，详见系统配置")
+        if st.button("连接MiniQMT实盘", type="secondary", width='content'):
+            st.warning("MiniQMT实盘交易功能需要先配置环境变量，详见系统配置。")
     
     # 显示模拟结果
     if st.session_state.get('show_strategy_simulation'):
@@ -404,13 +300,13 @@ def run_strategy_simulation(stocks_df: pd.DataFrame):
     """运行策略模拟"""
     
     st.markdown("---")
-    st.markdown("### 📈 策略模拟执行")
+    st.markdown("### 策略模拟执行")
     
     # 创建策略实例
     strategy = LowPriceBullStrategy(initial_capital=1000000.0)
     
     # 模拟买入（按成交额排序，优先买入成交额小的）
-    st.markdown("#### 1️⃣ 模拟买入信号")
+    st.markdown("#### 步骤1：模拟买入信号")
     
     buy_results = []
     current_date = datetime.now().strftime("%Y-%m-%d")
@@ -433,11 +329,11 @@ def run_strategy_simulation(stocks_df: pd.DataFrame):
         if result['success']:
             st.success(result['message'])
         else:
-            st.warning(f"⚠️ {result['message']}")
+            st.warning(result['message'])
     
     # 显示持仓
     st.markdown("---")
-    st.markdown("#### 2️⃣ 当前持仓")
+    st.markdown("#### 步骤2：当前持仓")
     
     positions = strategy.get_positions()
     if positions:
@@ -448,7 +344,7 @@ def run_strategy_simulation(stocks_df: pd.DataFrame):
     
     # 显示账户摘要
     st.markdown("---")
-    st.markdown("#### 3️⃣ 账户摘要")
+    st.markdown("#### 步骤3：账户摘要")
     
     summary = strategy.get_portfolio_summary()
     
@@ -469,7 +365,7 @@ def run_strategy_simulation(stocks_df: pd.DataFrame):
     st.markdown("---")
     
     # 策略说明
-    st.markdown("#### 📝 策略执行说明")
+    st.markdown("#### 策略执行说明")
     st.markdown("""
     **后续操作**：
     1. **持有期管理**：系统会自动跟踪每只股票的持有天数
@@ -480,9 +376,9 @@ def run_strategy_simulation(stocks_df: pd.DataFrame):
     3. **轮动买入**：卖出后释放资金，继续买入新的符合条件的股票
     
     **风险提示**：
-    - ⚠️ 本策略为模拟演示，实际交易存在滑点、手续费等成本
-    - ⚠️ 历史业绩不代表未来收益
-    - ⚠️ 请谨慎评估风险，理性投资
+    - 本策略为模拟演示，实际交易存在滑点、手续费等成本。
+    - 历史业绩不代表未来收益。
+    - 请谨慎评估风险，理性投资。
     """)
 
 
@@ -494,7 +390,7 @@ def send_dingtalk_notification(stocks_df: pd.DataFrame, top_n: int):
         webhook_config = notification_service.get_webhook_config_status()
         
         if not webhook_config['enabled'] or not webhook_config['configured']:
-            st.info("💡 未配置Webhook通知，如需接收钉钉消息请在环境配置中设置")
+            st.info("未配置Webhook通知，如需接收钉钉消息请在环境配置中设置。")
             return
         
         # 构建消息内容
@@ -577,13 +473,325 @@ def send_dingtalk_notification(stocks_df: pd.DataFrame, top_n: int):
                 if response.status_code == 200:
                     result = response.json()
                     if result.get('errcode') == 0:
-                        st.success("✅ 已发送钉钉通知")
+                        st.success("已发送钉钉通知。")
                     else:
-                        st.warning(f"⚠️ 钉钉通知发送失败: {result.get('errmsg')}")
+                        st.warning(f"钉钉通知发送失败: {result.get('errmsg')}")
                 else:
-                    st.warning(f"⚠️ 钉钉通知请求失败: HTTP {response.status_code}")
+                    st.warning(f"钉钉通知请求失败: HTTP {response.status_code}")
             except Exception as e:
-                st.warning(f"⚠️ 发送钉钉通知失败: {str(e)}")
+                st.warning(f"发送钉钉通知失败: {str(e)}")
         
     except Exception as e:
-        st.warning(f"⚠️ 发送通知时出错: {str(e)}")
+        st.warning(f"发送通知时出错: {str(e)}")
+_legacy_low_price_bull_results = display_stock_results
+
+
+def build_low_price_bull_filter_summary(
+    *,
+    max_price: float,
+    min_profit_growth: float,
+    min_turnover_yi: float,
+    max_turnover_yi: float,
+    min_market_cap_yi: float,
+    max_market_cap_yi: float,
+    sort_by: str,
+    exclude_st: bool,
+    exclude_kcb: bool,
+    exclude_cyb: bool,
+    only_hs_a: bool,
+) -> str:
+    """Build a compact summary for the current low-price bull filters."""
+    parts = [
+        f"股价≤{max_price:.2f}元",
+        f"净利增速≥{min_profit_growth:.0f}%",
+        f"排序: {sort_by}",
+    ]
+    if min_turnover_yi > 0:
+        parts.append(f"成交额≥{min_turnover_yi:.2f}亿")
+    if max_turnover_yi > 0:
+        parts.append(f"成交额≤{max_turnover_yi:.2f}亿")
+    if min_market_cap_yi > 0:
+        parts.append(f"总市值≥{min_market_cap_yi:.2f}亿")
+    if max_market_cap_yi > 0:
+        parts.append(f"总市值≤{max_market_cap_yi:.2f}亿")
+    if exclude_st:
+        parts.append("剔除ST")
+    if exclude_kcb:
+        parts.append("剔除科创板")
+    if exclude_cyb:
+        parts.append("剔除创业板")
+    if only_hs_a:
+        parts.append("仅沪深A股")
+    return "，".join(parts)
+
+
+def display_low_price_bull():
+    """Render the low-price bull page with a compact header and advanced filters."""
+    if st.session_state.get("show_low_price_monitor"):
+        from low_price_bull_monitor_ui import display_monitor_panel
+
+        display_monitor_panel()
+        if st.button("返回选股", type="secondary"):
+            del st.session_state["show_low_price_monitor"]
+            st.rerun()
+        return
+
+    with st.expander("选股策略说明", expanded=False):
+        st.markdown(
+            """
+            **筛选条件**：
+            - 股价 < 10元
+            - 净利润增长率 ≥ 100%（净利润同比增长率）
+            - 非ST股票
+            - 非科创板
+            - 非创业板
+            - 沪深A股
+            - 按成交额由小至大排名
+
+            **量化交易策略**：
+            - 资金量：100万元
+            - 持股周期：5天
+            - 仓位控制：满仓
+            - 个股最大持仓：4成（40%）
+            - 账户最大持股数：4只
+            - 单日最大买入数：2只
+            - 买入时机：开盘买入
+            - 卖出时机：MA5下穿MA20或持股满5天
+            """
+        )
+
+    col_top_n, col_hint = st.columns([2, 1])
+    with col_top_n:
+        top_n = st.slider(
+            "结果数量",
+            min_value=3,
+            max_value=20,
+            value=5,
+            step=1,
+            help="最终展示的候选股票数量",
+            key="low_price_bull_top_n",
+        )
+    with col_hint:
+        st.caption("默认按当前排序方式返回前 N 只股票。")
+
+    with st.expander("高级筛选参数", expanded=False):
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            max_price = st.number_input(
+                "最高股价(元)",
+                min_value=1.0,
+                max_value=50.0,
+                value=10.0,
+                step=0.5,
+                key="low_price_bull_max_price",
+            )
+        with col2:
+            min_profit_growth = st.number_input(
+                "最低净利增速(%)",
+                min_value=0.0,
+                max_value=2000.0,
+                value=100.0,
+                step=10.0,
+                key="low_price_bull_min_profit_growth",
+            )
+        with col3:
+            sort_by = st.selectbox(
+                "排序方式",
+                ["成交额升序", "成交额降序", "净利润增长率降序", "股价升序", "总市值升序"],
+                key="low_price_bull_sort_by",
+            )
+
+        col4, col5, col6, col7 = st.columns(4)
+        with col4:
+            min_turnover_yi = st.number_input(
+                "最低成交额(亿)",
+                min_value=0.0,
+                max_value=1000.0,
+                value=0.0,
+                step=1.0,
+                help="0 表示不限制",
+                key="low_price_bull_min_turnover_yi",
+            )
+        with col5:
+            max_turnover_yi = st.number_input(
+                "最高成交额(亿)",
+                min_value=0.0,
+                max_value=1000.0,
+                value=0.0,
+                step=5.0,
+                help="0 表示不限制",
+                key="low_price_bull_max_turnover_yi",
+            )
+        with col6:
+            min_market_cap_yi = st.number_input(
+                "最低总市值(亿)",
+                min_value=0.0,
+                max_value=5000.0,
+                value=0.0,
+                step=10.0,
+                help="0 表示不限制",
+                key="low_price_bull_min_market_cap_yi",
+            )
+        with col7:
+            max_market_cap_yi = st.number_input(
+                "最高总市值(亿)",
+                min_value=0.0,
+                max_value=5000.0,
+                value=0.0,
+                step=10.0,
+                help="0 表示不限制",
+                key="low_price_bull_max_market_cap_yi",
+            )
+
+        col8, col9, col10, col11 = st.columns(4)
+        with col8:
+            exclude_st = st.checkbox("剔除 ST", value=True, key="low_price_bull_exclude_st")
+        with col9:
+            exclude_kcb = st.checkbox("剔除科创板", value=True, key="low_price_bull_exclude_kcb")
+        with col10:
+            exclude_cyb = st.checkbox("剔除创业板", value=True, key="low_price_bull_exclude_cyb")
+        with col11:
+            only_hs_a = st.checkbox("仅沪深 A 股", value=True, key="low_price_bull_only_hs_a")
+
+    filter_summary = build_low_price_bull_filter_summary(
+        max_price=max_price,
+        min_profit_growth=min_profit_growth,
+        min_turnover_yi=min_turnover_yi,
+        max_turnover_yi=max_turnover_yi,
+        min_market_cap_yi=min_market_cap_yi,
+        max_market_cap_yi=max_market_cap_yi,
+        sort_by=sort_by,
+        exclude_st=exclude_st,
+        exclude_kcb=exclude_kcb,
+        exclude_cyb=exclude_cyb,
+        only_hs_a=only_hs_a,
+    )
+    st.caption(f"当前筛选：{filter_summary}")
+
+    action_col, monitor_col = st.columns([3, 1])
+    with action_col:
+        run_selection = st.button("开始低价擒牛选股", type="primary", width="stretch")
+    with monitor_col:
+        if st.button("策略监控", type="secondary", width="stretch"):
+            st.session_state["show_low_price_monitor"] = True
+            st.rerun()
+
+    if run_selection:
+        with st.spinner("正在获取数据，请稍候..."):
+            selector = LowPriceBullSelector()
+            success, stocks_df, message = selector.get_low_price_stocks(
+                top_n=top_n,
+                max_price=max_price,
+                min_profit_growth=min_profit_growth,
+                min_turnover_yi=min_turnover_yi or None,
+                max_turnover_yi=max_turnover_yi or None,
+                min_market_cap_yi=min_market_cap_yi or None,
+                max_market_cap_yi=max_market_cap_yi or None,
+                sort_by=sort_by,
+                exclude_st=exclude_st,
+                exclude_kcb=exclude_kcb,
+                exclude_cyb=exclude_cyb,
+                only_hs_a=only_hs_a,
+            )
+
+            if success and stocks_df is not None:
+                st.session_state["low_price_bull_stocks"] = stocks_df
+                st.session_state["low_price_bull_selector"] = selector
+                st.session_state["low_price_bull_filter_summary"] = filter_summary
+                st.session_state["low_price_bull_selected_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                st.success(message)
+                send_dingtalk_notification(stocks_df, top_n, filter_summary)
+                st.rerun()
+
+            st.error(message)
+
+    if "low_price_bull_stocks" in st.session_state:
+        display_stock_results(
+            st.session_state["low_price_bull_stocks"],
+            st.session_state.get("low_price_bull_selector"),
+        )
+
+
+def display_stock_results(stocks_df: pd.DataFrame, selector):
+    """Render legacy results with a compact context summary on top."""
+    selection_time = st.session_state.get("low_price_bull_selected_time")
+    filter_summary = st.session_state.get("low_price_bull_filter_summary")
+    if selection_time or filter_summary:
+        summary_parts = []
+        if selection_time:
+            summary_parts.append(f"选股时间: {selection_time}")
+        if filter_summary:
+            summary_parts.append(f"条件: {filter_summary}")
+        st.caption(" | ".join(summary_parts))
+    _legacy_low_price_bull_results(stocks_df, selector)
+
+
+def send_dingtalk_notification(
+    stocks_df: pd.DataFrame,
+    top_n: int,
+    filter_summary: str | None = None,
+):
+    """Send DingTalk notification with current filter summary."""
+    try:
+        webhook_config = notification_service.get_webhook_config_status()
+        if not webhook_config["enabled"] or not webhook_config["configured"]:
+            return
+
+        keyword = notification_service.config.get("webhook_keyword", "aiagents通知")
+        message_text = f"### {keyword} - 低价擒牛选股完成\n\n"
+        if filter_summary:
+            message_text += f"**筛选条件**: {filter_summary}\n\n"
+        message_text += f"**筛选数量**: {len(stocks_df)} 只\n\n"
+        message_text += "**精选股票**:\n\n"
+
+        for idx, row in stocks_df.head(top_n).iterrows():
+            code = row.get("股票代码", "")
+            name = row.get("股票简称", "")
+            price = row.get("股价", row.get("最新价", None))
+            growth = row.get("净利润增长率", row.get("净利润同比增长率", None))
+            turnover = row.get("成交额", None)
+
+            message_text += f"{idx + 1}. **{code} {name}**\n"
+            if price is not None and not pd.isna(price):
+                try:
+                    message_text += f"   - 股价: {float(price):.2f}元\n"
+                except (TypeError, ValueError):
+                    pass
+            if growth is not None and not pd.isna(growth):
+                try:
+                    message_text += f"   - 净利增速: {float(growth):.2f}%\n"
+                except (TypeError, ValueError):
+                    pass
+            if turnover is not None and not pd.isna(turnover):
+                try:
+                    message_text += f"   - 成交额: {float(turnover) / 100000000:.2f}亿元\n"
+                except (TypeError, ValueError):
+                    pass
+            message_text += "\n"
+
+        message_text += f"**生成时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+
+        if notification_service.config["webhook_type"] != "dingtalk":
+            return
+
+        import requests
+
+        response = requests.post(
+            notification_service.config["webhook_url"],
+            json={
+                "msgtype": "markdown",
+                "markdown": {"title": keyword, "text": message_text},
+            },
+            headers={"Content-Type": "application/json"},
+            timeout=10,
+        )
+        if response.status_code == 200:
+            result = response.json()
+            if result.get("errcode") == 0:
+                st.success("已发送钉钉通知")
+            else:
+                st.warning(f"钉钉通知发送失败: {result.get('errmsg')}")
+        else:
+            st.warning(f"钉钉通知请求失败: HTTP {response.status_code}")
+    except Exception as exc:
+        st.warning(f"发送通知失败: {exc}")

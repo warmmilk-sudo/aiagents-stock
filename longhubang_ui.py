@@ -17,18 +17,10 @@ from longhubang_pdf import LonghubangPDFGenerator
 
 def display_longhubang(lightweight_model=None, reasoning_model=None):
     """显示智瞰龙虎主界面"""
-    
-    st.markdown("""
-    <div class="top-nav">
-        <h1 class="nav-title">🎯 智瞰龙虎 - AI驱动的龙虎榜分析</h1>
-        <p class="nav-subtitle">Multi-Agent Dragon Tiger Analysis | 游资·个股·题材·风险多维分析</p>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    st.markdown("---")
-    
+
     # 功能说明
     with st.expander("💡 智瞰龙虎系统介绍", expanded=False):
+        st.caption("Multi-Agent Dragon Tiger Analysis | 游资·个股·题材·风险多维分析")
         st.markdown("""
         ### 🌟 系统特色
         

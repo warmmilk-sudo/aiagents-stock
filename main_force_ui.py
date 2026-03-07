@@ -45,37 +45,22 @@ def display_main_force_selector(lightweight_model=None, reasoning_model=None):
         display_batch_history()
         return
 
-    # 页面标题和历史记录按钮
-    col_title, col_history = st.columns([4, 1])
-    with col_title:
-        st.markdown("## 🎯 主力选股 - 智能筛选优质标的")
-    with col_history:
-        st.write("")  # 占位
-        if st.button("📚 批量分析历史", width='content'):
-            st.session_state.main_force_view_history = True
-            st.rerun()
+    with st.expander("功能说明", expanded=False):
+        st.markdown("""
+        本功能通过以下步骤筛选优质股票：
 
-    st.markdown("---")
+        1. **数据获取**: 使用问财获取指定日期以来主力资金净流入前100名股票
+        2. **智能筛选**: 过滤掉涨幅过高、市值不符的股票
+        3. **AI分析**: 调用资金流向、行业板块、财务基本面三大分析师团队
+        4. **综合决策**: 资深研究员综合评估，精选3-5只优质标的
 
-    st.markdown("""
-    ### 功能说明
-    
-    本功能通过以下步骤筛选优质股票：
-    
-    1. **数据获取**: 使用问财获取指定日期以来主力资金净流入前100名股票
-    2. **智能筛选**: 过滤掉涨幅过高、市值不符的股票
-    3. **AI分析**: 调用资金流向、行业板块、财务基本面三大分析师团队
-    4. **综合决策**: 资深研究员综合评估，精选3-5只优质标的
-    
-    **筛选标准**:
-    - ✅ 主力资金净流入较多
-    - ✅ 区间涨跌幅适中（避免追高）
-    - ✅ 财务基本面良好
-    - ✅ 行业前景明朗
-    - ✅ 综合素质优秀
-    """)
-
-    st.markdown("---")
+        **筛选标准**:
+        - 主力资金净流入较多
+        - 区间涨跌幅适中（避免追高）
+        - 财务基本面良好
+        - 行业前景明朗
+        - 综合素质优秀
+        """)
 
     # 参数设置
     col1, col2, col3 = st.columns(3)
@@ -114,10 +99,10 @@ def display_main_force_selector(lightweight_model=None, reasoning_model=None):
         )
 
     with col3:
-        st.info("💡 系统将获取前100名股票，进行整体分析后精选优质标的")
+        st.info("系统会先获取前100名股票，再做整体分析并精选优质标的。")
 
     # 高级选项
-    with st.expander("⚙️ 高级筛选参数"):
+    with st.expander("高级筛选参数"):
         col1, col2, col3 = st.columns(3)
 
         with col1:
@@ -148,10 +133,16 @@ def display_main_force_selector(lightweight_model=None, reasoning_model=None):
                 step=100.0
             )
 
-    st.markdown("---")
+    action_col, history_col = st.columns([3, 1])
+    with action_col:
+        run_analysis = st.button("开始主力选股", type="primary", width='content')
+    with history_col:
+        if st.button("批量分析历史", width='content'):
+            st.session_state.main_force_view_history = True
+            st.rerun()
 
     # 开始分析按钮（使用当前会话的双模型选择）
-    if st.button("🚀 开始主力选股", type="primary", width='content'):
+    if run_analysis:
 
         with st.spinner("正在获取数据并分析，这可能需要几分钟..."):
 
@@ -181,10 +172,10 @@ def display_main_force_selector(lightweight_model=None, reasoning_model=None):
 
         # 显示结果
         if result['success']:
-            st.success(f"✅ 分析完成！共筛选出 {len(result['final_recommendations'])} 只优质标的")
+            st.success(f"分析完成，共筛选出 {len(result['final_recommendations'])} 只优质标的。")
             st.rerun()
         else:
-            st.error(f"❌ 分析失败: {result.get('error', '未知错误')}")
+            st.error(f"分析失败: {result.get('error', '未知错误')}")
 
     # 显示分析结果
     if 'main_force_result' in st.session_state:
@@ -197,7 +188,7 @@ def display_analysis_results(result: dict, analyzer):
     """显示分析结果"""
 
     st.markdown("---")
-    st.markdown("## 📊 分析结果")
+    st.markdown("## 分析结果")
 
     # 统计信息
     col1, col2, col3 = st.columns(3)
@@ -221,7 +212,7 @@ def display_analysis_results(result: dict, analyzer):
 
     # 显示推荐股票
     if result['final_recommendations']:
-        st.markdown("### ⭐ 精选推荐")
+        st.markdown("### 精选推荐")
 
         for rec in result['final_recommendations']:
             with st.expander(
@@ -233,7 +224,7 @@ def display_analysis_results(result: dict, analyzer):
     # 显示候选股票列表
     if analyzer and analyzer.raw_stocks is not None and not analyzer.raw_stocks.empty:
         st.markdown("---")
-        st.markdown("### 📋 候选股票列表（筛选后）")
+        st.markdown("### 候选股票列表")
 
         # 选择关键列显示
         display_cols = ['股票代码', '股票简称']
@@ -285,19 +276,19 @@ def display_analysis_results(result: dict, analyzer):
         final_cols = [col for col in display_cols if col in analyzer.raw_stocks.columns]
 
         # 调试信息：显示找到的列名
-        with st.expander("🔍 调试信息 - 查看数据列", expanded=False):
+        with st.expander("调试信息", expanded=False):
             st.caption("所有可用列:")
             cols_list = list(analyzer.raw_stocks.columns)
             st.write(cols_list)
             st.caption(f"\n已选择显示的列: {final_cols}")
             if main_fund_col:
-                st.success(f"✅ 找到主力资金列: {main_fund_col}")
+                st.success(f"已找到主力资金列: {main_fund_col}")
             else:
-                st.warning("⚠️ 未找到主力资金列")
+                st.warning("未找到主力资金列。")
             if interval_pct_col:
-                st.success(f"✅ 找到涨跌幅列: {interval_pct_col}")
+                st.success(f"已找到涨跌幅列: {interval_pct_col}")
             else:
-                st.warning("⚠️ 未找到涨跌幅列")
+                st.warning("未找到涨跌幅列。")
 
         # 显示DataFrame
         display_df = analyzer.raw_stocks[final_cols].copy()
@@ -309,7 +300,7 @@ def display_analysis_results(result: dict, analyzer):
         # 下载按钮
         csv = display_df.to_csv(index=False, encoding='utf-8-sig')
         st.download_button(
-            label="📥 下载候选列表CSV",
+            label="下载候选列表CSV",
             data=csv,
             file_name=f"main_force_stocks_{datetime.now().strftime('%Y%m%d')}.csv",
             mime="text/csv"
@@ -320,7 +311,7 @@ def display_analysis_results(result: dict, analyzer):
 
         col_batch1, col_batch2, col_batch3 = st.columns([2, 1, 1])
         with col_batch1:
-            st.markdown("#### 🚀 批量深度分析")
+            st.markdown("#### 批量深度分析")
             st.caption("对主力资金净流入TOP股票进行完整的AI团队分析，获取投资评级和关键价位")
 
         with col_batch2:
@@ -333,7 +324,7 @@ def display_analysis_results(result: dict, analyzer):
 
         with col_batch3:
             st.write("")  # 占位
-            if st.button("🚀 开始批量分析", type="primary", width='content'):
+            if st.button("开始批量分析", type="primary", width='content'):
                 # 准备数据：按主力资金净流入排序
                 df_sorted = analyzer.raw_stocks.copy()
 
@@ -369,25 +360,25 @@ def display_recommendation_detail(rec: dict):
     col1, col2 = st.columns([1, 1])
 
     with col1:
-        st.markdown("#### 📌 推荐理由")
+        st.markdown("#### 推荐理由")
         for reason in rec.get('reasons', []):
             st.markdown(f"- {reason}")
 
-        st.markdown("#### 💡 投资亮点")
+        st.markdown("#### 投资亮点")
         st.info(rec.get('highlights', 'N/A'))
 
     with col2:
-        st.markdown("#### 📊 投资建议")
+        st.markdown("#### 投资建议")
         st.markdown(f"**建议仓位**: {rec.get('position', 'N/A')}")
         st.markdown(f"**投资周期**: {rec.get('investment_period', 'N/A')}")
 
-        st.markdown("#### ⚠️ 风险提示")
+        st.markdown("#### 风险提示")
         st.warning(rec.get('risks', 'N/A'))
 
     # 显示股票详细数据
     if 'stock_data' in rec:
         st.markdown("---")
-        st.markdown("#### 📊 股票详细数据")
+        st.markdown("#### 股票详细数据")
 
         stock_data = rec['stock_data']
 
@@ -447,13 +438,13 @@ def display_recommendation_detail(rec: dict):
 def display_analyst_reports(analyzer):
     """显示AI分析师完整报告"""
 
-    st.markdown("### 🤖 AI分析师团队完整报告")
+    st.markdown("### AI分析师团队完整报告")
 
     # 创建三个标签页
-    tab1, tab2, tab3 = st.tabs(["💰 资金流向分析", "📊 行业板块分析", "📈 财务基本面分析"])
+    tab1, tab2, tab3 = st.tabs(["资金流向分析", "行业板块分析", "财务基本面分析"])
 
     with tab1:
-        st.markdown("#### 💰 资金流向分析师报告")
+        st.markdown("#### 资金流向分析师报告")
         st.markdown("---")
         if hasattr(analyzer, 'fund_flow_analysis') and analyzer.fund_flow_analysis:
             st.markdown(analyzer.fund_flow_analysis)
@@ -461,7 +452,7 @@ def display_analyst_reports(analyzer):
             st.info("暂无资金流向分析报告")
 
     with tab2:
-        st.markdown("#### 📊 行业板块及市场热点分析师报告")
+        st.markdown("#### 行业板块及市场热点分析师报告")
         st.markdown("---")
         if hasattr(analyzer, 'industry_analysis') and analyzer.industry_analysis:
             st.markdown(analyzer.industry_analysis)
@@ -469,7 +460,7 @@ def display_analyst_reports(analyzer):
             st.info("暂无行业板块分析报告")
 
     with tab3:
-        st.markdown("#### 📈 财务基本面分析师报告")
+        st.markdown("#### 财务基本面分析师报告")
         st.markdown("---")
         if hasattr(analyzer, 'fundamental_analysis') and analyzer.fundamental_analysis:
             st.markdown(analyzer.fundamental_analysis)
@@ -511,7 +502,7 @@ def run_main_force_batch_analysis(lightweight_model=None, reasoning_model=None):
     import time
     import re
 
-    st.markdown("## 🚀 主力选股TOP股票批量分析")
+    st.markdown("## 主力选股TOP股票批量分析")
     st.markdown("---")
 
     # 检查是否已有分析结果
@@ -521,7 +512,7 @@ def run_main_force_batch_analysis(lightweight_model=None, reasoning_model=None):
         # 返回按钮
         col_back, col_clear = st.columns(2)
         with col_back:
-            if st.button("🔙 返回主力选股", width='content'):
+            if st.button("返回主力选股", width='content'):
                 # 清除所有批量分析相关状态
                 if 'main_force_batch_trigger' in st.session_state:
                     del st.session_state.main_force_batch_trigger
@@ -532,7 +523,7 @@ def run_main_force_batch_analysis(lightweight_model=None, reasoning_model=None):
                 st.rerun()
 
         with col_clear:
-            if st.button("🔄 重新分析", width='content'):
+            if st.button("重新分析", width='content'):
                 # 清除结果，保留触发标志和代码
                 if 'main_force_batch_results' in st.session_state:
                     del st.session_state.main_force_batch_results
@@ -553,7 +544,7 @@ def run_main_force_batch_analysis(lightweight_model=None, reasoning_model=None):
     st.info(f"即将分析 {len(stock_codes)} 只股票：{', '.join(stock_codes[:10])}{'...' if len(stock_codes) > 10 else ''}")
 
     # 返回按钮
-    if st.button("🔙 取消返回", type="secondary"):
+    if st.button("取消返回", type="secondary"):
         # 清除所有批量分析相关状态
         if 'main_force_batch_trigger' in st.session_state:
             del st.session_state.main_force_batch_trigger
@@ -593,11 +584,11 @@ def run_main_force_batch_analysis(lightweight_model=None, reasoning_model=None):
 
     start_analysis = False
     with col_confirm:
-        if st.button("🚀 确认开始分析", type="primary", width='content'):
+        if st.button("确认开始分析", type="primary", width='content'):
             start_analysis = True
 
     with col_cancel:
-        if st.button("❌ 取消", type="secondary", width='content'):
+        if st.button("取消", type="secondary", width='content'):
             # 清除所有批量分析相关状态
             if 'main_force_batch_trigger' in st.session_state:
                 del st.session_state.main_force_batch_trigger
@@ -612,13 +603,13 @@ def run_main_force_batch_analysis(lightweight_model=None, reasoning_model=None):
         import time
 
         st.markdown("---")
-        st.info("⏳ 正在执行批量分析，请稍候...")
+        st.info("正在执行批量分析，请稍候。")
 
         # 显示即将分析的股票代码（调试用）
-        with st.expander("🔍 调试信息", expanded=True):
+        with st.expander("调试信息", expanded=True):
             st.write(f"**股票代码数量**: {len(stock_codes)} 只")
             st.write(f"**股票代码列表**: {stock_codes}")
-            st.write(f"**代码格式检查**: {'✅ 无后缀，格式正确' if all('.' not in str(c) for c in stock_codes) else '❌ 包含后缀，可能有问题'}")
+            st.write(f"**代码格式检查**: {'无后缀，格式正确' if all('.' not in str(c) for c in stock_codes) else '包含后缀，可能有问题'}")
             st.write(f"**分析模式**: {analysis_mode}")
             st.write(f"**线程数**: {max_workers if analysis_mode == 'parallel' else 1}")
 
@@ -677,7 +668,7 @@ def run_main_force_batch_analysis(lightweight_model=None, reasoning_model=None):
             # 并行分析
             status_text.text(f"并行分析 {len(stock_codes)} 只股票（{max_workers}线程）...")
             print(f"\n{'='*60}")
-            print(f"🚀 开始并行分析 {len(stock_codes)} 只股票")
+            print(f"开始并行分析 {len(stock_codes)} 只股票")
             print(f"{'='*60}")
 
             def analyze_one(code):
@@ -717,7 +708,7 @@ def run_main_force_batch_analysis(lightweight_model=None, reasoning_model=None):
                         print(f"  获取结果失败: {code} - {str(e)}")
                         results.append({"symbol": code, "success": False, "error": str(e)})
 
-            print(f"\n✅ 所有并行任务已完成")
+            print("\n所有并行任务已完成")
             print(f"   完成数: {completed}")
             print(f"   结果数: {len(results)}")
             print(f"{'='*60}\n")
@@ -733,12 +724,12 @@ def run_main_force_batch_analysis(lightweight_model=None, reasoning_model=None):
 
         # 显示完成信息
         if success_count > 0:
-            st.success(f"✅ 批量分析完成！成功 {success_count} 只，失败 {failed_count} 只，耗时 {elapsed_time/60:.1f} 分钟")
+            st.success(f"批量分析完成。成功 {success_count} 只，失败 {failed_count} 只，耗时 {elapsed_time/60:.1f} 分钟。")
         else:
-            st.error(f"❌ 批量分析完成，但所有 {failed_count} 只股票都分析失败！")
+            st.error(f"批量分析完成，但所有 {failed_count} 只股票都分析失败。")
 
             # 显示失败原因（调试用）
-            with st.expander("❌ 查看失败原因", expanded=True):
+            with st.expander("查看失败原因", expanded=True):
                 for r in results:
                     if not r.get("success", False):
                         st.error(f"**{r.get('symbol', 'N/A')}**: {r.get('error', '未知错误')}")
@@ -751,7 +742,7 @@ def run_main_force_batch_analysis(lightweight_model=None, reasoning_model=None):
 
             # 调试信息
             print(f"\n{'='*60}")
-            print(f"📝 准备保存批量分析结果到历史记录")
+            print("准备保存批量分析结果到历史记录")
             print(f"{'='*60}")
             print(f"股票代码数: {len(stock_codes)}")
             print(f"分析模式: {analysis_mode}")
@@ -781,7 +772,7 @@ def run_main_force_batch_analysis(lightweight_model=None, reasoning_model=None):
             )
 
             save_elapsed = time.time() - save_start
-            print(f"✅ 批量分析结果已保存到历史记录")
+            print("批量分析结果已保存到历史记录")
             print(f"   记录ID: {record_id}")
             print(f"   保存耗时: {save_elapsed:.2f}秒")
             print(f"{'='*60}\n")
@@ -791,7 +782,7 @@ def run_main_force_batch_analysis(lightweight_model=None, reasoning_model=None):
             import traceback
             save_error = str(e)
             print(f"\n{'='*60}")
-            print(f"⚠️ 保存历史记录失败")
+            print("保存历史记录失败")
             print(f"{'='*60}")
             print(f"错误信息: {str(e)}")
             print(f"详细错误:")
@@ -828,13 +819,13 @@ def display_main_force_batch_results(batch_results):
     saved_to_history = batch_results.get('saved_to_history', False)
     save_error = batch_results.get('save_error')
 
-    st.markdown("## 📊 批量分析结果")
+    st.markdown("## 批量分析结果")
 
     # 显示保存状态
     if saved_to_history:
-        st.success("✅ 分析结果已自动保存到历史记录，可点击右上角'📚 批量分析历史'查看")
+        st.success("分析结果已自动保存到历史记录，可点击右上角“批量分析历史”查看。")
     elif save_error:
-        st.warning(f"⚠️ 历史记录保存失败: {save_error}，但结果仍可查看")
+        st.warning(f"历史记录保存失败: {save_error}，但结果仍可查看。")
 
     st.markdown("---")
 
@@ -859,7 +850,7 @@ def display_main_force_batch_results(batch_results):
     successful_results = [r for r in results if r['success']]
 
     if successful_results:
-        st.markdown(f"### ✅ 成功分析的股票 ({len(successful_results)}只)")
+        st.markdown(f"### 成功分析的股票 ({len(successful_results)}只)")
 
         # 创建DataFrame展示
         display_data = []
@@ -867,20 +858,12 @@ def display_main_force_batch_results(batch_results):
             stock_info = result.get('stock_info', {})
             final_decision = result.get('final_decision', {})
 
-            # 提取评级emoji
             rating = final_decision.get('rating', '未知')
-            rating_emoji = {
-                '强烈买入': '🔥',
-                '买入': '✅',
-                '持有': '⏸️',
-                '卖出': '⚠️',
-                '强烈卖出': '🚫'
-            }.get(rating, '❓')
 
             display_data.append({
                 '股票代码': stock_info.get('symbol', ''),
                 '股票名称': stock_info.get('name', ''),
-                '评级': f"{rating_emoji} {rating}",
+                '评级': rating,
                 '信心度': final_decision.get('confidence_level', 'N/A'),
                 '进场区间': final_decision.get('entry_range', 'N/A'),
                 '止盈位': final_decision.get('take_profit', 'N/A'),
@@ -905,7 +888,7 @@ def display_main_force_batch_results(batch_results):
 
         # 详细分析结果（可展开）
         st.markdown("---")
-        st.markdown("### 📋 详细分析报告")
+        st.markdown("### 详细分析报告")
 
         for result in successful_results:
             stock_info = result.get('stock_info', {})
@@ -914,15 +897,7 @@ def display_main_force_batch_results(batch_results):
             symbol = stock_info.get('symbol', '')
             name = stock_info.get('name', '')
             rating = final_decision.get('rating', '未知')
-            rating_emoji = {
-                '强烈买入': '🔥',
-                '买入': '✅',
-                '持有': '⏸️',
-                '卖出': '⚠️',
-                '强烈卖出': '🚫'
-            }.get(rating, '❓')
-
-            with st.expander(f"{rating_emoji} {symbol} - {name} | {rating}"):
+            with st.expander(f"{symbol} - {name} | {rating}"):
                 # 关键信息
                 col1, col2, col3 = st.columns(3)
 
@@ -945,12 +920,12 @@ def display_main_force_batch_results(batch_results):
                     st.metric("止损位", final_decision.get('stop_loss', 'N/A'))
 
                 # 投资建议
-                st.markdown("#### 💡 投资建议")
+                st.markdown("#### 投资建议")
                 advice = final_decision.get('operation_advice', final_decision.get('advice', '暂无建议'))
                 st.info(advice)
 
                 # 加入监测按钮
-                if st.button(f"➕ 加入监测列表", key=f"monitor_{symbol}"):
+                if st.button("加入监测列表", key=f"monitor_{symbol}"):
                     # 解析进场区间
                     entry_range = final_decision.get('entry_range', '')
                     entry_min, entry_max = None, None
@@ -1001,16 +976,16 @@ def display_main_force_batch_results(batch_results):
                             take_profit=take_profit,
                             stop_loss=stop_loss
                         )
-                        st.success(f"✅ {symbol} - {name} 已加入监测列表")
+                        st.success(f"{symbol} - {name} 已加入监测列表。")
                     except Exception as e:
-                        st.error(f"❌ 添加失败: {str(e)}")
+                        st.error(f"添加失败: {str(e)}")
 
     # 失败的股票
     failed_results = [r for r in results if not r['success']]
 
     if failed_results:
         st.markdown("---")
-        st.markdown(f"### ❌ 分析失败的股票 ({len(failed_results)}只)")
+        st.markdown(f"### 分析失败的股票 ({len(failed_results)}只)")
 
         failed_data = []
         for result in failed_results:

@@ -12,13 +12,20 @@ from datetime import datetime
 
 # 导入必要的模块
 from portfolio_db import portfolio_db
-import config
+from database import db as global_history_db
+from monitor_db import monitor_db as realtime_monitor_db
+from smart_monitor_db import SmartMonitorDB
 
 
 class PortfolioManager:
     """持仓管理器类"""
+
+    DEFAULT_SMART_MONITOR_CHECK_INTERVAL = 300
+    DEFAULT_REALTIME_MONITOR_CHECK_INTERVAL = 60
     
-    def __init__(self, model=None, lightweight_model=None, reasoning_model=None):
+    def __init__(self, model=None, lightweight_model=None, reasoning_model=None,
+                 portfolio_store=None, global_history_store=None,
+                 realtime_monitor_store=None, smart_monitor_store=None):
         """
         初始化持仓管理器
         
@@ -28,7 +35,10 @@ class PortfolioManager:
         self.model = model
         self.lightweight_model = lightweight_model
         self.reasoning_model = reasoning_model
-        self.db = portfolio_db
+        self.db = portfolio_store or portfolio_db
+        self.global_history_db = global_history_store or global_history_db
+        self.realtime_monitor_db = realtime_monitor_store or realtime_monitor_db
+        self.smart_monitor_db = smart_monitor_store or SmartMonitorDB()
 
     def _normalize_stock_code(self, code: str) -> str:
         """标准化股票代码，兼容 .SH/.SZ/.HK 等输入格式。"""
@@ -168,7 +178,15 @@ class PortfolioManager:
             
             # 添加到数据库
             stock_id = self.db.add_stock(code, final_name, cost_price, quantity, note, auto_monitor)
-            return True, f"添加持仓股票成功: {code} {final_name}", stock_id
+            warning = ""
+            if auto_monitor:
+                try:
+                    created_stock = self.db.get_stock(stock_id)
+                    if created_stock:
+                        self._sync_stock_to_smart_monitor(created_stock)
+                except Exception as e:
+                    warning = f"；AI盯盘同步失败: {e}"
+            return True, f"添加持仓股票成功: {code} {final_name}{warning}", stock_id
             
         except Exception as e:
             return False, f"添加失败: {str(e)}", None
@@ -185,9 +203,28 @@ class PortfolioManager:
             (成功标志, 消息)
         """
         try:
+            existing = self.db.get_stock(stock_id)
+            if not existing:
+                return False, f"未找到股票ID: {stock_id}"
+
+            old_code = existing["code"]
             success = self.db.update_stock(stock_id, **kwargs)
             if success:
-                return True, "更新成功"
+                updated_stock = self.db.get_stock(stock_id)
+                warning = ""
+
+                if old_code != updated_stock["code"]:
+                    self.remove_managed_integrations_for_code(old_code)
+
+                try:
+                    if updated_stock.get("auto_monitor"):
+                        self._sync_stock_to_smart_monitor(updated_stock)
+                    else:
+                        self.remove_managed_integrations_for_code(updated_stock["code"])
+                except Exception as e:
+                    warning = f"（联动同步失败: {e}）"
+
+                return True, f"更新成功{warning}"
             else:
                 return False, f"未找到股票ID: {stock_id}"
         except Exception as e:
@@ -204,9 +241,18 @@ class PortfolioManager:
             (成功标志, 消息)
         """
         try:
+            existing = self.db.get_stock(stock_id)
+            if not existing:
+                return False, f"未找到股票ID: {stock_id}"
+
             success = self.db.delete_stock(stock_id)
             if success:
-                return True, "删除成功"
+                warning = ""
+                try:
+                    self.remove_managed_integrations_for_code(existing["code"])
+                except Exception as e:
+                    warning = f"（下游清理失败: {e}）"
+                return True, f"删除成功{warning}"
             else:
                 return False, f"未找到股票ID: {stock_id}"
         except Exception as e:
@@ -227,6 +273,452 @@ class PortfolioManager:
     def get_stock_count(self) -> int:
         """获取持仓股票总数"""
         return self.db.get_stock_count()
+
+    def _extract_first_number(self, value, allow_zero: bool = False) -> Optional[float]:
+        """从数值或字符串中提取首个数字。"""
+        if value is None:
+            return None
+
+        if isinstance(value, (int, float)):
+            result = float(value)
+        else:
+            numbers = re.findall(r'-?\d+\.?\d*', str(value).replace(',', ''))
+            if not numbers:
+                return None
+            result = float(numbers[0])
+
+        if not allow_zero and result == 0:
+            return None
+        return result
+
+    def _extract_confidence(self, value) -> float:
+        """统一解析信心度到 0-10。"""
+        confidence = self._extract_first_number(value, allow_zero=True)
+        if confidence is None:
+            return 5.0
+        return max(0.0, min(10.0, confidence))
+
+    def _extract_entry_range(self, value) -> Tuple[Optional[float], Optional[float]]:
+        """解析进场区间。支持字典和多种字符串格式。"""
+        if isinstance(value, dict):
+            entry_min = self._extract_first_number(value.get("min"))
+            entry_max = self._extract_first_number(value.get("max"))
+            if entry_min is not None and entry_max is not None:
+                return (min(entry_min, entry_max), max(entry_min, entry_max))
+            return (None, None)
+
+        if not value:
+            return (None, None)
+
+        cleaned = str(value).replace("¥", "").replace("元", "").replace("$", "")
+        numbers = re.findall(r'\d+\.?\d*', cleaned)
+        if len(numbers) >= 2:
+            entry_min = float(numbers[0])
+            entry_max = float(numbers[1])
+            return (min(entry_min, entry_max), max(entry_min, entry_max))
+
+        return (None, None)
+
+    def _extract_analysis_summary(self, final_decision: Dict) -> str:
+        """提取分析摘要。"""
+        for key in ("operation_advice", "advice", "summary", "decision_text"):
+            value = final_decision.get(key)
+            if value:
+                return str(value)[:500]
+        return ""
+
+    def _build_analysis_payload(self, stock_info: Dict, final_decision: Dict) -> Dict:
+        """统一构建持仓分析历史落库数据。"""
+        rating = str(final_decision.get("rating", "持有")).strip() or "持有"
+        confidence = self._extract_confidence(final_decision.get("confidence_level", 5.0))
+        current_price = self._extract_first_number(stock_info.get("current_price"), allow_zero=True) or 0.0
+        target_price = self._extract_first_number(final_decision.get("target_price"))
+        entry_min, entry_max = self._extract_entry_range(final_decision.get("entry_range"))
+        take_profit = self._extract_first_number(final_decision.get("take_profit"))
+        stop_loss = self._extract_first_number(final_decision.get("stop_loss"))
+        summary = self._extract_analysis_summary(final_decision)
+
+        return {
+            "rating": rating,
+            "confidence": confidence,
+            "current_price": current_price,
+            "target_price": target_price,
+            "entry_min": entry_min,
+            "entry_max": entry_max,
+            "take_profit": take_profit,
+            "stop_loss": stop_loss,
+            "summary": summary,
+        }
+
+    def _sanitize_summary_text(self, value: str) -> str:
+        if not value:
+            return ""
+
+        text = str(value).strip()
+        text = re.sub(r"<think>.*?</think>", " ", text, flags=re.IGNORECASE | re.DOTALL)
+        text = re.sub(r"```.*?```", " ", text, flags=re.DOTALL)
+        text = re.sub(r"【推理过程】.*", " ", text, flags=re.DOTALL)
+        text = re.sub(r"推理过程[:：].*", " ", text, flags=re.DOTALL)
+        text = re.sub(r"\s+", " ", text).strip()
+
+        banned_markers = ("我现在需要", "首先，我得", "首先需要", "接下来需要", "JSON格式投资决策")
+        if any(marker in text for marker in banned_markers):
+            return ""
+        return text[:240]
+
+    def _build_fallback_summary(self, final_decision: Dict) -> str:
+        rating = str(final_decision.get("rating", "持有")).strip() or "持有"
+        parts = [f"评级: {rating}"]
+
+        operation_advice = self._sanitize_summary_text(final_decision.get("operation_advice") or "")
+        if operation_advice:
+            parts.append(operation_advice)
+
+        for label, key in (("进场区间", "entry_range"), ("止盈位", "take_profit"), ("止损位", "stop_loss")):
+            value = final_decision.get(key)
+            if value:
+                parts.append(f"{label}: {value}")
+
+        return "；".join(parts)[:240]
+
+    def _extract_analysis_summary(self, final_decision: Dict) -> str:
+        """鎻愬彇鍒嗘瀽鎽樿銆?"""
+        for key in ("operation_advice", "advice", "summary"):
+            cleaned = self._sanitize_summary_text(final_decision.get(key))
+            if cleaned:
+                return cleaned
+        return self._build_fallback_summary(final_decision)
+
+    def _build_analysis_payload(
+        self,
+        stock_info: Dict,
+        final_decision: Dict,
+        agents_results: Optional[Dict] = None,
+        discussion_result: Optional[str] = None,
+        analysis_period: str = "1y",
+        analysis_source: str = "portfolio_batch_analysis",
+        legacy_backfilled_from: Optional[int] = None,
+    ) -> Dict:
+        """缁熶竴鏋勫缓鎸佷粨鍒嗘瀽鍘嗗彶钀藉簱鏁版嵁銆?"""
+        rating = str(final_decision.get("rating", "鎸佹湁")).strip() or "鎸佹湁"
+        confidence = self._extract_confidence(final_decision.get("confidence_level", 5.0))
+        current_price = self._extract_first_number(stock_info.get("current_price"), allow_zero=True) or 0.0
+        target_price = self._extract_first_number(final_decision.get("target_price"))
+        entry_min, entry_max = self._extract_entry_range(final_decision.get("entry_range"))
+        take_profit = self._extract_first_number(final_decision.get("take_profit"))
+        stop_loss = self._extract_first_number(final_decision.get("stop_loss"))
+        summary = self._extract_analysis_summary(final_decision)
+
+        return {
+            "rating": rating,
+            "confidence": confidence,
+            "current_price": current_price,
+            "target_price": target_price,
+            "entry_min": entry_min,
+            "entry_max": entry_max,
+            "take_profit": take_profit,
+            "stop_loss": stop_loss,
+            "summary": summary,
+            "stock_info": stock_info,
+            "agents_results": agents_results or {},
+            "discussion_result": discussion_result or "",
+            "final_decision": final_decision,
+            "analysis_period": analysis_period,
+            "analysis_source": analysis_source,
+            "legacy_backfilled_from": legacy_backfilled_from,
+            "has_full_report": bool(stock_info or agents_results or discussion_result or final_decision),
+        }
+
+    def _build_smart_monitor_task_data(self, stock: Dict, existing_task: Optional[Dict] = None) -> Dict:
+        """构建 AI 盯盘任务数据。"""
+        quantity = stock.get("quantity") or 0
+        cost_price = stock.get("cost_price") or 0
+        has_position = 1 if quantity > 0 and cost_price > 0 else 0
+        existing_task = existing_task or {}
+
+        return {
+            "task_name": existing_task.get("task_name") or f"{stock.get('name', stock['code'])}盯盘",
+            "stock_code": stock["code"],
+            "stock_name": stock.get("name"),
+            "enabled": existing_task.get("enabled", 0),
+            "check_interval": existing_task.get("check_interval", self.DEFAULT_SMART_MONITOR_CHECK_INTERVAL),
+            "auto_trade": existing_task.get("auto_trade", 0),
+            "trading_hours_only": existing_task.get("trading_hours_only", 1),
+            "position_size_pct": existing_task.get("position_size_pct", 20),
+            "stop_loss_pct": existing_task.get("stop_loss_pct", 5),
+            "take_profit_pct": existing_task.get("take_profit_pct", 10),
+            "qmt_account_id": existing_task.get("qmt_account_id"),
+            "notify_email": existing_task.get("notify_email"),
+            "notify_webhook": existing_task.get("notify_webhook"),
+            "has_position": has_position,
+            "position_cost": float(cost_price) if cost_price else 0,
+            "position_quantity": int(quantity) if quantity else 0,
+            "position_date": existing_task.get("position_date") or datetime.now().strftime("%Y-%m-%d"),
+            "managed_by_portfolio": 1,
+        }
+
+    def _build_realtime_monitor_payload(self, stock: Dict, latest_analysis: Dict) -> Optional[Dict]:
+        """根据最新持仓分析构建实时监测配置。"""
+        if not latest_analysis:
+            return None
+
+        entry_min = latest_analysis.get("entry_min")
+        entry_max = latest_analysis.get("entry_max")
+        take_profit = latest_analysis.get("take_profit")
+        stop_loss = latest_analysis.get("stop_loss")
+
+        if not all(v is not None for v in (entry_min, entry_max, take_profit, stop_loss)):
+            return None
+
+        existing = self.realtime_monitor_db.get_monitor_by_code(stock["code"])
+        return {
+            "code": stock["code"],
+            "name": stock.get("name", stock["code"]),
+            "rating": latest_analysis.get("rating", "持有"),
+            "entry_min": float(entry_min),
+            "entry_max": float(entry_max),
+            "take_profit": float(take_profit),
+            "stop_loss": float(stop_loss),
+            "check_interval": existing.get("check_interval", self.DEFAULT_REALTIME_MONITOR_CHECK_INTERVAL) if existing else self.DEFAULT_REALTIME_MONITOR_CHECK_INTERVAL,
+            "notification_enabled": existing.get("notification_enabled", True) if existing else True,
+            "trading_hours_only": existing.get("trading_hours_only", True) if existing else True,
+            "managed_by_portfolio": True,
+        }
+
+    def _sync_stock_to_smart_monitor(self, stock: Dict) -> bool:
+        """同步单只持仓到 AI 盯盘任务。"""
+        if not stock or not stock.get("auto_monitor"):
+            return False
+
+        existing_task = self.smart_monitor_db.get_monitor_task_by_code(stock["code"], managed_only=True)
+        task_data = self._build_smart_monitor_task_data(stock, existing_task)
+        self.smart_monitor_db.upsert_monitor_task(task_data)
+        return True
+
+    def sync_portfolio_to_smart_monitor(self) -> Dict[str, int]:
+        """同步所有启用自动监测的持仓到 AI 盯盘。"""
+        synced = 0
+        failed = 0
+
+        for stock in self.get_all_stocks(auto_monitor_only=True):
+            try:
+                if self._sync_stock_to_smart_monitor(stock):
+                    synced += 1
+            except Exception as e:
+                failed += 1
+                print(f"[ERROR] 同步 AI盯盘任务失败 ({stock['code']}): {e}")
+
+        return {"synced": synced, "failed": failed, "total": synced + failed}
+
+    def sync_latest_analysis_to_realtime_monitor(self, codes: Optional[List[str]] = None) -> Dict[str, int]:
+        """将最新持仓分析结果同步到实时监测。"""
+        monitors_to_sync = []
+        stocks = self.get_all_stocks(auto_monitor_only=True)
+        if codes:
+            code_set = {self._normalize_stock_code(code) for code in codes}
+            stocks = [stock for stock in stocks if stock["code"] in code_set]
+
+        for stock in stocks:
+            latest_analysis = self.db.get_latest_analysis(stock["id"])
+            monitor_payload = self._build_realtime_monitor_payload(stock, latest_analysis)
+            if monitor_payload:
+                monitors_to_sync.append(monitor_payload)
+
+        if not monitors_to_sync:
+            return {"added": 0, "updated": 0, "failed": 0, "total": 0}
+
+        return self.realtime_monitor_db.batch_add_or_update_monitors(monitors_to_sync)
+
+    def remove_managed_integrations_for_code(self, code: str) -> Dict[str, int]:
+        """移除指定股票的持仓托管下游记录。"""
+        normalized_code = self._normalize_stock_code(code)
+        smart_deleted = 1 if self.smart_monitor_db.delete_monitor_task_by_code(normalized_code, managed_only=True) else 0
+        monitor_deleted = 1 if self.realtime_monitor_db.remove_monitor_by_code(normalized_code, managed_only=True) else 0
+        return {
+            "smart_monitor_deleted": smart_deleted,
+            "realtime_monitor_deleted": monitor_deleted,
+        }
+
+    def cleanup_managed_integrations(self) -> Dict[str, int]:
+        """清理已经不再受持仓托管的下游记录。"""
+        active_codes = {stock["code"] for stock in self.get_all_stocks(auto_monitor_only=True)}
+        cleaned_smart = 0
+        cleaned_monitor = 0
+
+        for task in self.smart_monitor_db.get_monitor_tasks(enabled_only=False):
+            if task.get("managed_by_portfolio") and task["stock_code"] not in active_codes:
+                if self.smart_monitor_db.delete_monitor_task_by_code(task["stock_code"], managed_only=True):
+                    cleaned_smart += 1
+
+        for monitor in self.realtime_monitor_db.get_monitored_stocks():
+            if monitor.get("managed_by_portfolio") and monitor["symbol"] not in active_codes:
+                if self.realtime_monitor_db.remove_monitor_by_code(monitor["symbol"], managed_only=True):
+                    cleaned_monitor += 1
+
+        return {
+            "smart_monitor_deleted": cleaned_smart,
+            "realtime_monitor_deleted": cleaned_monitor,
+        }
+
+    def migrate_global_history_to_portfolio_history(self) -> Dict[str, int]:
+        """将误写到全局历史的持仓分析记录迁移到持仓分析历史。"""
+        migrated = 0
+        deleted = 0
+        skipped = 0
+        stocks_by_code = {
+            stock["code"]: stock for stock in self.get_all_stocks()
+        }
+
+        if not stocks_by_code:
+            return {"migrated": 0, "deleted": 0, "skipped": 0}
+
+        for record in self.global_history_db.get_all_records():
+            symbol = self._normalize_stock_code(record.get("symbol", ""))
+            stock = stocks_by_code.get(symbol)
+            if not stock:
+                continue
+
+            detail = self.global_history_db.get_record_by_id(record["id"])
+            if not detail:
+                skipped += 1
+                continue
+
+            analysis_time = detail.get("analysis_date")
+            if not analysis_time:
+                skipped += 1
+                continue
+
+            if not self.db.analysis_exists(stock["id"], analysis_time):
+                payload = self._build_analysis_payload(
+                    detail.get("stock_info", {}),
+                    detail.get("final_decision", {}),
+                    agents_results=detail.get("agents_results", {}),
+                    discussion_result=detail.get("discussion_result", ""),
+                    analysis_period=detail.get("period", "1y"),
+                    analysis_source="global_history_migration",
+                )
+                self.db.save_analysis(
+                    stock_id=stock["id"],
+                    rating=payload["rating"],
+                    confidence=payload["confidence"],
+                    current_price=payload["current_price"],
+                    target_price=payload["target_price"],
+                    entry_min=payload["entry_min"],
+                    entry_max=payload["entry_max"],
+                    take_profit=payload["take_profit"],
+                    stop_loss=payload["stop_loss"],
+                    summary=payload["summary"],
+                    analysis_time=analysis_time,
+                    stock_info=payload["stock_info"],
+                    agents_results=payload["agents_results"],
+                    discussion_result=payload["discussion_result"],
+                    final_decision=payload["final_decision"],
+                    analysis_period=payload["analysis_period"],
+                    analysis_source=payload["analysis_source"],
+                    legacy_backfilled_from=payload["legacy_backfilled_from"],
+                    has_full_report=payload["has_full_report"],
+                )
+                migrated += 1
+
+            if self.global_history_db.delete_record(record["id"]):
+                deleted += 1
+
+        return {"migrated": migrated, "deleted": deleted, "skipped": skipped}
+
+    def backfill_legacy_history_details(self) -> Dict[str, int]:
+        """为缺少完整快照的旧持仓历史补一条当前完整报告。"""
+        backfill_complete = self.db.get_metadata("legacy_history_backfill_complete", "0") == "1"
+        candidates = self.db.get_legacy_backfill_candidates()
+
+        if backfill_complete and not candidates:
+            return {"candidates": 0, "created": 0, "failed": 0}
+
+        created = 0
+        failed = 0
+        for stock in candidates:
+            try:
+                result = self.analyze_single_stock(stock["code"])
+                if not result.get("success"):
+                    failed += 1
+                    continue
+
+                payload = self._build_analysis_payload(
+                    result.get("stock_info", {}),
+                    result.get("final_decision", {}),
+                    agents_results=result.get("agents_results", {}),
+                    discussion_result=result.get("discussion_result", ""),
+                    analysis_period="1y",
+                    analysis_source="legacy_backfill",
+                    legacy_backfilled_from=stock.get("legacy_record_id"),
+                )
+                self.db.save_analysis(
+                    stock_id=stock["id"],
+                    rating=payload["rating"],
+                    confidence=payload["confidence"],
+                    current_price=payload["current_price"],
+                    target_price=payload["target_price"],
+                    entry_min=payload["entry_min"],
+                    entry_max=payload["entry_max"],
+                    take_profit=payload["take_profit"],
+                    stop_loss=payload["stop_loss"],
+                    summary=payload["summary"],
+                    stock_info=payload["stock_info"],
+                    agents_results=payload["agents_results"],
+                    discussion_result=payload["discussion_result"],
+                    final_decision=payload["final_decision"],
+                    analysis_period=payload["analysis_period"],
+                    analysis_source=payload["analysis_source"],
+                    legacy_backfilled_from=payload["legacy_backfilled_from"],
+                    has_full_report=payload["has_full_report"],
+                )
+                created += 1
+            except Exception as e:
+                failed += 1
+                print(f"[ERROR] 旧持仓历史补全失败 ({stock['code']}): {e}")
+
+        if not self.db.get_legacy_backfill_candidates():
+            self.db.set_metadata("legacy_history_backfill_complete", "1")
+        else:
+            self.db.set_metadata("legacy_history_backfill_complete", "0")
+
+        return {"candidates": len(candidates), "created": created, "failed": failed}
+
+    def reconcile_portfolio_integrations(self) -> Dict[str, Dict[str, int]]:
+        """执行持仓历史迁移与下游联动对账。"""
+        migration_result = self.migrate_global_history_to_portfolio_history()
+        backfill_result = self.backfill_legacy_history_details()
+        smart_sync_result = self.sync_portfolio_to_smart_monitor()
+        monitor_sync_result = self.sync_latest_analysis_to_realtime_monitor()
+        cleanup_result = self.cleanup_managed_integrations()
+
+        return {
+            "history_migration": migration_result,
+            "legacy_backfill": backfill_result,
+            "smart_monitor_sync": smart_sync_result,
+            "realtime_monitor_sync": monitor_sync_result,
+            "cleanup": cleanup_result,
+        }
+
+    def persist_analysis_results(
+        self,
+        analysis_results: Dict,
+        sync_realtime_monitor: bool = True,
+        analysis_source: str = "portfolio_batch_analysis",
+        analysis_period: str = "1y",
+    ) -> Dict:
+        """保存持仓分析结果，并按需同步到实时监测。"""
+        saved_ids = self.save_analysis_results(
+            analysis_results,
+            analysis_source=analysis_source,
+            analysis_period=analysis_period,
+        )
+        sync_result = None
+
+        if sync_realtime_monitor:
+            codes = [item.get("code") for item in analysis_results.get("results", []) if item.get("code")]
+            sync_result = self.sync_latest_analysis_to_realtime_monitor(codes=codes)
+
+        return {"saved_ids": saved_ids, "sync_result": sync_result}
     
     # ==================== 单只股票分析 ====================
     
@@ -558,7 +1050,12 @@ class PortfolioManager:
     
     # ==================== 分析结果保存 ====================
     
-    def save_analysis_results(self, analysis_results: Dict) -> List[int]:
+    def save_analysis_results(
+        self,
+        analysis_results: Dict,
+        analysis_source: str = "portfolio_batch_analysis",
+        analysis_period: str = "1y",
+    ) -> List[int]:
         """
         保存批量分析结果到数据库
         
@@ -589,73 +1086,36 @@ class PortfolioManager:
             # 提取分析结果关键信息
             final_decision = result.get("final_decision", {})
             stock_info = result.get("stock_info", {})
-            
-            # 使用正确的字段名
-            rating = final_decision.get("rating", "持有")
-            # 确保信心度为float类型，避免Arrow序列化错误
-            confidence_raw = final_decision.get("confidence_level", 5.0)
-            try:
-                confidence = float(confidence_raw)
-                # 确保信心度在合理范围内
-                if confidence < 0:
-                    confidence = 0.0
-                elif confidence > 10:
-                    confidence = 10.0
-            except (ValueError, TypeError):
-                # 如果转换失败，使用默认值
-                confidence = 5.0
-            current_price = stock_info.get("current_price", 0.0)
-            target_price_str = final_decision.get("target_price", "")
-            entry_range = final_decision.get("entry_range", "")
-            take_profit_str = final_decision.get("take_profit", "")
-            stop_loss_str = final_decision.get("stop_loss", "")
-            
-            # 解析目标价格
-            target_price = None
-            if target_price_str:
-                try:
-                    numbers = re.findall(r'\d+\.?\d*', str(target_price_str))
-                    if numbers:
-                        target_price = float(numbers[0])
-                except:
-                    pass
-            
-            # 解析进场区间
-            entry_min, entry_max = None, None
-            if entry_range and isinstance(entry_range, str) and "-" in entry_range:
-                try:
-                    parts = entry_range.split("-")
-                    entry_min = float(parts[0].strip())
-                    entry_max = float(parts[1].strip())
-                except:
-                    pass
-            
-            # 解析止盈止损
-            take_profit, stop_loss = None, None
-            if take_profit_str:
-                try:
-                    numbers = re.findall(r'\d+\.?\d*', str(take_profit_str))
-                    if numbers:
-                        take_profit = float(numbers[0])
-                except:
-                    pass
-            
-            if stop_loss_str:
-                try:
-                    numbers = re.findall(r'\d+\.?\d*', str(stop_loss_str))
-                    if numbers:
-                        stop_loss = float(numbers[0])
-                except:
-                    pass
-            
-            # 生成摘要（使用advice或summary字段）
-            summary = final_decision.get("advice", final_decision.get("summary", ""))[:500]  # 限制长度
+            payload = self._build_analysis_payload(
+                stock_info,
+                final_decision,
+                agents_results=result.get("agents_results", {}),
+                discussion_result=result.get("discussion_result", ""),
+                analysis_period=analysis_period,
+                analysis_source=analysis_source,
+            )
             
             try:
                 # 保存到数据库
                 analysis_id = self.db.save_analysis(
-                    stock_id, rating, confidence, current_price, target_price,
-                    entry_min, entry_max, take_profit, stop_loss, summary
+                    stock_id,
+                    payload["rating"],
+                    payload["confidence"],
+                    payload["current_price"],
+                    payload["target_price"],
+                    payload["entry_min"],
+                    payload["entry_max"],
+                    payload["take_profit"],
+                    payload["stop_loss"],
+                    payload["summary"],
+                    stock_info=payload["stock_info"],
+                    agents_results=payload["agents_results"],
+                    discussion_result=payload["discussion_result"],
+                    final_decision=payload["final_decision"],
+                    analysis_period=payload["analysis_period"],
+                    analysis_source=payload["analysis_source"],
+                    legacy_backfilled_from=payload["legacy_backfilled_from"],
+                    has_full_report=payload["has_full_report"],
                 )
                 saved_ids.append(analysis_id)
                 

@@ -11,56 +11,71 @@ from value_stock_selector import ValueStockSelector
 from value_stock_strategy import ValueStockStrategy
 
 
+def build_value_stock_filter_summary(
+    *,
+    max_pe: float,
+    max_pb: float,
+    min_dividend_yield: float,
+    max_debt_ratio: float,
+    min_float_cap_yi: float,
+    max_float_cap_yi: float,
+    sort_by: str,
+    exclude_st: bool,
+    exclude_kcb: bool,
+    exclude_cyb: bool,
+) -> str:
+    """Build a compact filter summary for the UI."""
+    parts = [
+        f"PE≤{max_pe:.1f}",
+        f"PB≤{max_pb:.1f}",
+        f"股息率≥{min_dividend_yield:.1f}%",
+        f"资产负债率≤{max_debt_ratio:.1f}%",
+        sort_by,
+    ]
+    if min_float_cap_yi > 0:
+        parts.append(f"流通市值≥{min_float_cap_yi:.0f}亿")
+    if max_float_cap_yi > 0:
+        parts.append(f"流通市值≤{max_float_cap_yi:.0f}亿")
+    if exclude_st:
+        parts.append("剔除ST")
+    if exclude_kcb:
+        parts.append("剔除科创板")
+    if exclude_cyb:
+        parts.append("剔除创业板")
+    return "，".join(parts)
+
+
 def display_value_stock():
     """显示低估值选股界面"""
 
-    st.markdown("""
-    <div style="background: linear-gradient(135deg, #1a5276 0%, #2e86c1 50%, #1a5276 100%); 
-                padding: 2rem; border-radius: 15px; margin-bottom: 1.5rem;
-                box-shadow: 0 8px 32px rgba(0,0,0,0.3);">
-        <h1 style="color: #fff; margin: 0; font-size: 2rem;">
-            💎 低估值策略 - 价值投资选股
-        </h1>
-        <p style="color: rgba(255,255,255,0.7); margin: 0.5rem 0 0 0; font-size: 0.9rem;">
-            基于视频 <a href="https://www.bilibili.com/video/BV1eJfxBrEjZ" target="_blank" style="color: #7ec8e3; text-decoration: underline;">头号投资法则</a>
-        </p>
-        <p style="color: rgba(255,255,255,0.8); margin: 0.3rem 0 0 0; font-size: 1.1rem;">
-            低PE + 低PB + 高股息 + 低负债 — 寻找被市场低估的优质标的
-        </p>
-    </div>
-    """, unsafe_allow_html=True)
+    with st.expander("选股策略说明", expanded=False):
+        st.markdown("""
+        基于视频 [头号投资法则](https://www.bilibili.com/video/BV1eJfxBrEjZ)
 
-    st.markdown("---")
+        低PE + 低PB + 高股息 + 低负债 — 寻找被市场低估的优质标的
 
-    st.markdown("""
-    ### 📋 选股策略说明
+        **筛选条件**：
+        - 市盈率（PE）≤ 20
+        - 市净率（PB）≤ 1.5
+        - 股息率 ≥ 1%
+        - 资产负债率 ≤ 30%
+        - 非ST股票
+        - 非科创板
+        - 非创业板
+        - 按流通市值由小到大排名
 
-    **筛选条件**：
-    - ✅ 市盈率（PE）≤ 20
-    - ✅ 市净率（PB）≤ 1.5
-    - ✅ 股息率 ≥ 1%
-    - ✅ 资产负债率 ≤ 30%
-    - ✅ 非ST股票
-    - ✅ 非科创板
-    - ✅ 非创业板
-    - ✅ 按流通市值由小到大排名
+        **量化交易策略**：
+        - 资金量：100万元
+        - 买入时机：开盘买入
+        - 单股最大仓位：30%
+        - 最大持股数：4只
+        - 每日最多买入：2只
+        - 卖出条件①：持股满30天到期卖出
+        - 卖出条件②：RSI超买（>70）卖出
+        """)
 
-    **量化交易策略**：
-    - 💰 资金量：100万元
-    - 📈 买入时机：开盘买入
-    - 💼 单股最大仓位：30%
-    - 🎯 最大持股数：4只
-    - 🛒 每日最多买入：2只
-    - 📉 卖出条件①：持股满30天到期卖出
-    - 📉 卖出条件②：RSI超买（>70）卖出
-    """)
-
-    st.markdown("---")
-
-    # 参数设置
-    col1, col2 = st.columns([2, 1])
-
-    with col1:
+    col_top_n, col_hint = st.columns([2, 1])
+    with col_top_n:
         top_n = st.slider(
             "筛选数量",
             min_value=5,
@@ -68,28 +83,95 @@ def display_value_stock():
             value=10,
             step=1,
             help="选择展示的股票数量",
-            key="value_stock_top_n"
+            key="value_stock_top_n",
         )
+    with col_hint:
+        st.caption(f"默认返回前 {top_n} 只股票。")
 
-    with col2:
-        st.info(f"💡 将筛选流通市值最小的前{top_n}只低估值股票")
+    with st.expander("高级筛选参数", expanded=False):
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            max_pe = st.number_input("最高PE", min_value=1.0, max_value=200.0, value=20.0, step=1.0)
+        with col2:
+            max_pb = st.number_input("最高PB", min_value=0.1, max_value=20.0, value=1.5, step=0.1)
+        with col3:
+            min_dividend_yield = st.number_input("最低股息率(%)", min_value=0.0, max_value=20.0, value=1.0, step=0.1)
+        with col4:
+            max_debt_ratio = st.number_input("最高资产负债率(%)", min_value=0.0, max_value=100.0, value=30.0, step=1.0)
 
-    st.markdown("---")
+        col5, col6, col7, col8 = st.columns(4)
+        with col5:
+            min_float_cap_yi = st.number_input(
+                "最低流通市值(亿)",
+                min_value=0.0,
+                max_value=100000.0,
+                value=0.0,
+                step=10.0,
+                help="0 表示不限制",
+            )
+        with col6:
+            max_float_cap_yi = st.number_input(
+                "最高流通市值(亿)",
+                min_value=0.0,
+                max_value=100000.0,
+                value=0.0,
+                step=10.0,
+                help="0 表示不限制",
+            )
+        with col7:
+            sort_by = st.selectbox(
+                "排序方式",
+                ["流通市值升序", "PE升序", "PB升序", "股息率降序", "资产负债率升序"],
+            )
+        with col8:
+            exclude_st = st.checkbox("剔除ST", value=True)
 
-    # 开始选股按钮
-    if st.button("🚀 开始低估值选股", type="primary", width='content', key="value_stock_start"):
+        col9, col10 = st.columns(2)
+        with col9:
+            exclude_kcb = st.checkbox("剔除科创板", value=True)
+        with col10:
+            exclude_cyb = st.checkbox("剔除创业板", value=True)
 
+    filter_summary = build_value_stock_filter_summary(
+        max_pe=max_pe,
+        max_pb=max_pb,
+        min_dividend_yield=min_dividend_yield,
+        max_debt_ratio=max_debt_ratio,
+        min_float_cap_yi=min_float_cap_yi,
+        max_float_cap_yi=max_float_cap_yi,
+        sort_by=sort_by,
+        exclude_st=exclude_st,
+        exclude_kcb=exclude_kcb,
+        exclude_cyb=exclude_cyb,
+    )
+    st.caption(f"当前筛选：{filter_summary}")
+
+    if st.button("开始选股", type="primary", width='content', key="value_stock_start"):
         with st.spinner("正在获取数据，请稍候..."):
             selector = ValueStockSelector()
-            success, stocks_df, message = selector.get_value_stocks(top_n=top_n)
+            success, stocks_df, message = selector.get_value_stocks(
+                top_n=top_n,
+                max_pe=max_pe,
+                max_pb=max_pb,
+                min_dividend_yield=min_dividend_yield,
+                max_debt_ratio=max_debt_ratio,
+                min_float_cap_yi=min_float_cap_yi or None,
+                max_float_cap_yi=max_float_cap_yi or None,
+                sort_by=sort_by,
+                exclude_st=exclude_st,
+                exclude_kcb=exclude_kcb,
+                exclude_cyb=exclude_cyb,
+            )
 
             if success and stocks_df is not None:
                 st.session_state.value_stocks = stocks_df
                 st.session_state.value_stock_selector = selector
-                st.success(f"✅ {message}")
+                st.session_state.value_stock_selected_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                st.session_state.value_stock_filter_summary = filter_summary
+                st.success(message)
                 st.rerun()
             else:
-                st.error(f"❌ {message}")
+                st.error(message)
 
     # 显示选股结果
     if 'value_stocks' in st.session_state:
@@ -102,8 +184,18 @@ def display_value_stock():
 def display_stock_results(stocks_df: pd.DataFrame, selector):
     """显示选股结果"""
 
+    selection_time = st.session_state.get("value_stock_selected_time")
+    filter_summary = st.session_state.get("value_stock_filter_summary")
+    if selection_time or filter_summary:
+        summary_parts = []
+        if selection_time:
+            summary_parts.append(f"选股时间: {selection_time}")
+        if filter_summary:
+            summary_parts.append(f"条件: {filter_summary}")
+        st.caption(" | ".join(summary_parts))
+
     st.markdown("---")
-    st.markdown("## 📊 选股结果")
+    st.markdown("## 选股结果")
 
     # 统计信息
     col1, col2, col3, col4 = st.columns(4)
@@ -156,7 +248,7 @@ def display_stock_results(stocks_df: pd.DataFrame, selector):
     st.markdown("---")
 
     # 显示股票列表
-    st.markdown("### 📋 精选低估值股票")
+    st.markdown("### 精选低估值股票")
 
     for idx, row in stocks_df.iterrows():
         code = row.get('股票代码', 'N/A')
@@ -193,7 +285,7 @@ def display_stock_results(stocks_df: pd.DataFrame, selector):
 
     # 完整数据表格
     st.markdown("---")
-    st.markdown("### 📊 完整数据表格")
+    st.markdown("### 完整数据表格")
 
     # 选择关键列
     display_cols = ['股票代码', '股票简称']
@@ -214,7 +306,7 @@ def display_stock_results(stocks_df: pd.DataFrame, selector):
 
         csv = stocks_df[final_cols].to_csv(index=False, encoding='utf-8-sig')
         st.download_button(
-            label="📥 下载股票列表CSV",
+            label="下载股票列表CSV",
             data=csv,
             file_name=f"value_stock_{datetime.now().strftime('%Y%m%d')}.csv",
             mime="text/csv",
@@ -253,23 +345,23 @@ def display_stock_detail(row: pd.Series, df: pd.DataFrame):
         for p in ['市盈率', '市盈率(动态)']:
             m = [c for c in df.columns if p in c]
             if m:
-                st.metric("📊 市盈率(PE)", fmt(row.get(m[0])))
+                st.metric("市盈率(PE)", fmt(row.get(m[0])))
                 break
 
     with col2:
         m = [c for c in df.columns if '市净率' in c]
         if m:
-            st.metric("📊 市净率(PB)", fmt(row.get(m[0])))
+            st.metric("市净率(PB)", fmt(row.get(m[0])))
 
     with col3:
         m = [c for c in df.columns if '股息率' in c]
         if m:
-            st.metric("💰 股息率", fmt(row.get(m[0]), '%'))
+            st.metric("股息率", fmt(row.get(m[0]), '%'))
 
     with col4:
         m = [c for c in df.columns if '资产负债率' in c]
         if m:
-            st.metric("📉 资产负债率", fmt(row.get(m[0]), '%'))
+            st.metric("资产负债率", fmt(row.get(m[0]), '%'))
 
     # 补充信息
     st.markdown("**其他指标**：")
@@ -287,21 +379,21 @@ def display_stock_detail(row: pd.Series, df: pd.DataFrame):
 def display_strategy_simulation(stocks_df: pd.DataFrame, selector):
     """显示量化交易策略模拟"""
 
-    st.markdown("## 🎯 策略模拟")
+    st.markdown("## 策略模拟")
 
     st.info("""
     **策略规则**：
-    - 📈 **买入**：开盘价买入，单股最大仓位30%，每日最多买2只
-    - 📉 **卖出条件①**：持股满30天，到期自动卖出
-    - 📉 **卖出条件②**：RSI(14) > 70 超买，触发卖出
-    - 🎯 **最大持股**：4只
-    - 💰 **初始资金**：100万元
+    - **买入**：开盘价买入，单股最大仓位30%，每日最多买2只
+    - **卖出条件①**：持股满30天，到期自动卖出
+    - **卖出条件②**：RSI(14) > 70 超买，触发卖出
+    - **最大持股**：4只
+    - **初始资金**：100万元
     """)
 
     col1, col2 = st.columns(2)
 
     with col1:
-        if st.button("🎮 开始策略模拟", type="primary", width='content', key="value_sim_start"):
+        if st.button("开始策略模拟", type="primary", width='content', key="value_sim_start"):
             st.session_state.show_value_strategy_sim = True
 
     with col2:
@@ -315,7 +407,7 @@ def run_strategy_simulation(stocks_df: pd.DataFrame):
     """运行策略模拟"""
 
     st.markdown("---")
-    st.markdown("### 📈 策略模拟执行")
+    st.markdown("### 策略模拟执行")
 
     strategy = ValueStockStrategy(initial_capital=1000000.0)
 
@@ -353,7 +445,7 @@ def run_strategy_simulation(stocks_df: pd.DataFrame):
         if result['success']:
             st.success(result['message'])
         else:
-            st.warning(f"⚠️ {result['message']}")
+            st.warning(result['message'])
 
     # RSI检查
     st.markdown("---")
@@ -364,7 +456,7 @@ def run_strategy_simulation(stocks_df: pd.DataFrame):
             rsi = strategy.calculate_rsi(code)
             if rsi is not None:
                 if rsi > strategy.rsi_overbought:
-                    st.warning(f"⚠️ {code} {pos['name']} RSI={rsi} > {strategy.rsi_overbought}，触发超买卖出信号！")
+                    st.warning(f"{code} {pos['name']} RSI={rsi} > {strategy.rsi_overbought}，触发超买卖出信号。")
                 else:
                     st.info(f"ℹ️ {code} {pos['name']} RSI={rsi}，正常范围")
             else:
@@ -399,7 +491,7 @@ def run_strategy_simulation(stocks_df: pd.DataFrame):
         st.metric("总资产", f"{summary['total_assets']:,.0f} 元")
 
     st.markdown("---")
-    st.markdown("#### 📝 策略说明")
+    st.markdown("#### 策略说明")
     st.markdown("""
     **后续操作**：
     1. **持有期管理**：系统跟踪每只股票的持有天数（30天到期）
@@ -409,9 +501,9 @@ def run_strategy_simulation(stocks_df: pd.DataFrame):
     3. **轮动买入**：卖出后释放资金，继续买入新的低估值股票
 
     **风险提示**：
-    - ⚠️ 本策略为模拟演示，实际交易存在滑点、手续费等成本
-    - ⚠️ 低估值不代表没有风险，价值陷阱需警惕
-    - ⚠️ 请谨慎评估风险，理性投资
+    - 本策略为模拟演示，实际交易存在滑点、手续费等成本。
+    - 低估值不代表没有风险，价值陷阱仍需警惕。
+    - 请谨慎评估风险，理性投资。
     """)
 
 

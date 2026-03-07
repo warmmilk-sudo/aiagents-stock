@@ -18,13 +18,11 @@ from monitor_service import monitor_service
 from notification_service import notification_service
 from stock_data import StockDataFetcher
 from miniqmt_interface import miniqmt, get_miniqmt_status, QuantStrategyConfig
+from ui_shared import NON_MARKET_PALETTE, get_recommendation_color
 
 def display_monitor_manager():
     """显示监测管理主页面"""
-    
-    st.markdown("## 📊 股票监测管理")
-    st.markdown("---")
-    
+
     # 检查是否有跳转提示
     if 'monitor_jump_highlight' in st.session_state:
         symbol = st.session_state.monitor_jump_highlight
@@ -50,9 +48,9 @@ def display_monitor_status():
     
     with col1:
         if monitor_service.running:
-            st.success("🟢 运行中")
+            st.success("监测服务运行中")
         else:
-            st.error("🔴 已停止")
+            st.warning("监测服务已停止")
     
     with col2:
         stocks = monitor_db.get_monitored_stocks()
@@ -264,14 +262,11 @@ def display_stock_card(stock: Dict):
         
         with col1:
             st.markdown(f"**{stock['symbol']}** - {stock['name']}")
+            if stock.get('managed_by_portfolio'):
+                st.caption("来源: 持仓同步")
             
-            # 评级显示
-            rating_color = {
-                '买入': '🟢',
-                '持有': '🟡',
-                '卖出': '🔴'
-            }
-            st.markdown(f"评级: {rating_color.get(stock['rating'], '⚪')} {stock['rating']}")
+            rating_color = get_recommendation_color(stock['rating'])
+            st.markdown(f"评级: <span style='color: {rating_color}; font-weight: 600;'>{stock['rating']}</span>", unsafe_allow_html=True)
         
         with col2:
             if stock['current_price'] and stock['current_price'] != 'N/A':
@@ -293,13 +288,13 @@ def display_stock_card(stock: Dict):
         
         with col2:
             if stock['take_profit']:
-                st.success(f"**止盈位**\n¥{stock['take_profit']}")
+                st.info(f"**止盈位**\n¥{stock['take_profit']}")
             else:
                 st.info("**止盈位**\n未设置")
         
         with col3:
             if stock['stop_loss']:
-                st.error(f"**止损位**\n¥{stock['stop_loss']}")
+                st.info(f"**止损位**\n¥{stock['stop_loss']}")
             else:
                 st.info("**止损位**\n未设置")
         
@@ -318,14 +313,14 @@ def display_stock_card(stock: Dict):
                 st.caption("最后检查: 从未检查")
         
         with col3:
-            status = "🟢 启用" if stock['notification_enabled'] else "🔴 禁用"
+            status = "启用" if stock['notification_enabled'] else "禁用"
             st.caption(f"通知: {status}")
             
             # 显示量化状态
             if stock.get('quant_enabled', False):
-                st.caption("🤖 量化: 🟢 启用")
+                st.caption("量化: 启用")
             else:
-                st.caption("🤖 量化: 🔴 禁用")
+                st.caption("量化: 禁用")
         
         # 操作按钮
         st.markdown("**🔧 操作**")
@@ -591,18 +586,18 @@ def display_notification_management():
             for notification in all_notifications:
                 notification_type = notification['type']
                 color_map = {
-                    'entry': '🟢',
-                    'take_profit': '🟡',
-                    'stop_loss': '🔴',
-                    'quant_trade': '🤖'
+                    'entry': '入场',
+                    'take_profit': '止盈',
+                    'stop_loss': '止损',
+                    'quant_trade': '量化'
                 }
-                icon = color_map.get(notification_type, '🔵')
+                icon = color_map.get(notification_type, '通知')
                 
                 # 显示已发送状态
                 sent_status = "✅ 已发送" if notification.get('sent') else "⏳ 待发送"
                 
                 # 显示通知信息
-                st.info(f"{icon} **{notification['symbol']}** - {notification['message']}\n\n_{notification['triggered_at']}_ | {sent_status}")
+                st.info(f"[{icon}] **{notification['symbol']}** - {notification['message']}\n\n_{notification['triggered_at']}_ | {sent_status}")
             
             # 显示待发送通知数量
             pending_count = len([n for n in all_notifications if not n.get('sent')])
@@ -715,15 +710,15 @@ def display_scheduler_section():
     
     with col1:
         if status['scheduler_enabled']:
-            st.success("🟢 定时已启用")
+            st.info("定时已启用")
         else:
-            st.info("⚪ 定时未启用")
+            st.info("定时未启用")
     
     with col2:
         if status['scheduler_running']:
-            st.success("🔄 调度器运行中")
+            st.info("调度器运行中")
         else:
-            st.info("⏸️ 调度器未运行")
+            st.info("调度器未运行")
     
     with col3:
         if status['is_trading_day']:

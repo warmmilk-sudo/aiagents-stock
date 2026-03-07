@@ -4,6 +4,7 @@
 提供持仓股票和分析历史的数据库操作接口
 """
 
+import json
 import sqlite3
 from datetime import datetime
 from typing import List, Dict, Optional, Tuple
@@ -32,6 +33,42 @@ class PortfolioDB:
         conn.row_factory = sqlite3.Row  # 使查询结果可以通过列名访问
         return conn
     
+    def _ensure_column(self, cursor, table: str, column: str, definition: str):
+        cursor.execute(f"PRAGMA table_info({table})")
+        existing_columns = {row[1] for row in cursor.fetchall()}
+        if column not in existing_columns:
+            cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+    def _serialize_json(self, value):
+        if value is None:
+            return None
+        if isinstance(value, str):
+            return value
+        return json.dumps(value, ensure_ascii=False, default=str)
+
+    def _deserialize_analysis_row(self, row) -> Dict:
+        record = dict(row)
+        for field in ("stock_info_json", "agents_results_json", "final_decision_json"):
+            raw_value = record.get(field)
+            parsed_key = field.replace("_json", "")
+            if raw_value:
+                try:
+                    record[parsed_key] = json.loads(raw_value)
+                except json.JSONDecodeError:
+                    record[parsed_key] = {}
+            else:
+                record[parsed_key] = {}
+        discussion_result = record.get("discussion_result")
+        if discussion_result:
+            try:
+                record["discussion_result"] = json.loads(discussion_result)
+            except json.JSONDecodeError:
+                record["discussion_result"] = discussion_result
+        else:
+            record["discussion_result"] = ""
+        record["has_full_report"] = bool(record.get("has_full_report"))
+        return record
+
     def _init_database(self):
         """初始化数据库表结构"""
         conn = self._get_connection()
@@ -71,6 +108,27 @@ class PortfolioDB:
                     FOREIGN KEY (portfolio_stock_id) REFERENCES portfolio_stocks(id) ON DELETE CASCADE
                 )
             ''')
+
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS portfolio_metadata (
+                    config_key TEXT PRIMARY KEY,
+                    config_value TEXT,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+
+            analysis_columns = {
+                "stock_info_json": "TEXT",
+                "agents_results_json": "TEXT",
+                "discussion_result": "TEXT",
+                "final_decision_json": "TEXT",
+                "analysis_period": "TEXT DEFAULT '1y'",
+                "analysis_source": "TEXT DEFAULT 'portfolio_batch_analysis'",
+                "legacy_backfilled_from": "INTEGER",
+                "has_full_report": "INTEGER DEFAULT 0",
+            }
+            for column, definition in analysis_columns.items():
+                self._ensure_column(cursor, "portfolio_analysis_history", column, definition)
             
             # 创建索引以提升查询性能
             cursor.execute('''
@@ -353,7 +411,15 @@ class PortfolioDB:
                      current_price: float, target_price: Optional[float] = None,
                      entry_min: Optional[float] = None, entry_max: Optional[float] = None,
                      take_profit: Optional[float] = None, stop_loss: Optional[float] = None,
-                     summary: str = "") -> int:
+                     summary: str = "", analysis_time: Optional[datetime] = None,
+                     stock_info: Optional[Dict] = None,
+                     agents_results: Optional[Dict] = None,
+                     discussion_result: Optional[str] = None,
+                     final_decision: Optional[Dict] = None,
+                     analysis_period: str = "1y",
+                     analysis_source: str = "portfolio_batch_analysis",
+                     legacy_backfilled_from: Optional[int] = None,
+                     has_full_report: Optional[bool] = None) -> int:
         """
         保存分析历史记录
         
@@ -368,6 +434,7 @@ class PortfolioDB:
             take_profit: 止盈位
             stop_loss: 止损位
             summary: 分析摘要
+            analysis_time: 分析时间，默认当前时间
             
         Returns:
             新增分析记录的ID
@@ -376,13 +443,41 @@ class PortfolioDB:
         cursor = conn.cursor()
         
         try:
+            full_report_flag = has_full_report
+            if full_report_flag is None:
+                full_report_flag = any(
+                    value not in (None, "", {}, [])
+                    for value in (stock_info, agents_results, discussion_result, final_decision)
+                )
+
             cursor.execute('''
                 INSERT INTO portfolio_analysis_history 
                 (portfolio_stock_id, analysis_time, rating, confidence, current_price,
-                 target_price, entry_min, entry_max, take_profit, stop_loss, summary)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (stock_id, datetime.now(), rating, confidence, current_price,
-                  target_price, entry_min, entry_max, take_profit, stop_loss, summary))
+                 target_price, entry_min, entry_max, take_profit, stop_loss, summary,
+                 stock_info_json, agents_results_json, discussion_result, final_decision_json,
+                 analysis_period, analysis_source, legacy_backfilled_from, has_full_report)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                stock_id,
+                analysis_time or datetime.now(),
+                rating,
+                confidence,
+                current_price,
+                target_price,
+                entry_min,
+                entry_max,
+                take_profit,
+                stop_loss,
+                summary,
+                self._serialize_json(stock_info),
+                self._serialize_json(agents_results),
+                self._serialize_json(discussion_result),
+                self._serialize_json(final_decision),
+                analysis_period,
+                analysis_source,
+                legacy_backfilled_from,
+                1 if full_report_flag else 0,
+            ))
             
             conn.commit()
             analysis_id = cursor.lastrowid
@@ -395,8 +490,60 @@ class PortfolioDB:
             raise
         finally:
             conn.close()
+
+    def get_metadata(self, key: str, default: Optional[str] = None) -> Optional[str]:
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                '''
+                SELECT config_value
+                FROM portfolio_metadata
+                WHERE config_key = ?
+                ''',
+                (key,),
+            )
+            row = cursor.fetchone()
+            return row["config_value"] if row else default
+        finally:
+            conn.close()
+
+    def set_metadata(self, key: str, value: Optional[str]):
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                '''
+                INSERT INTO portfolio_metadata (config_key, config_value, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(config_key) DO UPDATE SET
+                    config_value = excluded.config_value,
+                    updated_at = excluded.updated_at
+                ''',
+                (key, value, datetime.now()),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def analysis_exists(self, stock_id: int, analysis_time: str) -> bool:
+        """检查指定时间点的分析记录是否已存在。"""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute('''
+                SELECT 1
+                FROM portfolio_analysis_history
+                WHERE portfolio_stock_id = ?
+                AND analysis_time = ?
+                LIMIT 1
+            ''', (stock_id, analysis_time))
+            return cursor.fetchone() is not None
+        finally:
+            conn.close()
     
-    def get_analysis_history(self, stock_id: int, limit: int = 10) -> List[Dict]:
+    def get_analysis_history(self, stock_id: int, limit: int = 10, include_legacy: bool = True) -> List[Dict]:
         """
         获取股票的分析历史记录
         
@@ -419,12 +566,15 @@ class PortfolioDB:
             ''', (stock_id, limit))
             
             rows = cursor.fetchall()
-            return [dict(row) for row in rows]
+            history = [self._deserialize_analysis_row(row) for row in rows]
+            if include_legacy:
+                return history
+            return [row for row in history if row.get("has_full_report")]
             
         finally:
             conn.close()
     
-    def get_latest_analysis_history(self, stock_id: int, limit: int = 10) -> List[Dict]:
+    def get_latest_analysis_history(self, stock_id: int, limit: int = 10, include_legacy: bool = True) -> List[Dict]:
         """
         获取股票的最新分析历史记录（按时间倒序）
         
@@ -437,9 +587,9 @@ class PortfolioDB:
         Returns:
             分析历史记录列表（按时间倒序）
         """
-        return self.get_analysis_history(stock_id, limit)
+        return self.get_analysis_history(stock_id, limit, include_legacy=include_legacy)
     
-    def get_latest_analysis(self, stock_id: int) -> Optional[Dict]:
+    def get_latest_analysis(self, stock_id: int, include_legacy: bool = True) -> Optional[Dict]:
         """
         获取股票的最新一次分析记录
         
@@ -457,14 +607,38 @@ class PortfolioDB:
                 SELECT * FROM portfolio_analysis_history 
                 WHERE portfolio_stock_id = ?
                 ORDER BY analysis_time DESC
-                LIMIT 1
             ''', (stock_id,))
             
-            row = cursor.fetchone()
-            if row:
-                return dict(row)
-            return None
+            rows = cursor.fetchall()
+            history = [self._deserialize_analysis_row(row) for row in rows]
+            if not include_legacy:
+                history = [row for row in history if row.get("has_full_report")]
+            return history[0] if history else None
             
+        finally:
+            conn.close()
+
+    def get_legacy_backfill_candidates(self) -> List[Dict]:
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute('''
+                SELECT s.*, MIN(h.id) AS legacy_record_id
+                FROM portfolio_stocks s
+                INNER JOIN portfolio_analysis_history h
+                    ON s.id = h.portfolio_stock_id
+                WHERE COALESCE(h.has_full_report, 0) = 0
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM portfolio_analysis_history h2
+                      WHERE h2.portfolio_stock_id = s.id
+                        AND COALESCE(h2.has_full_report, 0) = 1
+                  )
+                GROUP BY s.id
+                ORDER BY s.created_at DESC
+            ''')
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
         finally:
             conn.close()
     
@@ -556,7 +730,9 @@ class PortfolioDB:
                     s.*,
                     h.rating, h.confidence, h.current_price, h.target_price,
                     h.entry_min, h.entry_max, h.take_profit, h.stop_loss,
-                    h.analysis_time
+                    h.analysis_time, h.summary, h.stock_info_json, h.agents_results_json,
+                    h.discussion_result, h.final_decision_json, h.analysis_period,
+                    h.analysis_source, h.legacy_backfilled_from, h.has_full_report
                 FROM portfolio_stocks s
                 LEFT JOIN (
                     SELECT h1.*
@@ -573,7 +749,7 @@ class PortfolioDB:
             ''')
             
             rows = cursor.fetchall()
-            return [dict(row) for row in rows]
+            return [self._deserialize_analysis_row(row) for row in rows]
             
         finally:
             conn.close()

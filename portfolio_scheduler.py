@@ -216,14 +216,22 @@ class PortfolioScheduler:
             
             # 2. 保存分析结果
             print("\n[2/4] 保存分析结果...")
-            saved_ids = portfolio_manager.save_analysis_results(analysis_results)
+            persistence_result = portfolio_manager.persist_analysis_results(
+                analysis_results,
+                sync_realtime_monitor=self.auto_monitor_sync,
+                analysis_source="portfolio_scheduler",
+                analysis_period="1y",
+            )
+            saved_ids = persistence_result["saved_ids"]
             print(f"[OK] 保存 {len(saved_ids)} 条分析记录")
             
             # 3. 自动监测同步
-            sync_result = None
+            sync_result = persistence_result["sync_result"]
             if self.auto_monitor_sync:
                 print("\n[3/4] 自动同步到监测列表...")
-                sync_result = self._sync_to_monitor(analysis_results)
+                if sync_result is None:
+                    sync_result = {"added": 0, "updated": 0, "failed": 0, "total": 0}
+                print(f"[OK] 同步完成: 新增{sync_result.get('added', 0)}只, 更新{sync_result.get('updated', 0)}只, 失败{sync_result.get('failed', 0)}只")
             else:
                 print("\n[3/4] 跳过监测同步（已禁用）")
             
@@ -262,91 +270,8 @@ class PortfolioScheduler:
             同步结果统计
         """
         try:
-            from monitor_db import monitor_db
-            
-            # 准备批量监测数据
-            monitors_data = []
-            failed_count = 0
-            
-            for item in analysis_results.get("results", []):
-                code = item.get("code")
-                result = item.get("result", {})
-                
-                # 检查分析是否成功
-                if not result.get("success"):
-                    continue
-                
-                final_decision = result.get("final_decision", {})
-                stock_info = result.get("stock_info", {})
-                
-                # 检查是否启用自动监测
-                stock = portfolio_manager.db.get_stock_by_code(code)
-                if not stock or not stock.get("auto_monitor"):
-                    continue
-                
-                # 从final_decision中提取数据（使用正确的字段名）
-                rating = final_decision.get("rating", "持有")
-                entry_range = final_decision.get("entry_range", "")
-                take_profit_str = final_decision.get("take_profit", "")
-                stop_loss_str = final_decision.get("stop_loss", "")
-                
-                # 解析进场区间（格式如"10.5-12.3"）
-                entry_min, entry_max = None, None
-                if entry_range and isinstance(entry_range, str) and "-" in entry_range:
-                    try:
-                        parts = entry_range.split("-")
-                        entry_min = float(parts[0].strip())
-                        entry_max = float(parts[1].strip())
-                    except:
-                        pass
-                
-                # 解析止盈止损（提取数字）
-                import re
-                take_profit, stop_loss = None, None
-                if take_profit_str:
-                    try:
-                        numbers = re.findall(r'\d+\.?\d*', str(take_profit_str))
-                        if numbers:
-                            take_profit = float(numbers[0])
-                    except:
-                        pass
-                
-                if stop_loss_str:
-                    try:
-                        numbers = re.findall(r'\d+\.?\d*', str(stop_loss_str))
-                        if numbers:
-                            stop_loss = float(numbers[0])
-                    except:
-                        pass
-                
-                # 检查参数有效性
-                if not all([entry_min, entry_max, take_profit, stop_loss]):
-                    print(f"[WARN] {code} 参数不完整，跳过同步")
-                    failed_count += 1
-                    continue
-                
-                # 构建监测数据
-                monitor_data = {
-                    "code": code,
-                    "name": stock_info.get("name", stock.get("name", code)),
-                    "rating": rating,
-                    "entry_min": entry_min,
-                    "entry_max": entry_max,
-                    "take_profit": take_profit,
-                    "stop_loss": stop_loss,
-                    "check_interval": 60,
-                    "notification_enabled": True
-                }
-                
-                monitors_data.append(monitor_data)
-            
-            # 使用批量API同步
-            if monitors_data:
-                result = monitor_db.batch_add_or_update_monitors(monitors_data)
-                return result
-            else:
-                print("[WARN] 没有需要同步的监测数据")
-                return {"added": 0, "updated": 0, "failed": 0, "total": 0}
+            codes = [item.get("code") for item in analysis_results.get("results", []) if item.get("code")]
+            return portfolio_manager.sync_latest_analysis_to_realtime_monitor(codes=codes)
             
         except Exception as e:
             print(f"[ERROR] 监测同步异常: {str(e)}")

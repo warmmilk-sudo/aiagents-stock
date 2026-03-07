@@ -509,24 +509,32 @@ class SectorStrategyEngine:
         try:
             predictions = results.get("final_predictions", {})
             if isinstance(predictions, dict):
-                # 从summary中提取市场趋势信息
                 summary_info = predictions.get("summary", {})
                 market_trend = summary_info.get("market_view", "") if isinstance(summary_info, dict) else ""
-                
-                # 从long_short.bullish中计算热门板块数量
+                key_opportunity = summary_info.get("key_opportunity", "") if isinstance(summary_info, dict) else ""
                 long_short_info = predictions.get("long_short", {})
                 bullish_sectors = long_short_info.get("bullish", []) if isinstance(long_short_info, dict) else []
-                hot_sectors_count = len(bullish_sectors)
-                
-                # 如果有看多板块信息，则添加到摘要中
-                if bullish_sectors and isinstance(bullish_sectors, list):
-                    # 提取前3个看多板块名称
-                    bullish_names = [sector.get("sector", "") for sector in bullish_sectors[:3] if isinstance(sector, dict)]
-                    if bullish_names:
-                        bullish_text = "，".join(bullish_names)
-                        return f"市场趋势: {market_trend}，识别{hot_sectors_count}个热门板块机会，看多板块: {bullish_text}"
-                
-                return f"市场趋势: {market_trend}，识别{hot_sectors_count}个热门板块机会"
+                bearish_sectors = long_short_info.get("bearish", []) if isinstance(long_short_info, dict) else []
+
+                bullish_names = [
+                    sector.get("sector", "")
+                    for sector in bullish_sectors[:3]
+                    if isinstance(sector, dict) and sector.get("sector")
+                ]
+                bearish_names = [
+                    sector.get("sector", "")
+                    for sector in bearish_sectors[:2]
+                    if isinstance(sector, dict) and sector.get("sector")
+                ]
+
+                summary_parts = [part for part in [market_trend, key_opportunity] if part]
+                if bullish_names:
+                    summary_parts.append(f"看多板块: {'、'.join(bullish_names)}")
+                if bearish_names:
+                    summary_parts.append(f"关注风险板块: {'、'.join(bearish_names)}")
+
+                if summary_parts:
+                    return "；".join(summary_parts)
             else:
                 return "智策板块分析报告"
         except:

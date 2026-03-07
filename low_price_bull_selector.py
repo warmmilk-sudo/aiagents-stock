@@ -1,157 +1,162 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-低价擒牛选股模块
-使用pywencai获取低价高成长股票
-"""
+"""低价擒牛选股数据获取与过滤。"""
+
+from __future__ import annotations
+
+from typing import Optional, Tuple
 
 import pandas as pd
 import pywencai
-from datetime import datetime
-from typing import Tuple, Optional
-import time
+
+from selector_filter_utils import (
+    convert_result_to_dataframe,
+    filter_board_flags,
+    filter_numeric_range,
+    normalize_stock_code,
+    sort_dataframe,
+)
 
 
 class LowPriceBullSelector:
-    """低价擒牛选股类"""
-    
-    def __init__(self):
-        self.raw_data = None
-        self.selected_stocks = None
-    
-    def get_low_price_stocks(self, top_n: int = 5) -> Tuple[bool, Optional[pd.DataFrame], str]:
-        """
-        获取低价高成长股票
-        
-        选股策略：
-        - 股价<10元
-        - 净利润增长率≥100%
-        - 非ST
-        - 非科创板
-        - 非创业板
-        - 沪深A股
-        - 成交额由小至大排名
-        
-        Args:
-            top_n: 返回前N只股票
-            
-        Returns:
-            (success, dataframe, message)
-        """
+    """低价高成长选股器。"""
+
+    PRICE_COLUMNS = ("股价", "最新价")
+    GROWTH_COLUMNS = ("净利润增长率", "净利润同比增长率")
+    TURNOVER_COLUMNS = ("成交额",)
+    MARKET_CAP_COLUMNS = ("总市值",)
+
+    SORT_OPTIONS = {
+        "成交额升序": (TURNOVER_COLUMNS, True, "成交额从小到大排名"),
+        "成交额降序": (TURNOVER_COLUMNS, False, "成交额从大到小排名"),
+        "净利润增长率降序": (GROWTH_COLUMNS, False, "净利润增长率从大到小排名"),
+        "股价升序": (PRICE_COLUMNS, True, "股价从小到大排名"),
+        "总市值升序": (MARKET_CAP_COLUMNS, True, "总市值从小到大排名"),
+    }
+
+    def __init__(self) -> None:
+        self.raw_data: Optional[pd.DataFrame] = None
+        self.selected_stocks: Optional[pd.DataFrame] = None
+
+    def get_low_price_stocks(
+        self,
+        top_n: int = 5,
+        *,
+        max_price: float = 10.0,
+        min_profit_growth: float = 100.0,
+        min_turnover_yi: Optional[float] = None,
+        max_turnover_yi: Optional[float] = None,
+        min_market_cap_yi: Optional[float] = None,
+        max_market_cap_yi: Optional[float] = None,
+        sort_by: str = "成交额升序",
+        exclude_st: bool = True,
+        exclude_kcb: bool = True,
+        exclude_cyb: bool = True,
+        only_hs_a: bool = True,
+    ) -> Tuple[bool, Optional[pd.DataFrame], str]:
+        """获取低价高成长股票并按高级参数过滤。"""
+        filters = {
+            "max_price": max_price,
+            "min_profit_growth": min_profit_growth,
+            "min_turnover_yi": min_turnover_yi,
+            "max_turnover_yi": max_turnover_yi,
+            "min_market_cap_yi": min_market_cap_yi,
+            "max_market_cap_yi": max_market_cap_yi,
+            "sort_by": sort_by,
+            "exclude_st": exclude_st,
+            "exclude_kcb": exclude_kcb,
+            "exclude_cyb": exclude_cyb,
+            "only_hs_a": only_hs_a,
+        }
+
         try:
-            print(f"\n{'='*60}")
-            print(f"🐂 低价擒牛选股 - 数据获取中")
-            print(f"{'='*60}")
-            print(f"策略: 股价<10元 + 净利润增长率≥100% + 沪深A股")
-            print(f"目标: 筛选前{top_n}只股票")
-            
-            # 构建查询语句（按成交额由小至大排名）
-            query = (
-                "股价<10元，"
-                "净利润增长率(净利润同比增长率)≥100%，"
-                "非st，"
-                "非科创板，"
-                "非创业板，"
-                "沪深A股，"
-                "成交额由小至大排名"
-            )
-            
-            print(f"\n查询语句: {query}")
-            print(f"正在调用问财接口...")
-            
-            # 调用pywencai
+            query = self._build_query(filters)
             result = pywencai.get(query=query, loop=True)
-            
             if result is None:
-                return False, None, "问财接口返回None，请检查网络或稍后重试"
-            
-            # 转换为DataFrame
-            df_result = self._convert_to_dataframe(result)
-            
+                return False, None, "问财未返回数据，请稍后重试"
+
+            df_result = convert_result_to_dataframe(result)
             if df_result is None or df_result.empty:
                 return False, None, "未获取到符合条件的股票数据"
-            
-            print(f"✅ 成功获取 {len(df_result)} 只股票")
-            
-            # 显示获取到的列名
-            print(f"\n获取到的数据字段:")
-            for col in df_result.columns[:15]:
-                print(f"  - {col}")
-            if len(df_result.columns) > 15:
-                print(f"  ... 还有 {len(df_result.columns) - 15} 个字段")
-            
-            # 保存原始数据
-            self.raw_data = df_result
-            
-            # 取前N只
-            if len(df_result) > top_n:
-                selected = df_result.head(top_n)
-                print(f"\n从 {len(df_result)} 只股票中选出前 {top_n} 只")
-            else:
-                selected = df_result
-                print(f"\n共 {len(df_result)} 只符合条件的股票")
-            
+
+            self.raw_data = df_result.copy()
+
+            filtered = self._apply_post_filters(df_result, filters)
+            if filtered.empty:
+                return False, None, "高级筛选条件过严，未筛到符合条件的股票"
+
+            selected = self._sort_result(filtered, sort_by).head(top_n).reset_index(drop=True)
             self.selected_stocks = selected
-            
-            # 显示选中的股票
-            print(f"\n✅ 选中的股票:")
-            for idx, row in selected.iterrows():
-                code = row.get('股票代码', 'N/A')
-                name = row.get('股票简称', 'N/A')
-                price = row.get('股价', row.get('最新价', 'N/A'))
-                growth = row.get('净利润增长率', row.get('净利润同比增长率', 'N/A'))
-                turnover = row.get('成交额', 'N/A')
-                print(f"  {idx+1}. {code} {name} - 股价:{price} 净利增长:{growth}% 成交额:{turnover}")
-            
-            print(f"{'='*60}\n")
-            
-            return True, selected, f"成功筛选出{len(selected)}只低价高成长股票"
-            
-        except Exception as e:
-            error_msg = f"获取数据失败: {str(e)}"
-            print(f"❌ {error_msg}")
-            import traceback
-            traceback.print_exc()
-            return False, None, error_msg
-    
-    def _convert_to_dataframe(self, result) -> Optional[pd.DataFrame]:
-        """将pywencai返回结果转换为DataFrame"""
-        try:
-            if isinstance(result, pd.DataFrame):
-                return result
-            elif isinstance(result, dict):
-                if 'data' in result:
-                    return pd.DataFrame(result['data'])
-                elif 'result' in result:
-                    return pd.DataFrame(result['result'])
-                else:
-                    return pd.DataFrame(result)
-            elif isinstance(result, list):
-                return pd.DataFrame(result)
-            else:
-                print(f"⚠️ 未知的数据格式: {type(result)}")
-                return None
-        except Exception as e:
-            print(f"转换DataFrame失败: {e}")
-            return None
-    
-    def get_stock_codes(self) -> list:
-        """
-        获取选中股票的代码列表（去掉市场后缀）
-        
-        Returns:
-            股票代码列表
-        """
+            return True, selected, f"成功筛选出 {len(selected)} 只低价高成长股票"
+        except Exception as exc:
+            return False, None, f"获取数据失败: {exc}"
+
+    def _build_query(self, filters: dict) -> str:
+        parts = [
+            f"股价<={filters['max_price']:.2f}元",
+            (
+                f"净利润增长率>={filters['min_profit_growth']:.2f}%"
+                f"或净利润同比增长率>={filters['min_profit_growth']:.2f}%"
+            ),
+        ]
+
+        if filters["exclude_st"]:
+            parts.append("非ST")
+        if filters["exclude_kcb"]:
+            parts.append("非科创板")
+        if filters["exclude_cyb"]:
+            parts.append("非创业板")
+        if filters["only_hs_a"]:
+            parts.append("沪深A股")
+        if filters["min_turnover_yi"] is not None:
+            parts.append(f"成交额>={filters['min_turnover_yi']:.2f}亿")
+        if filters["max_turnover_yi"] is not None:
+            parts.append(f"成交额<={filters['max_turnover_yi']:.2f}亿")
+        if filters["min_market_cap_yi"] is not None:
+            parts.append(f"总市值>={filters['min_market_cap_yi']:.2f}亿")
+        if filters["max_market_cap_yi"] is not None:
+            parts.append(f"总市值<={filters['max_market_cap_yi']:.2f}亿")
+
+        sort_option = self.SORT_OPTIONS.get(filters["sort_by"])
+        if sort_option:
+            parts.append(sort_option[2])
+
+        return "，".join(parts)
+
+    def _apply_post_filters(self, df: pd.DataFrame, filters: dict) -> pd.DataFrame:
+        result = filter_board_flags(
+            df,
+            exclude_st=filters["exclude_st"],
+            exclude_kcb=filters["exclude_kcb"],
+            exclude_cyb=filters["exclude_cyb"],
+            only_hs_a=filters["only_hs_a"],
+        )
+        result = filter_numeric_range(result, self.PRICE_COLUMNS, max_value=filters["max_price"])
+        result = filter_numeric_range(result, self.GROWTH_COLUMNS, min_value=filters["min_profit_growth"])
+
+        if filters["min_turnover_yi"] is not None or filters["max_turnover_yi"] is not None:
+            result = filter_numeric_range(
+                result,
+                self.TURNOVER_COLUMNS,
+                min_value=filters["min_turnover_yi"] * 1e8 if filters["min_turnover_yi"] is not None else None,
+                max_value=filters["max_turnover_yi"] * 1e8 if filters["max_turnover_yi"] is not None else None,
+            )
+        if filters["min_market_cap_yi"] is not None or filters["max_market_cap_yi"] is not None:
+            result = filter_numeric_range(
+                result,
+                self.MARKET_CAP_COLUMNS,
+                min_value=filters["min_market_cap_yi"] * 1e8 if filters["min_market_cap_yi"] is not None else None,
+                max_value=filters["max_market_cap_yi"] * 1e8 if filters["max_market_cap_yi"] is not None else None,
+            )
+        return result
+
+    def _sort_result(self, df: pd.DataFrame, sort_by: str) -> pd.DataFrame:
+        candidates, ascending, _ = self.SORT_OPTIONS.get(sort_by, self.SORT_OPTIONS["成交额升序"])
+        return sort_dataframe(df, candidates, ascending=ascending)
+
+    def get_stock_codes(self) -> list[str]:
+        """获取当前选中股票代码列表。"""
         if self.selected_stocks is None or self.selected_stocks.empty:
             return []
-        
-        codes = []
-        for code in self.selected_stocks['股票代码'].tolist():
-            if isinstance(code, str):
-                # 去掉 .SZ 等后缀
-                clean_code = code.split('.')[0] if '.' in code else code
-                codes.append(clean_code)
-            else:
-                codes.append(str(code))
-        
-        return codes
+
+        return [normalize_stock_code(code) for code in self.selected_stocks["股票代码"].tolist()]

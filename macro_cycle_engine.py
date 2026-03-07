@@ -5,16 +5,16 @@
 
 from macro_cycle_agents import MacroCycleAgents
 from macro_cycle_data import MacroCycleDataFetcher
+from macro_cycle_db import macro_cycle_db
 from typing import Dict, Any
 import time
-import json
 import logging
 
 
 class MacroCycleEngine:
     """宏观周期综合研判引擎"""
 
-    def __init__(self, model=None, lightweight_model=None, reasoning_model=None):
+    def __init__(self, model=None, lightweight_model=None, reasoning_model=None, database=None):
         self.model = model
         self.lightweight_model = lightweight_model
         self.reasoning_model = reasoning_model
@@ -24,6 +24,7 @@ class MacroCycleEngine:
             reasoning_model=reasoning_model,
         )
         self.data_fetcher = MacroCycleDataFetcher()
+        self.database = database or macro_cycle_db
         self.logger = logging.getLogger(__name__)
         if not self.logger.handlers:
             logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(levelname)s %(name)s: %(message)s')
@@ -128,6 +129,14 @@ class MacroCycleEngine:
 
             results["agents_analysis"] = agents_results
             results["success"] = True
+            try:
+                report_id = self.save_analysis_report(results)
+                results["report_id"] = report_id
+                saved_report = self.get_report_detail(report_id)
+                if saved_report:
+                    results["saved_report"] = saved_report
+            except Exception as save_error:
+                self.logger.error(f"[宏观周期引擎] 保存分析报告失败: {save_error}")
 
             print("\n" + "=" * 60)
             print("✓ 宏观周期分析完成！")
@@ -143,6 +152,47 @@ class MacroCycleEngine:
             results["error"] = str(e)
 
         return results
+
+    def _extract_chief_summary(self, results: Dict[str, Any]) -> str:
+        agents = results.get("agents_analysis", {})
+        chief_analysis = agents.get("chief", {}).get("analysis", "")
+        if not chief_analysis:
+            return ""
+
+        normalized = str(chief_analysis).replace("\r\n", "\n").strip()
+        for paragraph in normalized.split("\n\n"):
+            text = paragraph.strip().lstrip("#*-> ")
+            if len(text) >= 20:
+                return text[:300]
+        return normalized[:300]
+
+    def _generate_report_summary(self, results: Dict[str, Any]) -> str:
+        chief_summary = self._extract_chief_summary(results)
+        if chief_summary:
+            return chief_summary
+
+        agents = results.get("agents_analysis", {})
+        available = [name for name, data in agents.items() if data.get("analysis")]
+        if available:
+            return f"宏观周期分析已完成，包含 {len(available)} 位分析师报告。"
+        return "宏观周期分析报告"
+
+    def save_analysis_report(self, results: Dict[str, Any]) -> int:
+        summary = self._generate_report_summary(results)
+        chief_summary = self._extract_chief_summary(results)
+        return self.database.save_analysis_report(results, summary, chief_summary)
+
+    def get_latest_report(self):
+        return self.database.get_latest_report()
+
+    def get_historical_reports(self, limit: int = 20):
+        return self.database.get_historical_reports(limit=limit)
+
+    def get_report_detail(self, report_id: int):
+        return self.database.get_report_detail(report_id)
+
+    def delete_report(self, report_id: int):
+        return self.database.delete_report(report_id)
 
 
 # 测试
