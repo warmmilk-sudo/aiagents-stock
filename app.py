@@ -145,12 +145,23 @@ st.markdown("""
 
     /* 隐藏全局垂直滚动条 */
     ::-webkit-scrollbar {
-        width: 0px;
+        width: 10px;
+        height: 10px;
+    }
+    ::-webkit-scrollbar-track {
         background: transparent;
     }
+    ::-webkit-scrollbar-thumb {
+        background: rgba(148,163,184,0.32);
+        border-radius: 999px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+        background: rgba(148,163,184,0.48);
+    }
     html, body {
-        scrollbar-width: none;
-        -ms-overflow-style: none;
+        scrollbar-width: thin;
+        -ms-overflow-style: auto;
+        scrollbar-gutter: stable;
     }
 
     /* 统一字号层级 */
@@ -282,10 +293,7 @@ st.markdown("""
         padding-top: var(--space-4);
         overflow-y: visible !important;
         max-height: none !important;
-        scrollbar-width: none;
-    }
-    .stTabs [data-baseweb="tab-panel"]::-webkit-scrollbar {
-        display: none;
+        scrollbar-width: thin;
     }
     .stTabs [data-baseweb="tab-panel"] > div,
     .stTabs [data-baseweb="tab-panel"] div[data-testid="stVerticalBlock"] {

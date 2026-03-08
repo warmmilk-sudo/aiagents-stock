@@ -12,7 +12,6 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 from typing import List, Dict
-import time
 
 from portfolio_analysis_tasks import portfolio_analysis_task_manager
 from portfolio_manager import portfolio_manager
@@ -109,7 +108,6 @@ def _ensure_portfolio_analysis_session_id() -> str:
         session_id = uuid.uuid4().hex
         st.session_state[PORTFOLIO_ANALYSIS_SESSION_KEY] = session_id
     return session_id
-
 
 def _format_task_time(timestamp) -> str:
     if not timestamp:
@@ -515,7 +513,11 @@ def display_portfolio_risk():
             df_ind = pd.DataFrame(industry_data)
             df_ind["占比"] = df_ind["weight"].apply(lambda x: f"{x*100:.1f}%")
             df_ind["市值"] = df_ind["market_value"].apply(lambda x: f"¥{x:,.2f}")
-            st.dataframe(df_ind[["industry", "市值", "占比"]].rename(columns={"industry": "行业"}), hide_index=True, use_container_width=True)
+            st.dataframe(
+                df_ind[["industry", "市值", "占比"]].rename(columns={"industry": "行业"}),
+                hide_index=True,
+                width="stretch",
+            )
             
     with col2:
         st.markdown("#### 🎯 单票集中度")
@@ -526,7 +528,11 @@ def display_portfolio_risk():
             df_st["市值"] = df_st["market_value"].apply(lambda x: f"¥{x:,.2f}")
             df_st["盈亏"] = df_st["pnl"].apply(lambda x: f"¥{x:,.2f}")
             df_st["盈亏比例"] = df_st["pnl_pct"].apply(lambda x: f"{x*100:.2f}%")
-            st.dataframe(df_st[["name", "市值", "占比", "盈亏比例"]].rename(columns={"name": "股票"}), hide_index=True, use_container_width=True)
+            st.dataframe(
+                df_st[["name", "市值", "占比", "盈亏比例"]].rename(columns={"name": "股票"}),
+                hide_index=True,
+                width="stretch",
+            )
 
 
 def display_portfolio_stocks(lightweight_model=None, reasoning_model=None):
@@ -540,7 +546,7 @@ def display_portfolio_stocks(lightweight_model=None, reasoning_model=None):
         display_add_stock_form()
     
     # 获取所有持仓股票
-    all_stocks = portfolio_manager.get_all_stocks()
+    all_stocks = portfolio_manager.get_all_latest_analysis()
     
     accounts = ["全部账户"] + list(sorted(set(s.get("account_name", "默认账户") for s in all_stocks)))
     selected_account = st.selectbox("账号筛选", accounts, key="portfolio_account_selector")
@@ -573,10 +579,20 @@ def display_portfolio_stocks(lightweight_model=None, reasoning_model=None):
     
     # 显示股票列表（卡片式布局）
     for stock in stocks:
-        display_stock_card(stock, lightweight_model, reasoning_model)
+        display_stock_card(
+            stock,
+            latest_analysis=stock,
+            lightweight_model=lightweight_model,
+            reasoning_model=reasoning_model,
+        )
 
 
-def display_stock_card(stock: Dict, lightweight_model=None, reasoning_model=None):
+def display_stock_card(
+    stock: Dict,
+    latest_analysis: Dict | None = None,
+    lightweight_model=None,
+    reasoning_model=None,
+):
     """显示单个股票卡片"""
 
     stock_id = stock.get("id")
@@ -585,7 +601,6 @@ def display_stock_card(stock: Dict, lightweight_model=None, reasoning_model=None
     quantity = stock.get("quantity")
     note = stock.get("note", "")
     auto_monitor = stock.get("auto_monitor", True)
-    latest_analysis = portfolio_manager.db.get_latest_analysis(stock_id)
     view_model = portfolio_manager.build_stock_card_view_model(stock, latest_analysis)
     rating = view_model.get("rating", "待分析")
     rating_color = get_recommendation_color(rating)
@@ -656,7 +671,6 @@ def display_stock_card(stock: Dict, lightweight_model=None, reasoning_model=None
                 else:
                     st.session_state[auto_monitor_key] = auto_monitor
                     st.error(msg)
-                time.sleep(0.35)
                 st.rerun()
         with action_col2:
             if st.button(
@@ -685,7 +699,6 @@ def display_stock_card(stock: Dict, lightweight_model=None, reasoning_model=None
                     st.success(msg)
                 else:
                     st.error(msg)
-                time.sleep(0.5)
                 st.rerun()
 
         if st.session_state.get(edit_state_key):
@@ -726,7 +739,6 @@ def display_stock_card(stock: Dict, lightweight_model=None, reasoning_model=None
                             st.success(msg)
                         else:
                             st.error(msg)
-                        time.sleep(0.5)
                         st.rerun()
                 
                 with col_cancel:
@@ -822,7 +834,6 @@ def display_add_stock_form():
                     st.session_state["portfolio_add_note"] = ""
                     st.session_state["portfolio_add_auto_monitor"] = True
                     st.success(msg)
-                    time.sleep(0.5)
                     st.rerun()
                 except Exception as e:
                     st.error(f"添加失败: {str(e)}")
@@ -1009,7 +1020,6 @@ def display_scheduler_management():
                                 if len(schedule_times) > 1:
                                     portfolio_scheduler.remove_schedule_time(time_str)
                                     st.success(f"已删除 {time_str}")
-                                    time.sleep(0.3)
                                     st.rerun()
                                 else:
                                     st.error("至少保留一个定时时间")
@@ -1032,7 +1042,6 @@ def display_scheduler_management():
                 time_str = new_time.strftime("%H:%M")
                 if portfolio_scheduler.add_schedule_time(time_str):
                     st.success(f"已添加 {time_str}")
-                    time.sleep(0.3)
                     st.rerun()
                 else:
                     st.warning(f"{time_str} 已存在")
@@ -1085,7 +1094,6 @@ def display_scheduler_management():
                     send_notification=send_notification
                 )
                 st.success("配置已更新！")
-                time.sleep(0.5)
                 st.rerun()
         
         with col_reset:
@@ -1098,7 +1106,6 @@ def display_scheduler_management():
                     send_notification=True
                 )
                 st.success("已恢复默认配置！")
-                time.sleep(0.5)
                 st.rerun()
     
     st.markdown("---")
@@ -1111,13 +1118,11 @@ def display_scheduler_management():
             if st.button("⏹️ 停止调度器", type="secondary", width='content'):
                 portfolio_scheduler.stop_scheduler()
                 st.success("调度器已停止")
-                time.sleep(0.5)
                 st.rerun()
         else:
             if st.button("▶️ 启动调度器", type="primary", width='content'):
                 portfolio_scheduler.start_scheduler()
                 st.success("调度器已启动")
-                time.sleep(0.5)
                 st.rerun()
     
     with col_btn2:

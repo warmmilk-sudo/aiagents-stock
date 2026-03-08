@@ -37,6 +37,10 @@ class PortfolioManager:
         self.db = portfolio_store or portfolio_db
         self.realtime_monitor_db = realtime_monitor_store or realtime_monitor_db
         self.smart_monitor_db = smart_monitor_store or SmartMonitorDB()
+        self._integrations_reconcile_pending = True
+
+    def _mark_integrations_reconcile_pending(self) -> None:
+        self._integrations_reconcile_pending = True
 
     def _normalize_stock_code(self, code: str) -> str:
         """标准化股票代码，兼容 .SH/.SZ/.HK 等输入格式。"""
@@ -176,6 +180,7 @@ class PortfolioManager:
             
             # 添加到数据库
             stock_id = self.db.add_stock(code, final_name, cost_price, quantity, note, auto_monitor)
+            self._mark_integrations_reconcile_pending()
             warning = ""
             if auto_monitor:
                 try:
@@ -208,6 +213,7 @@ class PortfolioManager:
             old_code = existing["code"]
             success = self.db.update_stock(stock_id, **kwargs)
             if success:
+                self._mark_integrations_reconcile_pending()
                 updated_stock = self.db.get_stock(stock_id)
                 warning = ""
 
@@ -245,6 +251,7 @@ class PortfolioManager:
 
             success = self.db.delete_stock(stock_id)
             if success:
+                self._mark_integrations_reconcile_pending()
                 warning = ""
                 try:
                     self.remove_managed_integrations_for_code(existing["code"])
@@ -694,14 +701,15 @@ class PortfolioManager:
     def sync_latest_analysis_to_realtime_monitor(self, codes: Optional[List[str]] = None) -> Dict[str, int]:
         """将最新持仓分析结果同步到实时监测。"""
         monitors_to_sync = []
-        stocks = self.get_all_stocks(auto_monitor_only=True)
+        stocks = self.db.get_all_latest_analysis()
         if codes:
-            code_set = {self._normalize_stock_code(code) for code in codes}
+            code_set = {self._normalize_stock_code(code) for code in codes if code}
             stocks = [stock for stock in stocks if stock["code"] in code_set]
 
         for stock in stocks:
-            latest_analysis = self.db.get_latest_analysis(stock["id"])
-            monitor_payload = self._build_realtime_monitor_payload(stock, latest_analysis)
+            if not stock.get("auto_monitor"):
+                continue
+            monitor_payload = self._build_realtime_monitor_payload(stock, stock)
             if monitor_payload:
                 monitors_to_sync.append(monitor_payload)
 
@@ -743,9 +751,17 @@ class PortfolioManager:
 
     def reconcile_portfolio_integrations(self) -> Dict[str, Dict[str, int]]:
         """执行持仓下游联动对账。"""
+        if not self._integrations_reconcile_pending:
+            return {
+                "smart_monitor_sync": {"synced": 0, "failed": 0, "total": 0},
+                "realtime_monitor_sync": {"added": 0, "updated": 0, "failed": 0, "total": 0},
+                "cleanup": {"smart_monitor_deleted": 0, "realtime_monitor_deleted": 0},
+            }
+
         smart_sync_result = self.sync_portfolio_to_smart_monitor()
         monitor_sync_result = self.sync_latest_analysis_to_realtime_monitor()
         cleanup_result = self.cleanup_managed_integrations()
+        self._integrations_reconcile_pending = False
 
         return {
             "smart_monitor_sync": smart_sync_result,
