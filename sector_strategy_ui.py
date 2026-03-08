@@ -711,7 +711,6 @@ def display_visualizations(predictions, key_prefix="sector_main"):
             fig,
             width='stretch',
             config={'responsive': True},
-            key=f"{key_prefix}_sector_confidence",
         )
     else:
         st.info("暂无可视化的多空板块数据。")
@@ -755,7 +754,6 @@ def display_visualizations(predictions, key_prefix="sector_main"):
             fig,
             width='stretch',
             config={'responsive': True},
-            key=f"{key_prefix}_sector_heat",
         )
     else:
         st.info("暂无可视化的板块热度数据。")
