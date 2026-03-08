@@ -431,7 +431,7 @@ def display_analysis_results(result, show_export=True, key_prefix="sector_main")
     
     # Tab 4: 数据可视化
     with tab4:
-        display_visualizations(result.get("final_predictions", {}))
+        display_visualizations(result.get("final_predictions", {}), key_prefix=key_prefix)
 
 
 def display_predictions(predictions):
@@ -664,7 +664,7 @@ def display_comprehensive_report(report):
     st.write(report)
 
 
-def display_visualizations(predictions):
+def display_visualizations(predictions, key_prefix="sector_main"):
     """显示数据可视化"""
     
     st.subheader("数据可视化")
@@ -707,7 +707,12 @@ def display_visualizations(predictions):
                      title='板块多空信心度对比')
         
         fig.update_layout(height=400)
-        st.plotly_chart(fig, width='stretch', config={'responsive': True}, key="sector_confidence")
+        st.plotly_chart(
+            fig,
+            width='stretch',
+            config={'responsive': True},
+            key=f"{key_prefix}_sector_confidence",
+        )
     else:
         st.info("暂无可视化的多空板块数据。")
     
@@ -746,7 +751,12 @@ def display_visualizations(predictions):
                         title='板块热度分布图')
         
         fig.update_layout(height=400)
-        st.plotly_chart(fig, width='stretch', config={'responsive': True}, key="sector_heat")
+        st.plotly_chart(
+            fig,
+            width='stretch',
+            config={'responsive': True},
+            key=f"{key_prefix}_sector_heat",
+        )
     else:
         st.info("暂无可视化的板块热度数据。")
 
