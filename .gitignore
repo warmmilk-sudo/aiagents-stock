@@ -12,3 +12,4 @@
 TradEnv/
 
 *.db
+*.log
