@@ -13,6 +13,52 @@ import base64
 
 from longhubang_engine import LonghubangEngine
 from longhubang_pdf import LonghubangPDFGenerator
+from ui_analysis_task_utils import (
+    consume_finished_ui_analysis_task,
+    get_ui_analysis_button_state,
+    render_ui_analysis_task_live_card,
+    start_ui_analysis_task,
+)
+
+
+LONGHUBANG_TASK_TYPE = "longhubang_analysis"
+LONGHUBANG_TASK_DONE_KEY = "longhubang_analysis_last_handled_task"
+
+
+@st.fragment(run_every=1.0)
+def _render_longhubang_task_fragment():
+    render_ui_analysis_task_live_card(
+        task_type=LONGHUBANG_TASK_TYPE,
+        title="龙虎榜分析任务状态",
+        state_prefix="longhubang_analysis_live",
+    )
+
+
+def _run_longhubang_analysis_task(
+    *,
+    model=None,
+    date=None,
+    days=1,
+    lightweight_model=None,
+    reasoning_model=None,
+    report_progress=None,
+):
+    report_progress(current=5, total=100, message="正在初始化龙虎榜分析引擎...")
+    engine = LonghubangEngine(
+        model=model,
+        lightweight_model=lightweight_model,
+        reasoning_model=reasoning_model,
+    )
+    report_progress(current=15, total=100, message="正在获取龙虎榜数据...")
+    result = engine.run_comprehensive_analysis(date=date, days=days)
+    if not result.get("success"):
+        raise RuntimeError(result.get("error", "未知错误"))
+
+    report_progress(current=100, total=100, message="龙虎榜分析完成，正在同步结果...")
+    return {
+        "result": result,
+        "message": "龙虎榜分析完成。",
+    }
 
 
 def display_longhubang(lightweight_model=None, reasoning_model=None):
@@ -100,6 +146,17 @@ def display_analysis_tab(lightweight_model=None, reasoning_model=None):
         return
     
     st.subheader("🔍 龙虎榜综合分析")
+    _render_longhubang_task_fragment()
+    finished_task = consume_finished_ui_analysis_task(LONGHUBANG_TASK_TYPE, LONGHUBANG_TASK_DONE_KEY)
+    if finished_task:
+        if finished_task.get("status") == "success":
+            payload = finished_task.get("result") or {}
+            st.session_state.longhubang_result = payload.get("result")
+            st.success(payload.get("message") or "龙虎榜分析完成。")
+        else:
+            error_message = finished_task.get("error") or "未知错误"
+            st.session_state.longhubang_result = {"success": False, "error": error_message}
+            st.error(f"❌ 分析失败: {error_message}")
     
     # 参数设置
     col1, col2 = st.columns([2, 2])
@@ -129,12 +186,23 @@ def display_analysis_tab(lightweight_model=None, reasoning_model=None):
     
     # 分析按钮
     col1, col2 = st.columns([2, 2])
+    action_label, action_disabled, action_help = get_ui_analysis_button_state(
+        LONGHUBANG_TASK_TYPE,
+        "🚀 开始分析",
+    )
     
     with col1:
-        analyze_button = st.button("🚀 开始分析", type="primary", width='stretch')
+        analyze_button = st.button(
+            action_label,
+            type="primary",
+            width='stretch',
+            disabled=action_disabled,
+            help=action_help,
+            key="longhubang_start_analysis",
+        )
     
     with col2:
-        if st.button("🔄 清除结果", width='stretch'):
+        if st.button("🔄 清除结果", width='stretch', key="longhubang_clear_analysis_result"):
             if 'longhubang_result' in st.session_state:
                 del st.session_state.longhubang_result
             st.success("已清除分析结果")
@@ -148,20 +216,25 @@ def display_analysis_tab(lightweight_model=None, reasoning_model=None):
         if 'longhubang_result' in st.session_state:
             del st.session_state.longhubang_result
         
-        # 准备参数（使用当前会话的双模型选择）
-        if analysis_mode == "指定日期":
-            date_str = selected_date.strftime('%Y-%m-%d')
-            run_longhubang_analysis(
-                date=date_str,
-                lightweight_model=lightweight_model,
-                reasoning_model=reasoning_model,
+        try:
+            date_str = selected_date.strftime('%Y-%m-%d') if analysis_mode == "指定日期" else None
+            analysis_days = days if analysis_mode != "指定日期" else 1
+            start_ui_analysis_task(
+                task_type=LONGHUBANG_TASK_TYPE,
+                label="龙虎榜分析",
+                runner=lambda _task_id, report_progress: _run_longhubang_analysis_task(
+                    date=date_str,
+                    days=analysis_days,
+                    lightweight_model=lightweight_model,
+                    reasoning_model=reasoning_model,
+                    report_progress=report_progress,
+                ),
+                metadata={"mode": analysis_mode, "date": date_str, "days": analysis_days},
             )
-        else:
-            run_longhubang_analysis(
-                days=days,
-                lightweight_model=lightweight_model,
-                reasoning_model=reasoning_model,
-            )
+            st.info("已提交后台分析任务，可切换页面，返回后会自动同步进度和结果。")
+            st.rerun()
+        except RuntimeError as exc:
+            st.warning(str(exc))
     
     # 显示分析结果
     if 'longhubang_result' in st.session_state:

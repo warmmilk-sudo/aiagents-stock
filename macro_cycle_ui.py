@@ -9,6 +9,49 @@ from datetime import datetime
 from macro_cycle_engine import MacroCycleEngine
 from macro_cycle_pdf import MacroCyclePDFGenerator, generate_macro_cycle_markdown
 from ui_shared import _split_analysis_report_sections, render_reasoning_process
+from ui_analysis_task_utils import (
+    consume_finished_ui_analysis_task,
+    get_active_ui_analysis_task,
+    get_ui_analysis_button_state,
+    render_ui_analysis_task_live_card,
+    start_ui_analysis_task,
+)
+
+
+MACRO_CYCLE_TASK_TYPE = "macro_cycle_analysis"
+MACRO_CYCLE_TASK_DONE_KEY = "macro_cycle_analysis_last_handled_task"
+
+
+@st.fragment(run_every=1.0)
+def _render_macro_cycle_task_fragment():
+    render_ui_analysis_task_live_card(
+        task_type=MACRO_CYCLE_TASK_TYPE,
+        title="宏观周期分析任务状态",
+        state_prefix="macro_cycle_analysis_live",
+    )
+
+
+def _run_macro_cycle_analysis_task(*, lightweight_model=None, reasoning_model=None, report_progress=None):
+    def progress_callback(pct, text):
+        raw_pct = float(pct or 0)
+        if 0.0 <= raw_pct <= 1.0:
+            raw_pct *= 100
+        pct_value = int(max(0, min(100, raw_pct)))
+        report_progress(current=pct_value, total=100, message=text or "宏观周期分析进行中...")
+
+    engine = MacroCycleEngine(
+        lightweight_model=lightweight_model,
+        reasoning_model=reasoning_model,
+    )
+    result = engine.run_full_analysis(progress_callback=progress_callback)
+    if not result.get("success"):
+        raise RuntimeError(result.get("error", "未知错误"))
+
+    report_progress(current=100, total=100, message="宏观周期分析完成，正在同步结果...")
+    return {
+        "result": result,
+        "message": "宏观周期分析完成。",
+    }
 
 
 def _render_macro_agent_report(agent_result, *, empty_message: str, report_heading: str | None = None):
@@ -43,7 +86,8 @@ def _render_macro_agent_report(agent_result, *, empty_message: str, report_headi
 def display_macro_cycle(lightweight_model=None, reasoning_model=None):
     """显示宏观周期分析主界面"""
     restore_suppressed = st.session_state.pop("suppress_macro_cycle_restore_once", False)
-    if not restore_suppressed and 'macro_cycle_result' not in st.session_state:
+    active_macro_task = get_active_ui_analysis_task(MACRO_CYCLE_TASK_TYPE)
+    if not restore_suppressed and not active_macro_task and 'macro_cycle_result' not in st.session_state:
         try:
             engine = MacroCycleEngine(
                 lightweight_model=lightweight_model,
@@ -89,11 +133,35 @@ def display_analysis_tab(lightweight_model=None, reasoning_model=None):
         - **首席宏观策略师** — 三维综合研判，最终资产配置建议
         """)
 
+    _render_macro_cycle_task_fragment()
+    finished_task = consume_finished_ui_analysis_task(MACRO_CYCLE_TASK_TYPE, MACRO_CYCLE_TASK_DONE_KEY)
+    if finished_task:
+        if finished_task.get("status") == "success":
+            payload = finished_task.get("result") or {}
+            st.session_state.macro_cycle_result = payload.get("result")
+            st.session_state.macro_cycle_result_source = "task_complete"
+            st.success(payload.get("message") or "宏观周期分析完成。")
+        else:
+            error_message = finished_task.get("error") or "未知错误"
+            st.session_state.macro_cycle_result = {"success": False, "error": error_message}
+            st.error(f"分析失败: {error_message}")
+
+    action_label, action_disabled, action_help = get_ui_analysis_button_state(
+        MACRO_CYCLE_TASK_TYPE,
+        "开始宏观周期分析",
+    )
+
     # 操作按钮
     col1, col2 = st.columns([2, 2])
 
     with col1:
-        analyze_button = st.button("开始宏观周期分析", type="primary", key="macro_analyze")
+        analyze_button = st.button(
+            action_label,
+            type="primary",
+            key="macro_analyze",
+            disabled=action_disabled,
+            help=action_help,
+        )
 
     with col2:
         if st.button("清除结果", key="macro_clear"):
@@ -107,13 +175,23 @@ def display_analysis_tab(lightweight_model=None, reasoning_model=None):
 
     # 开始分析
     if analyze_button:
-        if 'macro_cycle_result' in st.session_state:
-            del st.session_state.macro_cycle_result
-
-        run_macro_cycle_analysis(
-            lightweight_model=lightweight_model,
-            reasoning_model=reasoning_model,
-        )
+        try:
+            if 'macro_cycle_result' in st.session_state:
+                del st.session_state.macro_cycle_result
+            st.session_state["suppress_macro_cycle_restore_once"] = True
+            start_ui_analysis_task(
+                task_type=MACRO_CYCLE_TASK_TYPE,
+                label="宏观周期分析",
+                runner=lambda _task_id, report_progress: _run_macro_cycle_analysis_task(
+                    lightweight_model=lightweight_model,
+                    reasoning_model=reasoning_model,
+                    report_progress=report_progress,
+                ),
+            )
+            st.info("已提交后台分析任务，可切换页面，返回后会自动同步进度和结果。")
+            st.rerun()
+        except RuntimeError as exc:
+            st.warning(str(exc))
 
     # 显示结果
     if 'macro_cycle_result' in st.session_state:

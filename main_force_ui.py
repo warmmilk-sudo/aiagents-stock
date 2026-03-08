@@ -294,22 +294,27 @@ def display_analysis_results(result: dict, analyzer):
 
     st.markdown("---")
 
-    # 显示AI分析师完整报告
-    if analyzer and hasattr(analyzer, 'fund_flow_analysis'):
-        display_analyst_reports(analyzer)
+    rec_col, report_col = st.columns([1, 1], gap="large")
 
-    st.markdown("---")
-
-    # 显示推荐股票
-    if result['final_recommendations']:
+    with rec_col:
         st.markdown("### 精选推荐")
+        recommendations = result.get('final_recommendations') or []
+        if recommendations:
+            for rec in recommendations:
+                with st.expander(
+                    f"【第{rec['rank']}名】{rec['symbol']} - {rec['name']}",
+                    expanded=(rec['rank'] <= 3)
+                ):
+                    display_recommendation_detail(rec)
+        else:
+            st.info("暂无精选推荐。")
 
-        for rec in result['final_recommendations']:
-            with st.expander(
-                f"【第{rec['rank']}名】{rec['symbol']} - {rec['name']}",
-                expanded=(rec['rank'] <= 3)
-            ):
-                display_recommendation_detail(rec)
+    with report_col:
+        st.markdown("### AI团队分析报告")
+        if analyzer and hasattr(analyzer, 'fund_flow_analysis'):
+            display_analyst_reports(analyzer, show_title=False)
+        else:
+            st.info("暂无AI团队分析报告。")
 
     # 显示候选股票列表
     if analyzer and analyzer.raw_stocks is not None and not analyzer.raw_stocks.empty:
@@ -529,10 +534,11 @@ def display_recommendation_detail(rec: dict):
                 if cap_keys:
                     st.caption(f"总市值: {stock_data.get(cap_keys[0], 'N/A')}")
 
-def display_analyst_reports(analyzer):
+def display_analyst_reports(analyzer, *, show_title: bool = True):
     """显示AI分析师完整报告"""
 
-    st.markdown("### AI分析师团队完整报告")
+    if show_title:
+        st.markdown("### AI分析师团队完整报告")
 
     # 创建三个标签页
     tab1, tab2, tab3 = st.tabs(["资金流向分析", "行业板块分析", "财务基本面分析"])

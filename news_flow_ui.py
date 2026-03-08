@@ -10,6 +10,51 @@ import pandas as pd
 from datetime import datetime, timedelta
 import time
 from ui_shared import get_dataframe_height
+from ui_analysis_task_utils import (
+    consume_finished_ui_analysis_task,
+    get_ui_analysis_button_state,
+    render_ui_analysis_task_live_card,
+    start_ui_analysis_task,
+)
+
+
+NEWS_FLOW_TASK_TYPE = "news_flow_analysis"
+NEWS_FLOW_TASK_DONE_KEY = "news_flow_analysis_last_handled_task"
+
+
+@st.fragment(run_every=1.0)
+def _render_news_flow_task_fragment():
+    render_ui_analysis_task_live_card(
+        task_type=NEWS_FLOW_TASK_TYPE,
+        title="新闻流量分析任务状态",
+        state_prefix="news_flow_analysis_live",
+    )
+
+
+def _run_news_flow_analysis_task(
+    *,
+    category=None,
+    lightweight_model=None,
+    reasoning_model=None,
+    report_progress=None,
+):
+    from news_flow_engine import news_flow_engine
+
+    report_progress(current=10, total=100, message="正在获取多平台新闻数据...")
+    result = news_flow_engine.run_full_analysis(
+        category=category,
+        include_ai=True,
+        lightweight_model=lightweight_model,
+        reasoning_model=reasoning_model,
+    )
+    if not result.get("success"):
+        raise RuntimeError(result.get("error", "未知错误"))
+
+    report_progress(current=100, total=100, message="新闻流量分析完成，正在同步结果...")
+    return {
+        "result": result,
+        "message": f"AI分析完成，耗时 {result.get('duration', 0):.1f} 秒。",
+    }
 
 
 def display_news_flow_monitor(lightweight_model=None, reasoning_model=None):
@@ -365,11 +410,34 @@ def display_realtime_monitor(lightweight_model=None, reasoning_model=None):
         "新闻媒体": "news",
         "科技媒体": "tech",
     }
+    _render_news_flow_task_fragment()
+    finished_task = consume_finished_ui_analysis_task(NEWS_FLOW_TASK_TYPE, NEWS_FLOW_TASK_DONE_KEY)
+    if finished_task:
+        if finished_task.get("status") == "success":
+            payload = finished_task.get("result") or {}
+            st.session_state['news_flow_result'] = payload.get("result")
+            if 'news_flow_pdf_data' in st.session_state:
+                del st.session_state['news_flow_pdf_data']
+            st.success(payload.get("message") or "AI分析完成。")
+        else:
+            st.error(f"分析失败: {finished_task.get('error', '未知错误')}")
+
+    action_label, action_disabled, action_help = get_ui_analysis_button_state(
+        NEWS_FLOW_TASK_TYPE,
+        "开始AI智能分析",
+    )
     
     with col2:
         st.write("")
         st.write("")
-        run_btn = st.button("开始AI智能分析", type="primary", width='stretch')
+        run_btn = st.button(
+            action_label,
+            type="primary",
+            width='stretch',
+            disabled=action_disabled,
+            help=action_help,
+            key="news_flow_start_ai_analysis",
+        )
     
     with col3:
         st.write("")
@@ -377,41 +445,23 @@ def display_realtime_monitor(lightweight_model=None, reasoning_model=None):
         # 空占位
     
     if run_btn:
-        with st.spinner("AI正在分析全网热点新闻..."):
-            try:
-                from news_flow_engine import news_flow_engine
-                
-                cat = category_map.get(category)
-                
-                # 显示分析进度
-                progress_bar = st.progress(0)
-                status_text = st.empty()
-                
-                status_text.text("获取多平台新闻数据...")
-                progress_bar.progress(10)
-                
-                result = news_flow_engine.run_full_analysis(
+        try:
+            cat = category_map.get(category)
+            start_ui_analysis_task(
+                task_type=NEWS_FLOW_TASK_TYPE,
+                label="新闻流量分析",
+                runner=lambda _task_id, report_progress: _run_news_flow_analysis_task(
                     category=cat,
-                    include_ai=True,
                     lightweight_model=lightweight_model,
                     reasoning_model=reasoning_model,
-                )
-                
-                progress_bar.progress(100)
-                status_text.empty()
-                progress_bar.empty()
-                
-                if result['success']:
-                    st.session_state['news_flow_result'] = result
-                    # 清除之前的PDF缓存
-                    if 'news_flow_pdf_data' in st.session_state:
-                        del st.session_state['news_flow_pdf_data']
-                    st.success(f"AI分析完成，耗时 {result.get('duration', 0):.1f} 秒。")
-                else:
-                    st.error(f"分析失败: {result.get('error')}")
-                    
-            except Exception as e:
-                st.error(f"分析异常: {e}")
+                    report_progress=report_progress,
+                ),
+                metadata={"category": cat or "all"},
+            )
+            st.info("已提交后台分析任务，可切换页面，返回后会自动同步进度和结果。")
+            st.rerun()
+        except RuntimeError as exc:
+            st.warning(str(exc))
     
     # 显示结果
     if 'news_flow_result' in st.session_state:
