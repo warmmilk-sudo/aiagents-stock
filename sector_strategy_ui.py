@@ -19,6 +19,72 @@ from sector_strategy_pdf import SectorStrategyPDFGenerator
 from sector_strategy_db import SectorStrategyDatabase
 from sector_strategy_scheduler import sector_strategy_scheduler
 from ui_shared import NON_MARKET_PALETTE
+from ui_analysis_task_utils import (
+    consume_finished_ui_analysis_task,
+    get_ui_analysis_button_state,
+    render_ui_analysis_task_live_card,
+    start_ui_analysis_task,
+)
+
+
+SECTOR_STRATEGY_TASK_TYPE = "sector_strategy_analysis"
+SECTOR_STRATEGY_TASK_DONE_KEY = "sector_strategy_analysis_last_handled_task"
+
+
+@st.fragment(run_every=1.0)
+def _render_sector_strategy_task_fragment():
+    render_ui_analysis_task_live_card(
+        task_type=SECTOR_STRATEGY_TASK_TYPE,
+        title="智策分析任务状态",
+        state_prefix="sector_strategy_analysis_live",
+    )
+
+
+def _extract_sector_data_summary(data: dict) -> dict:
+    return {
+        "from_cache": bool(data.get("from_cache")),
+        "cache_warning": data.get("cache_warning", ""),
+        "market_overview": data.get("market_overview", {}),
+        "sectors": data.get("sectors", {}) or {},
+        "concepts": data.get("concepts", {}) or {},
+    }
+
+
+def _run_sector_strategy_analysis_task(
+    *,
+    model=None,
+    lightweight_model=None,
+    reasoning_model=None,
+    report_progress,
+) -> dict:
+    report_progress(current=0, total=3, message="正在获取市场数据...")
+    fetcher = SectorStrategyDataFetcher()
+    data = fetcher.get_cached_data_with_fallback()
+    if not data.get("success"):
+        raise RuntimeError(data.get("error") or "数据获取失败")
+
+    report_progress(current=1, total=3, message="市场数据获取完成，正在执行AI分析...")
+    engine = SectorStrategyEngine(
+        model=model,
+        lightweight_model=lightweight_model,
+        reasoning_model=reasoning_model,
+    )
+    result = engine.run_comprehensive_analysis(data)
+    if data.get("from_cache") or data.get("cache_warning"):
+        result["cache_meta"] = {
+            "from_cache": bool(data.get("from_cache")),
+            "cache_warning": data.get("cache_warning", ""),
+            "data_timestamp": data.get("timestamp"),
+        }
+    if not result.get("success"):
+        raise RuntimeError(result.get("error") or "智策分析失败")
+
+    report_progress(current=3, total=3, message="智策分析完成，正在同步结果...")
+    return {
+        "result": result,
+        "data_summary": _extract_sector_data_summary(data),
+        "message": "智策分析完成。",
+    }
 
 
 def _parse_json_field(value, default):
@@ -176,16 +242,42 @@ def display_analysis_tab(lightweight_model=None, reasoning_model=None):
     
     st.markdown("---")
     
+    _render_sector_strategy_task_fragment()
+    finished_task = consume_finished_ui_analysis_task(SECTOR_STRATEGY_TASK_TYPE, SECTOR_STRATEGY_TASK_DONE_KEY)
+    if finished_task:
+        if finished_task.get("status") == "success":
+            payload = finished_task.get("result") or {}
+            st.session_state.sector_strategy_result = payload.get("result")
+            st.session_state.sector_strategy_data_summary = payload.get("data_summary")
+            st.success(payload.get("message") or "智策分析完成。")
+        else:
+            error_message = finished_task.get("error") or "未知错误"
+            st.session_state.sector_strategy_result = {"success": False, "error": error_message}
+            st.error(f"分析失败: {error_message}")
+
+    action_label, action_disabled, action_help = get_ui_analysis_button_state(
+        SECTOR_STRATEGY_TASK_TYPE,
+        "开始智策分析",
+    )
+
     # 操作按钮
     col1, col2 = st.columns([2, 2])
     
     with col1:
-        analyze_button = st.button("开始智策分析", type="primary", width='content')
+        analyze_button = st.button(
+            action_label,
+            type="primary",
+            width='content',
+            disabled=action_disabled,
+            help=action_help,
+            key="sector_strategy_start_analysis",
+        )
     
     with col2:
-        if st.button("清除结果", width='content'):
+        if st.button("清除结果", width='content', key="sector_strategy_clear_result"):
             if 'sector_strategy_result' in st.session_state:
                 del st.session_state.sector_strategy_result
+            st.session_state.pop("sector_strategy_data_summary", None)
             st.success("已清除分析结果")
             st.rerun()
     
@@ -193,20 +285,31 @@ def display_analysis_tab(lightweight_model=None, reasoning_model=None):
     
     # 开始分析（使用当前会话的双模型选择）
     if analyze_button:
-        # 清除之前的结果
-        if 'sector_strategy_result' in st.session_state:
-            del st.session_state.sector_strategy_result
-        
-        run_sector_strategy_analysis(
-            lightweight_model=lightweight_model,
-            reasoning_model=reasoning_model,
-        )
+        try:
+            st.session_state.pop("sector_strategy_result", None)
+            st.session_state.pop("sector_strategy_data_summary", None)
+            start_ui_analysis_task(
+                task_type=SECTOR_STRATEGY_TASK_TYPE,
+                label="智策分析",
+                runner=lambda _task_id, report_progress: _run_sector_strategy_analysis_task(
+                    lightweight_model=lightweight_model,
+                    reasoning_model=reasoning_model,
+                    report_progress=report_progress,
+                ),
+            )
+            st.info("已提交后台分析任务，可切换页面，返回后会自动同步进度和结果。")
+            st.rerun()
+        except RuntimeError as exc:
+            st.warning(str(exc))
     
     # 显示分析结果
     if 'sector_strategy_result' in st.session_state:
         result = st.session_state.sector_strategy_result
         
         if result.get("success"):
+            data_summary = st.session_state.get("sector_strategy_data_summary")
+            if data_summary:
+                display_data_summary(data_summary)
             display_analysis_results(result)
         else:
             st.error(f"分析失败: {result.get('error', '未知错误')}")

@@ -13,6 +13,12 @@ from notification_service import notification_service
 from low_price_bull_monitor import low_price_bull_monitor
 from low_price_bull_service import low_price_bull_service
 from ui_shared import get_dataframe_height
+from ui_analysis_task_utils import (
+    consume_finished_ui_analysis_task,
+    get_ui_analysis_button_state,
+    render_ui_analysis_task_live_card,
+    start_ui_analysis_task,
+)
 
 def display_stock_results(stocks_df: pd.DataFrame, selector):
     """显示选股结果"""
@@ -530,6 +536,64 @@ def build_low_price_bull_filter_summary(
     return "，".join(parts)
 
 
+LOW_PRICE_BULL_TASK_TYPE = "low_price_bull_selection"
+LOW_PRICE_BULL_TASK_DONE_KEY = "low_price_bull_selection_last_handled_task"
+
+
+@st.fragment(run_every=1.0)
+def _render_low_price_bull_task_fragment():
+    render_ui_analysis_task_live_card(
+        task_type=LOW_PRICE_BULL_TASK_TYPE,
+        title="低价擒牛任务状态",
+        state_prefix="low_price_bull_selection_live",
+    )
+
+
+def _run_low_price_bull_selection_task(
+    *,
+    top_n: int,
+    max_price: float,
+    min_profit_growth: float,
+    min_turnover_yi: float,
+    max_turnover_yi: float,
+    min_market_cap_yi: float,
+    max_market_cap_yi: float,
+    sort_by: str,
+    exclude_st: bool,
+    exclude_kcb: bool,
+    exclude_cyb: bool,
+    only_hs_a: bool,
+    filter_summary: str,
+    report_progress,
+):
+    report_progress(current=0, total=2, message="正在拉取低价擒牛候选数据...")
+    selector = LowPriceBullSelector()
+    success, stocks_df, message = selector.get_low_price_stocks(
+        top_n=top_n,
+        max_price=max_price,
+        min_profit_growth=min_profit_growth,
+        min_turnover_yi=min_turnover_yi or None,
+        max_turnover_yi=max_turnover_yi or None,
+        min_market_cap_yi=min_market_cap_yi or None,
+        max_market_cap_yi=max_market_cap_yi or None,
+        sort_by=sort_by,
+        exclude_st=exclude_st,
+        exclude_kcb=exclude_kcb,
+        exclude_cyb=exclude_cyb,
+        only_hs_a=only_hs_a,
+    )
+    if not success or stocks_df is None:
+        raise RuntimeError(message or "低价擒牛选股失败")
+
+    report_progress(current=2, total=2, message="低价擒牛选股完成，正在同步结果...")
+    return {
+        "stocks_df": stocks_df,
+        "message": message,
+        "filter_summary": filter_summary,
+        "selected_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }
+
+
 def display_low_price_bull():
     """Render the low-price bull page with a compact header and advanced filters."""
     if st.session_state.get("show_low_price_monitor"):
@@ -672,43 +736,73 @@ def display_low_price_bull():
         only_hs_a=only_hs_a,
     )
     st.caption(f"当前筛选：{filter_summary}")
+    _render_low_price_bull_task_fragment()
 
+    finished_task = consume_finished_ui_analysis_task(LOW_PRICE_BULL_TASK_TYPE, LOW_PRICE_BULL_TASK_DONE_KEY)
+    if finished_task:
+        if finished_task.get("status") == "success":
+            payload = finished_task.get("result") or {}
+            stocks_df = payload.get("stocks_df")
+            if stocks_df is not None:
+                st.session_state["low_price_bull_stocks"] = stocks_df
+                st.session_state["low_price_bull_selector"] = None
+                st.session_state["low_price_bull_filter_summary"] = payload.get("filter_summary")
+                st.session_state["low_price_bull_selected_time"] = payload.get("selected_time")
+                st.success(payload.get("message") or "低价擒牛选股完成。")
+                send_dingtalk_notification(
+                    stocks_df,
+                    int(st.session_state.get("low_price_bull_top_n", top_n)),
+                    payload.get("filter_summary"),
+                )
+        else:
+            st.error(f"低价擒牛选股失败：{finished_task.get('error', '未知错误')}")
+
+    action_label, action_disabled, action_help = get_ui_analysis_button_state(
+        LOW_PRICE_BULL_TASK_TYPE,
+        "开始低价擒牛选股",
+    )
     action_col, monitor_col = st.columns([3, 1])
     with action_col:
-        run_selection = st.button("开始低价擒牛选股", type="primary", width="stretch")
+        run_selection = st.button(
+            action_label,
+            type="primary",
+            width="stretch",
+            disabled=action_disabled,
+            help=action_help,
+            key="low_price_bull_start_selection",
+        )
     with monitor_col:
-        if st.button("策略监控", type="secondary", width="stretch"):
+        if st.button("策略监控", type="secondary", width="stretch", key="low_price_bull_monitor_panel"):
             st.session_state["show_low_price_monitor"] = True
             st.rerun()
 
     if run_selection:
-        with st.spinner("正在获取数据，请稍候..."):
-            selector = LowPriceBullSelector()
-            success, stocks_df, message = selector.get_low_price_stocks(
-                top_n=top_n,
-                max_price=max_price,
-                min_profit_growth=min_profit_growth,
-                min_turnover_yi=min_turnover_yi or None,
-                max_turnover_yi=max_turnover_yi or None,
-                min_market_cap_yi=min_market_cap_yi or None,
-                max_market_cap_yi=max_market_cap_yi or None,
-                sort_by=sort_by,
-                exclude_st=exclude_st,
-                exclude_kcb=exclude_kcb,
-                exclude_cyb=exclude_cyb,
-                only_hs_a=only_hs_a,
+        try:
+            start_ui_analysis_task(
+                task_type=LOW_PRICE_BULL_TASK_TYPE,
+                label="低价擒牛选股",
+                runner=lambda _task_id, report_progress: _run_low_price_bull_selection_task(
+                    top_n=top_n,
+                    max_price=max_price,
+                    min_profit_growth=min_profit_growth,
+                    min_turnover_yi=min_turnover_yi,
+                    max_turnover_yi=max_turnover_yi,
+                    min_market_cap_yi=min_market_cap_yi,
+                    max_market_cap_yi=max_market_cap_yi,
+                    sort_by=sort_by,
+                    exclude_st=exclude_st,
+                    exclude_kcb=exclude_kcb,
+                    exclude_cyb=exclude_cyb,
+                    only_hs_a=only_hs_a,
+                    filter_summary=filter_summary,
+                    report_progress=report_progress,
+                ),
+                metadata={"top_n": top_n, "filter_summary": filter_summary},
             )
-
-            if success and stocks_df is not None:
-                st.session_state["low_price_bull_stocks"] = stocks_df
-                st.session_state["low_price_bull_selector"] = selector
-                st.session_state["low_price_bull_filter_summary"] = filter_summary
-                st.session_state["low_price_bull_selected_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                st.success(message)
-                send_dingtalk_notification(stocks_df, top_n, filter_summary)
-                st.rerun()
-
-            st.error(message)
+            st.info("已提交后台分析任务，可切换页面，返回后会自动同步进度和结果。")
+            st.rerun()
+        except RuntimeError as exc:
+            st.warning(str(exc))
 
     if "low_price_bull_stocks" in st.session_state:
         display_stock_results(

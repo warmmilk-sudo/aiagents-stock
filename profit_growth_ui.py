@@ -11,6 +11,61 @@ from typing import List, Dict
 from profit_growth_selector import profit_growth_selector
 from notification_service import notification_service
 from profit_growth_monitor import profit_growth_monitor
+from ui_analysis_task_utils import (
+    consume_finished_ui_analysis_task,
+    get_ui_analysis_button_state,
+    render_ui_analysis_task_live_card,
+    start_ui_analysis_task,
+)
+
+
+PROFIT_GROWTH_TASK_TYPE = "profit_growth_selection"
+PROFIT_GROWTH_TASK_DONE_KEY = "profit_growth_selection_last_handled_task"
+
+
+@st.fragment(run_every=1.0)
+def _render_profit_growth_task_fragment():
+    render_ui_analysis_task_live_card(
+        task_type=PROFIT_GROWTH_TASK_TYPE,
+        title="净利增长选股任务状态",
+        state_prefix="profit_growth_selection_live",
+    )
+
+
+def _run_profit_growth_selection_task(
+    *,
+    top_n: int,
+    min_profit_growth: float,
+    min_turnover_yi: float,
+    max_turnover_yi: float,
+    sort_by: str,
+    exclude_st: bool,
+    exclude_kcb: bool,
+    exclude_cyb: bool,
+    filter_summary: str,
+    report_progress,
+):
+    report_progress(current=0, total=2, message="正在拉取净利增长候选数据...")
+    success, stocks_df, message = profit_growth_selector.get_profit_growth_stocks(
+        top_n,
+        min_profit_growth=min_profit_growth,
+        min_turnover_yi=min_turnover_yi or None,
+        max_turnover_yi=max_turnover_yi or None,
+        sort_by=sort_by,
+        exclude_st=exclude_st,
+        exclude_kcb=exclude_kcb,
+        exclude_cyb=exclude_cyb,
+    )
+    if not success:
+        raise RuntimeError(message or "净利增长选股失败")
+
+    report_progress(current=2, total=2, message="净利增长选股完成，正在同步结果...")
+    return {
+        "stocks_df": stocks_df,
+        "message": message,
+        "filter_summary": filter_summary,
+        "selected_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }
 
 
 def build_profit_growth_filter_summary(
@@ -139,36 +194,61 @@ def display_profit_growth():
         exclude_cyb=exclude_cyb,
     )
     st.caption(f"当前筛选：{filter_summary}")
+    _render_profit_growth_task_fragment()
 
+    finished_task = consume_finished_ui_analysis_task(PROFIT_GROWTH_TASK_TYPE, PROFIT_GROWTH_TASK_DONE_KEY)
+    if finished_task:
+        if finished_task.get("status") == "success":
+            payload = finished_task.get("result") or {}
+            st.session_state.profit_growth_stocks = payload.get("stocks_df")
+            st.session_state.profit_growth_time = payload.get("selected_time")
+            st.session_state.profit_growth_filter_summary = payload.get("filter_summary")
+            st.success(payload.get("message") or "净利增长选股完成。")
+        else:
+            st.error(f"净利增长选股失败：{finished_task.get('error', '未知错误')}")
+
+    action_label, action_disabled, action_help = get_ui_analysis_button_state(
+        PROFIT_GROWTH_TASK_TYPE,
+        "开始选股",
+    )
     action_col, monitor_col = st.columns([3, 1])
     with action_col:
-        run_selection = st.button("开始选股", type="primary", width='stretch')
+        run_selection = st.button(
+            action_label,
+            type="primary",
+            width='stretch',
+            disabled=action_disabled,
+            help=action_help,
+            key="profit_growth_start_selection",
+        )
     with monitor_col:
-        if st.button("策略监控", type="secondary", width='stretch'):
+        if st.button("策略监控", type="secondary", width='stretch', key="profit_growth_monitor_panel"):
             st.session_state.show_profit_growth_monitor = True
             st.rerun()
 
     if run_selection:
-        with st.spinner("正在获取数据，请稍候..."):
-            success, stocks_df, message = profit_growth_selector.get_profit_growth_stocks(
-                top_n,
-                min_profit_growth=min_profit_growth,
-                min_turnover_yi=min_turnover_yi or None,
-                max_turnover_yi=max_turnover_yi or None,
-                sort_by=sort_by,
-                exclude_st=exclude_st,
-                exclude_kcb=exclude_kcb,
-                exclude_cyb=exclude_cyb,
+        try:
+            start_ui_analysis_task(
+                task_type=PROFIT_GROWTH_TASK_TYPE,
+                label="净利增长选股",
+                runner=lambda _task_id, report_progress: _run_profit_growth_selection_task(
+                    top_n=top_n,
+                    min_profit_growth=min_profit_growth,
+                    min_turnover_yi=min_turnover_yi,
+                    max_turnover_yi=max_turnover_yi,
+                    sort_by=sort_by,
+                    exclude_st=exclude_st,
+                    exclude_kcb=exclude_kcb,
+                    exclude_cyb=exclude_cyb,
+                    filter_summary=filter_summary,
+                    report_progress=report_progress,
+                ),
+                metadata={"top_n": top_n, "filter_summary": filter_summary},
             )
-
-            if not success:
-                st.error(message)
-                return
-
-            st.success(message)
-            st.session_state.profit_growth_stocks = stocks_df
-            st.session_state.profit_growth_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            st.session_state.profit_growth_filter_summary = filter_summary
+            st.info("已提交后台分析任务，可切换页面，返回后会自动同步进度和结果。")
+            st.rerun()
+        except RuntimeError as exc:
+            st.warning(str(exc))
     
     # 显示选股结果
     if 'profit_growth_stocks' in st.session_state and st.session_state.profit_growth_stocks is not None:

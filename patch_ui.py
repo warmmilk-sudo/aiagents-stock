@@ -93,7 +93,7 @@ def display_portfolio_risk():
             df_ind = pd.DataFrame(industry_data)
             df_ind["占比"] = df_ind["weight"].apply(lambda x: f"{x*100:.1f}%")
             df_ind["市值"] = df_ind["market_value"].apply(lambda x: f"¥{x:,.2f}")
-            st.dataframe(df_ind[["industry", "市值", "占比"]].rename(columns={"industry": "行业"}), hide_index=True, use_container_width=True)
+            st.dataframe(df_ind[["industry", "市值", "占比"]].rename(columns={"industry": "行业"}), hide_index=True, width="stretch")
             
     with col2:
         st.markdown("#### 🎯 单票集中度")
@@ -102,7 +102,7 @@ def display_portfolio_risk():
             df_st = pd.DataFrame(stock_data)
             df_st["占比"] = df_st["weight"].apply(lambda x: f"{x*100:.1f}%")
             df_st["市值"] = df_st["market_value"].apply(lambda x: f"¥{x:,.2f}")
-            st.dataframe(df_st[["name", "市值", "占比"]].rename(columns={"name": "股票"}), hide_index=True, use_container_width=True)
+            st.dataframe(df_st[["name", "市值", "占比"]].rename(columns={"name": "股票"}), hide_index=True, width="stretch")
 '''
 
 # insert risk method

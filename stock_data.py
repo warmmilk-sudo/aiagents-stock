@@ -6,6 +6,9 @@ import ta
 from datetime import datetime, timedelta
 import requests
 import json
+from pywencai_runtime import setup_pywencai_runtime_env
+
+setup_pywencai_runtime_env()
 import pywencai
 from data_source_manager import data_source_manager
 from stock_data_cache import stock_data_cache_service

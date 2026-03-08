@@ -7,6 +7,9 @@ from __future__ import annotations
 from typing import Optional, Tuple
 
 import pandas as pd
+from pywencai_runtime import setup_pywencai_runtime_env
+
+setup_pywencai_runtime_env()
 import pywencai
 
 from selector_filter_utils import (

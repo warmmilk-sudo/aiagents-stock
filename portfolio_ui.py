@@ -36,7 +36,22 @@ AGENT_OPTIONS = [
 
 def _render_static_table(df: pd.DataFrame) -> None:
     """Render small summary tables without the heavier dataframe grid."""
-    st.table(df.reset_index(drop=True).style.hide(axis="index"))
+    st.dataframe(df.reset_index(drop=True), width="stretch", hide_index=True)
+
+
+def _render_three_by_one_table(first_label: str, first_value: str, second_label: str, second_value: str, third_label: str, third_value: str) -> None:
+    """Render a compact 3x1 summary table."""
+    _render_static_table(
+        pd.DataFrame(
+            [
+                {
+                    first_label: first_value,
+                    second_label: second_value,
+                    third_label: third_value,
+                }
+            ]
+        )
+    )
 
 
 def _format_percent(value, digits: int = 2) -> str:
@@ -629,10 +644,14 @@ def _legacy_display_portfolio_risk():
     total_pnl = result.get("total_pnl", 0)
     total_pnl_pct = result.get("total_pnl_pct", 0) * 100
     coverage = result.get("data_coverage", {})
-    m1, m2, m3 = st.columns(3)
-    m1.metric("总持仓市值", f"¥{total_val:,.2f}")
-    m2.metric("总持仓成本", f"¥{total_cost:,.2f}")
-    m3.metric("总浮动盈亏", f"¥{total_pnl:,.2f}", delta=f"{total_pnl_pct:.2f}%", delta_color="inverse")
+    _render_three_by_one_table(
+        "总持仓市值",
+        f"¥{total_val:,.2f}",
+        "总持仓成本",
+        f"¥{total_cost:,.2f}",
+        "总浮动盈亏",
+        f"¥{total_pnl:,.2f} ({total_pnl_pct:+.2f}%)",
+    )
     
     st.markdown("---")
 
@@ -645,10 +664,14 @@ def _legacy_display_portfolio_risk():
             st.success(w)
 
     st.markdown("#### 定量风险指标")
-    q1, q2, q3 = st.columns(3)
-    q1.metric("年化波动率", _format_percent(result.get("annual_volatility")))
-    q2.metric("Beta(沪深300)", _format_ratio(result.get("beta_hs300")))
-    q3.metric("夏普比率", _format_ratio(result.get("sharpe_ratio")))
+    _render_three_by_one_table(
+        "年化波动率",
+        _format_percent(result.get("annual_volatility")),
+        "Beta(沪深300)",
+        _format_ratio(result.get("beta_hs300")),
+        "夏普比率",
+        _format_ratio(result.get("sharpe_ratio")),
+    )
 
     metric_warnings = result.get("metric_warnings", [])
     if metric_warnings:
@@ -683,7 +706,9 @@ def _legacy_display_portfolio_risk():
             df_st["盈亏"] = df_st["pnl"].apply(lambda x: f"¥{x:,.2f}")
             df_st["盈亏比例"] = df_st["pnl_pct"].apply(lambda x: f"{x*100:.2f}%")
             _render_static_table(
-                df_st[["name", "市值", "占比", "盈亏比例"]].rename(columns={"name": "股票"})
+                df_st[["code", "name", "市值", "占比", "盈亏比例"]].rename(
+                    columns={"code": "证券代码", "name": "股票"}
+                )
             )
 
 
@@ -715,10 +740,14 @@ def display_portfolio_risk():
     total_pnl = result.get("total_pnl", 0)
     total_pnl_pct = result.get("total_pnl_pct", 0) * 100
     coverage = result.get("data_coverage", {})
-    m1, m2, m3 = st.columns(3)
-    m1.metric("总持仓市值", f"¥{total_val:,.2f}")
-    m2.metric("总持仓成本", f"¥{total_cost:,.2f}")
-    m3.metric("总浮动盈亏", f"¥{total_pnl:,.2f}", delta=f"{total_pnl_pct:.2f}%", delta_color="inverse")
+    _render_three_by_one_table(
+        "总持仓市值",
+        f"¥{total_val:,.2f}",
+        "总持仓成本",
+        f"¥{total_cost:,.2f}",
+        "总浮动盈亏",
+        f"¥{total_pnl:,.2f} ({total_pnl_pct:+.2f}%)",
+    )
 
     st.markdown("---")
 
@@ -731,10 +760,14 @@ def display_portfolio_risk():
             st.success(warning)
 
     st.markdown("#### 定量风险指标")
-    q1, q2, q3 = st.columns(3)
-    q1.metric("年化波动率", _format_percent(result.get("annual_volatility")))
-    q2.metric("Beta(沪深300)", _format_ratio(result.get("beta_hs300")))
-    q3.metric("夏普比率", _format_ratio(result.get("sharpe_ratio")))
+    _render_three_by_one_table(
+        "年化波动率",
+        _format_percent(result.get("annual_volatility")),
+        "Beta(沪深300)",
+        _format_ratio(result.get("beta_hs300")),
+        "夏普比率",
+        _format_ratio(result.get("sharpe_ratio")),
+    )
 
     metric_warnings = result.get("metric_warnings", [])
     if metric_warnings:
@@ -768,7 +801,9 @@ def display_portfolio_risk():
             df_st["市值"] = df_st["market_value"].apply(lambda x: f"¥{x:,.2f}")
             df_st["盈亏比例"] = df_st["pnl_pct"].apply(lambda x: f"{x * 100:.2f}%")
             _render_static_table(
-                df_st[["name", "市值", "占比", "盈亏比例"]].rename(columns={"name": "股票"})
+                df_st[["code", "name", "市值", "占比", "盈亏比例"]].rename(
+                    columns={"code": "证券代码", "name": "股票"}
+                )
             )
 
 
@@ -1102,7 +1137,6 @@ def display_stock_card(
     rating = view_model.get("rating", "待分析")
     rating_color = get_recommendation_color(rating)
     analysis_time_text = view_model.get("analysis_time_text") or "尚未分析"
-    summary_text = view_model.get("summary_text", "")
     note_text = view_model.get("note_text", "")
     display_name = view_model.get("display_name") or code
     edit_state_key = f"portfolio_editing_{stock_id}"
@@ -1158,8 +1192,6 @@ def display_stock_card(
                 st.markdown(f"**{value}**")
 
         st.caption(f"最近分析：{analysis_time_text}")
-        if summary_text:
-            st.write(f"摘要：{summary_text}")
         if note_text:
             st.caption(f"备注：{note_text}")
 

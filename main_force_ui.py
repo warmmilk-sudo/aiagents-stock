@@ -13,6 +13,12 @@ from main_force_pdf_generator import display_report_download_section
 from main_force_history_ui import display_batch_history
 import pandas as pd
 from ui_shared import get_dataframe_height
+from ui_analysis_task_utils import (
+    consume_finished_ui_analysis_task,
+    get_ui_analysis_button_state,
+    render_ui_analysis_task_live_card,
+    start_ui_analysis_task,
+)
 
 
 def build_main_force_display_context(analyzer=None):
@@ -32,6 +38,67 @@ def build_main_force_display_context(analyzer=None):
         return SimpleNamespace(**snapshot)
 
     return st.session_state.get("main_force_analyzer")
+
+
+MAIN_FORCE_TASK_TYPE = "main_force_selection"
+MAIN_FORCE_TASK_DONE_KEY = "main_force_selection_last_handled_task"
+
+
+@st.fragment(run_every=1.0)
+def _render_main_force_task_fragment():
+    render_ui_analysis_task_live_card(
+        task_type=MAIN_FORCE_TASK_TYPE,
+        title="主力选股任务状态",
+        state_prefix="main_force_selection_live",
+    )
+
+
+def _run_main_force_selection_task(
+    *,
+    start_date,
+    days_ago,
+    final_n: int,
+    max_change: float,
+    min_cap: float,
+    max_cap: float,
+    lightweight_model,
+    reasoning_model,
+    report_progress,
+):
+    report_progress(current=0, total=3, message="正在准备主力资金数据...")
+    analyzer = MainForceAnalyzer(
+        lightweight_model=lightweight_model,
+        reasoning_model=reasoning_model,
+    )
+    report_progress(current=1, total=3, message="正在执行主力筛选与AI分析...")
+    result = analyzer.run_full_analysis(
+        start_date=start_date,
+        days_ago=days_ago,
+        final_n=final_n,
+        max_range_change=max_change,
+        min_market_cap=min_cap,
+        max_market_cap=max_cap,
+    )
+    if not result.get("success"):
+        raise RuntimeError(result.get("error") or "主力选股分析失败")
+
+    context_snapshot = {
+        "raw_stocks": getattr(analyzer, "raw_stocks", None),
+        "fund_flow_analysis": getattr(analyzer, "fund_flow_analysis", ""),
+        "industry_analysis": getattr(analyzer, "industry_analysis", ""),
+        "fundamental_analysis": getattr(analyzer, "fundamental_analysis", ""),
+    }
+    recommendation_count = len(result.get("final_recommendations") or [])
+    report_progress(
+        current=3,
+        total=3,
+        message=f"主力选股完成，共筛选出 {recommendation_count} 只优质标的。",
+    )
+    return {
+        "result": result,
+        "context_snapshot": context_snapshot,
+        "message": f"分析完成，共筛选出 {recommendation_count} 只优质标的。",
+    }
 
 def display_main_force_selector(lightweight_model=None, reasoning_model=None):
     """显示主力选股界面"""
@@ -134,49 +201,69 @@ def display_main_force_selector(lightweight_model=None, reasoning_model=None):
                 step=100.0
             )
 
+    _render_main_force_task_fragment()
+    finished_task = consume_finished_ui_analysis_task(MAIN_FORCE_TASK_TYPE, MAIN_FORCE_TASK_DONE_KEY)
+    if finished_task:
+        if finished_task.get("status") == "success":
+            payload = finished_task.get("result") or {}
+            result = payload.get("result") or {}
+            st.session_state.main_force_result = result
+            st.session_state.main_force_result_context = payload.get("context_snapshot")
+            st.session_state.pop("main_force_analyzer", None)
+            st.success(payload.get("message") or "主力选股分析完成。")
+        else:
+            error_message = finished_task.get("error") or "未知错误"
+            st.session_state.main_force_result = {"success": False, "error": error_message}
+            st.session_state.pop("main_force_result_context", None)
+            st.error(f"主力选股分析失败: {error_message}")
+
+    action_label, action_disabled, action_help = get_ui_analysis_button_state(
+        MAIN_FORCE_TASK_TYPE,
+        "开始主力选股",
+    )
     action_col, history_col = st.columns([3, 1])
     with action_col:
-        run_analysis = st.button("开始主力选股", type="primary", width='content')
+        run_analysis = st.button(
+            action_label,
+            type="primary",
+            width='content',
+            disabled=action_disabled,
+            help=action_help,
+            key="main_force_start_selection",
+        )
     with history_col:
-        if st.button("批量分析历史", width='content'):
+        if st.button("批量分析历史", width='content', key="main_force_history_entry"):
             st.session_state.main_force_view_history = True
             st.rerun()
 
     # 开始分析按钮（使用当前会话的双模型选择）
     if run_analysis:
-
-        with st.spinner("正在获取数据并分析，这可能需要几分钟..."):
-
-            # 创建分析器（使用当前会话模型选择）
-            analyzer = MainForceAnalyzer(
-                lightweight_model=lightweight_model,
-                reasoning_model=reasoning_model,
+        try:
+            st.session_state.pop("main_force_result", None)
+            start_ui_analysis_task(
+                task_type=MAIN_FORCE_TASK_TYPE,
+                label="主力选股分析",
+                runner=lambda _task_id, report_progress: _run_main_force_selection_task(
+                    start_date=start_date,
+                    days_ago=days_ago,
+                    final_n=final_n,
+                    max_change=max_change,
+                    min_cap=min_cap,
+                    max_cap=max_cap,
+                    lightweight_model=lightweight_model,
+                    reasoning_model=reasoning_model,
+                    report_progress=report_progress,
+                ),
+                metadata={
+                    "start_date": start_date,
+                    "days_ago": days_ago,
+                    "final_n": final_n,
+                },
             )
-
-            # 运行分析
-            result = analyzer.run_full_analysis(
-                start_date=start_date,
-                days_ago=days_ago,
-                final_n=final_n,
-                max_range_change=max_change,
-                min_market_cap=min_cap,
-                max_market_cap=max_cap
-            )
-
-            # 保存结果到session_state
-            st.session_state.main_force_result = result
-            st.session_state.main_force_analyzer = analyzer
-            if result.get("success"):
-                build_main_force_display_context(analyzer)
-            else:
-                st.session_state.pop("main_force_result_context", None)
-
-        # 显示结果
-        if result['success']:
-            st.success(f"分析完成，共筛选出 {len(result['final_recommendations'])} 只优质标的。")
+            st.info("已提交后台分析任务，可切换页面，返回后会自动同步进度和结果。")
             st.rerun()
-        else:
-            st.error(f"分析失败: {result.get('error', '未知错误')}")
+        except RuntimeError as exc:
+            st.warning(str(exc))
 
     # 显示分析结果
     if 'main_force_result' in st.session_state:
@@ -184,6 +271,8 @@ def display_main_force_selector(lightweight_model=None, reasoning_model=None):
 
         if result['success']:
             display_analysis_results(result, build_main_force_display_context())
+        else:
+            st.error(f"分析失败: {result.get('error', '未知错误')}")
 
 def display_analysis_results(result: dict, analyzer):
     """显示分析结果"""

@@ -11,6 +11,63 @@ from small_cap_selector import small_cap_selector
 from notification_service import notification_service
 from low_price_bull_monitor import low_price_bull_monitor
 from low_price_bull_service import low_price_bull_service
+from ui_analysis_task_utils import (
+    consume_finished_ui_analysis_task,
+    get_ui_analysis_button_state,
+    render_ui_analysis_task_live_card,
+    start_ui_analysis_task,
+)
+
+
+SMALL_CAP_TASK_TYPE = "small_cap_selection"
+SMALL_CAP_TASK_DONE_KEY = "small_cap_selection_last_handled_task"
+
+
+@st.fragment(run_every=1.0)
+def _render_small_cap_task_fragment():
+    render_ui_analysis_task_live_card(
+        task_type=SMALL_CAP_TASK_TYPE,
+        title="小市值选股任务状态",
+        state_prefix="small_cap_selection_live",
+    )
+
+
+def _run_small_cap_selection_task(
+    *,
+    top_n: int,
+    max_market_cap_yi: float,
+    min_revenue_growth: float,
+    min_profit_growth: float,
+    sort_by: str,
+    exclude_st: bool,
+    exclude_kcb: bool,
+    exclude_cyb: bool,
+    only_hs_a: bool,
+    filter_summary: str,
+    report_progress,
+):
+    report_progress(current=0, total=2, message="正在拉取小市值候选数据...")
+    success, stocks_df, message = small_cap_selector.get_small_cap_stocks(
+        top_n,
+        max_market_cap_yi=max_market_cap_yi,
+        min_revenue_growth=min_revenue_growth,
+        min_profit_growth=min_profit_growth,
+        sort_by=sort_by,
+        exclude_st=exclude_st,
+        exclude_kcb=exclude_kcb,
+        exclude_cyb=exclude_cyb,
+        only_hs_a=only_hs_a,
+    )
+    if not success:
+        raise RuntimeError(message or "小市值选股失败")
+
+    report_progress(current=2, total=2, message="小市值选股完成，正在同步结果...")
+    return {
+        "stocks_df": stocks_df,
+        "message": message,
+        "filter_summary": filter_summary,
+        "selected_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }
 
 
 def build_small_cap_filter_summary(
@@ -145,37 +202,62 @@ def display_small_cap():
         only_hs_a=only_hs_a,
     )
     st.caption(f"当前筛选：{filter_summary}")
+    _render_small_cap_task_fragment()
 
+    finished_task = consume_finished_ui_analysis_task(SMALL_CAP_TASK_TYPE, SMALL_CAP_TASK_DONE_KEY)
+    if finished_task:
+        if finished_task.get("status") == "success":
+            payload = finished_task.get("result") or {}
+            st.session_state.small_cap_stocks = payload.get("stocks_df")
+            st.session_state.small_cap_time = payload.get("selected_time")
+            st.session_state.small_cap_filter_summary = payload.get("filter_summary")
+            st.success(payload.get("message") or "小市值选股完成。")
+        else:
+            st.error(f"小市值选股失败：{finished_task.get('error', '未知错误')}")
+
+    action_label, action_disabled, action_help = get_ui_analysis_button_state(
+        SMALL_CAP_TASK_TYPE,
+        "开始选股",
+    )
     action_col, monitor_col = st.columns([3, 1])
     with action_col:
-        run_selection = st.button("开始选股", type="primary", width='stretch')
+        run_selection = st.button(
+            action_label,
+            type="primary",
+            width='stretch',
+            disabled=action_disabled,
+            help=action_help,
+            key="small_cap_start_selection",
+        )
     with monitor_col:
-        if st.button("策略监控", type="secondary", width='stretch'):
+        if st.button("策略监控", type="secondary", width='stretch', key="small_cap_monitor_panel"):
             st.session_state.show_small_cap_monitor = True
             st.rerun()
 
     if run_selection:
-        with st.spinner("正在获取数据，请稍候..."):
-            success, stocks_df, message = small_cap_selector.get_small_cap_stocks(
-                top_n,
-                max_market_cap_yi=max_market_cap_yi,
-                min_revenue_growth=min_revenue_growth,
-                min_profit_growth=min_profit_growth,
-                sort_by=sort_by,
-                exclude_st=exclude_st,
-                exclude_kcb=exclude_kcb,
-                exclude_cyb=exclude_cyb,
-                only_hs_a=only_hs_a,
+        try:
+            start_ui_analysis_task(
+                task_type=SMALL_CAP_TASK_TYPE,
+                label="小市值选股",
+                runner=lambda _task_id, report_progress: _run_small_cap_selection_task(
+                    top_n=top_n,
+                    max_market_cap_yi=max_market_cap_yi,
+                    min_revenue_growth=min_revenue_growth,
+                    min_profit_growth=min_profit_growth,
+                    sort_by=sort_by,
+                    exclude_st=exclude_st,
+                    exclude_kcb=exclude_kcb,
+                    exclude_cyb=exclude_cyb,
+                    only_hs_a=only_hs_a,
+                    filter_summary=filter_summary,
+                    report_progress=report_progress,
+                ),
+                metadata={"top_n": top_n, "filter_summary": filter_summary},
             )
-
-            if not success:
-                st.error(message)
-                return
-
-            st.success(message)
-            st.session_state.small_cap_stocks = stocks_df
-            st.session_state.small_cap_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            st.session_state.small_cap_filter_summary = filter_summary
+            st.info("已提交后台分析任务，可切换页面，返回后会自动同步进度和结果。")
+            st.rerun()
+        except RuntimeError as exc:
+            st.warning(str(exc))
     
     # 显示选股结果
     if 'small_cap_stocks' in st.session_state and st.session_state.small_cap_stocks is not None:

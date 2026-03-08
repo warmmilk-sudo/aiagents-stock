@@ -6,13 +6,16 @@
 3. 近期重要事件
 """
 
-import pywencai
 import pandas as pd
 from typing import Dict, Any
 import time
 import warnings
 import os
 import threading
+from pywencai_runtime import setup_pywencai_runtime_env
+
+setup_pywencai_runtime_env()
+import pywencai
 
 try:
     from config import RISK_QUERY_TIMEOUT_SECONDS
@@ -22,7 +25,6 @@ except Exception:
 # 屏蔽pywencai的Node.js警告信息（不影响功能）
 warnings.filterwarnings('ignore', category=DeprecationWarning)
 os.environ['PYTHONWARNINGS'] = 'ignore::DeprecationWarning'
-os.environ['NODE_NO_WARNINGS'] = '1'  # 屏蔽Node.js警告
 
 
 class RiskDataFetcher:

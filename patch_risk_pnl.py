@@ -104,13 +104,13 @@ ui_code = ui_code.replace(old_ui_metrics, new_ui_metrics)
 
 old_ui_stock_df = '''            df_st["占比"] = df_st["weight"].apply(lambda x: f"{x*100:.1f}%")
             df_st["市值"] = df_st["market_value"].apply(lambda x: f"¥{x:,.2f}")
-            st.dataframe(df_st[["name", "市值", "占比"]].rename(columns={"name": "股票"}), hide_index=True, use_container_width=True)'''
+            st.dataframe(df_st[["name", "市值", "占比"]].rename(columns={"name": "股票"}), hide_index=True, width="stretch")'''
 
 new_ui_stock_df = '''            df_st["占比"] = df_st["weight"].apply(lambda x: f"{x*100:.1f}%")
             df_st["市值"] = df_st["market_value"].apply(lambda x: f"¥{x:,.2f}")
             df_st["盈亏"] = df_st["pnl"].apply(lambda x: f"¥{x:,.2f}")
             df_st["盈亏比例"] = df_st["pnl_pct"].apply(lambda x: f"{x*100:.2f}%")
-            st.dataframe(df_st[["name", "市值", "占比", "盈亏比例"]].rename(columns={"name": "股票"}), hide_index=True, use_container_width=True)'''
+            st.dataframe(df_st[["name", "市值", "占比", "盈亏比例"]].rename(columns={"name": "股票"}), hide_index=True, width="stretch")'''
 ui_code = ui_code.replace(old_ui_stock_df, new_ui_stock_df)
 
 with open("f:/zfywork/aiagents-stock/portfolio_ui.py", "w", encoding="utf-8") as f:

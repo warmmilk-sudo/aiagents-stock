@@ -423,11 +423,54 @@ st.markdown("""
     .reasoning-body p:last-child {
         margin-bottom: 0 !important;
     }
-    .stTextInput>div>div>input, .stSelectbox>div>div>div {
+    .stTextInput>div>div>input {
         border-radius: 6px;
         border: 1px solid rgba(255,255,255,0.2);
         width: 100%;
         max-width: 100%;
+    }
+    .stSelectbox [data-baseweb="select"] > div,
+    .stMultiSelect [data-baseweb="select"] > div {
+        border-radius: 6px;
+        border: 1px solid rgba(148,163,184,0.35) !important;
+        background: var(--secondary-background-color) !important;
+        color: var(--text-color) !important;
+        width: 100%;
+        max-width: 100%;
+        padding-right: 0.2rem !important;
+    }
+    .stSelectbox [data-baseweb="select"] > div > div:first-child {
+        flex: 1 1 auto !important;
+        min-width: 0 !important;
+        margin-right: 0.2rem !important;
+    }
+    .stSelectbox [data-baseweb="select"] > div > div:last-child {
+        flex: 0 0 1.15rem !important;
+        width: 1.15rem !important;
+        min-width: 1.15rem !important;
+        max-width: 1.15rem !important;
+        padding: 0 !important;
+        margin-left: 0.1rem !important;
+        justify-content: center !important;
+    }
+    .stSelectbox [data-baseweb="select"] > div > div:last-child svg {
+        width: 0.8rem !important;
+        height: 0.8rem !important;
+    }
+    .stSelectbox [data-baseweb="select"] span,
+    .stSelectbox [data-baseweb="select"] input,
+    .stSelectbox [data-baseweb="select"] svg,
+    .stMultiSelect [data-baseweb="select"] span,
+    .stMultiSelect [data-baseweb="select"] input,
+    .stMultiSelect [data-baseweb="select"] svg {
+        color: var(--text-color) !important;
+        fill: var(--text-color) !important;
+        -webkit-text-fill-color: var(--text-color) !important;
+    }
+    .stSelectbox [data-baseweb="select"] span {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
     }
     .stTextArea textarea,
     .stNumberInput input,
@@ -549,42 +592,6 @@ st.markdown("""
     [data-testid="stSidebar"] [data-testid="stWidgetLabel"],
     [data-testid="stSidebar"] .stSelectbox label {
         color: var(--text-color) !important;
-    }
-    [data-testid="stSidebar"] .stSelectbox [data-baseweb="select"] > div {
-        background: var(--secondary-background-color) !important;
-        border: 1px solid rgba(148,163,184,0.35) !important;
-        color: var(--text-color) !important;
-        padding-right: 0.2rem !important;
-    }
-    [data-testid="stSidebar"] .stSelectbox [data-baseweb="select"] > div > div:first-child {
-        flex: 1 1 auto !important;
-        min-width: 0 !important;
-        margin-right: 0.2rem !important;
-    }
-    [data-testid="stSidebar"] .stSelectbox [data-baseweb="select"] > div > div:last-child {
-        flex: 0 0 1.15rem !important;
-        width: 1.15rem !important;
-        min-width: 1.15rem !important;
-        max-width: 1.15rem !important;
-        padding: 0 !important;
-        margin-left: 0.1rem !important;
-        justify-content: center !important;
-    }
-    [data-testid="stSidebar"] .stSelectbox [data-baseweb="select"] > div > div:last-child svg {
-        width: 0.8rem !important;
-        height: 0.8rem !important;
-    }
-    [data-testid="stSidebar"] .stSelectbox [data-baseweb="select"] span,
-    [data-testid="stSidebar"] .stSelectbox [data-baseweb="select"] input,
-    [data-testid="stSidebar"] .stSelectbox [data-baseweb="select"] svg {
-        color: var(--text-color) !important;
-        fill: var(--text-color) !important;
-        -webkit-text-fill-color: var(--text-color) !important;
-    }
-    [data-testid="stSidebar"] .stSelectbox [data-baseweb="select"] span {
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
     }
     div[role="listbox"] {
         background: var(--secondary-background-color) !important;

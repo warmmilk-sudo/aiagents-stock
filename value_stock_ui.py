@@ -10,6 +10,68 @@ from datetime import datetime
 from value_stock_selector import ValueStockSelector
 from value_stock_strategy import ValueStockStrategy
 from ui_shared import get_dataframe_height
+from ui_analysis_task_utils import (
+    consume_finished_ui_analysis_task,
+    get_ui_analysis_button_state,
+    render_ui_analysis_task_live_card,
+    start_ui_analysis_task,
+)
+
+
+VALUE_STOCK_TASK_TYPE = "value_stock_selection"
+VALUE_STOCK_TASK_DONE_KEY = "value_stock_selection_last_handled_task"
+
+
+@st.fragment(run_every=1.0)
+def _render_value_stock_task_fragment():
+    render_ui_analysis_task_live_card(
+        task_type=VALUE_STOCK_TASK_TYPE,
+        title="低估值选股任务状态",
+        state_prefix="value_stock_selection_live",
+    )
+
+
+def _run_value_stock_selection_task(
+    *,
+    top_n: int,
+    max_pe: float,
+    max_pb: float,
+    min_dividend_yield: float,
+    max_debt_ratio: float,
+    min_float_cap_yi: float,
+    max_float_cap_yi: float,
+    sort_by: str,
+    exclude_st: bool,
+    exclude_kcb: bool,
+    exclude_cyb: bool,
+    filter_summary: str,
+    report_progress,
+):
+    report_progress(current=0, total=2, message="正在拉取低估值候选数据...")
+    selector = ValueStockSelector()
+    success, stocks_df, message = selector.get_value_stocks(
+        top_n=top_n,
+        max_pe=max_pe,
+        max_pb=max_pb,
+        min_dividend_yield=min_dividend_yield,
+        max_debt_ratio=max_debt_ratio,
+        min_float_cap_yi=min_float_cap_yi or None,
+        max_float_cap_yi=max_float_cap_yi or None,
+        sort_by=sort_by,
+        exclude_st=exclude_st,
+        exclude_kcb=exclude_kcb,
+        exclude_cyb=exclude_cyb,
+    )
+    if not success or stocks_df is None:
+        raise RuntimeError(message or "低估值选股失败")
+
+    report_progress(current=2, total=2, message="低估值选股完成，正在同步结果...")
+    return {
+        "stocks_df": stocks_df,
+        "message": message,
+        "filter_summary": filter_summary,
+        "selected_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }
 
 
 def build_value_stock_filter_summary(
@@ -146,33 +208,57 @@ def display_value_stock():
         exclude_cyb=exclude_cyb,
     )
     st.caption(f"当前筛选：{filter_summary}")
+    _render_value_stock_task_fragment()
 
-    if st.button("开始选股", type="primary", width='content', key="value_stock_start"):
-        with st.spinner("正在获取数据，请稍候..."):
-            selector = ValueStockSelector()
-            success, stocks_df, message = selector.get_value_stocks(
-                top_n=top_n,
-                max_pe=max_pe,
-                max_pb=max_pb,
-                min_dividend_yield=min_dividend_yield,
-                max_debt_ratio=max_debt_ratio,
-                min_float_cap_yi=min_float_cap_yi or None,
-                max_float_cap_yi=max_float_cap_yi or None,
-                sort_by=sort_by,
-                exclude_st=exclude_st,
-                exclude_kcb=exclude_kcb,
-                exclude_cyb=exclude_cyb,
+    finished_task = consume_finished_ui_analysis_task(VALUE_STOCK_TASK_TYPE, VALUE_STOCK_TASK_DONE_KEY)
+    if finished_task:
+        if finished_task.get("status") == "success":
+            payload = finished_task.get("result") or {}
+            st.session_state.value_stocks = payload.get("stocks_df")
+            st.session_state.value_stock_selector = None
+            st.session_state.value_stock_selected_time = payload.get("selected_time")
+            st.session_state.value_stock_filter_summary = payload.get("filter_summary")
+            st.success(payload.get("message") or "低估值选股完成。")
+        else:
+            st.error(f"低估值选股失败：{finished_task.get('error', '未知错误')}")
+
+    action_label, action_disabled, action_help = get_ui_analysis_button_state(
+        VALUE_STOCK_TASK_TYPE,
+        "开始选股",
+    )
+    if st.button(
+        action_label,
+        type="primary",
+        width='content',
+        key="value_stock_start",
+        disabled=action_disabled,
+        help=action_help,
+    ):
+        try:
+            start_ui_analysis_task(
+                task_type=VALUE_STOCK_TASK_TYPE,
+                label="低估值选股",
+                runner=lambda _task_id, report_progress: _run_value_stock_selection_task(
+                    top_n=top_n,
+                    max_pe=max_pe,
+                    max_pb=max_pb,
+                    min_dividend_yield=min_dividend_yield,
+                    max_debt_ratio=max_debt_ratio,
+                    min_float_cap_yi=min_float_cap_yi,
+                    max_float_cap_yi=max_float_cap_yi,
+                    sort_by=sort_by,
+                    exclude_st=exclude_st,
+                    exclude_kcb=exclude_kcb,
+                    exclude_cyb=exclude_cyb,
+                    filter_summary=filter_summary,
+                    report_progress=report_progress,
+                ),
+                metadata={"top_n": top_n, "filter_summary": filter_summary},
             )
-
-            if success and stocks_df is not None:
-                st.session_state.value_stocks = stocks_df
-                st.session_state.value_stock_selector = selector
-                st.session_state.value_stock_selected_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                st.session_state.value_stock_filter_summary = filter_summary
-                st.success(message)
-                st.rerun()
-            else:
-                st.error(message)
+            st.info("已提交后台分析任务，可切换页面，返回后会自动同步进度和结果。")
+            st.rerun()
+        except RuntimeError as exc:
+            st.warning(str(exc))
 
     # 显示选股结果
     if 'value_stocks' in st.session_state:

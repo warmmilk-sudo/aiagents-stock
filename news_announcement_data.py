@@ -4,6 +4,9 @@
 """
 
 import pandas as pd
+from pywencai_runtime import setup_pywencai_runtime_env
+
+setup_pywencai_runtime_env()
 import pywencai
 import sys
 import io
