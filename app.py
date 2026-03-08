@@ -143,6 +143,16 @@ st.markdown("""
         overflow: visible;
     }
 
+    /* 隐藏全局垂直滚动条 */
+    ::-webkit-scrollbar {
+        width: 0px;
+        background: transparent;
+    }
+    html, body {
+        scrollbar-width: none;
+        -ms-overflow-style: none;
+    }
+
     /* 统一字号层级 */
     div[data-testid="stMarkdownContainer"] p,
     div[data-testid="stMarkdownContainer"] li,

@@ -362,10 +362,29 @@ class PortfolioDB:
             if row:
                 return dict(row)
             return None
-            
         finally:
             conn.close()
     
+    def get_stocks_by_code(self, code: str) -> List[Dict]:
+        """
+        根据股票代码获取该股票在所有账户中的持仓信息
+        
+        Args:
+            code: 股票代码
+            
+        Returns:
+            匹配的股票信息字典列表
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute('SELECT * FROM portfolio_stocks WHERE code = ?', (code,))
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
+        finally:
+            conn.close()
+
     def get_all_stocks(self, auto_monitor_only: bool = False) -> List[Dict]:
         """
         获取所有持仓股票列表
@@ -771,23 +790,3 @@ if __name__ == "__main__":
             print(f"  {h['analysis_time']}: {h['rating']} (信心度: {h['confidence']})")
     
     print("\n[OK] 数据库测试完成")
-
-
-    def get_stocks_by_code(self, code: str) -> List[Dict]:
-        """
-        根据股票代码获取该股票在所有账户中的持仓信息
-        
-        Args:
-            code: 股票代码
-            
-        Returns:
-            匹配的股票信息字典列表
-        """
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        try:
-            cursor.execute('SELECT * FROM portfolio_stocks WHERE code = ?', (code,))
-            rows = cursor.fetchall()
-            return [dict(row) for row in rows]
-        finally:
-            conn.close()
