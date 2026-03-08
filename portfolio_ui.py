@@ -813,10 +813,10 @@ def display_history_record(record: Dict):
         if not has_full_report:
             return
 
-        stock_info = record.get("stock_info_json") or record.get("stock_info") or {}
-        agents_results = record.get("agents_results_json") or record.get("agents_results") or {}
+        stock_info = record.get("stock_info") or {}
+        agents_results = record.get("agents_results") or {}
         discussion_result = record.get("discussion_result", "")
-        final_decision = record.get("final_decision_json") or record.get("final_decision") or {}
+        final_decision = record.get("final_decision") or {}
 
         render_stock_info_metrics(stock_info, price_label="分析时价格")
         render_agents_analysis_tabs(agents_results)

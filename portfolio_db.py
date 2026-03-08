@@ -46,26 +46,40 @@ class PortfolioDB:
             return value
         return json.dumps(value, ensure_ascii=False, default=str)
 
+    def _deserialize_json_object(self, raw_value) -> Dict:
+        if not raw_value:
+            return {}
+
+        if isinstance(raw_value, dict):
+            return raw_value
+
+        if isinstance(raw_value, str):
+            try:
+                parsed = json.loads(raw_value)
+            except json.JSONDecodeError:
+                return {}
+            return parsed if isinstance(parsed, dict) else {}
+
+        return {}
+
+    def _deserialize_flexible_value(self, raw_value, default=""):
+        if raw_value in (None, ""):
+            return default
+
+        if not isinstance(raw_value, str):
+            return raw_value
+
+        try:
+            return json.loads(raw_value)
+        except json.JSONDecodeError:
+            return raw_value
+
     def _deserialize_analysis_row(self, row) -> Dict:
         record = dict(row)
-        for field in ("stock_info_json", "agents_results_json", "final_decision_json"):
-            raw_value = record.get(field)
-            parsed_key = field.replace("_json", "")
-            if raw_value:
-                try:
-                    record[parsed_key] = json.loads(raw_value)
-                except json.JSONDecodeError:
-                    record[parsed_key] = {}
-            else:
-                record[parsed_key] = {}
-        discussion_result = record.get("discussion_result")
-        if discussion_result:
-            try:
-                record["discussion_result"] = json.loads(discussion_result)
-            except json.JSONDecodeError:
-                record["discussion_result"] = discussion_result
-        else:
-            record["discussion_result"] = ""
+        record["stock_info"] = self._deserialize_json_object(record.pop("stock_info_json", None))
+        record["agents_results"] = self._deserialize_json_object(record.pop("agents_results_json", None))
+        record["final_decision"] = self._deserialize_json_object(record.pop("final_decision_json", None))
+        record["discussion_result"] = self._deserialize_flexible_value(record.get("discussion_result"), default="")
         record["has_full_report"] = bool(record.get("has_full_report"))
         return record
 

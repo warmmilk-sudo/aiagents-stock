@@ -362,6 +362,36 @@ st.markdown("""
         vertical-align: middle;
         transition: all 0.2s;
     }
+    .stButton>button > div,
+    .stDownloadButton>button > div,
+    button[data-testid^="baseButton-"] > div {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 100%;
+        height: 100%;
+    }
+    .stButton>button div[data-testid="stMarkdownContainer"],
+    .stDownloadButton>button div[data-testid="stMarkdownContainer"],
+    button[data-testid^="baseButton-"] div[data-testid="stMarkdownContainer"] {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 100%;
+        height: 100%;
+    }
+    .stButton>button div[data-testid="stMarkdownContainer"] p,
+    .stDownloadButton>button div[data-testid="stMarkdownContainer"] p,
+    button[data-testid^="baseButton-"] div[data-testid="stMarkdownContainer"] p,
+    .stButton>button span,
+    .stDownloadButton>button span,
+    button[data-testid^="baseButton-"] span {
+        margin: 0 !important;
+        line-height: 1.2 !important;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
     .stButton>button:hover {
         border-color: var(--primary-color);
     }

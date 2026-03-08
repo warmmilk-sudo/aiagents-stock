@@ -1,10 +1,23 @@
-import tempfile
+import shutil
+import sys
+import types
 import unittest
+import uuid
+from pathlib import Path
 
 from monitor_db import StockMonitorDatabase
 from portfolio_db import PortfolioDB
 from portfolio_manager import PortfolioManager
 from smart_monitor_db import SmartMonitorDB
+
+sys.modules.setdefault("streamlit", types.SimpleNamespace())
+
+from ui_shared import (
+    _normalize_agents_results,
+    _normalize_discussion_result,
+    _normalize_mapping_input,
+    _normalize_text_or_mapping,
+)
 
 try:
     from macro_cycle_db import MacroCycleDatabase
@@ -17,13 +30,23 @@ except ModuleNotFoundError:
     SectorStrategyEngine = None
 
 
+TEST_TMP_ROOT = Path(".codex_test_tmp")
+
+
+def make_workspace_temp_dir(prefix: str) -> Path:
+    TEST_TMP_ROOT.mkdir(exist_ok=True)
+    path = TEST_TMP_ROOT / f"{prefix}{uuid.uuid4().hex}"
+    path.mkdir(parents=True, exist_ok=False)
+    return path
+
+
 class PortfolioHistoryPersistenceTests(unittest.TestCase):
     def setUp(self):
-        self.temp_dir = tempfile.TemporaryDirectory()
-        base = self.temp_dir.name
-        self.portfolio_db = PortfolioDB(f"{base}/portfolio.db")
-        self.realtime_monitor_db = StockMonitorDatabase(f"{base}/monitor.db")
-        self.smart_monitor_db = SmartMonitorDB(f"{base}/smart.db")
+        self.temp_dir = make_workspace_temp_dir("portfolio_history_")
+        base = self.temp_dir
+        self.portfolio_db = PortfolioDB(str(base / "portfolio.db"))
+        self.realtime_monitor_db = StockMonitorDatabase(str(base / "monitor.db"))
+        self.smart_monitor_db = SmartMonitorDB(str(base / "smart.db"))
         self.manager = PortfolioManager(
             portfolio_store=self.portfolio_db,
             realtime_monitor_store=self.realtime_monitor_db,
@@ -32,7 +55,7 @@ class PortfolioHistoryPersistenceTests(unittest.TestCase):
         self.manager._resolve_stock_name = lambda code: f"Stock{code}"
 
     def tearDown(self):
-        self.temp_dir.cleanup()
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
 
     def _add_stock(self, code: str):
         success, msg, stock_id = self.manager.add_stock(
@@ -50,7 +73,7 @@ class PortfolioHistoryPersistenceTests(unittest.TestCase):
         clean_summary = self.manager._extract_analysis_summary(
             {
                 "rating": "买入",
-                "operation_advice": "<think>内部推理</think>建议分批低吸，跌破9.80元止损。",
+                "operation_advice": "<think>internal reasoning</think>建议分批低吸，跌破9.80元止损。",
                 "entry_range": "10.00-10.50",
                 "take_profit": "11.80元",
                 "stop_loss": "9.80元",
@@ -70,7 +93,7 @@ class PortfolioHistoryPersistenceTests(unittest.TestCase):
         )
         self.assertIn("评级: 持有", fallback_summary)
         self.assertIn("进场区间", fallback_summary)
-        self.assertIn("止盈", fallback_summary)
+        self.assertIn("止盈位", fallback_summary)
 
     def test_history_queries_only_return_full_reports(self):
         stock_id = self._add_stock("600519")
@@ -103,7 +126,7 @@ class PortfolioHistoryPersistenceTests(unittest.TestCase):
             agents_results={
                 "technical": {
                     "agent_name": "技术分析师",
-                    "agent_role": "技术",
+                    "agent_role": "技术面",
                     "focus_areas": ["趋势"],
                     "analysis": "趋势改善",
                     "timestamp": "2026-03-07 10:00:00",
@@ -127,17 +150,67 @@ class PortfolioHistoryPersistenceTests(unittest.TestCase):
         self.assertEqual(full_history[0]["analysis_source"], "portfolio_batch_analysis")
         self.assertTrue(full_history[0]["has_full_report"])
         self.assertEqual(full_history[0]["stock_info"]["symbol"], "600519")
+        self.assertNotIn("stock_info_json", full_history[0])
+        self.assertNotIn("agents_results_json", full_history[0])
+        self.assertNotIn("final_decision_json", full_history[0])
 
         latest = self.portfolio_db.get_latest_analysis(stock_id)
         self.assertIsNotNone(latest)
         self.assertEqual(latest["summary"], "建议分批建仓。")
+        self.assertEqual(latest["final_decision"]["rating"], "买入")
+        self.assertEqual(latest["discussion_result"], "团队讨论认为回撤可控。")
+
+
+class UiSharedNormalizationTests(unittest.TestCase):
+    def test_mapping_normalization_accepts_dict_and_json_string(self):
+        normalized, invalid = _normalize_mapping_input({"current_price": 123.45})
+        self.assertEqual(normalized["current_price"], 123.45)
+        self.assertFalse(invalid)
+
+        normalized, invalid = _normalize_mapping_input('{"current_price": 123.45}')
+        self.assertEqual(normalized["current_price"], 123.45)
+        self.assertFalse(invalid)
+
+    def test_mapping_normalization_rejects_invalid_or_non_object_strings(self):
+        normalized, invalid = _normalize_mapping_input("not-json")
+        self.assertEqual(normalized, {})
+        self.assertTrue(invalid)
+
+        normalized, invalid = _normalize_mapping_input('"text only"')
+        self.assertEqual(normalized, {})
+        self.assertTrue(invalid)
+
+    def test_agents_and_final_decision_normalization_tolerate_json_strings(self):
+        agents_results, invalid = _normalize_agents_results(
+            '{"technical": {"agent_name": "技术分析师", "analysis": "趋势改善"}}'
+        )
+        self.assertFalse(invalid)
+        self.assertEqual(agents_results["technical"]["analysis"], "趋势改善")
+
+        final_decision, invalid = _normalize_text_or_mapping(
+            '{"rating": "买入", "confidence_level": 8.5}'
+        )
+        self.assertFalse(invalid)
+        self.assertEqual(final_decision["rating"], "买入")
+
+        final_decision, invalid = _normalize_text_or_mapping("plain text decision")
+        self.assertFalse(invalid)
+        self.assertEqual(final_decision, "plain text decision")
+
+    def test_discussion_normalization_decodes_json_encoded_text(self):
+        self.assertEqual(
+            _normalize_discussion_result('"团队讨论认为回撤可控。"'),
+            "团队讨论认为回撤可控。",
+        )
+        self.assertEqual(_normalize_discussion_result("plain discussion"), "plain discussion")
 
 
 @unittest.skipIf(MacroCycleDatabase is None, "macro cycle dependencies unavailable")
 class MacroCyclePersistenceTests(unittest.TestCase):
     def test_macro_cycle_database_roundtrip(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            db = MacroCycleDatabase(f"{temp_dir}/macro_cycle.db")
+        temp_dir = make_workspace_temp_dir("macro_cycle_")
+        try:
+            db = MacroCycleDatabase(str(temp_dir / "macro_cycle.db"))
             report_id = db.save_analysis_report(
                 {
                     "success": True,
@@ -162,6 +235,8 @@ class MacroCyclePersistenceTests(unittest.TestCase):
             self.assertEqual(detail["summary"], "当前处于复苏后段，权益资产仍有配置价值。")
             self.assertTrue(db.delete_report(report_id))
             self.assertIsNone(db.get_latest_report())
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 @unittest.skipIf(SectorStrategyEngine is None, "sector strategy dependencies unavailable")
