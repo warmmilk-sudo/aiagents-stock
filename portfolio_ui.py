@@ -18,12 +18,16 @@ from portfolio_manager import portfolio_manager
 from portfolio_scheduler import portfolio_scheduler
 from ui_shared import (
     _resolve_final_decision_content,
-    get_dataframe_height,
     get_recommendation_color,
     render_agents_analysis_tabs,
     render_final_decision,
     render_reasoning_process,
 )
+
+
+def _render_static_table(df: pd.DataFrame) -> None:
+    """Render small summary tables without the heavier dataframe grid."""
+    st.table(df.reset_index(drop=True).style.hide(axis="index"))
 
 
 def format_price(value) -> str:
@@ -36,26 +40,6 @@ def format_price(value) -> str:
 
 def _escape_text(value) -> str:
     return html.escape("" if value is None else str(value))
-
-
-def _build_stock_card_chips_html(view_model: Dict) -> str:
-    chips = []
-    if view_model.get("cost_text"):
-        chips.append(("成本", view_model["cost_text"]))
-    if view_model.get("quantity_text"):
-        chips.append(("数量", view_model["quantity_text"]))
-    if not chips:
-        chips.append(("持仓", "未设置"))
-
-    return "".join(
-        (
-            '<span class="portfolio-stock-card__chip">'
-            f'<span class="portfolio-stock-card__chip-label">{_escape_text(label)}</span>'
-            f'<span class="portfolio-stock-card__chip-value">{_escape_text(value)}</span>'
-            "</span>"
-        )
-        for label, value in chips
-    )
 
 
 def _format_history_entry_range(entry_min, entry_max) -> str:
@@ -514,11 +498,8 @@ def display_portfolio_risk():
             df_ind = pd.DataFrame(industry_data)
             df_ind["占比"] = df_ind["weight"].apply(lambda x: f"{x*100:.1f}%")
             df_ind["市值"] = df_ind["market_value"].apply(lambda x: f"¥{x:,.2f}")
-            st.dataframe(
-                df_ind[["industry", "市值", "占比"]].rename(columns={"industry": "行业"}),
-                hide_index=True,
-                width="stretch",
-                height=get_dataframe_height(len(df_ind), max_rows=20),
+            _render_static_table(
+                df_ind[["industry", "市值", "占比"]].rename(columns={"industry": "行业"})
             )
             
     with col2:
@@ -530,11 +511,8 @@ def display_portfolio_risk():
             df_st["市值"] = df_st["market_value"].apply(lambda x: f"¥{x:,.2f}")
             df_st["盈亏"] = df_st["pnl"].apply(lambda x: f"¥{x:,.2f}")
             df_st["盈亏比例"] = df_st["pnl_pct"].apply(lambda x: f"{x*100:.2f}%")
-            st.dataframe(
-                df_st[["name", "市值", "占比", "盈亏比例"]].rename(columns={"name": "股票"}),
-                hide_index=True,
-                width="stretch",
-                height=get_dataframe_height(len(df_st), max_rows=20),
+            _render_static_table(
+                df_st[["name", "市值", "占比", "盈亏比例"]].rename(columns={"name": "股票"})
             )
 
 
@@ -607,7 +585,6 @@ def display_stock_card(
     view_model = portfolio_manager.build_stock_card_view_model(stock, latest_analysis)
     rating = view_model.get("rating", "待分析")
     rating_color = get_recommendation_color(rating)
-    chips_html = _build_stock_card_chips_html(view_model)
     analysis_time_text = view_model.get("analysis_time_text") or "尚未分析"
     summary_text = view_model.get("summary_text", "")
     note_text = view_model.get("note_text", "")
@@ -626,41 +603,39 @@ def display_stock_card(
     else:
         analysis_button_label = "分析"
 
-    with st.container():
-        summary_html = ""
+    with st.container(border=True):
+        header_col, rating_col = st.columns([4.5, 1.2], gap="small")
+        with header_col:
+            st.markdown(f"#### {display_name}")
+        with rating_col:
+            st.markdown(
+                (
+                    "<div style='text-align:right; font-weight:600; "
+                    f"color:{rating_color}; padding-top:0.35rem;'>{_escape_text(rating)}</div>"
+                ),
+                unsafe_allow_html=True,
+            )
+
+        info_pairs = [
+            ("成本", view_model.get("cost_text") or "未设置"),
+            ("数量", view_model.get("quantity_text") or "未设置"),
+            ("盈亏", view_model.get("pnl_amount_text") or "N/A"),
+            ("盈亏比", view_model.get("pnl_percent_text") or "N/A"),
+        ]
+        info_cols = st.columns(len(info_pairs), gap="small")
+        for col, (label, value) in zip(info_cols, info_pairs):
+            with col:
+                st.caption(label)
+                st.markdown(f"**{value}**")
+
+        st.caption(f"最近分析：{analysis_time_text}")
         if summary_text:
-            summary_html = (
-                '<div class="portfolio-stock-card__summary">'
-                f"摘要：{_escape_text(summary_text)}"
-                "</div>"
-            )
-        note_html = ""
+            st.write(f"摘要：{summary_text}")
         if note_text:
-            note_html = (
-                '<div class="portfolio-stock-card__note">'
-                f"备注：{_escape_text(note_text)}"
-                "</div>"
-            )
+            st.caption(f"备注：{note_text}")
 
-        st.markdown(
-            f"""
-            <div class="portfolio-stock-card">
-                <div class="portfolio-stock-card__title-row">
-                    <div class="portfolio-stock-card__title">{_escape_text(display_name)}</div>
-                    <div class="portfolio-stock-card__badge" style="color:{rating_color};">{_escape_text(rating)}</div>
-                </div>
-                <div class="portfolio-stock-card__chips">{chips_html}</div>
-                <div class="portfolio-stock-card__analysis-meta">最近分析：{_escape_text(analysis_time_text)}</div>
-                {summary_html}
-                {note_html}
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-        action_col1, action_col2, action_col3, action_col4 = st.columns([1.2, 0.93, 0.93, 0.93], gap="small")
+        action_col1, action_col2, action_col3, action_col4 = st.columns([1.15, 1, 1, 1], gap="small")
         with action_col1:
-            st.markdown("<span class='portfolio-stock-card__action-sentinel'></span>", unsafe_allow_html=True)
             toggle_value = st.toggle(
                 "监测",
                 value=view_model.get("auto_monitor", True),
@@ -748,8 +723,6 @@ def display_stock_card(
                     if st.form_submit_button("取消"):
                         del st.session_state[edit_state_key]
                         st.rerun()
-
-        st.markdown("<div style='margin:0.45rem 0 0.7rem 0; border-bottom:1px solid rgba(148,163,184,0.18);'></div>", unsafe_allow_html=True)
 
 
 def run_single_stock_analysis(stock: Dict, lightweight_model=None, reasoning_model=None):

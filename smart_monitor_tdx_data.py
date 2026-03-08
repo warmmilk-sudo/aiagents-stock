@@ -25,6 +25,33 @@ class SmartMonitorTDXDataFetcher:
         self.timeout = 10  # 请求超时时间（秒）
         
         self.logger.info(f"TDX数据源初始化成功，接口地址: {self.base_url}")
+        self.check_connection(log_on_success=True)
+
+    def check_connection(self, log_on_success: bool = False) -> bool:
+        """Check whether the configured TDX service is reachable."""
+        try:
+            response = requests.get(
+                f"{self.base_url}/api/health",
+                timeout=min(self.timeout, 5),
+            )
+            if response.status_code == 200:
+                if log_on_success:
+                    self.logger.info(f"TDX连接成功，健康检查通过: {self.base_url}/api/health")
+                return True
+
+            self.logger.warning(
+                f"TDX健康检查未通过，HTTP {response.status_code}: {self.base_url}/api/health"
+            )
+            return False
+        except requests.exceptions.Timeout:
+            self.logger.warning(f"TDX健康检查超时: {self.base_url}/api/health")
+            return False
+        except requests.exceptions.ConnectionError:
+            self.logger.warning(f"TDX健康检查连接失败: {self.base_url}/api/health")
+            return False
+        except Exception as e:
+            self.logger.warning(f"TDX健康检查异常: {type(e).__name__}: {e}")
+            return False
     
     def get_realtime_quote(self, stock_code: str) -> Optional[Dict]:
         """

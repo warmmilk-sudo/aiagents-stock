@@ -638,31 +638,6 @@ st.markdown("""
     .portfolio-stock-card__summary {
         color: rgba(255,255,255,0.64);
     }
-    .portfolio-stock-card__action-sentinel {
-        display: none;
-    }
-    div[data-testid="stHorizontalBlock"]:has(.portfolio-stock-card__action-sentinel) {
-        align-items: center;
-        gap: 0.32rem;
-    }
-    div[data-testid="stHorizontalBlock"]:has(.portfolio-stock-card__action-sentinel) > div[data-testid="column"] {
-        min-width: 0;
-    }
-    div[data-testid="stHorizontalBlock"]:has(.portfolio-stock-card__action-sentinel) [data-testid="stButton"] > button,
-    div[data-testid="stHorizontalBlock"]:has(.portfolio-stock-card__action-sentinel) button[data-testid^="baseButton-"] {
-        white-space: nowrap;
-        padding-left: 0.55rem;
-        padding-right: 0.55rem;
-    }
-    div[data-testid="stHorizontalBlock"]:has(.portfolio-stock-card__action-sentinel) label p {
-        margin: 0 !important;
-        white-space: nowrap;
-        font-size: 0.82rem;
-    }
-    div[data-testid="stHorizontalBlock"]:has(.portfolio-stock-card__action-sentinel) label {
-        gap: 0.28rem !important;
-    }
-    
     @media (max-width: 768px) {
         html, body, [data-testid="stAppViewContainer"] {
             overflow-x: hidden;
@@ -794,38 +769,6 @@ st.markdown("""
         .portfolio-stock-card__note,
         .portfolio-stock-card__summary {
             font-size: 0.79rem;
-        }
-        div[data-testid="stHorizontalBlock"]:has(.portfolio-stock-card__action-sentinel) {
-            flex-wrap: wrap !important;
-            gap: 0.26rem !important;
-        }
-        div[data-testid="stHorizontalBlock"]:has(.portfolio-stock-card__action-sentinel) > div[data-testid="column"] {
-            min-width: 0 !important;
-            flex: 1 1 0 !important;
-            max-width: 100% !important;
-        }
-        div[data-testid="stHorizontalBlock"]:has(.portfolio-stock-card__action-sentinel) > div[data-testid="column"]:first-child {
-            flex: 1 1 100% !important;
-            max-width: 100% !important;
-        }
-        div[data-testid="stHorizontalBlock"]:has(.portfolio-stock-card__action-sentinel) > div[data-testid="column"]:not(:first-child) {
-            flex: 1 1 calc((100% - 0.52rem) / 3) !important;
-            max-width: calc((100% - 0.52rem) / 3) !important;
-        }
-        div[data-testid="stHorizontalBlock"]:has(.portfolio-stock-card__action-sentinel) [data-testid="stButton"] > button,
-        div[data-testid="stHorizontalBlock"]:has(.portfolio-stock-card__action-sentinel) button[data-testid^="baseButton-"] {
-            width: 100% !important;
-            min-width: 0 !important;
-            min-height: 2.05rem;
-            padding-left: 0.35rem;
-            padding-right: 0.35rem;
-            font-size: 0.8rem;
-        }
-        div[data-testid="stHorizontalBlock"]:has(.portfolio-stock-card__action-sentinel) label p {
-            font-size: 0.74rem;
-        }
-        div[data-testid="stHorizontalBlock"]:has(.portfolio-stock-card__action-sentinel) label {
-            gap: 0.2rem !important;
         }
     }
 </style>
