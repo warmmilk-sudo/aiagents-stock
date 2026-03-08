@@ -13,6 +13,7 @@ from low_price_bull_monitor import low_price_bull_monitor
 from low_price_bull_service import low_price_bull_service
 from ui_analysis_task_utils import (
     consume_finished_ui_analysis_task,
+    get_latest_ui_analysis_task,
     get_ui_analysis_button_state,
     render_ui_analysis_task_live_card,
     start_ui_analysis_task,
@@ -68,6 +69,21 @@ def _run_small_cap_selection_task(
         "filter_summary": filter_summary,
         "selected_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
+
+
+def _restore_small_cap_result_from_latest_task() -> None:
+    if st.session_state.get("small_cap_stocks") is not None:
+        return
+    latest_task = get_latest_ui_analysis_task(SMALL_CAP_TASK_TYPE)
+    if not latest_task or latest_task.get("status") != "success":
+        return
+    payload = latest_task.get("result") or {}
+    stocks_df = payload.get("stocks_df")
+    if stocks_df is None:
+        return
+    st.session_state.small_cap_stocks = stocks_df
+    st.session_state.small_cap_time = payload.get("selected_time")
+    st.session_state.small_cap_filter_summary = payload.get("filter_summary")
 
 
 def build_small_cap_filter_summary(
@@ -202,6 +218,7 @@ def display_small_cap():
         only_hs_a=only_hs_a,
     )
     st.caption(f"当前筛选：{filter_summary}")
+    _restore_small_cap_result_from_latest_task()
     _render_small_cap_task_fragment()
 
     finished_task = consume_finished_ui_analysis_task(SMALL_CAP_TASK_TYPE, SMALL_CAP_TASK_DONE_KEY)

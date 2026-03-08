@@ -12,6 +12,7 @@ from value_stock_strategy import ValueStockStrategy
 from ui_shared import get_dataframe_height
 from ui_analysis_task_utils import (
     consume_finished_ui_analysis_task,
+    get_latest_ui_analysis_task,
     get_ui_analysis_button_state,
     render_ui_analysis_task_live_card,
     start_ui_analysis_task,
@@ -72,6 +73,22 @@ def _run_value_stock_selection_task(
         "filter_summary": filter_summary,
         "selected_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
+
+
+def _restore_value_stock_result_from_latest_task() -> None:
+    if st.session_state.get("value_stocks") is not None:
+        return
+    latest_task = get_latest_ui_analysis_task(VALUE_STOCK_TASK_TYPE)
+    if not latest_task or latest_task.get("status") != "success":
+        return
+    payload = latest_task.get("result") or {}
+    stocks_df = payload.get("stocks_df")
+    if stocks_df is None:
+        return
+    st.session_state.value_stocks = stocks_df
+    st.session_state.value_stock_selector = None
+    st.session_state.value_stock_selected_time = payload.get("selected_time")
+    st.session_state.value_stock_filter_summary = payload.get("filter_summary")
 
 
 def build_value_stock_filter_summary(
@@ -208,6 +225,7 @@ def display_value_stock():
         exclude_cyb=exclude_cyb,
     )
     st.caption(f"当前筛选：{filter_summary}")
+    _restore_value_stock_result_from_latest_task()
     _render_value_stock_task_fragment()
 
     finished_task = consume_finished_ui_analysis_task(VALUE_STOCK_TASK_TYPE, VALUE_STOCK_TASK_DONE_KEY)

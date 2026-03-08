@@ -15,6 +15,7 @@ import pandas as pd
 from ui_shared import get_dataframe_height
 from ui_analysis_task_utils import (
     consume_finished_ui_analysis_task,
+    get_latest_ui_analysis_task,
     get_ui_analysis_button_state,
     render_ui_analysis_task_live_card,
     start_ui_analysis_task,
@@ -99,6 +100,21 @@ def _run_main_force_selection_task(
         "context_snapshot": context_snapshot,
         "message": f"分析完成，共筛选出 {recommendation_count} 只优质标的。",
     }
+
+
+def _restore_main_force_result_from_latest_task() -> None:
+    if st.session_state.get("main_force_result") is not None:
+        return
+    latest_task = get_latest_ui_analysis_task(MAIN_FORCE_TASK_TYPE)
+    if not latest_task or latest_task.get("status") != "success":
+        return
+    payload = latest_task.get("result") or {}
+    result = payload.get("result")
+    if not result:
+        return
+    st.session_state.main_force_result = result
+    st.session_state.main_force_result_context = payload.get("context_snapshot")
+    st.session_state.pop("main_force_analyzer", None)
 
 def display_main_force_selector(lightweight_model=None, reasoning_model=None):
     """显示主力选股界面"""
@@ -201,6 +217,7 @@ def display_main_force_selector(lightweight_model=None, reasoning_model=None):
                 step=100.0
             )
 
+    _restore_main_force_result_from_latest_task()
     _render_main_force_task_fragment()
     finished_task = consume_finished_ui_analysis_task(MAIN_FORCE_TASK_TYPE, MAIN_FORCE_TASK_DONE_KEY)
     if finished_task:
@@ -294,22 +311,27 @@ def display_analysis_results(result: dict, analyzer):
 
     st.markdown("---")
 
-    # 显示AI分析师完整报告
-    if analyzer and hasattr(analyzer, 'fund_flow_analysis'):
-        display_analyst_reports(analyzer)
+    rec_col, report_col = st.columns([1, 1], gap="large")
 
-    st.markdown("---")
-
-    # 显示推荐股票
-    if result['final_recommendations']:
+    with rec_col:
         st.markdown("### 精选推荐")
+        recommendations = result.get('final_recommendations') or []
+        if recommendations:
+            for rec in recommendations:
+                with st.expander(
+                    f"【第{rec['rank']}名】{rec['symbol']} - {rec['name']}",
+                    expanded=(rec['rank'] <= 3)
+                ):
+                    display_recommendation_detail(rec)
+        else:
+            st.info("暂无精选推荐。")
 
-        for rec in result['final_recommendations']:
-            with st.expander(
-                f"【第{rec['rank']}名】{rec['symbol']} - {rec['name']}",
-                expanded=(rec['rank'] <= 3)
-            ):
-                display_recommendation_detail(rec)
+    with report_col:
+        st.markdown("### AI团队分析报告")
+        if analyzer and hasattr(analyzer, 'fund_flow_analysis'):
+            display_analyst_reports(analyzer, show_title=False)
+        else:
+            st.info("暂无AI团队分析报告。")
 
     # 显示候选股票列表
     if analyzer and analyzer.raw_stocks is not None and not analyzer.raw_stocks.empty:
@@ -529,10 +551,11 @@ def display_recommendation_detail(rec: dict):
                 if cap_keys:
                     st.caption(f"总市值: {stock_data.get(cap_keys[0], 'N/A')}")
 
-def display_analyst_reports(analyzer):
+def display_analyst_reports(analyzer, *, show_title: bool = True):
     """显示AI分析师完整报告"""
 
-    st.markdown("### AI分析师团队完整报告")
+    if show_title:
+        st.markdown("### AI分析师团队完整报告")
 
     # 创建三个标签页
     tab1, tab2, tab3 = st.tabs(["资金流向分析", "行业板块分析", "财务基本面分析"])

@@ -13,6 +13,7 @@ from notification_service import notification_service
 from profit_growth_monitor import profit_growth_monitor
 from ui_analysis_task_utils import (
     consume_finished_ui_analysis_task,
+    get_latest_ui_analysis_task,
     get_ui_analysis_button_state,
     render_ui_analysis_task_live_card,
     start_ui_analysis_task,
@@ -66,6 +67,21 @@ def _run_profit_growth_selection_task(
         "filter_summary": filter_summary,
         "selected_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
+
+
+def _restore_profit_growth_result_from_latest_task() -> None:
+    if st.session_state.get("profit_growth_stocks") is not None:
+        return
+    latest_task = get_latest_ui_analysis_task(PROFIT_GROWTH_TASK_TYPE)
+    if not latest_task or latest_task.get("status") != "success":
+        return
+    payload = latest_task.get("result") or {}
+    stocks_df = payload.get("stocks_df")
+    if stocks_df is None:
+        return
+    st.session_state.profit_growth_stocks = stocks_df
+    st.session_state.profit_growth_time = payload.get("selected_time")
+    st.session_state.profit_growth_filter_summary = payload.get("filter_summary")
 
 
 def build_profit_growth_filter_summary(
@@ -194,6 +210,7 @@ def display_profit_growth():
         exclude_cyb=exclude_cyb,
     )
     st.caption(f"当前筛选：{filter_summary}")
+    _restore_profit_growth_result_from_latest_task()
     _render_profit_growth_task_fragment()
 
     finished_task = consume_finished_ui_analysis_task(PROFIT_GROWTH_TASK_TYPE, PROFIT_GROWTH_TASK_DONE_KEY)

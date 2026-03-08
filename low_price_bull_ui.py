@@ -15,6 +15,7 @@ from low_price_bull_service import low_price_bull_service
 from ui_shared import get_dataframe_height
 from ui_analysis_task_utils import (
     consume_finished_ui_analysis_task,
+    get_latest_ui_analysis_task,
     get_ui_analysis_button_state,
     render_ui_analysis_task_live_card,
     start_ui_analysis_task,
@@ -594,6 +595,22 @@ def _run_low_price_bull_selection_task(
     }
 
 
+def _restore_low_price_bull_result_from_latest_task() -> None:
+    if st.session_state.get("low_price_bull_stocks") is not None:
+        return
+    latest_task = get_latest_ui_analysis_task(LOW_PRICE_BULL_TASK_TYPE)
+    if not latest_task or latest_task.get("status") != "success":
+        return
+    payload = latest_task.get("result") or {}
+    stocks_df = payload.get("stocks_df")
+    if stocks_df is None:
+        return
+    st.session_state["low_price_bull_stocks"] = stocks_df
+    st.session_state["low_price_bull_selector"] = None
+    st.session_state["low_price_bull_filter_summary"] = payload.get("filter_summary")
+    st.session_state["low_price_bull_selected_time"] = payload.get("selected_time")
+
+
 def display_low_price_bull():
     """Render the low-price bull page with a compact header and advanced filters."""
     if st.session_state.get("show_low_price_monitor"):
@@ -736,6 +753,7 @@ def display_low_price_bull():
         only_hs_a=only_hs_a,
     )
     st.caption(f"当前筛选：{filter_summary}")
+    _restore_low_price_bull_result_from_latest_task()
     _render_low_price_bull_task_fragment()
 
     finished_task = consume_finished_ui_analysis_task(LOW_PRICE_BULL_TASK_TYPE, LOW_PRICE_BULL_TASK_DONE_KEY)
