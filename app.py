@@ -130,13 +130,38 @@ st.markdown("""
         --space-5: 1.35rem;
     }
 
+    *, *::before, *::after {
+        box-sizing: border-box;
+    }
+
     /* 全局极简风格 */
     html, body, [data-testid="stAppViewContainer"] {
         font-size: 15px;
+        width: 100%;
+        max-width: 100%;
+        -webkit-text-size-adjust: 100%;
+        text-size-adjust: 100%;
+    }
+    [data-testid="stAppViewContainer"],
+    [data-testid="stMain"],
+    section.main {
+        width: 100%;
+        max-width: 100%;
+        overflow-x: hidden;
     }
     .block-container {
         padding-top: 2.2rem;
         padding-bottom: 1.8rem;
+        width: 100%;
+        max-width: 100%;
+        overflow-x: clip;
+    }
+    div[data-testid="stVerticalBlock"],
+    div[data-testid="element-container"],
+    div[data-testid="stHorizontalBlock"],
+    div[data-testid="column"] {
+        min-width: 0;
+        max-width: 100%;
     }
     .page-title-wrap {
         text-align: center;
@@ -400,6 +425,16 @@ st.markdown("""
     .stTextInput>div>div>input, .stSelectbox>div>div>div {
         border-radius: 6px;
         border: 1px solid rgba(255,255,255,0.2);
+        width: 100%;
+        max-width: 100%;
+    }
+    .stTextArea textarea,
+    .stNumberInput input,
+    .stDateInput input,
+    .stTimeInput input,
+    .stMultiSelect [data-baseweb="select"] > div {
+        width: 100%;
+        max-width: 100%;
     }
     div[data-testid="stForm"] {
         margin: 0 0 var(--space-4) 0;
@@ -643,12 +678,21 @@ st.markdown("""
         html, body, [data-testid="stAppViewContainer"] {
             overflow-x: hidden;
         }
+        [data-testid="stAppViewContainer"],
+        [data-testid="stMain"],
+        section.main {
+            width: 100%;
+            max-width: 100vw;
+            overflow-x: hidden;
+        }
         .block-container {
             padding-top: 1.45rem;
             padding-bottom: 1.2rem;
-            padding-left: 0.75rem;
-            padding-right: 0.75rem;
-            max-width: 100%;
+            padding-left: calc(0.7rem + env(safe-area-inset-left));
+            padding-right: calc(0.7rem + env(safe-area-inset-right));
+            width: 100%;
+            max-width: 100vw;
+            overflow-x: clip;
         }
         :root {
             --font-size-h1: 1.72rem;
@@ -669,6 +713,8 @@ st.markdown("""
         div[data-testid="stHorizontalBlock"] {
             flex-wrap: wrap;
             gap: 0.5rem;
+            width: 100%;
+            max-width: 100%;
         }
         div[data-testid="column"] {
             min-width: 0 !important;
@@ -700,20 +746,39 @@ st.markdown("""
         .stTabs [data-baseweb="tab"] {
             height: 2.8rem;
             padding: 0 0.7rem;
-            min-width: max-content;
+            min-width: fit-content;
             flex: 0 0 auto;
             white-space: nowrap;
+            max-width: calc(100vw - 1.4rem);
         }
         .stTabs [data-baseweb="tab-list"] {
             gap: 0.45rem;
+            width: 100%;
+            max-width: 100%;
             overflow-x: auto;
             overflow-y: hidden;
             padding-bottom: 0.2rem;
             scrollbar-width: thin;
+            overscroll-behavior-x: contain;
         }
         .stTabs [data-baseweb="tab-panel"] {
             overflow-x: hidden;
             overflow-y: visible !important;
+        }
+        .stTextInput input,
+        .stNumberInput input,
+        .stTextArea textarea,
+        .stDateInput input,
+        .stTimeInput input,
+        .stSelectbox [data-baseweb="select"] > div,
+        .stMultiSelect [data-baseweb="select"] > div,
+        [data-baseweb="input"] input,
+        [data-baseweb="textarea"] textarea {
+            font-size: 16px !important;
+            line-height: 1.35 !important;
+        }
+        .stTextArea textarea {
+            min-height: 6.5rem;
         }
         .agent-card, .metric-card, .decision-card, .warning-card {
             padding: 1rem;

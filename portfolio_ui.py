@@ -7,7 +7,6 @@
 
 import html
 import re
-import uuid
 import streamlit as st
 import pandas as pd
 from datetime import date, datetime
@@ -116,14 +115,16 @@ def _build_history_final_decision_display(
 
 
 PORTFOLIO_ANALYSIS_SESSION_KEY = "portfolio_analysis_session_id"
+PORTFOLIO_ANALYSIS_SCOPE_ID = "portfolio-analysis-global"
+PORTFOLIO_ANALYSIS_LIVE_STATUS_KEY = "portfolio_analysis_live_status_task_id"
+PORTFOLIO_ANALYSIS_REFRESH_SIGNATURE_KEY = "portfolio_analysis_refresh_signature"
 
 
 def _ensure_portfolio_analysis_session_id() -> str:
-    session_id = st.session_state.get(PORTFOLIO_ANALYSIS_SESSION_KEY)
-    if not session_id:
-        session_id = uuid.uuid4().hex
-        st.session_state[PORTFOLIO_ANALYSIS_SESSION_KEY] = session_id
-    return session_id
+    # Use a stable task scope so in-flight work can still be recovered after page switches
+    # and browser reconnects in the same server process.
+    st.session_state[PORTFOLIO_ANALYSIS_SESSION_KEY] = PORTFOLIO_ANALYSIS_SCOPE_ID
+    return PORTFOLIO_ANALYSIS_SCOPE_ID
 
 def _format_task_time(timestamp) -> str:
     if not timestamp:
@@ -137,25 +138,37 @@ def _format_task_time(timestamp) -> str:
 def _get_portfolio_analysis_task(task_type: str | None = None) -> Dict | None:
     session_id = _ensure_portfolio_analysis_session_id()
     portfolio_analysis_task_manager.prune_session_tasks(session_id)
-    return portfolio_analysis_task_manager.get_latest_task(session_id, task_type=task_type)
+    task = portfolio_analysis_task_manager.get_latest_task(session_id, task_type=task_type)
+    if task:
+        return task
+    return portfolio_analysis_task_manager.get_latest_task_any(task_type=task_type)
 
 
 def _get_pending_portfolio_analysis_tasks(task_type: str | None = None) -> List[Dict]:
     session_id = _ensure_portfolio_analysis_session_id()
     portfolio_analysis_task_manager.prune_session_tasks(session_id)
-    return portfolio_analysis_task_manager.get_pending_tasks(session_id, task_type=task_type)
+    tasks = portfolio_analysis_task_manager.get_pending_tasks(session_id, task_type=task_type)
+    if tasks:
+        return tasks
+    return portfolio_analysis_task_manager.get_pending_tasks_any(task_type=task_type)
 
 
 def _get_active_portfolio_analysis_task() -> Dict | None:
     session_id = _ensure_portfolio_analysis_session_id()
     portfolio_analysis_task_manager.prune_session_tasks(session_id)
-    return portfolio_analysis_task_manager.get_active_task(session_id)
+    task = portfolio_analysis_task_manager.get_active_task(session_id)
+    if task:
+        return task
+    return portfolio_analysis_task_manager.get_active_task_any()
 
 
 def _get_running_portfolio_analysis_task() -> Dict | None:
     session_id = _ensure_portfolio_analysis_session_id()
     portfolio_analysis_task_manager.prune_session_tasks(session_id)
-    return portfolio_analysis_task_manager.get_running_task(session_id)
+    task = portfolio_analysis_task_manager.get_running_task(session_id)
+    if task:
+        return task
+    return portfolio_analysis_task_manager.get_running_task_any()
 
 
 def _get_stock_pending_analysis_task(stock_id) -> Dict | None:
@@ -185,6 +198,81 @@ def _render_portfolio_analysis_task_notice():
         st.info(f"{task_label}：{message}{suffix}{queue_text}")
     else:
         st.info(f"分析队列中有 {queued_count} 个任务，等待执行。")
+
+
+def _merge_monitor_sync_result(summary: Dict | None, sync_result: Dict | None) -> Dict | None:
+    if summary is None:
+        return None
+    if not sync_result:
+        return summary
+    for key in ("added", "updated", "failed", "total"):
+        summary[key] = int(summary.get(key, 0)) + int(sync_result.get(key, 0) or 0)
+    return summary
+
+
+def _render_portfolio_analysis_live_status_card():
+    pending_tasks = _get_pending_portfolio_analysis_tasks()
+    active_task = _get_active_portfolio_analysis_task()
+    task_id = active_task.get("id") if active_task else None
+    previous_task_id = st.session_state.get(PORTFOLIO_ANALYSIS_LIVE_STATUS_KEY)
+    previous_signature = st.session_state.get(PORTFOLIO_ANALYSIS_REFRESH_SIGNATURE_KEY)
+
+    if not pending_tasks or not active_task:
+        if previous_task_id or previous_signature:
+            st.session_state.pop(PORTFOLIO_ANALYSIS_LIVE_STATUS_KEY, None)
+            st.session_state.pop(PORTFOLIO_ANALYSIS_REFRESH_SIGNATURE_KEY, None)
+            st.rerun()
+        return
+
+    refresh_signature = "|".join(
+        [
+            str(task_id or ""),
+            str(active_task.get("status") or ""),
+            str(active_task.get("current") or 0),
+            str(active_task.get("total") or 0),
+            str(active_task.get("step_code") or ""),
+            str(active_task.get("step_status") or ""),
+        ]
+    )
+    st.session_state[PORTFOLIO_ANALYSIS_LIVE_STATUS_KEY] = task_id
+    if previous_signature != refresh_signature:
+        st.session_state[PORTFOLIO_ANALYSIS_REFRESH_SIGNATURE_KEY] = refresh_signature
+        if previous_signature is not None:
+            st.rerun()
+    task_label = active_task.get("label") or "当前分析任务"
+    message = active_task.get("message") or "分析正在后台执行，切换页面后状态会保留。"
+    current = int(active_task.get("current") or 0)
+    total = int(active_task.get("total") or 0)
+    progress = float(active_task.get("progress") or 0.0)
+    step_code = active_task.get("step_code") or "--"
+    status = active_task.get("status") or "queued"
+    queued_count = sum(1 for task in pending_tasks if task.get("status") == "queued")
+    queue_size = len(pending_tasks)
+    started_at = _format_task_time(active_task.get("started_at") or active_task.get("created_at"))
+
+    with st.container(border=True):
+        st.markdown(f"#### {task_label}")
+        st.write(message)
+        st.progress(progress, text=f"{int(progress * 100)}%")
+
+        meta_col1, meta_col2, meta_col3, meta_col4 = st.columns(4)
+        meta_col1.metric("执行状态", "进行中" if status == "running" else "排队中")
+        meta_col2.metric("当前步骤", step_code)
+        meta_col3.metric("已完成", f"{current}/{total}" if total else str(current))
+        meta_col4.metric("队列任务", queue_size)
+
+        detail_bits = []
+        if queued_count:
+            detail_bits.append(f"待执行 {queued_count} 个")
+        if started_at:
+            detail_bits.append(f"开始时间 {started_at}")
+        detail_bits.append("离开页面后可返回继续查看进度")
+        st.caption(" | ".join(detail_bits))
+
+
+@st.fragment(run_every=1.0)
+def _render_portfolio_analysis_live_status_fragment():
+    _render_portfolio_analysis_live_status_card()
 
 
 def _start_single_stock_analysis_task(stock: Dict, lightweight_model=None, reasoning_model=None):
@@ -289,6 +377,9 @@ def _start_batch_analysis_task(
         raise RuntimeError(f"批量分析任务{status_text}，请勿重复提交。")
 
     def runner(_task_id, report_progress):
+        saved_ids: List[int] = []
+        aggregated_sync_result = {"added": 0, "updated": 0, "failed": 0, "total": 0} if auto_sync else None
+
         report_progress(
             current=0,
             total=total,
@@ -305,23 +396,33 @@ def _start_batch_analysis_task(
                 message=_build_batch_progress_message(current, callback_total, code, status),
             )
 
+        def result_callback(code, single_result):
+            persistence_result = portfolio_manager.persist_single_analysis_result(
+                code,
+                single_result,
+                sync_realtime_monitor=auto_sync,
+                analysis_source="portfolio_batch_analysis",
+                analysis_period="1y",
+            )
+            saved_ids.extend(persistence_result.get("saved_ids", []))
+            _merge_monitor_sync_result(aggregated_sync_result, persistence_result.get("sync_result"))
+
         result = portfolio_manager.batch_analyze_portfolio(
             mode=analysis_mode,
             max_workers=max_workers,
             selected_agents=selected_agents,
             progress_callback=progress_callback,
+            result_callback=result_callback,
             lightweight_model=lightweight_model,
             reasoning_model=reasoning_model,
         )
         if not result.get("success"):
             raise RuntimeError(result.get("error", "批量分析失败"))
 
-        persistence_result = portfolio_manager.persist_analysis_results(
-            result,
-            sync_realtime_monitor=auto_sync,
-            analysis_source="portfolio_batch_analysis",
-            analysis_period="1y",
-        )
+        persistence_result = {
+            "saved_ids": saved_ids,
+            "sync_result": aggregated_sync_result if auto_sync else None,
+        }
 
         if send_notification:
             from notification_service import notification_service
@@ -337,7 +438,7 @@ def _start_batch_analysis_task(
             step_status="success",
             message=(
                 f"批量分析完成：成功 {result.get('succeeded', 0)}，"
-                f"失败 {result.get('failed', 0)}"
+                f"失败 {result.get('failed', 0)}，已写入 {len(saved_ids)} 条历史"
             ),
         )
         return {
@@ -458,7 +559,7 @@ def display_portfolio_manager(lightweight_model=None, reasoning_model=None):
     except Exception as e:
         st.warning(f"持仓同步检查执行失败: {e}")
 
-    _render_portfolio_analysis_task_notice()
+    _render_portfolio_analysis_live_status_fragment()
     
     # 创建标签页
     tab1, tab2, tab3, tab4 = st.tabs([

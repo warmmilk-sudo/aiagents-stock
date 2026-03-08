@@ -8,7 +8,7 @@ import time
 import re
 import math
 from datetime import date, datetime, timedelta
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import numpy as np
@@ -1769,6 +1769,32 @@ class PortfolioManager:
                 self.capture_daily_snapshot(account_name=account, source="analysis")
 
         return {"saved_ids": saved_ids, "sync_result": sync_result}
+
+    def persist_single_analysis_result(
+        self,
+        code: str,
+        analysis_result: Dict,
+        *,
+        sync_realtime_monitor: bool = True,
+        analysis_source: str = "portfolio_batch_analysis",
+        analysis_period: str = "1y",
+    ) -> Dict:
+        """Persist one completed analysis result immediately."""
+        wrapped_results = {
+            "success": bool(analysis_result.get("success", True)),
+            "results": [
+                {
+                    "code": code,
+                    "result": analysis_result,
+                }
+            ],
+        }
+        return self.persist_analysis_results(
+            wrapped_results,
+            sync_realtime_monitor=sync_realtime_monitor,
+            analysis_source=analysis_source,
+            analysis_period=analysis_period,
+        )
     
     # ==================== 单只股票分析 ====================
     
@@ -1867,6 +1893,7 @@ class PortfolioManager:
     def batch_analyze_sequential(self, stock_codes: List[str], period="1y",
                                  selected_agents: List[str] = None,
                                  progress_callback=None,
+                                 result_callback: Optional[Callable[[str, Dict], None]] = None,
                                  model: str = None,
                                  lightweight_model: str = None,
                                  reasoning_model: str = None) -> Dict:
@@ -1911,6 +1938,8 @@ class PortfolioManager:
                         "code": code,
                         "result": result
                     })
+                    if result_callback:
+                        result_callback(code, result)
                     if progress_callback:
                         progress_callback(i, len(stock_codes), code, "success")
                 else:
@@ -1952,6 +1981,7 @@ class PortfolioManager:
                                selected_agents: List[str] = None,
                                max_workers: int = 3,
                                progress_callback=None,
+                               result_callback: Optional[Callable[[str, Dict], None]] = None,
                                model: str = None,
                                lightweight_model: str = None,
                                reasoning_model: str = None) -> Dict:
@@ -2005,6 +2035,8 @@ class PortfolioManager:
                             "code": code,
                             "result": result
                         })
+                        if result_callback:
+                            result_callback(code, result)
                         print(f"\n[{completed}/{len(stock_codes)}] {code} 分析完成")
                         if progress_callback:
                             progress_callback(completed, len(stock_codes), code, "success")
@@ -2048,6 +2080,7 @@ class PortfolioManager:
                                 selected_agents: List[str] = None,
                                 max_workers: int = 3,
                                 progress_callback=None,
+                                result_callback: Optional[Callable[[str, Dict], None]] = None,
                                 model: str = None,
                                 lightweight_model: str = None,
                                 reasoning_model: str = None) -> Dict:
@@ -2083,6 +2116,7 @@ class PortfolioManager:
                 selected_agents,
                 max_workers,
                 progress_callback,
+                result_callback,
                 model=model,
                 lightweight_model=lightweight_model,
                 reasoning_model=reasoning_model,
@@ -2093,6 +2127,7 @@ class PortfolioManager:
                 period,
                 selected_agents,
                 progress_callback,
+                result_callback,
                 model=model,
                 lightweight_model=lightweight_model,
                 reasoning_model=reasoning_model,

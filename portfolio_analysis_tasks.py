@@ -41,6 +41,22 @@ class PortfolioAnalysisTaskManager:
         tasks.sort(key=lambda item: item.get("created_at", 0.0), reverse=newest_first)
         return tasks
 
+    def _list_tasks_locked(
+        self,
+        *,
+        task_type: Optional[str] = None,
+        statuses: Optional[set[str]] = None,
+        newest_first: bool = True,
+    ) -> list[Dict[str, Any]]:
+        tasks = [
+            dict(task)
+            for task in self._tasks.values()
+            if (task_type is None or task.get("task_type") == task_type)
+            and (statuses is None or task.get("status") in statuses)
+        ]
+        tasks.sort(key=lambda item: item.get("created_at", 0.0), reverse=newest_first)
+        return tasks
+
     def _update_task_locked(self, task_id: str, **updates: Any) -> None:
         task = self._tasks.get(task_id)
         if not task:
@@ -197,6 +213,11 @@ class PortfolioAnalysisTaskManager:
             )
             return tasks[0] if tasks else None
 
+    def get_running_task_any(self, *, task_type: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            tasks = self._list_tasks_locked(task_type=task_type, statuses={"running"})
+            return tasks[0] if tasks else None
+
     def get_pending_tasks(
         self,
         session_id: str,
@@ -211,11 +232,30 @@ class PortfolioAnalysisTaskManager:
                 newest_first=False,
             )
 
+    def get_pending_tasks_any(
+        self,
+        *,
+        task_type: Optional[str] = None,
+    ) -> list[Dict[str, Any]]:
+        with self._lock:
+            return self._list_tasks_locked(
+                task_type=task_type,
+                statuses=self.PENDING_STATUSES,
+                newest_first=False,
+            )
+
     def get_active_task(self, session_id: str) -> Optional[Dict[str, Any]]:
         running = self.get_running_task(session_id)
         if running:
             return running
         pending = self.get_pending_tasks(session_id)
+        return pending[0] if pending else None
+
+    def get_active_task_any(self, *, task_type: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        running = self.get_running_task_any(task_type=task_type)
+        if running:
+            return running
+        pending = self.get_pending_tasks_any(task_type=task_type)
         return pending[0] if pending else None
 
     def has_active_task(self, session_id: str) -> bool:
@@ -229,6 +269,11 @@ class PortfolioAnalysisTaskManager:
     ) -> Optional[Dict[str, Any]]:
         with self._lock:
             tasks = self._list_session_tasks_locked(session_id, task_type=task_type)
+            return tasks[0] if tasks else None
+
+    def get_latest_task_any(self, *, task_type: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            tasks = self._list_tasks_locked(task_type=task_type)
             return tasks[0] if tasks else None
 
     def count_queued_tasks(

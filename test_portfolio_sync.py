@@ -138,6 +138,66 @@ class PortfolioIntegrationTests(unittest.TestCase):
         self.assertEqual(len(monitors), 1)
         self.assertEqual(monitors[0]["take_profit"], 170.0)
 
+    def test_batch_analysis_can_persist_history_incrementally(self):
+        first_stock_id = self._add_stock("000001", cost_price=10.0, quantity=100)
+        second_stock_id = self._add_stock("600519", cost_price=1500.0, quantity=10)
+
+        fake_results = {
+            "000001": {
+                "success": True,
+                "stock_info": {"symbol": "000001", "name": "Stock000001", "current_price": 10.8},
+                "final_decision": {
+                    "rating": "买入",
+                    "confidence_level": 7.6,
+                    "entry_range": "10.2-10.5",
+                    "take_profit": "11.6元",
+                    "stop_loss": "9.8元",
+                    "operation_advice": "放量突破后继续持有。",
+                },
+            },
+            "600519": {
+                "success": True,
+                "stock_info": {"symbol": "600519", "name": "Stock600519", "current_price": 1512.0},
+                "final_decision": {
+                    "rating": "持有",
+                    "confidence_level": 6.9,
+                    "entry_range": "1490-1505",
+                    "take_profit": "1580元",
+                    "stop_loss": "1450元",
+                    "operation_advice": "趋势仍在，继续观察量价配合。",
+                },
+            },
+        }
+
+        callback_order = []
+        total_history_counts = []
+
+        def fake_analyze_single_stock(code, *args, **kwargs):
+            return fake_results[code]
+
+        def result_callback(code, result):
+            callback_order.append(code)
+            self.manager.persist_single_analysis_result(code, result, sync_realtime_monitor=False)
+            total_history = (
+                len(self.portfolio_db.get_analysis_history(first_stock_id, limit=10))
+                + len(self.portfolio_db.get_analysis_history(second_stock_id, limit=10))
+            )
+            total_history_counts.append(total_history)
+
+        self.manager.analyze_single_stock = fake_analyze_single_stock
+
+        result = self.manager.batch_analyze_sequential(
+            ["000001", "600519"],
+            progress_callback=None,
+            result_callback=result_callback,
+        )
+
+        self.assertTrue(result["success"])
+        self.assertEqual(callback_order, ["000001", "600519"])
+        self.assertEqual(total_history_counts, [1, 2])
+        self.assertEqual(len(self.portfolio_db.get_analysis_history(first_stock_id, limit=10)), 1)
+        self.assertEqual(len(self.portfolio_db.get_analysis_history(second_stock_id, limit=10)), 1)
+
     def test_delete_stock_cascades_managed_integrations(self):
         stock_id = self._add_stock("002594", cost_price=220.0, quantity=300)
         self.portfolio_db.save_analysis(

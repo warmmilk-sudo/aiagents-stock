@@ -455,6 +455,44 @@ class PortfolioAnalysisTaskManagerTests(unittest.TestCase):
             self.fail("queued task did not finish in time")
         self.assertEqual(execution_order, ["first", "second"])
 
+    def test_task_manager_can_recover_tasks_without_original_session_id(self):
+        manager = PortfolioAnalysisTaskManager()
+        blocker = threading.Event()
+        started = threading.Event()
+
+        def runner(_task_id, report_progress):
+            report_progress(total=2, current=1, step_code="300136", message="running")
+            started.set()
+            blocker.wait(1.0)
+            report_progress(total=2, current=2, step_code="300136", message="done")
+            return {"ok": True}
+
+        task_id = manager.start_task(
+            "session-a",
+            task_type="batch",
+            label="batch-task",
+            runner=runner,
+        )
+        self.assertTrue(started.wait(1.0))
+
+        active_task = manager.get_active_task_any(task_type="batch")
+        self.assertIsNotNone(active_task)
+        self.assertEqual(active_task["id"], task_id)
+        self.assertEqual(len(manager.get_pending_tasks_any(task_type="batch")), 1)
+
+        blocker.set()
+        for _ in range(40):
+            latest_task = manager.get_latest_task_any(task_type="batch")
+            if latest_task and latest_task.get("status") == "success":
+                break
+            time.sleep(0.02)
+        else:
+            self.fail("global task lookup did not observe completion")
+
+        latest_task = manager.get_latest_task_any(task_type="batch")
+        self.assertEqual(latest_task["status"], "success")
+        self.assertEqual(latest_task["result"]["ok"], True)
+
 
 @unittest.skipIf(MacroCycleDatabase is None, "macro cycle dependencies unavailable")
 class MacroCyclePersistenceTests(unittest.TestCase):
