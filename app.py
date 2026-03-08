@@ -546,6 +546,53 @@ st.markdown("""
     [data-testid="stSidebar"] hr {
         margin: 0.3rem 0;
     }
+    [data-testid="stSidebar"] [data-testid="stWidgetLabel"],
+    [data-testid="stSidebar"] .stSelectbox label {
+        color: var(--text-color) !important;
+    }
+    [data-testid="stSidebar"] .stSelectbox [data-baseweb="select"] > div {
+        background: var(--secondary-background-color) !important;
+        border: 1px solid rgba(148,163,184,0.35) !important;
+        color: var(--text-color) !important;
+        padding-right: 0.2rem !important;
+    }
+    [data-testid="stSidebar"] .stSelectbox [data-baseweb="select"] > div > div:first-child {
+        flex: 1 1 auto !important;
+        min-width: 0 !important;
+        margin-right: 0.2rem !important;
+    }
+    [data-testid="stSidebar"] .stSelectbox [data-baseweb="select"] > div > div:last-child {
+        flex: 0 0 1.15rem !important;
+        width: 1.15rem !important;
+        min-width: 1.15rem !important;
+        max-width: 1.15rem !important;
+        padding: 0 !important;
+        margin-left: 0.1rem !important;
+        justify-content: center !important;
+    }
+    [data-testid="stSidebar"] .stSelectbox [data-baseweb="select"] > div > div:last-child svg {
+        width: 0.8rem !important;
+        height: 0.8rem !important;
+    }
+    [data-testid="stSidebar"] .stSelectbox [data-baseweb="select"] span,
+    [data-testid="stSidebar"] .stSelectbox [data-baseweb="select"] input,
+    [data-testid="stSidebar"] .stSelectbox [data-baseweb="select"] svg {
+        color: var(--text-color) !important;
+        fill: var(--text-color) !important;
+        -webkit-text-fill-color: var(--text-color) !important;
+    }
+    [data-testid="stSidebar"] .stSelectbox [data-baseweb="select"] span {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    div[role="listbox"] {
+        background: var(--secondary-background-color) !important;
+        border: 1px solid rgba(148,163,184,0.24) !important;
+    }
+    div[role="listbox"] [role="option"] {
+        color: var(--text-color) !important;
+    }
     [data-testid="stSidebar"] .streamlit-expanderHeader {
         min-height: 2rem;
         padding-top: 0.2rem;
