@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import html
 import json
+import re
 from typing import Any, Dict, Optional
 
 import streamlit as st
@@ -109,7 +110,158 @@ def _normalize_discussion_result(value: Any) -> Any:
     if parsed in (None, ""):
         return ""
 
+    if isinstance(parsed, str):
+        parsed = re.sub(r"^\s*[【\[]?推理过程[】\]]?\s*", "", parsed, count=1)
+        parsed = re.sub(r"^\s*推理过程[:：]\s*", "", parsed, count=1)
+        parsed = parsed.strip()
+
     return parsed
+
+
+STRUCTURED_FINAL_DECISION_KEYS = (
+    "rating",
+    "confidence_level",
+    "target_price",
+    "operation_advice",
+    "entry_range",
+    "take_profit",
+    "stop_loss",
+    "holding_period",
+    "position_size",
+    "risk_warning",
+)
+
+
+def _extract_embedded_json_mapping(text: str) -> tuple[Dict[str, Any], str]:
+    if not text:
+        return {}, ""
+
+    decoder = json.JSONDecoder()
+    candidate_mapping: Dict[str, Any] = {}
+    candidate_prefix = ""
+
+    for index, char in enumerate(text):
+        if char != "{":
+            continue
+
+        try:
+            parsed, end = decoder.raw_decode(text[index:])
+        except json.JSONDecodeError:
+            continue
+
+        trailing = text[index + end :].strip()
+        if trailing:
+            continue
+        if isinstance(parsed, dict):
+            candidate_mapping = parsed
+            candidate_prefix = text[:index].strip()
+
+    return candidate_mapping, candidate_prefix
+
+
+def _resolve_final_decision_content(final_decision: Any) -> tuple[Any, bool, str]:
+    normalized_final_decision, invalid = _normalize_text_or_mapping(final_decision)
+    extracted_reasoning = ""
+
+    if isinstance(normalized_final_decision, dict):
+        has_structured_keys = any(
+            key in normalized_final_decision for key in STRUCTURED_FINAL_DECISION_KEYS
+        )
+        decision_text = str(normalized_final_decision.get("decision_text") or "").strip()
+        if decision_text and not has_structured_keys:
+            embedded_mapping, reasoning_prefix = _extract_embedded_json_mapping(decision_text)
+            if embedded_mapping:
+                extracted_reasoning = reasoning_prefix
+                return embedded_mapping, invalid, extracted_reasoning
+
+    return normalized_final_decision, invalid, extracted_reasoning
+
+
+def _find_report_body_start(text: str) -> Optional[int]:
+    report_patterns = (
+        r"(?m)^#\s*.+(?:分析报告|报告).*$",
+        r"(?m)^##\s*基本概况.*$",
+        r"(?m)^(?:一、|1[\.、])\s*(?:趋势分析|基本概况|核心结论|技术分析|投资建议).*$",
+    )
+    positions = []
+    for pattern in report_patterns:
+        match = re.search(pattern, text)
+        if match:
+            positions.append(match.start())
+    if not positions:
+        return None
+    return min(positions)
+
+
+def _split_analysis_report_sections(value: Any) -> tuple[str, str]:
+    parsed = _coerce_json_value(value)
+    text = "" if parsed is None else str(parsed).strip()
+    if not text:
+        return "", ""
+
+    marker = re.search(r"[\[【]推理过程[\]】]", text)
+    if not marker:
+        return text, ""
+
+    before_marker = text[:marker.start()].strip()
+    after_marker = text[marker.end():].lstrip("：:\n ").strip()
+
+    if before_marker:
+        body = before_marker
+        reasoning = after_marker
+    else:
+        report_start = _find_report_body_start(after_marker)
+        if report_start is not None and report_start > 0:
+            reasoning = after_marker[:report_start].strip()
+            body = after_marker[report_start:].strip()
+        else:
+            body = ""
+            reasoning = after_marker
+
+    body = re.sub(r"^\s*分析报告(?:正文)?\s*[:：]\s*", "", body, count=1)
+    reasoning = re.sub(r"^\s*[\[【]?推理过程[\]】]?\s*", "", reasoning, count=1)
+    reasoning = re.sub(r"^\s*推理过程[:：]\s*", "", reasoning, count=1)
+    return body.strip(), reasoning.strip()
+
+
+def _format_multiline_text_as_html(value: Any) -> str:
+    text = "" if value is None else str(value).strip()
+    if not text:
+        return ""
+
+    paragraphs = [segment.strip() for segment in re.split(r"\n{2,}", text) if segment.strip()]
+    if not paragraphs:
+        return ""
+
+    rendered = []
+    for paragraph in paragraphs:
+        rendered.append(f"<p>{_safe_text(paragraph).replace(chr(10), '<br>')}</p>")
+    return "".join(rendered)
+
+
+def _render_reasoning_block(title: str, content: Any, *, description: str = ""):
+    html_body = _format_multiline_text_as_html(content)
+    if not html_body:
+        return
+
+    description_html = ""
+    if description:
+        description_html = (
+            f'<div class="reasoning-section__description">{_safe_text(description)}</div>'
+        )
+
+    st.markdown(
+        f"""
+        <div class="reasoning-section">
+            <div class="reasoning-section__title">{_safe_text(title)}</div>
+            {description_html}
+        </div>
+        <div class="reasoning-body">
+            {html_body}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def to_float(value: Any) -> Optional[float]:
@@ -209,8 +361,18 @@ def render_stock_info_metrics(
             st.metric("市值", f"{market_cap}")
 
 
-def render_agents_analysis_tabs(agents_results: Any):
-    st.subheader("AI 分析师团队报告")
+def render_agents_analysis_tabs(
+    agents_results: Any,
+    *,
+    show_header: bool = True,
+    preferred_order: Optional[list[str]] = None,
+    tab_labels: Optional[Dict[str, str]] = None,
+    include_other_agents: bool = True,
+    split_reasoning: bool = False,
+):
+    if show_header:
+        st.subheader("AI 分析师团队报告")
+
     normalized_agents_results, invalid = _normalize_agents_results(agents_results)
     if not normalized_agents_results:
         if invalid:
@@ -222,10 +384,27 @@ def render_agents_analysis_tabs(agents_results: Any):
     if invalid:
         st.caption("部分分析师报告格式异常，已按文本降级展示。")
 
+    ordered_keys: list[str] = []
+    if preferred_order:
+        for key in preferred_order:
+            if key in normalized_agents_results:
+                ordered_keys.append(key)
+        if include_other_agents:
+            ordered_keys.extend(
+                key for key in normalized_agents_results.keys() if key not in ordered_keys
+            )
+    else:
+        ordered_keys = list(normalized_agents_results.keys())
+
+    if not ordered_keys:
+        st.info("暂无 AI 分析师报告")
+        return
+
     tab_names = []
     tab_contents = []
-    for _, agent_result in normalized_agents_results.items():
-        tab_names.append(agent_result.get("agent_name", "未知分析师"))
+    for key in ordered_keys:
+        agent_result = normalized_agents_results[key]
+        tab_names.append((tab_labels or {}).get(key, agent_result.get("agent_name", "未知分析师")))
         tab_contents.append(agent_result)
 
     tabs = st.tabs(tab_names)
@@ -235,6 +414,7 @@ def render_agents_analysis_tabs(agents_results: Any):
             focus_areas = agent_result.get("focus_areas", [])
             if not isinstance(focus_areas, list):
                 focus_areas = [str(focus_areas)]
+            analysis_time = agent_result.get("analysis_time") or agent_result.get("timestamp") or "未知"
 
             st.markdown(
                 f"""
@@ -242,37 +422,110 @@ def render_agents_analysis_tabs(agents_results: Any):
                     <h4>{_safe_text(agent_result.get('agent_name', '未知'))}</h4>
                     <p><strong>职责:</strong> {_safe_text(agent_result.get('agent_role', '未知'))}</p>
                     <p><strong>关注领域:</strong> {_safe_text(', '.join(str(item) for item in focus_areas))}</p>
-                    <p><strong>分析时间:</strong> {_safe_text(agent_result.get('timestamp', '未知'))}</p>
+                    <p><strong>分析时间:</strong> {_safe_text(analysis_time)}</p>
                 </div>
                 """,
                 unsafe_allow_html=True,
             )
-            st.markdown("**分析报告：**")
-            st.write(agent_result.get("analysis", "暂无分析"))
+            if split_reasoning:
+                report_body, reasoning_text = _split_analysis_report_sections(
+                    agent_result.get("analysis", "")
+                )
+                st.markdown("**分析报告正文：**")
+                if report_body:
+                    st.markdown(report_body)
+                elif reasoning_text:
+                    st.info("未提取到结构化报告正文，已保留原始推理过程。")
+                else:
+                    st.info("暂无分析")
+
+                if reasoning_text:
+                    with st.expander("推理过程", expanded=False):
+                        _render_reasoning_block("分析师推理过程", reasoning_text)
+            else:
+                st.markdown("**分析报告：**")
+                st.write(agent_result.get("analysis", "暂无分析"))
 
 
-def render_team_discussion(discussion_result: Any):
-    st.subheader("分析团队讨论")
+def render_team_discussion(discussion_result: Any, *, show_header: bool = True):
+    if show_header:
+        st.subheader("分析团队讨论")
+
     normalized_discussion = _normalize_discussion_result(discussion_result)
     if not normalized_discussion:
         st.info("暂无讨论记录")
         return
 
-    st.markdown(
-        """
-        <div class="agent-card">
-            <h4>团队综合讨论</h4>
-            <p>以下内容为多位分析师综合讨论后的结论。</p>
-        </div>
-        """,
-        unsafe_allow_html=True,
+    _render_reasoning_block(
+        "团队综合讨论",
+        normalized_discussion,
+        description="以下内容为多位分析师综合讨论后的原始记录。",
     )
-    st.write(normalized_discussion)
 
 
-def render_final_decision(final_decision: Any):
-    st.subheader("最终投资决策")
-    normalized_final_decision, invalid = _normalize_text_or_mapping(final_decision)
+def render_reasoning_process(
+    agents_results: Any,
+    discussion_result: Any,
+    *,
+    expanded: bool = False,
+    include_agents: bool = True,
+    include_discussion: bool = True,
+    extra_sections: Optional[list[tuple[str, Any]]] = None,
+):
+    normalized_agents_results, _ = _normalize_agents_results(agents_results)
+    normalized_discussion = _normalize_discussion_result(discussion_result)
+    normalized_extra_sections = []
+
+    if not include_agents:
+        normalized_agents_results = {}
+    if not include_discussion:
+        normalized_discussion = ""
+    for title, content in extra_sections or []:
+        parsed_content = _coerce_json_value(content)
+        if parsed_content in (None, ""):
+            continue
+        normalized_extra_sections.append((title, str(parsed_content).strip()))
+
+    if not normalized_agents_results and not normalized_discussion and not normalized_extra_sections:
+        return
+
+    if normalized_discussion and not normalized_agents_results and not normalized_extra_sections:
+        expander_title = "团队综合讨论"
+    elif normalized_discussion and normalized_extra_sections and not normalized_agents_results:
+        expander_title = "团队综合讨论与决策推理"
+    elif normalized_agents_results and not normalized_discussion and not normalized_extra_sections:
+        expander_title = "分析师推理过程"
+    else:
+        expander_title = "推理过程详情"
+
+    with st.expander(expander_title, expanded=expanded):
+        if normalized_agents_results and (normalized_discussion or normalized_extra_sections):
+            st.caption("这里保留完整的团队讨论与分析师原始推理内容，默认折叠。")
+        elif normalized_discussion or normalized_extra_sections:
+            st.caption("这里保留完整的团队讨论与决策推理原始内容，默认折叠。")
+        else:
+            st.caption("这里保留分析师原始推理内容，默认折叠。")
+
+        if normalized_discussion:
+            render_team_discussion(normalized_discussion, show_header=False)
+
+        for index, (title, content) in enumerate(normalized_extra_sections):
+            if normalized_discussion or index > 0:
+                st.markdown("---")
+            _render_reasoning_block(title, content)
+
+        if normalized_agents_results:
+            if normalized_discussion or normalized_extra_sections:
+                st.markdown("---")
+            st.markdown("#### 分析师原始报告")
+            render_agents_analysis_tabs(normalized_agents_results, show_header=False)
+
+
+def render_final_decision(final_decision: Any, *, show_header: bool = True):
+    if show_header:
+        st.subheader("最终投资决策")
+
+    normalized_final_decision, invalid, _ = _resolve_final_decision_content(final_decision)
     if not normalized_final_decision:
         st.info("暂无最终投资决策")
         return

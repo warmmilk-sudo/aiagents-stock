@@ -440,7 +440,7 @@ def render_monitor_tasks():
     
     tasks = db.get_monitor_tasks(enabled_only=False)
     valid_codes = {task['stock_code'] for task in tasks}
-    for running_code in list(engine.monitoring_threads.keys()):
+    for running_code in list(engine.monitoring_stocks):
         if running_code not in valid_codes:
             engine.stop_monitor(running_code)
     
@@ -477,7 +477,7 @@ def render_monitor_tasks():
                 except Exception as e:
                     pass
 
-            is_running = task['stock_code'] in engine.monitoring_threads
+            is_running = task['stock_code'] in engine.monitoring_stocks
             status = "已启用" if task['enabled'] else "已禁用"
             auto_trade_status = "自动交易" if task['auto_trade'] else "仅监控"
             trading_mode = "仅交易时段" if task.get('trading_hours_only', 1) else "全时段"
@@ -561,7 +561,7 @@ def render_monitor_tasks():
                 with action_col2:
                     if st.button("删除", key=f"del_{task['id']}"):
                         # 如果正在运行，先停止
-                        if task['stock_code'] in engine.monitoring_threads:
+                        if task['stock_code'] in engine.monitoring_stocks:
                             engine.stop_monitor(task['stock_code'])
 
                         db.delete_monitor_task(task['id'])

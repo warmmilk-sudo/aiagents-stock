@@ -1,11 +1,14 @@
 import shutil
 import sys
+import time
+import threading
 import types
 import unittest
 import uuid
 from pathlib import Path
 
 from monitor_db import StockMonitorDatabase
+from portfolio_analysis_tasks import PortfolioAnalysisTaskManager
 from portfolio_db import PortfolioDB
 from portfolio_manager import PortfolioManager
 from smart_monitor_db import SmartMonitorDB
@@ -16,6 +19,8 @@ from ui_shared import (
     _normalize_agents_results,
     _normalize_discussion_result,
     _normalize_mapping_input,
+    _resolve_final_decision_content,
+    _split_analysis_report_sections,
     _normalize_text_or_mapping,
 )
 
@@ -160,6 +165,77 @@ class PortfolioHistoryPersistenceTests(unittest.TestCase):
         self.assertEqual(latest["final_decision"]["rating"], "买入")
         self.assertEqual(latest["discussion_result"], "团队讨论认为回撤可控。")
 
+    def test_build_analysis_payload_uses_clean_default_rating(self):
+        payload = self.manager._build_analysis_payload(
+            stock_info={"current_price": 10.5},
+            final_decision={},
+        )
+
+        self.assertEqual(payload["rating"], "持有")
+        self.assertEqual(payload["summary"], "评级: 持有")
+
+    def test_build_stock_card_view_model_formats_name_pnl_and_summary(self):
+        view_model = self.manager.build_stock_card_view_model(
+            stock={
+                "code": "300136",
+                "name": "信维通信",
+                "cost_price": 10.0,
+                "quantity": 100,
+                "note": "波段仓位",
+                "auto_monitor": True,
+            },
+            latest_analysis={
+                "rating": "鎸佹湁",
+                "current_price": 12.5,
+                "analysis_time": "2026-03-08 10:28:08.754695",
+                "summary": "<p class='portfolio-stock-card__summary'>评级: 持有；短线可继续跟踪。</p>",
+                "final_decision": {},
+            },
+        )
+
+        self.assertEqual(view_model["display_name"], "信维通信")
+        self.assertEqual(view_model["cost_text"], "¥10.000")
+        self.assertEqual(view_model["quantity_text"], "100股")
+        self.assertEqual(view_model["pnl_amount_text"], "+¥250.00")
+        self.assertEqual(view_model["pnl_percent_text"], "+25.00%")
+        self.assertEqual(view_model["rating"], "持有")
+        self.assertEqual(view_model["analysis_time_text"], "2026-03-08 10:28")
+        self.assertEqual(view_model["summary_text"], "短线可继续跟踪")
+        self.assertEqual(view_model["note_text"], "波段仓位")
+
+    def test_build_stock_card_view_model_resolves_rating_priority_and_missing_pnl(self):
+        view_model = self.manager.build_stock_card_view_model(
+            stock={
+                "code": "600519",
+                "name": "贵州茅台",
+                "cost_price": 100.0,
+                "quantity": 50,
+                "auto_monitor": False,
+            },
+            latest_analysis={
+                "rating": "未知",
+                "analysis_time": "2026-03-08 09:15:00",
+                "summary": "评级: 卖出；风险偏高",
+                "final_decision": {"rating": "买入"},
+            },
+        )
+
+        self.assertEqual(view_model["display_name"], "贵州茅台")
+        self.assertEqual(view_model["rating"], "买入")
+        self.assertEqual(view_model["summary_text"], "风险偏高")
+        self.assertEqual(view_model["pnl_amount_text"], "")
+        self.assertEqual(view_model["pnl_percent_text"], "")
+
+        summary_only_view = self.manager.build_stock_card_view_model(
+            stock={"code": "000001", "name": "平安银行", "auto_monitor": True},
+            latest_analysis={
+                "summary": "评级: 持有；等待企稳",
+                "final_decision": {},
+            },
+        )
+        self.assertEqual(summary_only_view["rating"], "持有")
+        self.assertEqual(summary_only_view["summary_text"], "等待企稳")
+
 
 class UiSharedNormalizationTests(unittest.TestCase):
     def test_mapping_normalization_accepts_dict_and_json_string(self):
@@ -203,6 +279,146 @@ class UiSharedNormalizationTests(unittest.TestCase):
             "团队讨论认为回撤可控。",
         )
         self.assertEqual(_normalize_discussion_result("plain discussion"), "plain discussion")
+
+    def test_split_analysis_report_sections_extracts_body_and_reasoning(self):
+        body, reasoning = _split_analysis_report_sections(
+            "【推理过程】\n先逐项梳理指标，再组织成报告。\n# 技术分析报告\n\n正文结论在这里。"
+        )
+        self.assertEqual(body, "# 技术分析报告\n\n正文结论在这里。")
+        self.assertEqual(reasoning, "先逐项梳理指标，再组织成报告。")
+
+        body, reasoning = _split_analysis_report_sections("直接给出报告正文")
+        self.assertEqual(body, "直接给出报告正文")
+        self.assertEqual(reasoning, "")
+
+    def test_resolve_final_decision_content_extracts_embedded_json(self):
+        final_decision, invalid, reasoning = _resolve_final_decision_content(
+            {
+                "decision_text": """【推理过程】
+先核对会议结论，再整理成 JSON。
+
+{
+  "rating": "持有",
+  "target_price": "76.00",
+  "operation_advice": "等待信号后分批建仓",
+  "entry_range": "60.00-64.00",
+  "take_profit": "76.00",
+  "stop_loss": "60.00",
+  "holding_period": "3-6个月",
+  "position_size": "轻仓",
+  "risk_warning": "关注减持与解禁风险",
+  "confidence_level": 5
+}"""
+            }
+        )
+        self.assertFalse(invalid)
+        self.assertEqual(final_decision["rating"], "持有")
+        self.assertEqual(final_decision["operation_advice"], "等待信号后分批建仓")
+        self.assertIn("先核对会议结论", reasoning)
+
+
+class PortfolioAnalysisTaskManagerTests(unittest.TestCase):
+    def test_task_manager_persists_active_and_finished_state(self):
+        manager = PortfolioAnalysisTaskManager()
+        started = threading.Event()
+        finished = threading.Event()
+
+        def runner(_task_id, report_progress):
+            report_progress(
+                current=0,
+                total=1,
+                step_code="300136",
+                step_status="analyzing",
+                message="正在分析 300136",
+            )
+            started.set()
+            time.sleep(0.05)
+            report_progress(
+                current=1,
+                total=1,
+                step_code="300136",
+                step_status="success",
+                message="300136 分析完成",
+            )
+            finished.set()
+            return {"stock_code": "300136", "saved_count": 1}
+
+        task_id = manager.start_task(
+            "session-a",
+            task_type="single",
+            label="单股分析",
+            runner=runner,
+            metadata={"stock_code": "300136"},
+        )
+        self.assertTrue(started.wait(1.0))
+        active_task = manager.get_active_task("session-a")
+        self.assertIsNotNone(active_task)
+        self.assertEqual(active_task["id"], task_id)
+        self.assertTrue(manager.has_active_task("session-a"))
+        self.assertEqual(active_task["message"], "正在分析 300136")
+
+        self.assertTrue(finished.wait(1.0))
+        for _ in range(40):
+            latest_task = manager.get_latest_task("session-a")
+            if latest_task and latest_task.get("status") == "success":
+                break
+            time.sleep(0.02)
+        else:
+            self.fail("task did not finish in time")
+
+        latest_task = manager.get_latest_task("session-a")
+        self.assertEqual(latest_task["status"], "success")
+        self.assertEqual(latest_task["result"]["saved_count"], 1)
+        self.assertIsNone(manager.get_active_task("session-a"))
+
+    def test_task_manager_queues_second_task_in_same_session(self):
+        manager = PortfolioAnalysisTaskManager()
+        blocker = threading.Event()
+        started = threading.Event()
+        second_started = threading.Event()
+        execution_order = []
+
+        def runner(_task_id, report_progress):
+            report_progress(total=1, current=0, message="running")
+            execution_order.append("first")
+            started.set()
+            blocker.wait(1.0)
+            return {"ok": True}
+
+        def second_runner(_task_id, report_progress):
+            report_progress(total=1, current=0, message="queued")
+            execution_order.append("second")
+            second_started.set()
+            return {"ok": True}
+
+        manager.start_task(
+            "session-a",
+            task_type="single",
+            label="first",
+            runner=runner,
+        )
+        self.assertTrue(started.wait(1.0))
+        second_task_id = manager.start_task(
+            "session-a",
+            task_type="batch",
+            label="second",
+            runner=second_runner,
+        )
+        pending_tasks = manager.get_pending_tasks("session-a")
+        self.assertEqual(len(pending_tasks), 2)
+        queued_task = next(task for task in pending_tasks if task["id"] == second_task_id)
+        self.assertEqual(queued_task["status"], "queued")
+        self.assertEqual(manager.count_queued_tasks("session-a"), 1)
+        blocker.set()
+        self.assertTrue(second_started.wait(1.0))
+        for _ in range(40):
+            latest_task = manager.get_task(second_task_id)
+            if latest_task and latest_task.get("status") == "success":
+                break
+            time.sleep(0.02)
+        else:
+            self.fail("queued task did not finish in time")
+        self.assertEqual(execution_order, ["first", "second"])
 
 
 @unittest.skipIf(MacroCycleDatabase is None, "macro cycle dependencies unavailable")

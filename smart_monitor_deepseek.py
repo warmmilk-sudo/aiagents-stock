@@ -443,6 +443,15 @@ KDJ:
 总资产: ¥{account_info.get('total_value', 0):,.2f}
 持仓数量: {account_info.get('positions_count', 0)}
 """
+        # --- 注入语义化标签分析 ---
+        labels = market_data.get('semantic_labels', [])
+        if labels:
+            prompt += f"""
+[AI_PATTERN_RECOGNITION] AI形态识别标签 ⭐ 重要
+═══════════════════════════════════════════════════════════
+预处理引擎已发现以下关键技术形态，请在决策时重点参考：
+- {chr(10) + '- '.join(labels)}
+"""
 
         # 如果已持有该股票
         if has_position and position_cost > 0 and position_quantity > 0:

@@ -339,6 +339,42 @@ class SmartMonitorDataFetcher:
                 boll_position = '中轨上方'
             else:
                 boll_position = '中轨下方'
+                
+            # --- 语义化标签生成 (Semantic Labels) ---
+            semantic_labels = []
+            
+            # 1. 均线形态
+            if trend == 'up':
+                semantic_labels.append("均线多头排列")
+            elif trend == 'down':
+                semantic_labels.append("均线空头排列")
+                
+            # 2. MACD形态
+            macd = float(latest['macd'])
+            dif = float(latest['dif'])
+            dea = float(latest['dea'])
+            prev_macd = float(df.iloc[-2]['macd'])
+            prev_dif = float(df.iloc[-2]['dif'])
+            if dif > 0 and dea > 0 and macd > 0 and prev_macd <= 0:
+                semantic_labels.append("MACD水上金叉")
+            elif dif < 0 and dea < 0 and macd > 0 and prev_macd <= 0:
+                semantic_labels.append("MACD水下金叉(反弹概率大)")
+            elif macd < 0 and prev_macd >= 0:
+                semantic_labels.append("MACD高位死叉")
+                
+            # 3. KDJ超买超卖
+            kdj_k = float(latest['kdj_k'])
+            kdj_j = float(latest['kdj_j'])
+            if kdj_j > 100 or kdj_k > 80:
+                semantic_labels.append("KDJ严重超买(风险变大)")
+            elif kdj_j < 0 or kdj_k < 20:
+                semantic_labels.append("KDJ严重超卖(具备反弹条件)")
+                
+            # 4. 布林带极端
+            if current_price > boll_upper * 1.02:
+                semantic_labels.append("强势突破布林上轨")
+            elif current_price < boll_lower * 0.98:
+                semantic_labels.append("跌出布林下轨极限范围")
             
             return {
                 'ma5': ma5,
@@ -359,7 +395,8 @@ class SmartMonitorDataFetcher:
                 'boll_lower': boll_lower,
                 'boll_position': boll_position,
                 'vol_ma5': float(latest['vol_ma5']),
-                'volume_ratio': float(latest['成交量']) / float(latest['vol_ma5']) if latest['vol_ma5'] > 0 else 1.0
+                'volume_ratio': float(latest['成交量']) / float(latest['vol_ma5']) if latest['vol_ma5'] > 0 else 1.0,
+                'semantic_labels': semantic_labels  # 新增语义标签
             }
             
         except Exception as e:

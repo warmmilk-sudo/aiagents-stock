@@ -29,10 +29,9 @@ from news_flow_ui import display_news_flow_monitor
 from ui_shared import (
     get_recommendation_color,
     render_a_share_change_metric,
-    render_agents_analysis_tabs as shared_render_agents_analysis_tabs,
     render_final_decision as shared_render_final_decision,
+    render_reasoning_process as shared_render_reasoning_process,
     render_stock_info_metrics as shared_render_stock_info_metrics,
-    render_team_discussion as shared_render_team_discussion,
 )
 
 # 页面配置（支持导航点击后单次强制收起侧边栏）
@@ -271,6 +270,17 @@ st.markdown("""
     }
     .stTabs [data-baseweb="tab-panel"] {
         padding-top: var(--space-4);
+        overflow-y: visible !important;
+        max-height: none !important;
+        scrollbar-width: none;
+    }
+    .stTabs [data-baseweb="tab-panel"]::-webkit-scrollbar {
+        display: none;
+    }
+    .stTabs [data-baseweb="tab-panel"] > div,
+    .stTabs [data-baseweb="tab-panel"] div[data-testid="stVerticalBlock"] {
+        overflow-y: visible !important;
+        max-height: none !important;
     }
     .stTabs [data-baseweb="tab"] {
         height: 3rem;
@@ -330,6 +340,43 @@ st.markdown("""
     }
     
     /* 表单控件极简设计 */
+    .reasoning-section {
+        margin: 0.25rem 0 0.55rem 0;
+        padding: 0.7rem 0.85rem;
+        border: 1px solid rgba(59,130,246,0.18);
+        border-radius: 8px;
+        background: rgba(30,41,59,0.34);
+    }
+    .reasoning-section__title {
+        font-size: 0.94rem;
+        font-weight: 600;
+        line-height: 1.35;
+        color: rgba(255,255,255,0.96);
+        margin: 0;
+    }
+    .reasoning-section__description {
+        margin-top: 0.28rem;
+        font-size: 0.78rem;
+        line-height: 1.45;
+        color: rgba(255,255,255,0.6);
+    }
+    .reasoning-body {
+        margin: 0 0 0.85rem 0;
+        padding: 0.9rem 1rem;
+        border-radius: 8px;
+        border: 1px solid rgba(148,163,184,0.12);
+        background: rgba(15,23,42,0.34);
+    }
+    .reasoning-body p {
+        margin: 0 0 0.72rem 0 !important;
+        font-size: 0.88rem !important;
+        line-height: 1.72 !important;
+        color: rgba(226,232,240,0.9);
+        word-break: break-word;
+    }
+    .reasoning-body p:last-child {
+        margin-bottom: 0 !important;
+    }
     .stTextInput>div>div>input, .stSelectbox>div>div>div {
         border-radius: 6px;
         border: 1px solid rgba(255,255,255,0.2);
@@ -360,6 +407,7 @@ st.markdown("""
         align-items: center;
         justify-content: center;
         vertical-align: middle;
+        white-space: nowrap;
         transition: all 0.2s;
     }
     .stButton>button > div,
@@ -416,8 +464,28 @@ st.markdown("""
     }
     [data-testid="stSidebar"] .stButton>button {
         min-height: 2rem;
-        padding-top: 0.2rem;
-        padding-bottom: 0.2rem;
+        height: 2rem;
+        padding: 0 0.7rem !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        box-sizing: border-box;
+    }
+    [data-testid="stSidebar"] .stButton>button > div,
+    [data-testid="stSidebar"] .stButton>button div[data-testid="stMarkdownContainer"] {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        width: 100%;
+        height: 100%;
+    }
+    [data-testid="stSidebar"] .stButton>button div[data-testid="stMarkdownContainer"] p,
+    [data-testid="stSidebar"] .stButton>button span {
+        margin: 0 !important;
+        line-height: 1 !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
     }
     [data-testid="stSidebar"] hr {
         margin: 0.3rem 0;
@@ -473,11 +541,119 @@ st.markdown("""
         color: rgba(255,255,255,0.8);
         text-decoration: underline;
     }
+
+    .portfolio-stock-card {
+        display: flex;
+        flex-direction: column;
+        gap: 0.55rem;
+        margin-bottom: 0.55rem;
+    }
+    .portfolio-stock-card__title-row {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 0.7rem;
+        flex-wrap: wrap;
+    }
+    .portfolio-stock-card__title {
+        font-size: 1rem;
+        font-weight: 600;
+        line-height: 1.35;
+    }
+    .portfolio-stock-card__badge {
+        font-size: 0.92rem;
+        font-weight: 600;
+        line-height: 1.2;
+        white-space: nowrap;
+    }
+    .portfolio-stock-card__chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.4rem;
+    }
+    .portfolio-stock-card__chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        padding: 0.28rem 0.68rem;
+        border: 1px solid rgba(148,163,184,0.18);
+        border-radius: 999px;
+        background: rgba(15,23,42,0.4);
+        font-size: var(--font-size-caption);
+        line-height: 1.35;
+        white-space: nowrap;
+    }
+    .portfolio-stock-card__chip-label {
+        color: rgba(255,255,255,0.56);
+    }
+    .portfolio-stock-card__chip-value {
+        color: rgba(255,255,255,0.9);
+        font-weight: 600;
+    }
+    .portfolio-stock-card__analysis-meta {
+        font-size: var(--font-size-caption);
+        line-height: 1.35;
+        color: rgba(255,255,255,0.62);
+    }
+    .portfolio-stock-card__meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.35rem 0.7rem;
+        color: rgba(255,255,255,0.68);
+        font-size: var(--font-size-caption);
+        line-height: 1.35;
+    }
+    .portfolio-stock-card__meta span {
+        white-space: nowrap;
+    }
+    .portfolio-stock-card__note,
+    .portfolio-stock-card__summary {
+        font-size: var(--font-size-caption);
+        line-height: 1.45;
+        margin: 0;
+        word-break: break-word;
+    }
+    .portfolio-stock-card__note {
+        color: rgba(255,255,255,0.78);
+    }
+    .portfolio-stock-card__summary {
+        color: rgba(255,255,255,0.64);
+    }
+    .portfolio-stock-card__action-sentinel {
+        display: none;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.portfolio-stock-card__action-sentinel) {
+        align-items: center;
+        gap: 0.32rem;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.portfolio-stock-card__action-sentinel) > div[data-testid="column"] {
+        min-width: 0;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.portfolio-stock-card__action-sentinel) [data-testid="stButton"] > button,
+    div[data-testid="stHorizontalBlock"]:has(.portfolio-stock-card__action-sentinel) button[data-testid^="baseButton-"] {
+        white-space: nowrap;
+        padding-left: 0.55rem;
+        padding-right: 0.55rem;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.portfolio-stock-card__action-sentinel) label p {
+        margin: 0 !important;
+        white-space: nowrap;
+        font-size: 0.82rem;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.portfolio-stock-card__action-sentinel) label {
+        gap: 0.28rem !important;
+    }
     
     @media (max-width: 768px) {
+        html, body, [data-testid="stAppViewContainer"] {
+            overflow-x: hidden;
+        }
         .block-container {
             padding-top: 1.45rem;
             padding-bottom: 1.2rem;
+            padding-left: 0.75rem;
+            padding-right: 0.75rem;
+            max-width: 100%;
         }
         :root {
             --font-size-h1: 1.72rem;
@@ -487,13 +663,150 @@ st.markdown("""
             --font-size-body: 0.92rem;
             --font-size-caption: 0.8rem;
         }
+        [data-testid="stSidebar"] {
+            min-width: min(82vw, 18rem) !important;
+            max-width: min(82vw, 18rem) !important;
+        }
+        [data-testid="stSidebar"] .block-container {
+            padding-left: 0.7rem;
+            padding-right: 0.7rem;
+        }
+        div[data-testid="stHorizontalBlock"] {
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+        div[data-testid="column"] {
+            min-width: 0 !important;
+        }
+        div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
+            min-width: 100% !important;
+            flex: 1 1 100% !important;
+            max-width: 100% !important;
+        }
+        div[data-testid="stHorizontalBlock"]:has(div[data-testid="stMetric"]) > div[data-testid="column"] {
+            min-width: 8.2rem !important;
+            flex: 1 1 8.2rem !important;
+            max-width: 100% !important;
+        }
+        div[data-testid="stHorizontalBlock"]:has(div[data-testid="stButton"]):not(:has(div[data-testid="stTextInput"])):not(:has(div[data-testid="stSelectbox"])):not(:has(div[data-testid="stTextArea"])):not(:has(div[data-testid="stNumberInput"])):not(:has(div[data-testid="stTimeInput"])):not(:has(div[data-testid="stCheckbox"])) > div[data-testid="column"] {
+            min-width: 6.4rem !important;
+            flex: 1 1 6.4rem !important;
+            max-width: 100% !important;
+        }
+        div[data-testid="stHorizontalBlock"]:has(div[data-testid="stTextInput"]) > div[data-testid="column"],
+        div[data-testid="stHorizontalBlock"]:has(div[data-testid="stSelectbox"]) > div[data-testid="column"],
+        div[data-testid="stHorizontalBlock"]:has(div[data-testid="stTextArea"]) > div[data-testid="column"],
+        div[data-testid="stHorizontalBlock"]:has(div[data-testid="stNumberInput"]) > div[data-testid="column"],
+        div[data-testid="stHorizontalBlock"]:has(div[data-testid="stTimeInput"]) > div[data-testid="column"] {
+            min-width: 100% !important;
+            flex: 1 1 100% !important;
+            max-width: 100% !important;
+        }
         .stTabs [data-baseweb="tab"] {
             height: 2.8rem;
             padding: 0 0.7rem;
+            min-width: max-content;
+            flex: 0 0 auto;
+            white-space: nowrap;
+        }
+        .stTabs [data-baseweb="tab-list"] {
+            gap: 0.45rem;
+            overflow-x: auto;
+            overflow-y: hidden;
+            padding-bottom: 0.2rem;
+            scrollbar-width: thin;
+        }
+        .stTabs [data-baseweb="tab-panel"] {
+            overflow-x: hidden;
+            overflow-y: visible !important;
         }
         .agent-card, .metric-card, .decision-card, .warning-card {
             padding: 1rem;
             margin: var(--space-2) 0;
+        }
+        .reasoning-section {
+            margin: 0.2rem 0 0.42rem 0;
+            padding: 0.58rem 0.7rem;
+        }
+        .reasoning-section__title {
+            font-size: 0.88rem;
+        }
+        .reasoning-section__description {
+            font-size: 0.74rem;
+        }
+        .reasoning-body {
+            margin-bottom: 0.72rem;
+            padding: 0.72rem 0.8rem;
+        }
+        .reasoning-body p {
+            font-size: 0.8rem !important;
+            line-height: 1.66 !important;
+        }
+        .js-plotly-plot,
+        div[data-testid="stPlotlyChart"],
+        div[data-testid="stDataFrame"],
+        div[data-testid="stTable"] {
+            width: 100% !important;
+            max-width: 100% !important;
+            overflow-x: auto;
+        }
+        .stButton > button,
+        .stDownloadButton > button,
+        button[data-testid^="baseButton-"] {
+            width: 100%;
+            min-height: 2.35rem;
+            padding-left: 0.6rem;
+            padding-right: 0.6rem;
+            font-size: 0.88rem;
+        }
+        .portfolio-stock-card {
+            gap: 0.4rem;
+        }
+        .portfolio-stock-card__title {
+            font-size: 0.98rem;
+        }
+        .portfolio-stock-card__chips {
+            gap: 0.34rem;
+        }
+        .portfolio-stock-card__chip {
+            padding: 0.24rem 0.55rem;
+        }
+        .portfolio-stock-card__analysis-meta,
+        .portfolio-stock-card__note,
+        .portfolio-stock-card__summary {
+            font-size: 0.79rem;
+        }
+        div[data-testid="stHorizontalBlock"]:has(.portfolio-stock-card__action-sentinel) {
+            flex-wrap: wrap !important;
+            gap: 0.26rem !important;
+        }
+        div[data-testid="stHorizontalBlock"]:has(.portfolio-stock-card__action-sentinel) > div[data-testid="column"] {
+            min-width: 0 !important;
+            flex: 1 1 0 !important;
+            max-width: 100% !important;
+        }
+        div[data-testid="stHorizontalBlock"]:has(.portfolio-stock-card__action-sentinel) > div[data-testid="column"]:first-child {
+            flex: 1 1 100% !important;
+            max-width: 100% !important;
+        }
+        div[data-testid="stHorizontalBlock"]:has(.portfolio-stock-card__action-sentinel) > div[data-testid="column"]:not(:first-child) {
+            flex: 1 1 calc((100% - 0.52rem) / 3) !important;
+            max-width: calc((100% - 0.52rem) / 3) !important;
+        }
+        div[data-testid="stHorizontalBlock"]:has(.portfolio-stock-card__action-sentinel) [data-testid="stButton"] > button,
+        div[data-testid="stHorizontalBlock"]:has(.portfolio-stock-card__action-sentinel) button[data-testid^="baseButton-"] {
+            width: 100% !important;
+            min-width: 0 !important;
+            min-height: 2.05rem;
+            padding-left: 0.35rem;
+            padding-right: 0.35rem;
+            font-size: 0.8rem;
+        }
+        div[data-testid="stHorizontalBlock"]:has(.portfolio-stock-card__action-sentinel) label p {
+            font-size: 0.74rem;
+        }
+        div[data-testid="stHorizontalBlock"]:has(.portfolio-stock-card__action-sentinel) label {
+            gap: 0.2rem !important;
         }
     }
 </style>
@@ -695,7 +1008,6 @@ def main():
         st.selectbox(
             "轻量模型",
             options=lightweight_model_keys,
-            index=lightweight_model_keys.index(st.session_state.selected_lightweight_model),
             format_func=lambda model_name: lightweight_model_options.get(model_name, model_name),
             key="selected_lightweight_model",
             help="用于数据拉取、技术指标解读、资金面/新闻整理等轻量任务，速度优先。",
@@ -704,7 +1016,6 @@ def main():
         st.selectbox(
             "推理模型",
             options=reasoning_model_keys,
-            index=reasoning_model_keys.index(st.session_state.selected_reasoning_model),
             format_func=lambda model_name: reasoning_model_options.get(model_name, model_name),
             key="selected_reasoning_model",
             help="用于多分析师讨论与最终投资决策生成等复杂推理任务，质量优先。",
@@ -1045,21 +1356,17 @@ def main():
             render_stale_cache_notice("历史行情", stock_data)
             stock_data = strip_cache_meta(stock_data)
 
-            # 显示股票基本信息
+            # 显示最终决策
+            display_final_decision(final_decision, stock_info, agents_results, discussion_result)
+
+            # 再展示关键股票信息与图表
             display_stock_info(stock_info, indicators)
 
-            # 显示股票图表
             if stock_data is not None:
                 display_stock_chart(stock_data, stock_info)
 
-            # 显示各分析师报告
-            display_agents_analysis(agents_results)
-
-            # 显示团队讨论
-            display_team_discussion(discussion_result)
-
-            # 显示最终决策
-            display_final_decision(final_decision, stock_info, agents_results, discussion_result)
+            # 推理过程放在最后，默认折叠
+            display_reasoning_process(agents_results, discussion_result, expanded=False)
 
     # 示例和说明
     elif not stock_input:
@@ -1457,6 +1764,10 @@ def run_stock_analysis(symbol, period):
     # 进度条
     progress_bar = st.progress(0)
     status_text = st.empty()
+    decision_section = st.container()
+    info_section = st.container()
+    chart_section = st.container()
+    reasoning_section = st.container()
 
     try:
         # 1. 获取股票数据
@@ -1479,11 +1790,13 @@ def run_stock_analysis(symbol, period):
         stock_data = strip_cache_meta(stock_data)
 
         # 显示股票基本信息
-        display_stock_info(stock_info, indicators)
+        with info_section:
+            display_stock_info(stock_info, indicators)
         progress_bar.progress(20)
 
         # 显示股票图表
-        display_stock_chart(stock_data, stock_info)
+        with chart_section:
+            display_stock_chart(stock_data, stock_info)
         progress_bar.progress(30)
 
         # 2. 获取财务数据
@@ -1649,16 +1962,10 @@ def run_stock_analysis(symbol, period):
         )
         progress_bar.progress(75)
 
-        # 显示各分析师报告
-        display_agents_analysis(agents_results)
-
         # 8. 团队讨论
         status_text.text("分析团队正在讨论...")
         discussion_result = agents.conduct_team_discussion(agents_results, stock_info)
         progress_bar.progress(88)
-
-        # 显示团队讨论
-        display_team_discussion(discussion_result)
 
         # 9. 最终决策
         status_text.text("正在制定最终投资决策...")
@@ -1666,7 +1973,12 @@ def run_stock_analysis(symbol, period):
         progress_bar.progress(100)
 
         # 显示最终决策
-        display_final_decision(final_decision, stock_info, agents_results, discussion_result)
+        with decision_section:
+            display_final_decision(final_decision, stock_info, agents_results, discussion_result)
+
+        # 推理过程放在最后，默认折叠
+        with reasoning_section:
+            display_reasoning_process(agents_results, discussion_result, expanded=False)
 
         # 保存分析结果到session_state（用于页面刷新后显示）
         st.session_state.analysis_completed = True
@@ -1842,13 +2154,9 @@ def display_stock_chart(stock_data, stock_info):
         volume_key = f"volume_chart_{stock_info.get('symbol', 'unknown')}_{int(time.time())}"
         st.plotly_chart(fig_volume, width='stretch', config={'responsive': True}, key=volume_key)
 
-def display_agents_analysis(agents_results):
-    """显示各分析师报告"""
-    shared_render_agents_analysis_tabs(agents_results)
-
-def display_team_discussion(discussion_result):
-    """显示团队讨论"""
-    shared_render_team_discussion(discussion_result)
+def display_reasoning_process(agents_results, discussion_result, expanded=False):
+    """将推理过程放到统一折叠区块中展示。"""
+    shared_render_reasoning_process(agents_results, discussion_result, expanded=expanded)
 
 def display_final_decision(final_decision, stock_info, agents_results=None, discussion_result=None):
     """显示最终投资决策"""
@@ -2184,29 +2492,23 @@ def display_record_detail(record_id):
     with col3:
         st.metric("分析时间", record['analysis_date'])
 
+    agents_results = record['agents_results']
+    discussion_result = record['discussion_result']
+
+    # 最终决策
+    st.subheader("最终投资决策")
+    final_decision = record['final_decision']
+    if final_decision:
+        shared_render_final_decision(final_decision, show_header=False)
+
     # 股票基本信息
     st.subheader("股票基本信息")
     stock_info = record['stock_info']
     if stock_info:
         shared_render_stock_info_metrics(stock_info)
 
-    # 各分析师报告
-    st.subheader("AI分析师团队报告")
-    agents_results = record['agents_results']
-    if agents_results:
-        shared_render_agents_analysis_tabs(agents_results)
-
-    # 团队讨论
-    st.subheader("分析团队讨论")
-    discussion_result = record['discussion_result']
-    if discussion_result:
-        shared_render_team_discussion(discussion_result)
-
-    # 最终决策
-    st.subheader("最终投资决策")
-    final_decision = record['final_decision']
-    if final_decision:
-        shared_render_final_decision(final_decision)
+    # 推理过程放在最后，默认折叠
+    shared_render_reasoning_process(agents_results, discussion_result, expanded=False)
 
     # 加入监测功能
     st.markdown("---")
@@ -2955,21 +3257,17 @@ def display_detailed_cards(results, period):
     try:
         stock_info_current, stock_data, _ = get_stock_data(stock_info['symbol'], period)
 
-        # 显示股票基本信息
+        # 显示最终决策
+        display_final_decision(final_decision, stock_info, agents_results, discussion_result)
+
+        # 再展示关键股票信息与图表
         display_stock_info(stock_info, indicators)
 
-        # 显示股票图表
         if stock_data is not None:
             display_stock_chart(stock_data, stock_info)
 
-        # 显示各分析师报告
-        display_agents_analysis(agents_results)
-
-        # 显示团队讨论
-        display_team_discussion(discussion_result)
-
-        # 显示最终决策
-        display_final_decision(final_decision, stock_info, agents_results, discussion_result)
+        # 推理过程放在最后，默认折叠
+        display_reasoning_process(agents_results, discussion_result, expanded=False)
 
     except Exception as e:
         st.error(f"显示详细信息时出错: {str(e)}")

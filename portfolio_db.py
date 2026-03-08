@@ -89,20 +89,49 @@ class PortfolioDB:
         cursor = conn.cursor()
         
         try:
-            # 创建持仓股票表
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS portfolio_stocks (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    code TEXT NOT NULL UNIQUE,
-                    name TEXT NOT NULL,
-                    cost_price REAL,
-                    quantity INTEGER,
-                    note TEXT,
-                    auto_monitor BOOLEAN DEFAULT 1,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
+            cursor.execute("PRAGMA table_info(portfolio_stocks)")
+            columns = {row[1] for row in cursor.fetchall()}
+            
+            if columns and 'account_name' not in columns:
+                print("[INFO] 执行持仓表结构升级：支持多账户，更改唯一约束")
+                cursor.execute('ALTER TABLE portfolio_stocks RENAME TO portfolio_stocks_old')
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS portfolio_stocks (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        account_name TEXT DEFAULT '默认账户',
+                        code TEXT NOT NULL,
+                        name TEXT NOT NULL,
+                        cost_price REAL,
+                        quantity INTEGER,
+                        note TEXT,
+                        auto_monitor BOOLEAN DEFAULT 1,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE(code, account_name)
+                    )
+                ''')
+                cursor.execute('''
+                    INSERT INTO portfolio_stocks (id, account_name, code, name, cost_price, quantity, note, auto_monitor, created_at, updated_at)
+                    SELECT id, '默认账户', code, name, cost_price, quantity, note, auto_monitor, created_at, updated_at
+                    FROM portfolio_stocks_old
+                ''')
+                cursor.execute('DROP TABLE portfolio_stocks_old')
+            elif not columns:
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS portfolio_stocks (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        account_name TEXT DEFAULT '默认账户',
+                        code TEXT NOT NULL,
+                        name TEXT NOT NULL,
+                        cost_price REAL,
+                        quantity INTEGER,
+                        note TEXT,
+                        auto_monitor BOOLEAN DEFAULT 1,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE(code, account_name)
+                    )
+                ''')
             
             # 创建持仓分析历史表
             cursor.execute('''
@@ -160,7 +189,7 @@ class PortfolioDB:
     
     def add_stock(self, code: str, name: str, cost_price: Optional[float] = None,
                   quantity: Optional[int] = None, note: str = "", 
-                  auto_monitor: bool = True) -> int:
+                  auto_monitor: bool = True, account_name: str = "默认账户") -> int:
         """
         添加持仓股票
         
@@ -171,6 +200,7 @@ class PortfolioDB:
             quantity: 持仓数量（可选）
             note: 备注信息
             auto_monitor: 是否自动同步到监测列表
+            account_name: 账户名称
             
         Returns:
             新增股票的ID
@@ -184,9 +214,9 @@ class PortfolioDB:
         try:
             cursor.execute('''
                 INSERT INTO portfolio_stocks 
-                (code, name, cost_price, quantity, note, auto_monitor, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (code, name, cost_price, quantity, note, auto_monitor, 
+                (account_name, code, name, cost_price, quantity, note, auto_monitor, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (account_name, code, name, cost_price, quantity, note, auto_monitor, 
                   datetime.now(), datetime.now()))
             
             conn.commit()
@@ -195,8 +225,8 @@ class PortfolioDB:
             return stock_id
             
         except sqlite3.IntegrityError as e:
-            print(f"[ERROR] 股票代码已存在: {code}")
-            raise ValueError(f"股票代码 {code} 已存在") from e
+            print(f"[ERROR] 股票代码在账户 {account_name} 中已存在: {code}")
+            raise ValueError(f"股票代码 {code} 在账户 {account_name} 中已存在") from e
         except Exception as e:
             print(f"[ERROR] 添加持仓股票失败: {e}")
             conn.rollback()
@@ -219,7 +249,7 @@ class PortfolioDB:
         cursor = conn.cursor()
         
         # 允许更新的字段
-        allowed_fields = ['code', 'name', 'cost_price', 'quantity', 'note', 'auto_monitor']
+        allowed_fields = ['account_name', 'code', 'name', 'cost_price', 'quantity', 'note', 'auto_monitor']
         update_fields = {k: v for k, v in kwargs.items() if k in allowed_fields}
         
         if not update_fields:
@@ -312,7 +342,7 @@ class PortfolioDB:
         finally:
             conn.close()
     
-    def get_stock_by_code(self, code: str) -> Optional[Dict]:
+    def get_stock_by_code(self, code: str, account_name: str = "默认账户") -> Optional[Dict]:
         """
         根据股票代码获取持仓股票信息
         
@@ -326,7 +356,7 @@ class PortfolioDB:
         cursor = conn.cursor()
         
         try:
-            cursor.execute('SELECT * FROM portfolio_stocks WHERE code = ?', (code,))
+            cursor.execute('SELECT * FROM portfolio_stocks WHERE code = ? AND account_name = ?', (code, account_name))
             row = cursor.fetchone()
             
             if row:
@@ -742,3 +772,22 @@ if __name__ == "__main__":
     
     print("\n[OK] 数据库测试完成")
 
+
+    def get_stocks_by_code(self, code: str) -> List[Dict]:
+        """
+        根据股票代码获取该股票在所有账户中的持仓信息
+        
+        Args:
+            code: 股票代码
+            
+        Returns:
+            匹配的股票信息字典列表
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute('SELECT * FROM portfolio_stocks WHERE code = ?', (code,))
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
+        finally:
+            conn.close()

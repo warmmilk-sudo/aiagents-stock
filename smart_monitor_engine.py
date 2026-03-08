@@ -15,6 +15,7 @@ from smart_monitor_qmt import SmartMonitorQMT, SmartMonitorQMTSimulator
 from smart_monitor_db import SmartMonitorDB
 from notification_service import notification_service  # 复用主程序的通知服务
 from config_manager import config_manager  # 复用主程序的配置管理器
+from internal_events import event_bus, Events
 
 
 class SmartMonitorEngine:
@@ -84,11 +85,13 @@ class SmartMonitorEngine:
                 self.qmt = SmartMonitorQMTSimulator()
                 self.qmt.connect("simulator")
         
-        # 监控线程控制
-        self.monitoring_threads = {}
-        self.stop_flags = {}
+        # 监控控制(保留字典为了停止特定监控时注销事件)
+        self.monitoring_stocks = set()
         
-        self.logger.info("智能盯盘引擎初始化完成")
+        # 注册事件总线监听
+        event_bus.subscribe(Events.STOCK_ABNORMAL_FLUCTUATION, self._on_radar_event)
+        
+        self.logger.info("智能盯盘引擎初始化完成, 已订阅事件总线。")
 
     def set_model_overrides(self, model: str = None,
                             lightweight_model: str = None,
@@ -547,94 +550,55 @@ class SmartMonitorEngine:
                      has_position: bool = False, position_cost: float = 0,
                      position_quantity: int = 0, trading_hours_only: bool = True):
         """
-        启动股票监控（在独立线程中运行）
-        
-        Args:
-            stock_code: 股票代码
-            check_interval: 检查间隔（秒）
-            auto_trade: 是否自动交易
-            notify: 是否发送通知
-            has_position: 是否已持仓
-            position_cost: 持仓成本
-            position_quantity: 持仓数量
-            trading_hours_only: 是否仅在交易时段监控（默认True）
+        启动接收某个股票的雷达告警信号
         """
-        if stock_code in self.monitoring_threads:
-            self.logger.warning(f"[{stock_code}] 监控已在运行中")
+        if stock_code in self.monitoring_stocks:
+            self.logger.warning(f"[{stock_code}] 监控接收已在运行中")
             return
-        
-        # 创建停止标志
-        stop_flag = threading.Event()
-        self.stop_flags[stock_code] = stop_flag
-        
-        # 创建监控线程
-        thread = threading.Thread(
-            target=self._monitor_loop,
-            args=(stock_code, check_interval, auto_trade, notify, stop_flag,
-                 has_position, position_cost, position_quantity, trading_hours_only),
-            daemon=True
-        )
-        
-        self.monitoring_threads[stock_code] = thread
-        thread.start()
+            
+        self.monitoring_stocks.add(stock_code)
         
         position_info = f"（持仓: {position_quantity}股 @ {position_cost:.2f}元）" if has_position else ""
         trading_info = "（仅交易时段）" if trading_hours_only else "（全时段）"
-        self.logger.info(f"[{stock_code}] 监控已启动{trading_info}，间隔: {check_interval}秒 {position_info}")
+        self.logger.info(f"[{stock_code}] 智能大脑开始接收雷达信号{trading_info} {position_info}")
     
     def stop_monitor(self, stock_code: str):
-        """停止股票监控"""
-        if stock_code not in self.monitoring_threads:
-            self.logger.warning(f"[{stock_code}] 监控未运行")
-            return
-        
-        # 设置停止标志
-        self.stop_flags[stock_code].set()
-        
-        # 等待线程结束
-        self.monitoring_threads[stock_code].join(timeout=5)
-        
-        # 清理
-        del self.monitoring_threads[stock_code]
-        del self.stop_flags[stock_code]
-        
-        self.logger.info(f"[{stock_code}] 监控已停止")
+        """停止接收股票的雷达信号"""
+        if stock_code in self.monitoring_stocks:
+            self.monitoring_stocks.remove(stock_code)
+            self.logger.info(f"[{stock_code}] 智能大脑停止接收雷达信号")
+        else:
+            self.logger.warning(f"[{stock_code}] 监控接收未运行")
     
-    def _monitor_loop(self, stock_code: str, check_interval: int,
-                     auto_trade: bool, notify: bool, stop_flag: threading.Event,
-                     has_position: bool = False, position_cost: float = 0,
-                     position_quantity: int = 0, trading_hours_only: bool = True):
-        """监控循环（在独立线程中运行）"""
-        self.logger.info(f"[{stock_code}] 监控线程已启动")
-        
-        while not stop_flag.is_set():
-            try:
-                # 执行分析
-                result = self.analyze_stock(
-                    stock_code=stock_code,
-                    auto_trade=auto_trade,
-                    notify=notify,
-                    has_position=has_position,
-                    position_cost=position_cost,
-                    position_quantity=position_quantity,
-                    trading_hours_only=trading_hours_only
-                )
-                
-                if result.get('skipped'):
-                    # 非交易时段跳过，不算错误
-                    self.logger.debug(f"[{stock_code}] {result.get('error')}")
-                elif result['success']:
-                    self.logger.info(f"[{stock_code}] 分析完成: {result['decision']['action']}")
-                else:
-                    self.logger.error(f"[{stock_code}] 分析失败: {result.get('error')}")
-                
-            except Exception as e:
-                self.logger.error(f"[{stock_code}] 监控循环异常: {e}")
+    def _on_radar_event(self, **kwargs):
+        """接收并处理雷达层抛出的异常事件"""
+        stock_code = kwargs.get('stock_code')
+        if not stock_code or stock_code not in self.monitoring_stocks:
+            # 不是自己关注的股票，忽略
+            return
             
-            # 等待下一次检查
-            stop_flag.wait(check_interval)
+        trigger_msg = kwargs.get('trigger_msg', '未知异常')
+        self.logger.info(f"[{stock_code}] 大脑被唤醒！收到雷达事件: {trigger_msg}")
         
-        self.logger.info(f"[{stock_code}] 监控线程已退出")
+        try:
+            # 唤醒后进行深度分析
+            # TODO: 提取参数，支持从上下文中获取上下文自动交易配置的参数
+            result = self.analyze_stock(
+                stock_code=stock_code,
+                auto_trade=True,  # 接收事件时允许自动交易 (受限于QMT真实连接)
+                notify=True,
+                trading_hours_only=True
+            )
+            
+            if result.get('skipped'):
+                self.logger.debug(f"[{stock_code}] 拒接执行雷达指令: {result.get('error')}")
+            elif result.get('success'):
+                self.logger.info(f"[{stock_code}] 大脑研判完成: {result['decision']['action']}")
+            else:
+                self.logger.error(f"[{stock_code}] 大脑研判失败: {result.get('error')}")
+                
+        except Exception as e:
+            self.logger.error(f"[{stock_code}] 处理雷达事件异常: {e}")
 
 
 if __name__ == '__main__':

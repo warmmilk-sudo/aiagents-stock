@@ -5,20 +5,24 @@
 提供持仓股票的增删改查、批量分析、定时任务管理界面
 """
 
+import html
+import re
+import uuid
 import streamlit as st
 import pandas as pd
 from datetime import datetime
 from typing import List, Dict
 import time
 
+from portfolio_analysis_tasks import portfolio_analysis_task_manager
 from portfolio_manager import portfolio_manager
 from portfolio_scheduler import portfolio_scheduler
 from ui_shared import (
+    _resolve_final_decision_content,
     get_recommendation_color,
     render_agents_analysis_tabs,
     render_final_decision,
-    render_stock_info_metrics,
-    render_team_discussion,
+    render_reasoning_process,
 )
 
 
@@ -30,16 +34,415 @@ def format_price(value) -> str:
         return str(value)
 
 
+def _escape_text(value) -> str:
+    return html.escape("" if value is None else str(value))
+
+
+def _build_stock_card_chips_html(view_model: Dict) -> str:
+    chips = []
+    if view_model.get("cost_text"):
+        chips.append(("成本", view_model["cost_text"]))
+    if view_model.get("quantity_text"):
+        chips.append(("数量", view_model["quantity_text"]))
+    if not chips:
+        chips.append(("持仓", "未设置"))
+
+    return "".join(
+        (
+            '<span class="portfolio-stock-card__chip">'
+            f'<span class="portfolio-stock-card__chip-label">{_escape_text(label)}</span>'
+            f'<span class="portfolio-stock-card__chip-value">{_escape_text(value)}</span>'
+            "</span>"
+        )
+        for label, value in chips
+    )
+
+
+def _format_history_entry_range(entry_min, entry_max) -> str:
+    if entry_min is None or entry_max is None:
+        return "N/A"
+    return f"{format_price(entry_min)} - {format_price(entry_max)}"
+
+
+def _build_history_final_decision_display(
+    record: Dict,
+    final_decision: Dict,
+    *,
+    normalized_rating: str,
+) -> Dict:
+    if not isinstance(final_decision, dict):
+        final_decision = {}
+
+    summary = str(record.get("summary") or "").strip()
+    summary = re.sub(
+        r"^(?:投资)?评级\s*[:：]\s*(?:买入|持有|卖出|鎸佹湁|涔板叆|鍗栧嚭)?(?:[；;，,。]\s*|\s+)?",
+        "",
+        summary,
+        count=1,
+    ).strip(" ；;，,。")
+    display = dict(final_decision)
+    display.setdefault("rating", normalized_rating)
+    display.setdefault("confidence_level", record.get("confidence", "N/A"))
+    display.setdefault("target_price", record.get("target_price", "N/A"))
+    display.setdefault("operation_advice", summary or "暂无最终结论摘要")
+    display.setdefault(
+        "entry_range",
+        final_decision.get("entry_range") or _format_history_entry_range(
+            record.get("entry_min"),
+            record.get("entry_max"),
+        ),
+    )
+    display.setdefault("take_profit", record.get("take_profit", "N/A"))
+    display.setdefault("stop_loss", record.get("stop_loss", "N/A"))
+    display.setdefault("holding_period", final_decision.get("holding_period", "N/A"))
+    display.setdefault("position_size", final_decision.get("position_size", "N/A"))
+    display.setdefault("risk_warning", final_decision.get("risk_warning", ""))
+    return display
+
+
+PORTFOLIO_ANALYSIS_SESSION_KEY = "portfolio_analysis_session_id"
+
+
+def _ensure_portfolio_analysis_session_id() -> str:
+    session_id = st.session_state.get(PORTFOLIO_ANALYSIS_SESSION_KEY)
+    if not session_id:
+        session_id = uuid.uuid4().hex
+        st.session_state[PORTFOLIO_ANALYSIS_SESSION_KEY] = session_id
+    return session_id
+
+
+def _format_task_time(timestamp) -> str:
+    if not timestamp:
+        return ""
+    try:
+        return datetime.fromtimestamp(float(timestamp)).strftime("%Y-%m-%d %H:%M:%S")
+    except (TypeError, ValueError, OSError):
+        return ""
+
+
+def _get_portfolio_analysis_task(task_type: str | None = None) -> Dict | None:
+    session_id = _ensure_portfolio_analysis_session_id()
+    portfolio_analysis_task_manager.prune_session_tasks(session_id)
+    return portfolio_analysis_task_manager.get_latest_task(session_id, task_type=task_type)
+
+
+def _get_pending_portfolio_analysis_tasks(task_type: str | None = None) -> List[Dict]:
+    session_id = _ensure_portfolio_analysis_session_id()
+    portfolio_analysis_task_manager.prune_session_tasks(session_id)
+    return portfolio_analysis_task_manager.get_pending_tasks(session_id, task_type=task_type)
+
+
+def _get_active_portfolio_analysis_task() -> Dict | None:
+    session_id = _ensure_portfolio_analysis_session_id()
+    portfolio_analysis_task_manager.prune_session_tasks(session_id)
+    return portfolio_analysis_task_manager.get_active_task(session_id)
+
+
+def _get_running_portfolio_analysis_task() -> Dict | None:
+    session_id = _ensure_portfolio_analysis_session_id()
+    portfolio_analysis_task_manager.prune_session_tasks(session_id)
+    return portfolio_analysis_task_manager.get_running_task(session_id)
+
+
+def _get_stock_pending_analysis_task(stock_id) -> Dict | None:
+    for task in _get_pending_portfolio_analysis_tasks("single"):
+        metadata = task.get("metadata") or {}
+        if metadata.get("stock_id") == stock_id:
+            return task
+    return None
+
+
+def _render_portfolio_analysis_task_notice():
+    pending_tasks = _get_pending_portfolio_analysis_tasks()
+    if not pending_tasks:
+        return
+
+    running_task = _get_running_portfolio_analysis_task()
+    active_task = running_task or pending_tasks[0]
+    task_label = active_task.get("label") or "当前分析任务"
+    message = active_task.get("message") or "分析正在后台执行，切换页面后状态会保留。"
+    current = active_task.get("current") or 0
+    total = active_task.get("total") or 0
+    suffix = f" ({current}/{total})" if total else ""
+    queued_count = sum(1 for task in pending_tasks if task.get("status") == "queued")
+
+    if running_task:
+        queue_text = f" 队列中还有 {queued_count} 个任务。" if queued_count else ""
+        st.info(f"{task_label}：{message}{suffix}{queue_text}")
+    else:
+        st.info(f"分析队列中有 {queued_count} 个任务，等待执行。")
+
+
+def _start_single_stock_analysis_task(stock: Dict, lightweight_model=None, reasoning_model=None):
+    session_id = _ensure_portfolio_analysis_session_id()
+    code = stock.get("code", "")
+    name = stock.get("name", code)
+    stock_id = stock.get("id")
+    existing_task = _get_stock_pending_analysis_task(stock_id)
+    if existing_task:
+        status_text = "正在分析" if existing_task.get("status") == "running" else "已在队列中"
+        raise RuntimeError(f"{code} {name} {status_text}，请勿重复提交。")
+
+    def runner(_task_id, report_progress):
+        report_progress(
+            current=0,
+            total=1,
+            step_code=code,
+            step_status="analyzing",
+            message=f"正在分析 {code} {name}",
+        )
+        result = portfolio_manager.analyze_single_stock(
+            code,
+            lightweight_model=lightweight_model,
+            reasoning_model=reasoning_model,
+        )
+        if not result.get("success"):
+            raise RuntimeError(f"{code} 分析失败: {result.get('error', '未知错误')}")
+
+        wrapped_result = {
+            "success": True,
+            "results": [
+                {
+                    "code": code,
+                    "result": result,
+                }
+            ],
+        }
+        persistence_result = portfolio_manager.persist_analysis_results(
+            wrapped_result,
+            sync_realtime_monitor=True,
+            analysis_source="portfolio_single_analysis",
+            analysis_period="1y",
+        )
+        saved_count = len(persistence_result.get("saved_ids", []))
+        sync_result = persistence_result.get("sync_result") or {}
+        report_progress(
+            current=1,
+            total=1,
+            step_code=code,
+            step_status="success",
+            message=f"{code} 分析完成，已保存 {saved_count} 条记录",
+        )
+        return {
+            "task_type": "single",
+            "stock_id": stock_id,
+            "stock_code": code,
+            "stock_name": name,
+            "saved_count": saved_count,
+            "sync_result": sync_result,
+            "analysis_result": result,
+        }
+
+    portfolio_analysis_task_manager.start_task(
+        session_id,
+        task_type="single",
+        label=f"{name} 分析任务",
+        runner=runner,
+        metadata={"stock_id": stock_id, "stock_code": code, "stock_name": name},
+    )
+
+
+def _build_batch_progress_message(current, total, code, status) -> str:
+    status_map = {
+        "analyzing": "正在分析",
+        "success": "已完成",
+        "failed": "失败",
+        "error": "异常",
+    }
+    base = status_map.get(status, "处理中")
+    if total:
+        return f"{base} {code} ({current}/{total})"
+    return f"{base} {code}"
+
+
+def _start_batch_analysis_task(
+    stocks: List[Dict],
+    *,
+    analysis_mode: str,
+    max_workers: int,
+    auto_sync: bool,
+    send_notification: bool,
+    lightweight_model=None,
+    reasoning_model=None,
+):
+    session_id = _ensure_portfolio_analysis_session_id()
+    total = len(stocks)
+    pending_batch_tasks = _get_pending_portfolio_analysis_tasks("batch")
+    if pending_batch_tasks:
+        active_batch_task = pending_batch_tasks[0]
+        status_text = "正在分析" if active_batch_task.get("status") == "running" else "已在队列中"
+        raise RuntimeError(f"批量分析任务{status_text}，请勿重复提交。")
+
+    def runner(_task_id, report_progress):
+        report_progress(
+            current=0,
+            total=total,
+            step_status="analyzing",
+            message=f"正在批量分析 {total} 只持仓股票",
+        )
+
+        def progress_callback(current, callback_total, code, status):
+            report_progress(
+                current=current,
+                total=callback_total,
+                step_code=code,
+                step_status=status,
+                message=_build_batch_progress_message(current, callback_total, code, status),
+            )
+
+        result = portfolio_manager.batch_analyze_portfolio(
+            mode=analysis_mode,
+            max_workers=max_workers,
+            progress_callback=progress_callback,
+            lightweight_model=lightweight_model,
+            reasoning_model=reasoning_model,
+        )
+        if not result.get("success"):
+            raise RuntimeError(result.get("error", "批量分析失败"))
+
+        persistence_result = portfolio_manager.persist_analysis_results(
+            result,
+            sync_realtime_monitor=auto_sync,
+            analysis_source="portfolio_batch_analysis",
+            analysis_period="1y",
+        )
+
+        if send_notification:
+            from notification_service import notification_service
+
+            notification_service.send_portfolio_analysis_notification(
+                result,
+                persistence_result.get("sync_result") if auto_sync else None,
+            )
+
+        report_progress(
+            current=result.get("total", total),
+            total=result.get("total", total) or total or 1,
+            step_status="success",
+            message=(
+                f"批量分析完成：成功 {result.get('succeeded', 0)}，"
+                f"失败 {result.get('failed', 0)}"
+            ),
+        )
+        return {
+            "task_type": "batch",
+            "analysis_result": result,
+            "persistence_result": persistence_result,
+            "auto_sync": auto_sync,
+            "send_notification": send_notification,
+        }
+
+    portfolio_analysis_task_manager.start_task(
+        session_id,
+        task_type="batch",
+        label="持仓批量分析任务",
+        runner=runner,
+        metadata={"stock_count": total, "analysis_mode": analysis_mode},
+    )
+
+
+def _render_single_analysis_feedback():
+    if _get_active_portfolio_analysis_task():
+        return
+    task = _get_portfolio_analysis_task("single")
+    if not task or task.get("status") in {"queued", "running"}:
+        return
+
+    stock_code = task.get("metadata", {}).get("stock_code") or task.get("result", {}).get("stock_code") or "该股票"
+    if task.get("status") == "success":
+        result = task.get("result") or {}
+        saved_count = result.get("saved_count", 0)
+        sync_result = result.get("sync_result") or {}
+        message = task.get("message") or f"{stock_code} 分析完成"
+        st.success(f"{message}，已写入 {saved_count} 条分析记录。")
+        if sync_result.get("total", 0) > 0:
+            st.caption(
+                f"监测同步：新增 {sync_result.get('added', 0)}，更新 {sync_result.get('updated', 0)}。"
+            )
+    elif task.get("error"):
+        st.error(task["error"])
+
+
+def _render_batch_analysis_feedback():
+    task = _get_portfolio_analysis_task("batch")
+    if not task:
+        return
+
+    if task.get("status") in {"queued", "running"}:
+        pending_batch_tasks = _get_pending_portfolio_analysis_tasks("batch")
+        queue_position = 0
+        for index, pending_task in enumerate(pending_batch_tasks, start=1):
+            if pending_task.get("id") == task.get("id"):
+                queue_position = index
+                break
+        if task.get("status") == "running":
+            started_at = _format_task_time(task.get("started_at") or task.get("created_at"))
+            if started_at:
+                st.caption(f"批量任务启动时间：{started_at}")
+        elif queue_position:
+            st.caption(f"批量分析已进入队列，当前排在第 {queue_position} 位。")
+        return
+
+    if task.get("status") == "failed":
+        st.error(task.get("error") or "批量分析失败")
+        return
+
+    result_bundle = task.get("result") or {}
+    result = result_bundle.get("analysis_result") or {}
+    persistence_result = result_bundle.get("persistence_result") or {}
+    sync_result = persistence_result.get("sync_result") or {}
+    started_at = _format_task_time(task.get("started_at") or task.get("created_at"))
+    finished_at = _format_task_time(task.get("finished_at"))
+
+    st.success(task.get("message") or "批量分析完成。")
+    if started_at or finished_at:
+        time_parts = [part for part in [started_at, finished_at] if part]
+        st.caption(" -> ".join(time_parts))
+
+    col_r1, col_r2, col_r3, col_r4 = st.columns(4)
+    with col_r1:
+        st.metric("总计", result.get("total", 0))
+    with col_r2:
+        st.metric("成功", result.get("succeeded", 0))
+    with col_r3:
+        st.metric("失败", result.get("failed", 0))
+    with col_r4:
+        st.metric("耗时", f"{result.get('elapsed_time', 0):.1f}秒")
+
+    saved_ids = persistence_result.get("saved_ids") or []
+    if saved_ids:
+        st.info(f"已保存 {len(saved_ids)} 条分析记录到“分析历史”。")
+
+    if result_bundle.get("auto_sync"):
+        if sync_result.get("total", 0) > 0:
+            st.info(
+                f"实时监测同步：新增 {sync_result.get('added', 0)}，更新 {sync_result.get('updated', 0)}。"
+            )
+        else:
+            st.info("没有可同步的实时监测项。")
+
+    if result_bundle.get("send_notification"):
+        st.caption("完成通知已按当前配置发送。")
+
+    if result.get("results"):
+        st.markdown("### 分析结果详情")
+        for item in result.get("results", []):
+            display_analysis_result_card(item)
+
+
 def display_portfolio_manager(lightweight_model=None, reasoning_model=None):
     """显示持仓管理主界面"""
     try:
         portfolio_manager.reconcile_portfolio_integrations()
     except Exception as e:
         st.warning(f"持仓同步检查执行失败: {e}")
+
+    _render_portfolio_analysis_task_notice()
     
     # 创建标签页
-    tab1, tab2, tab3, tab4 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "持仓管理",
+        "风险评估",
         "批量分析",
         "定时任务",
         "分析历史"
@@ -47,29 +450,106 @@ def display_portfolio_manager(lightweight_model=None, reasoning_model=None):
     
     with tab1:
         display_portfolio_stocks(lightweight_model, reasoning_model)
-    
+        
     with tab2:
-        display_batch_analysis(lightweight_model, reasoning_model)
+        display_portfolio_risk()
     
     with tab3:
-        display_scheduler_management()
+        display_batch_analysis(lightweight_model, reasoning_model)
     
     with tab4:
+        display_scheduler_management()
+    
+    with tab5:
         display_analysis_history()
+
+
+
+def display_portfolio_risk():
+    """显示持仓风险评估"""
+    st.markdown("### 🛡️ 组合风险评估")
+    
+    # 账号筛选
+    all_stocks = portfolio_manager.get_all_stocks()
+    if not all_stocks:
+        st.info("暂无持仓股票，无法评估组合风险。")
+        return
+        
+    accounts = ["全部账户"] + list(sorted(set(s.get("account_name", "默认账户") for s in all_stocks)))
+    selected_account = st.selectbox("选择账户进行评估", accounts, key="risk_account_selector")
+    
+    account_filter = None if selected_account == "全部账户" else selected_account
+    
+    result = portfolio_manager.calculate_portfolio_risk(account_name=account_filter)
+    
+    if result.get("status") == "error":
+        st.warning(result.get("message", "评估失败"))
+        return
+        
+    total_val = result.get("total_market_value", 0)
+    total_cost = result.get("total_cost_value", 0)
+    total_pnl = result.get("total_pnl", 0)
+    total_pnl_pct = result.get("total_pnl_pct", 0) * 100
+    
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("总持仓市值", f"¥{total_val:,.2f}")
+    m2.metric("总持仓成本", f"¥{total_cost:,.2f}")
+    m3.metric("总浮动盈亏", f"¥{total_pnl:,.2f}", delta=f"{total_pnl_pct:.2f}%", delta_color="normal")
+    
+    st.markdown("---")
+    # 显示警告
+    warnings = result.get("risk_warnings", [])
+    if result.get("high_concentration"):
+        for w in warnings:
+            st.error(w)
+    else:
+        for w in warnings:
+            st.success(w)
+            
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("#### 🔄 行业集中度")
+        industry_data = result.get("industry_distribution", [])
+        if industry_data:
+            df_ind = pd.DataFrame(industry_data)
+            df_ind["占比"] = df_ind["weight"].apply(lambda x: f"{x*100:.1f}%")
+            df_ind["市值"] = df_ind["market_value"].apply(lambda x: f"¥{x:,.2f}")
+            st.dataframe(df_ind[["industry", "市值", "占比"]].rename(columns={"industry": "行业"}), hide_index=True, use_container_width=True)
+            
+    with col2:
+        st.markdown("#### 🎯 单票集中度")
+        stock_data = result.get("stock_distribution", [])
+        if stock_data:
+            df_st = pd.DataFrame(stock_data)
+            df_st["占比"] = df_st["weight"].apply(lambda x: f"{x*100:.1f}%")
+            df_st["市值"] = df_st["market_value"].apply(lambda x: f"¥{x:,.2f}")
+            df_st["盈亏"] = df_st["pnl"].apply(lambda x: f"¥{x:,.2f}")
+            df_st["盈亏比例"] = df_st["pnl_pct"].apply(lambda x: f"{x*100:.2f}%")
+            st.dataframe(df_st[["name", "市值", "占比", "盈亏比例"]].rename(columns={"name": "股票"}), hide_index=True, use_container_width=True)
 
 
 def display_portfolio_stocks(lightweight_model=None, reasoning_model=None):
     """显示持仓股票列表和管理"""
     
     st.markdown("### 持仓股票管理")
+    _render_single_analysis_feedback()
     
     # 添加新股票表单
     with st.expander("➕ 添加持仓股票", expanded=False):
         display_add_stock_form()
     
     # 获取所有持仓股票
-    stocks = portfolio_manager.get_all_stocks()
+    all_stocks = portfolio_manager.get_all_stocks()
     
+    accounts = ["全部账户"] + list(sorted(set(s.get("account_name", "默认账户") for s in all_stocks)))
+    selected_account = st.selectbox("账号筛选", accounts, key="portfolio_account_selector")
+    
+    if selected_account == "全部账户":
+        stocks = all_stocks
+    else:
+        stocks = [s for s in all_stocks if s.get("account_name", "默认账户") == selected_account]
+        
     if not stocks:
         st.info("暂无持仓股票，请添加股票代码开始管理。")
         return
@@ -98,110 +578,150 @@ def display_portfolio_stocks(lightweight_model=None, reasoning_model=None):
 
 def display_stock_card(stock: Dict, lightweight_model=None, reasoning_model=None):
     """显示单个股票卡片"""
-    
-    stock_id = stock.get("id")  # 获取股票ID
+
+    stock_id = stock.get("id")
     code = stock.get("code", "")
-    name = stock.get("name", "")
     cost_price = stock.get("cost_price")
     quantity = stock.get("quantity")
     note = stock.get("note", "")
     auto_monitor = stock.get("auto_monitor", True)
     latest_analysis = portfolio_manager.db.get_latest_analysis(stock_id)
-    
-    # 创建卡片
+    view_model = portfolio_manager.build_stock_card_view_model(stock, latest_analysis)
+    rating = view_model.get("rating", "待分析")
+    rating_color = get_recommendation_color(rating)
+    chips_html = _build_stock_card_chips_html(view_model)
+    analysis_time_text = view_model.get("analysis_time_text") or "尚未分析"
+    summary_text = view_model.get("summary_text", "")
+    note_text = view_model.get("note_text", "")
+    display_name = view_model.get("display_name") or code
+    edit_state_key = f"portfolio_editing_{stock_id}"
+    auto_monitor_key = f"portfolio_auto_monitor_{stock_id}"
+    stock_pending_task = _get_stock_pending_analysis_task(stock_id)
+    queue_active = bool(_get_pending_portfolio_analysis_tasks())
+    analysis_disabled = bool(stock_pending_task)
+    if stock_pending_task and stock_pending_task.get("status") == "running":
+        analysis_button_label = "分析中"
+    elif stock_pending_task:
+        analysis_button_label = "已排队"
+    elif queue_active:
+        analysis_button_label = "加入队列"
+    else:
+        analysis_button_label = "分析"
+
     with st.container():
-        header_col, status_col = st.columns([4, 1.4])
-        
-        with header_col:
-            st.markdown(f"**{code}** {name}")
-            if note:
-                st.caption(f"备注: {note}")
-            if latest_analysis:
-                st.caption(f"最近分析: {latest_analysis.get('analysis_time', '')}")
-        
-        with status_col:
-            status_text = "自动监测" if auto_monitor else "不监测"
-            st.caption(status_text)
+        summary_html = ""
+        if summary_text:
+            summary_html = (
+                '<div class="portfolio-stock-card__summary">'
+                f"摘要：{_escape_text(summary_text)}"
+                "</div>"
+            )
+        note_html = ""
+        if note_text:
+            note_html = (
+                '<div class="portfolio-stock-card__note">'
+                f"备注：{_escape_text(note_text)}"
+                "</div>"
+            )
 
-        info_col1, info_col2 = st.columns(2)
+        st.markdown(
+            f"""
+            <div class="portfolio-stock-card">
+                <div class="portfolio-stock-card__title-row">
+                    <div class="portfolio-stock-card__title">{_escape_text(display_name)}</div>
+                    <div class="portfolio-stock-card__badge" style="color:{rating_color};">{_escape_text(rating)}</div>
+                </div>
+                <div class="portfolio-stock-card__chips">{chips_html}</div>
+                <div class="portfolio-stock-card__analysis-meta">最近分析：{_escape_text(analysis_time_text)}</div>
+                {summary_html}
+                {note_html}
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
-        with info_col1:
-            if cost_price and quantity:
-                st.caption(f"成本: {format_price(cost_price)}")
-                st.caption(f"数量: {quantity}股")
-            else:
-                st.caption("未设置持仓")
-        
-        with info_col2:
-            if latest_analysis:
-                rating = latest_analysis.get("rating", "未知")
-                rating_color = get_recommendation_color(rating)
-                st.markdown(
-                    f"<span style='color:{rating_color}; font-weight:600;'>{rating}</span>",
-                    unsafe_allow_html=True,
-                )
-            elif auto_monitor:
-                st.caption("待分析")
-
-        action_col1, action_col2, action_col3 = st.columns(3)
+        action_col1, action_col2, action_col3, action_col4 = st.columns([1.2, 0.93, 0.93, 0.93], gap="small")
         with action_col1:
-            if st.button("分析", key=f"analyze_{code}", help="单独分析该持仓"):
-                run_single_stock_analysis(stock, lightweight_model, reasoning_model)
-        with action_col2:
-            if st.button("编辑", key=f"edit_{code}", help="编辑"):
-                st.session_state[f"editing_{code}"] = True
-                st.rerun()
-        with action_col3:
-            if st.button("删除", key=f"del_{code}", help="删除"):
-                success, msg = portfolio_manager.delete_stock(stock_id)  # 使用stock_id而不是code
+            st.markdown("<span class='portfolio-stock-card__action-sentinel'></span>", unsafe_allow_html=True)
+            toggle_value = st.toggle(
+                "监测",
+                value=view_model.get("auto_monitor", True),
+                key=auto_monitor_key,
+                help="自动监测：启用后会自动同步到监测",
+            )
+            if toggle_value != auto_monitor:
+                success, msg = portfolio_manager.update_stock(stock_id, auto_monitor=toggle_value)
                 if success:
+                    st.success(msg)
+                else:
+                    st.session_state[auto_monitor_key] = auto_monitor
+                    st.error(msg)
+                time.sleep(0.35)
+                st.rerun()
+        with action_col2:
+            if st.button(
+                analysis_button_label,
+                key=f"analyze_{stock_id}",
+                help=(
+                    "单独分析该持仓"
+                    if not stock_pending_task and not queue_active
+                    else "加入分析队列，等待前序任务完成后执行"
+                    if not stock_pending_task
+                    else "该股票已在后台分析队列中"
+                ),
+                disabled=analysis_disabled,
+            ):
+                run_single_stock_analysis(stock, lightweight_model, reasoning_model)
+        with action_col3:
+            if st.button("编辑", key=f"edit_{stock_id}", help="编辑"):
+                st.session_state[edit_state_key] = True
+                st.rerun()
+        with action_col4:
+            if st.button("删除", key=f"del_{stock_id}", help="删除"):
+                success, msg = portfolio_manager.delete_stock(stock_id)
+                if success:
+                    st.session_state.pop(auto_monitor_key, None)
+                    st.session_state.pop(edit_state_key, None)
                     st.success(msg)
                 else:
                     st.error(msg)
                 time.sleep(0.5)
                 st.rerun()
-        
-        if latest_analysis:
-            rating = latest_analysis.get("rating", "未知")
-            summary = latest_analysis.get("summary", "")
-            st.caption(f"最新摘要: {summary or '暂无摘要'}")
 
-        # 编辑表单（如果处于编辑状态）
-        if st.session_state.get(f"editing_{code}"):
-            with st.form(key=f"edit_form_{code}"):
-                st.markdown(f"#### 编辑 {code}")
-                
+        if st.session_state.get(edit_state_key):
+            with st.form(key=f"edit_form_{stock_id}"):
+                st.markdown(f"#### 编辑 {display_name}")
+                st.caption(f"股票代码：{code}")
+
                 col_a, col_b = st.columns(2)
                 with col_a:
                     new_cost = st.number_input(
-                        "成本价", 
-                        value=cost_price if cost_price else 0.0, 
-                        min_value=0.0, 
+                        "成本价",
+                        value=cost_price if cost_price else 0.0,
+                        min_value=0.0,
                         step=0.001,
-                        format="%.3f"
+                        format="%.3f",
                     )
                     new_quantity = st.number_input(
-                        "持仓数量", 
-                        value=quantity if quantity else 0, 
-                        min_value=0, 
-                        step=100
+                        "持仓数量",
+                        value=quantity if quantity else 0,
+                        min_value=0,
+                        step=100,
                     )
-                
+
                 with col_b:
                     new_note = st.text_area("备注", value=note, height=80)
-                    new_auto_monitor = st.checkbox("自动同步到监测", value=auto_monitor)
-                
+
                 col_submit, col_cancel = st.columns(2)
                 with col_submit:
                     if st.form_submit_button("保存", type="primary"):
                         success, msg = portfolio_manager.update_stock(
-                            stock_id,  # 使用stock_id而不是code
+                            stock_id,
                             cost_price=new_cost if new_cost > 0 else None,
                             quantity=new_quantity if new_quantity > 0 else None,
                             note=new_note,
-                            auto_monitor=new_auto_monitor
                         )
-                        del st.session_state[f"editing_{code}"]
+                        del st.session_state[edit_state_key]
                         if success:
                             st.success(msg)
                         else:
@@ -211,54 +731,30 @@ def display_stock_card(stock: Dict, lightweight_model=None, reasoning_model=None
                 
                 with col_cancel:
                     if st.form_submit_button("取消"):
-                        del st.session_state[f"editing_{code}"]
+                        del st.session_state[edit_state_key]
                         st.rerun()
-        
+
         st.markdown("<div style='margin:0.45rem 0 0.7rem 0; border-bottom:1px solid rgba(148,163,184,0.18);'></div>", unsafe_allow_html=True)
 
 
 def run_single_stock_analysis(stock: Dict, lightweight_model=None, reasoning_model=None):
-    """执行单只持仓分析并保存到持仓历史。"""
+    """启动单只持仓后台分析任务。"""
     code = stock.get("code", "")
     name = stock.get("name", code)
     if not code:
         st.error("持仓股票缺少代码，无法分析。")
         return
 
-    with st.spinner(f"正在分析 {code} {name} ..."):
-        result = portfolio_manager.analyze_single_stock(
-            code,
-            lightweight_model=lightweight_model,
-            reasoning_model=reasoning_model,
-        )
-
-    if not result.get("success"):
-        st.error(f"{code} 分析失败: {result.get('error', '未知错误')}")
+    queue_active = bool(_get_pending_portfolio_analysis_tasks())
+    try:
+        _start_single_stock_analysis_task(stock, lightweight_model, reasoning_model)
+    except RuntimeError as exc:
+        st.warning(str(exc))
         return
-
-    wrapped_result = {
-        "success": True,
-        "results": [
-            {
-                "code": code,
-                "result": result,
-            }
-        ],
-    }
-    persistence_result = portfolio_manager.persist_analysis_results(
-        wrapped_result,
-        sync_realtime_monitor=True,
-        analysis_source="portfolio_single_analysis",
-        analysis_period="1y",
-    )
-    saved_count = len(persistence_result.get("saved_ids", []))
-    sync_result = persistence_result.get("sync_result") or {}
-
-    st.success(f"{code} 分析完成，已写入持仓分析历史 {saved_count} 条。")
-    if sync_result.get("total", 0) > 0:
-        st.info(
-            f"实时监测同步完成：新增 {sync_result.get('added', 0)}，更新 {sync_result.get('updated', 0)}。"
-        )
+    if queue_active:
+        st.success(f"{code} {name} 已加入分析队列，会在前序任务完成后自动执行。")
+    else:
+        st.success(f"已开始后台分析 {code} {name}，切换页面后状态会保留。")
     st.rerun()
 
 
@@ -274,6 +770,7 @@ def display_add_stock_form():
         col1, col2 = st.columns(2)
         
         with col1:
+            account_name = st.text_input("账户名称", value="默认账户", help="隔离不同账户的持仓")
             code = st.text_input(
                 "股票代码*", 
                 placeholder="例如: 600519、000001.SZ、00700.HK、AAPL",
@@ -313,7 +810,8 @@ def display_add_stock_form():
                         cost_price=cost_price if cost_price > 0 else None,
                         quantity=quantity if quantity > 0 else None,
                         note=note.strip() if note else None,
-                        auto_monitor=auto_monitor
+                        auto_monitor=auto_monitor,
+                        account_name=account_name.strip()
                     )
                     if not success:
                         st.error(msg)
@@ -334,12 +832,16 @@ def display_batch_analysis(lightweight_model=None, reasoning_model=None):
     """显示批量分析功能"""
     
     st.markdown("### 🔄 批量分析持仓股票")
+    _render_batch_analysis_feedback()
     
     stocks = portfolio_manager.get_all_stocks()
     
     if not stocks:
         st.warning("暂无持仓股票，请先添加股票。")
         return
+
+    queue_active = bool(_get_pending_portfolio_analysis_tasks())
+    batch_pending = bool(_get_pending_portfolio_analysis_tasks("batch"))
     
     # 分析选项
     col1, col2, col3 = st.columns(3)
@@ -387,84 +889,31 @@ def display_batch_analysis(lightweight_model=None, reasoning_model=None):
         )
     
     # 立即分析按钮
-    if st.button("立即开始分析", type="primary", width='content'):
-        with st.spinner("正在批量分析持仓股票..."):
-            # 显示进度
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-            
-            # 执行批量分析
-            try:
-                # 定义进度回调函数
-                def update_progress(current, total, code, status):
-                    progress_bar.progress(current / total)
-                    status_map = {
-                        "analyzing": "正在分析",
-                        "success": "✅ 完成",
-                        "failed": "❌ 失败",
-                        "error": "⚠️ 错误"
-                    }
-                    status_text.text(f"{status_map.get(status, '处理中')} {code} ({current}/{total})")
-                
-                result = portfolio_manager.batch_analyze_portfolio(
-                    mode=analysis_mode,
-                    max_workers=max_workers,
-                    progress_callback=update_progress,
-                    lightweight_model=lightweight_model,
-                    reasoning_model=reasoning_model,
-                )
-                
-                # 清除进度显示
-                progress_bar.empty()
-                status_text.empty()
-                
-                # 显示结果
-                st.success("批量分析完成。")
-                
-                col_r1, col_r2, col_r3, col_r4 = st.columns(4)
-                with col_r1:
-                    st.metric("总计", result.get("total", 0))
-                with col_r2:
-                    st.metric("成功", result.get("succeeded", 0))
-                with col_r3:
-                    st.metric("失败", result.get("failed", 0))
-                with col_r4:
-                    st.metric("耗时", f"{result.get('elapsed_time', 0):.1f}秒")
-                
-                persistence_result = portfolio_manager.persist_analysis_results(
-                    result,
-                    sync_realtime_monitor=auto_sync,
-                    analysis_source="portfolio_batch_analysis",
-                    analysis_period="1y",
-                )
-                saved_ids = persistence_result["saved_ids"]
-                sync_result = persistence_result["sync_result"]
-                st.info(f"💾 已保存 {len(saved_ids)} 条分析记录到“分析历史”")
-
-                if auto_sync:
-                    if sync_result and sync_result.get("total", 0) > 0:
-                        st.info(f"实时监测同步：新增 {sync_result.get('added', 0)} 只，更新 {sync_result.get('updated', 0)} 只。")
-                    else:
-                        st.info("没有可同步的实时监测项，可能缺少完整阈值或未启用自动监测。")
-                
-                # 发送通知
-                if send_notification:
-                    from notification_service import notification_service
-                    notification_service.send_portfolio_analysis_notification(
-                        result, 
-                        sync_result if auto_sync else None
-                    )
-                    st.info("✉️ 已发送完成通知")
-                
-                # 显示详细结果
-                st.markdown("### 分析结果详情")
-                for item in result.get("results", []):
-                    display_analysis_result_card(item)
-                
-            except Exception as e:
-                st.error(f"批量分析失败: {str(e)}")
-                import traceback
-                st.code(traceback.format_exc())
+    if st.button(
+        "批量分析中" if batch_pending else "加入批量队列" if queue_active else "立即开始分析",
+        type="primary",
+        width="content",
+        disabled=batch_pending,
+        help="当前已有批量分析任务在执行或排队中" if batch_pending else "加入当前分析队列" if queue_active else None,
+    ):
+        try:
+            _start_batch_analysis_task(
+                stocks,
+                analysis_mode=analysis_mode,
+                max_workers=max_workers,
+                auto_sync=auto_sync,
+                send_notification=send_notification,
+                lightweight_model=lightweight_model,
+                reasoning_model=reasoning_model,
+            )
+        except RuntimeError as exc:
+            st.warning(str(exc))
+            return
+        if queue_active:
+            st.success("批量分析已加入队列，会在前序任务完成后自动执行。")
+        else:
+            st.success("已开始后台批量分析，切换页面后状态会保留。")
+        st.rerun()
 
 
 def display_analysis_result_card(item: Dict):
@@ -752,7 +1201,7 @@ def display_history_record(record: Dict):
     code = record.get("code", "")
     name = record.get("name", "")
     analysis_time = record.get("analysis_time", "")
-    rating = record.get("rating", "未知")
+    rating = portfolio_manager._normalize_analysis_rating(record.get("rating"), default="待分析")
     confidence = record.get("confidence", 0)
     current_price = record.get("current_price")
     target_price = record.get("target_price")
@@ -776,6 +1225,47 @@ def display_history_record(record: Dict):
         f"{code} {name} | {rating} | {analysis_time}",
         expanded=False
     ):
+        if has_full_report:
+            agents_results = record.get("agents_results") or {}
+            discussion_result = record.get("discussion_result", "")
+            raw_final_decision = record.get("final_decision") or {}
+            resolved_final_decision, _, decision_reasoning = _resolve_final_decision_content(
+                raw_final_decision
+            )
+            normalized_rating = portfolio_manager._normalize_analysis_rating(
+                (resolved_final_decision or {}).get("rating") if isinstance(resolved_final_decision, dict) else rating,
+                default=rating,
+            )
+            final_decision_display = _build_history_final_decision_display(
+                record,
+                resolved_final_decision if isinstance(resolved_final_decision, dict) else {},
+                normalized_rating=normalized_rating,
+            )
+
+            render_final_decision(final_decision_display)
+            st.subheader("分析师原始报告")
+            render_agents_analysis_tabs(
+                agents_results,
+                show_header=False,
+                preferred_order=["technical", "fundamental", "fund_flow", "risk_management"],
+                tab_labels={
+                    "technical": "技术",
+                    "fundamental": "基本面",
+                    "fund_flow": "资金",
+                    "risk_management": "风险管理",
+                },
+                include_other_agents=False,
+                split_reasoning=True,
+            )
+            render_reasoning_process(
+                None,
+                discussion_result,
+                expanded=False,
+                include_agents=False,
+                extra_sections=[("最终决策推理", decision_reasoning)] if decision_reasoning else None,
+            )
+            return
+
         st.markdown(
             f"""
             <div class="decision-card">
@@ -809,17 +1299,4 @@ def display_history_record(record: Dict):
         if summary:
             st.markdown("**分析摘要**")
             st.info(summary)
-
-        if not has_full_report:
-            return
-
-        stock_info = record.get("stock_info") or {}
-        agents_results = record.get("agents_results") or {}
-        discussion_result = record.get("discussion_result", "")
-        final_decision = record.get("final_decision") or {}
-
-        render_stock_info_metrics(stock_info, price_label="分析时价格")
-        render_agents_analysis_tabs(agents_results)
-        render_team_discussion(discussion_result)
-        render_final_decision(final_decision)
 

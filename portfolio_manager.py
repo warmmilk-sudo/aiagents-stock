@@ -142,7 +142,7 @@ class PortfolioManager:
     
     def add_stock(self, code: str, name: Optional[str], cost_price: Optional[float] = None,
                   quantity: Optional[int] = None, note: str = "", 
-                  auto_monitor: bool = True) -> Tuple[bool, str, Optional[int]]:
+                  auto_monitor: bool = True, account_name: str = "默认账户") -> Tuple[bool, str, Optional[int]]:
         """
         添加持仓股票
         
@@ -170,7 +170,7 @@ class PortfolioManager:
                 return False, "无法根据股票代码自动识别股票名称，请检查代码格式后重试", None
             
             # 检查股票代码是否已存在
-            existing = self.db.get_stock_by_code(code)
+            existing = self.db.get_stock_by_code(code, account_name)
             if existing:
                 return False, f"股票代码 {code} 已存在", None
             
@@ -317,42 +317,19 @@ class PortfolioManager:
 
         return (None, None)
 
-    def _extract_analysis_summary(self, final_decision: Dict) -> str:
-        """提取分析摘要。"""
-        for key in ("operation_advice", "advice", "summary", "decision_text"):
-            value = final_decision.get(key)
-            if value:
-                return str(value)[:500]
-        return ""
-
-    def _build_analysis_payload(self, stock_info: Dict, final_decision: Dict) -> Dict:
-        """统一构建持仓分析历史落库数据。"""
-        rating = str(final_decision.get("rating", "持有")).strip() or "持有"
-        confidence = self._extract_confidence(final_decision.get("confidence_level", 5.0))
-        current_price = self._extract_first_number(stock_info.get("current_price"), allow_zero=True) or 0.0
-        target_price = self._extract_first_number(final_decision.get("target_price"))
-        entry_min, entry_max = self._extract_entry_range(final_decision.get("entry_range"))
-        take_profit = self._extract_first_number(final_decision.get("take_profit"))
-        stop_loss = self._extract_first_number(final_decision.get("stop_loss"))
-        summary = self._extract_analysis_summary(final_decision)
-
-        return {
-            "rating": rating,
-            "confidence": confidence,
-            "current_price": current_price,
-            "target_price": target_price,
-            "entry_min": entry_min,
-            "entry_max": entry_max,
-            "take_profit": take_profit,
-            "stop_loss": stop_loss,
-            "summary": summary,
-        }
-
     def _sanitize_summary_text(self, value: str) -> str:
         if not value:
             return ""
 
         text = str(value).strip()
+        text = re.sub(
+            r"<p[^>]*portfolio-stock-card__summary[^>]*>",
+            " ",
+            text,
+            flags=re.IGNORECASE,
+        )
+        text = re.sub(r"</p>", " ", text, flags=re.IGNORECASE)
+        text = re.sub(r"<[^>]+>", " ", text)
         text = re.sub(r"<think>.*?</think>", " ", text, flags=re.IGNORECASE | re.DOTALL)
         text = re.sub(r"```.*?```", " ", text, flags=re.DOTALL)
         text = re.sub(r"【推理过程】.*", " ", text, flags=re.DOTALL)
@@ -365,7 +342,7 @@ class PortfolioManager:
         return text[:240]
 
     def _build_fallback_summary(self, final_decision: Dict) -> str:
-        rating = str(final_decision.get("rating", "持有")).strip() or "持有"
+        rating = self._normalize_analysis_rating(final_decision.get("rating"), default="持有")
         parts = [f"评级: {rating}"]
 
         operation_advice = self._sanitize_summary_text(final_decision.get("operation_advice") or "")
@@ -387,6 +364,214 @@ class PortfolioManager:
                 return cleaned
         return self._build_fallback_summary(final_decision)
 
+    def _normalize_analysis_rating(self, value, default: str = "持有") -> str:
+        text = str(value or "").strip()
+        if not text:
+            return default
+
+        normalized_aliases = {
+            "买入": "买入",
+            "强烈买入": "买入",
+            "增持": "买入",
+            "持有": "持有",
+            "中性": "持有",
+            "观望": "持有",
+            "卖出": "卖出",
+            "减持": "卖出",
+            "鎸佹湁": "持有",
+            "涔板叆": "买入",
+            "鍗栧嚭": "卖出",
+        }
+        if text in normalized_aliases:
+            return normalized_aliases[text]
+
+        lowered = text.lower()
+        if text in {"未知", "待分析", "N/A"} or lowered in {"unknown", "n/a", "na"}:
+            return default
+        if any(token in text for token in ("买入", "强烈买入", "增持")) or any(
+            token in lowered for token in ("buy", "add")
+        ):
+            return "买入"
+        if any(token in text for token in ("卖出", "减持")) or any(
+            token in lowered for token in ("sell", "reduce")
+        ):
+            return "卖出"
+        if any(token in text for token in ("持有", "中性", "观望")) or any(
+            token in lowered for token in ("hold", "neutral")
+        ):
+            return "持有"
+        return text
+
+    def _extract_rating_from_text(self, value: str) -> str:
+        text = self._sanitize_summary_text(value)
+        if not text:
+            return ""
+
+        match = re.search(r"(?:投资)?评级\s*[:：]\s*([^\s；;，,。]+)", text)
+        if match:
+            return self._normalize_analysis_rating(match.group(1), default="")
+
+        for token in ("买入", "持有", "卖出", "鎸佹湁", "涔板叆", "鍗栧嚭"):
+            if token in text:
+                return self._normalize_analysis_rating(token, default="")
+        return ""
+
+    def _sanitize_card_summary(self, value: str, *, rating: str = "") -> str:
+        text = self._sanitize_summary_text(value)
+        if not text:
+            return ""
+
+        text = re.sub(r"^(?:最新)?摘要\s*[:：]\s*", "", text, count=1)
+        if rating:
+            text = re.sub(
+                rf"^(?:投资)?评级\s*[:：]\s*{re.escape(rating)}(?:[；;，,。]\s*|\s+)?",
+                "",
+                text,
+                count=1,
+            )
+        text = re.sub(
+            r"^(?:投资)?评级\s*[:：]\s*(?:买入|持有|卖出|鎸佹湁|涔板叆|鍗栧嚭)?(?:[；;，,。]\s*|\s+)?",
+            "",
+            text,
+            count=1,
+        )
+
+        text = text.strip(" ；;，,。")
+        return text[:160]
+
+    def _resolve_stock_card_rating(self, latest_analysis: Optional[Dict]) -> str:
+        if not latest_analysis:
+            return "待分析"
+
+        final_decision = latest_analysis.get("final_decision")
+        if not isinstance(final_decision, dict):
+            final_decision = {}
+
+        candidates = [
+            final_decision.get("rating"),
+            latest_analysis.get("rating"),
+            self._extract_rating_from_text(latest_analysis.get("summary", "")),
+        ]
+        for candidate in candidates:
+            normalized = self._normalize_analysis_rating(candidate, default="")
+            if normalized:
+                return normalized
+        return "待分析"
+
+    def _format_currency_text(
+        self,
+        value: Optional[float],
+        *,
+        precision: int = 3,
+        signed: bool = False,
+    ) -> str:
+        if value is None:
+            return ""
+
+        prefix = ""
+        amount = value
+        if signed:
+            if value > 0:
+                prefix = "+"
+            elif value < 0:
+                prefix = "-"
+            amount = abs(value)
+
+        return f"{prefix}¥{amount:,.{precision}f}"
+
+    def _format_percent_text(self, value: Optional[float], *, signed: bool = False) -> str:
+        if value is None:
+            return ""
+
+        prefix = ""
+        amount = value
+        if signed:
+            if value > 0:
+                prefix = "+"
+            elif value < 0:
+                prefix = "-"
+            amount = abs(value)
+
+        return f"{prefix}{amount:.2f}%"
+
+    def _format_analysis_time_text(self, value) -> str:
+        if not value:
+            return ""
+
+        text = str(value).strip()
+        for fmt in ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S"):
+            try:
+                parsed = datetime.strptime(text, fmt)
+                return parsed.strftime("%Y-%m-%d %H:%M")
+            except ValueError:
+                continue
+        return text
+
+    def build_stock_card_view_model(
+        self,
+        stock: Dict,
+        latest_analysis: Optional[Dict] = None,
+    ) -> Dict[str, object]:
+        latest_analysis = latest_analysis or {}
+        final_decision = latest_analysis.get("final_decision")
+        if not isinstance(final_decision, dict):
+            final_decision = {}
+
+        display_name = (stock.get("name") or stock.get("code") or "").strip()
+        cost_price = self._extract_first_number(stock.get("cost_price"), allow_zero=True)
+        quantity = stock.get("quantity")
+        try:
+            quantity_value = int(quantity) if quantity not in (None, "") else None
+        except (TypeError, ValueError):
+            quantity_value = None
+
+        current_price = self._extract_first_number(latest_analysis.get("current_price"), allow_zero=True)
+        if current_price is None:
+            stock_info = latest_analysis.get("stock_info")
+            if isinstance(stock_info, dict):
+                current_price = self._extract_first_number(
+                    stock_info.get("current_price"),
+                    allow_zero=True,
+                )
+
+        rating = self._resolve_stock_card_rating(latest_analysis)
+        summary_candidates = [
+            latest_analysis.get("summary", ""),
+            final_decision.get("operation_advice"),
+            final_decision.get("advice"),
+            final_decision.get("summary"),
+        ]
+        summary_text = ""
+        for candidate in summary_candidates:
+            summary_text = self._sanitize_card_summary(candidate, rating=rating)
+            if summary_text:
+                break
+
+        pnl_amount = None
+        pnl_percent = None
+        if (
+            latest_analysis
+            and current_price is not None
+            and cost_price is not None
+            and quantity_value
+        ):
+            pnl_amount = (current_price - cost_price) * quantity_value
+            if cost_price:
+                pnl_percent = ((current_price - cost_price) / cost_price) * 100
+
+        return {
+            "display_name": display_name,
+            "cost_text": self._format_currency_text(cost_price, precision=3) if cost_price is not None else "",
+            "quantity_text": f"{quantity_value}股" if quantity_value is not None else "",
+            "pnl_amount_text": self._format_currency_text(pnl_amount, precision=2, signed=True) if pnl_amount is not None else "",
+            "pnl_percent_text": self._format_percent_text(pnl_percent, signed=True) if pnl_percent is not None else "",
+            "rating": rating,
+            "analysis_time_text": self._format_analysis_time_text(latest_analysis.get("analysis_time")),
+            "summary_text": summary_text,
+            "note_text": str(stock.get("note") or "").strip(),
+            "auto_monitor": bool(stock.get("auto_monitor", True)),
+        }
+
     def _build_analysis_payload(
         self,
         stock_info: Dict,
@@ -396,8 +581,8 @@ class PortfolioManager:
         analysis_period: str = "1y",
         analysis_source: str = "portfolio_batch_analysis",
     ) -> Dict:
-        """缁熶竴鏋勫缓鎸佷粨鍒嗘瀽鍘嗗彶钀藉簱鏁版嵁銆?"""
-        rating = str(final_decision.get("rating", "鎸佹湁")).strip() or "鎸佹湁"
+        """统一构建持仓分析历史落库数据。"""
+        rating = self._normalize_analysis_rating(final_decision.get("rating"), default="持有")
         confidence = self._extract_confidence(final_decision.get("confidence_level", 5.0))
         current_price = self._extract_first_number(stock_info.get("current_price"), allow_zero=True) or 0.0
         target_price = self._extract_first_number(final_decision.get("target_price"))
@@ -945,7 +1130,11 @@ class PortfolioManager:
             result = item.get("result", {})
             
             # 获取持仓股票ID
-            stock = self.db.get_stock_by_code(code)
+            stocks = self.db.get_stocks_by_code(code)
+            if not stocks:
+                print(f"[WARN] 未找到持仓股票: {code}，跳过保存")
+                continue
+            stock = stocks[0]
             if not stock:
                 print(f"[WARN] 未找到持仓股票: {code}，跳过保存")
                 continue
@@ -1012,6 +1201,134 @@ class PortfolioManager:
         return self.db.get_rating_changes(stock_id, days)
 
 
+    
+    # ==================== 风险评估 ====================
+    
+    def calculate_portfolio_risk(self, account_name: Optional[str] = None) -> Dict:
+        """
+        计算持仓风险指标评估，包括单票集中度、行业集中度等。
+        
+        Args:
+            account_name: 指定账户名称进行过滤，若为None则计算所有账户。
+            
+        Returns:
+            Dict: 包含风险指标评估结果的字典
+        """
+        stocks = self.get_all_stocks()
+        if account_name:
+            stocks = [s for s in stocks if s.get("account_name", "默认账户") == account_name]
+            
+        if not stocks:
+            return {"status": "error", "message": "没有持仓记录，无法评估风险"}
+            
+        total_market_value = 0.0
+        total_cost_value = 0.0
+        stock_values = []
+        industry_values = {}
+        
+        for stock in stocks:
+            quantity = stock.get('quantity')
+            try:
+                quantity_value = int(quantity) if quantity not in (None, "") else 0
+            except (TypeError, ValueError):
+                quantity_value = 0
+                
+            latest_analysis = self.get_latest_analysis(stock['id'])
+            
+            # 获取当前价格
+            current_price = None
+            industry = "未知行业"
+            
+            if latest_analysis:
+                current_price = latest_analysis.get('current_price')
+                stock_info = latest_analysis.get('stock_info')
+                if isinstance(stock_info, dict):
+                    if current_price is None or current_price == 0:
+                        try:
+                            # 尝试获取字符串中的第一个浮点数
+                            cp_str = str(stock_info.get("current_price", ""))
+                            import re
+                            match = re.search(r'\d+(\.\d+)?', cp_str)
+                            if match:
+                                current_price = float(match.group())
+                        except:
+                            pass
+                    industry = stock_info.get("industry", "未知行业")
+            
+            cost_price = float(stock.get("cost_price", 0) or 0.0)
+            if current_price is None or current_price == 0:
+                current_price = cost_price
+                
+            market_value = current_price * quantity_value
+            cost_value = cost_price * quantity_value
+            total_market_value += market_value
+            total_cost_value += cost_value
+            
+            
+            pnl = market_value - cost_value
+            pnl_pct = (pnl / cost_value) if cost_value > 0 else 0.0
+
+            stock_values.append({
+                "code": stock['code'],
+                "name": stock['name'],
+                "market_value": market_value,
+                "cost_value": cost_value,
+                "pnl": pnl,
+                "pnl_pct": pnl_pct,
+                "industry": industry
+            })
+            
+            industry_values[industry] = industry_values.get(industry, 0) + market_value
+            
+        if total_market_value == 0:
+            return {"status": "error", "message": "持仓总市值为空，请更新价格或数量"}
+            
+        # 计算单票权重
+        for sv in stock_values:
+            sv["weight"] = sv["market_value"] / total_market_value
+            
+        stock_values.sort(key=lambda x: x["weight"], reverse=True)
+        
+        # 计算行业权重
+        industry_distribution = []
+        for ind, val in industry_values.items():
+            industry_distribution.append({
+                "industry": ind,
+                "market_value": val,
+                "weight": val / total_market_value
+            })
+            
+        industry_distribution.sort(key=lambda x: x["weight"], reverse=True)
+        
+        # 风险评估结果
+        risk_warnings = []
+        high_concentration = False
+        
+        if stock_values and stock_values[0]["weight"] > 0.3:
+            risk_warnings.append(f"单票超载预警：{stock_values[0]['name']} 占比达到 {stock_values[0]['weight']*100:.1f}%，超过安全线(30%)。")
+            high_concentration = True
+            
+        if industry_distribution and industry_distribution[0]["weight"] > 0.4:
+            risk_warnings.append(f"行业集中度预警：{industry_distribution[0]['industry']} 占比达到 {industry_distribution[0]['weight']*100:.1f}%，超过安全线(40%)。")
+            high_concentration = True
+            
+        if not risk_warnings:
+            risk_warnings.append("仓位结构健康，未发现明显集中度风险。")
+            
+        total_pnl = total_market_value - total_cost_value
+        total_pnl_pct = (total_pnl / total_cost_value) if total_cost_value > 0 else 0.0
+
+        return {
+            "status": "success",
+            "total_market_value": total_market_value,
+            "total_cost_value": total_cost_value,
+            "total_pnl": total_pnl,
+            "total_pnl_pct": total_pnl_pct,
+            "stock_distribution": stock_values,
+            "industry_distribution": industry_distribution,
+            "high_concentration": high_concentration,
+            "risk_warnings": risk_warnings
+        }
 # 创建全局实例
 portfolio_manager = PortfolioManager()
 
