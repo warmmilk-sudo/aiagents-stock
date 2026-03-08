@@ -50,7 +50,7 @@ risk_method = '''
                             # 尝试获取字符串中的第一个浮点数
                             cp_str = str(stock_info.get("current_price", ""))
                             import re
-                            match = re.search(r'\d+(\.\d+)?', cp_str)
+                            match = re.search(r'\\d+(\\.\\d+)?', cp_str)
                             if match:
                                 current_price = float(match.group())
                         except:

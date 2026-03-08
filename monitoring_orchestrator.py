@@ -41,8 +41,10 @@ class MonitoringOrchestrator:
                 self.tdx_fetcher = SmartMonitorTDXDataFetcher(base_url=tdx_base_url)
                 self.use_tdx = True
                 self.logger.info(f"TDX数据源已启用: {tdx_base_url}")
-            except Exception as exc:
+            except (OSError, RuntimeError, ValueError, TypeError) as exc:
                 self.logger.warning(f"TDX数据源初始化失败，将使用默认数据源: {exc}")
+            except Exception:
+                self.logger.exception("TDX数据源初始化出现未知异常，将降级使用默认数据源")
 
     def start(self):
         if self.running:
@@ -116,25 +118,38 @@ class MonitoringOrchestrator:
             try:
                 self.run_once()
                 time.sleep(self.poll_seconds)
-            except Exception as exc:
-                self.logger.error(f"监测服务执行异常: {exc}")
+            except Exception:
+                self.logger.exception("监测服务执行异常，下一轮将重试")
                 time.sleep(min(self.poll_seconds, 10))
 
     def _dispatch_item(self, item: Dict, force: bool = False) -> bool:
+        symbol = item.get("symbol", "UNKNOWN") if isinstance(item, dict) else "UNKNOWN"
+        item_id = item.get("id") if isinstance(item, dict) else None
         try:
-            if item["monitor_type"] == "price_alert":
+            monitor_type = item.get("monitor_type")
+            if monitor_type == "price_alert":
                 return self._process_price_alert(item, force=force)
-            if item["monitor_type"] == "ai_task":
+            if monitor_type == "ai_task":
                 return self._process_ai_task(item)
-            self.logger.warning(f"未知监控类型: {item['monitor_type']}")
+            self.logger.warning("未知监控类型: %s", monitor_type)
+            return False
+        except (KeyError, TypeError, ValueError) as exc:
+            self.logger.warning("[%s] 监控项数据异常，已降级失败: %s", symbol, exc)
+            if item_id is not None:
+                self.repository.update_runtime(
+                    item_id,
+                    last_status="failed",
+                    last_message=f"invalid_item:{exc}",
+                )
             return False
         except Exception as exc:
-            self.logger.error(f"[{item['symbol']}] 处理监控项失败: {exc}")
-            self.repository.update_runtime(
-                item["id"],
-                last_status="failed",
-                last_message=str(exc),
-            )
+            self.logger.exception("[%s] 处理监控项出现未知异常", symbol)
+            if item_id is not None:
+                self.repository.update_runtime(
+                    item_id,
+                    last_status="failed",
+                    last_message=str(exc),
+                )
             return False
 
     def _process_ai_task(self, item: Dict) -> bool:
@@ -218,8 +233,10 @@ class MonitoringOrchestrator:
                 quote = self.tdx_fetcher.get_realtime_quote(symbol)
                 if quote and quote.get("current_price"):
                     return float(quote["current_price"])
-            except Exception as exc:
+            except (ValueError, TypeError, RuntimeError, OSError, ConnectionError, TimeoutError) as exc:
                 self.logger.warning(f"[{symbol}] TDX获取失败，降级默认数据源: {exc}")
+            except Exception:
+                self.logger.exception("[%s] TDX获取出现未知异常，降级默认数据源", symbol)
 
         try:
             stock_info = self.fetcher.get_stock_info(
@@ -231,8 +248,10 @@ class MonitoringOrchestrator:
             current_price = stock_info.get("current_price")
             if current_price and current_price != "N/A":
                 return float(current_price)
-        except Exception as exc:
+        except (ValueError, TypeError, RuntimeError, OSError, ConnectionError, TimeoutError) as exc:
             self.logger.warning(f"[{symbol}] 默认数据源获取失败: {exc}")
+        except Exception:
+            self.logger.exception("[%s] 默认数据源获取出现未知异常", symbol)
         return None
 
     def _check_trigger_conditions(self, stock: Dict, current_price: float):
@@ -305,8 +324,10 @@ class MonitoringOrchestrator:
                 notification_service.send_notifications()
             else:
                 self.logger.warning(f"[{stock['symbol']}] 量化交易失败: {msg}")
-        except Exception as exc:
-            self.logger.error(f"[{stock['symbol']}] 执行量化交易异常: {exc}")
+        except (ValueError, TypeError, RuntimeError, OSError, ConnectionError, TimeoutError) as exc:
+            self.logger.warning(f"[{stock['symbol']}] 执行量化交易失败，已降级: {exc}")
+        except Exception:
+            self.logger.exception("[%s] 执行量化交易出现未知异常", stock.get("symbol", "UNKNOWN"))
 
     def _is_trading_time(self) -> bool:
         try:
@@ -316,5 +337,9 @@ class MonitoringOrchestrator:
             if scheduler is None:
                 return True
             return scheduler.is_trading_time()
+        except ImportError as exc:
+            self.logger.warning("监控调度器不可用，默认按可交易时段处理: %s", exc)
+            return True
         except Exception:
+            self.logger.exception("读取调度器状态失败，默认按可交易时段处理")
             return True

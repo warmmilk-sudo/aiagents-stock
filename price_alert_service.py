@@ -1,6 +1,7 @@
 import streamlit as st
 
 from monitor_db import monitor_db
+from ui_state_keys import MONITOR_JUMP_HIGHLIGHT_KEY, SMART_MONITOR_ACTIVE_TAB_KEY
 
 
 def create_price_alert(
@@ -77,5 +78,5 @@ def jump_to_price_alert_workspace(symbol: str):
     for key in view_keys:
         st.session_state.pop(key, None)
     st.session_state.show_smart_monitor = True
-    st.session_state.smart_monitor_active_tab = 'price_alert'
-    st.session_state.monitor_jump_highlight = symbol
+    st.session_state[SMART_MONITOR_ACTIVE_TAB_KEY] = "price_alert"
+    st.session_state[MONITOR_JUMP_HIGHLIGHT_KEY] = symbol

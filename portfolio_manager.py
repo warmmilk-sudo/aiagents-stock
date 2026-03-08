@@ -1821,7 +1821,7 @@ class PortfolioManager:
         
         try:
             # 导入app.py中的分析函数
-            from app import analyze_single_stock_for_batch
+            from batch_analysis_service import analyze_single_stock_for_batch
             
             # 构建分析师配置
             if selected_agents is None:

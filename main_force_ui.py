@@ -603,7 +603,7 @@ def run_main_force_batch_analysis(lightweight_model=None, reasoning_model=None):
 
     if start_analysis:
         # 导入统一分析函数（遵循统一规范）
-        from app import analyze_single_stock_for_batch
+        from batch_analysis_service import analyze_single_stock_for_batch
         import concurrent.futures
         import time
 

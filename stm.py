@@ -1,72 +1,149 @@
-# 1. 删除带 \r 的旧文件
-rm -f /www/wwwroot/aiagents-stock/stm /www/wwwroot/aiagents-stock/stm.py
-
-# 2. 重新写入（纯 Unix 换行）
-cat > /www/wwwroot/aiagents-stock/stm << 'EOF'
 #!/usr/bin/env python3
-import os, time, signal, subprocess, psutil
+# -*- coding: utf-8 -*-
+"""
+Simple local process helper for starting/stopping the Streamlit app.
 
-APP_NAME  = "app.py"
-VENV_PATH = "/www/wwwroot/aiagents-stock/venv"
-APP_PATH  = "/www/wwwroot/aiagents-stock"
-PORT      = 8501
-STR = os.path.join(VENV_PATH, "bin", "streamlit")
-LOG = os.path.join(APP_PATH, "app.log")
+Usage:
+  python stm.py start
+  python stm.py stop
+  python stm.py restart
+  python stm.py status
+"""
 
-def is_run():
-    for p in psutil.process_iter(['cmdline']):
-        if p.info['cmdline'] and 'streamlit' in ' '.join(p.info['cmdline']) and 'run' in p.info['cmdline']:
-            return p.pid
+from __future__ import annotations
+
+import argparse
+import os
+import signal
+import subprocess
+import sys
+import time
+from pathlib import Path
+from typing import Optional
+
+try:
+    import psutil
+except Exception:  # pragma: no cover - optional dependency
+    psutil = None
+
+
+ROOT_DIR = Path(__file__).resolve().parent
+APP_NAME = "app.py"
+DEFAULT_PORT = int(os.getenv("STREAMLIT_PORT", "8503"))
+DEFAULT_HOST = os.getenv("STREAMLIT_HOST", "127.0.0.1")
+DEFAULT_LOG = ROOT_DIR / "app.log"
+
+
+def _find_streamlit_pid(app_name: str = APP_NAME) -> Optional[int]:
+    if psutil is None:
+        return None
+    for proc in psutil.process_iter(["pid", "cmdline"]):
+        cmd = proc.info.get("cmdline") or []
+        if not cmd:
+            continue
+        cmd_str = " ".join(str(x) for x in cmd).lower()
+        if "streamlit" in cmd_str and "run" in cmd_str and app_name.lower() in cmd_str:
+            return int(proc.info["pid"])
     return None
 
-def start():
-    if is_run():
-        print("⚠️  已在运行"); return
-    os.chdir(APP_PATH)
-    with open(LOG, "a") as f:
-        subprocess.Popen(["nohup", STR, "run", APP_NAME,
-                          "--server.port", str(PORT),
-                          "--server.address", "0.0.0.0",
-                          "--server.headless", "true"],
-                         stdout=f, stderr=f, preexec_fn=os.setsid)
-    time.sleep(3)
-    print("✅ 启动成功 | http://服务器IP:8501")
 
-def stop():
-    pid = is_run()
+def start(app_name: str = APP_NAME, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT) -> int:
+    existing_pid = _find_streamlit_pid(app_name)
+    if existing_pid:
+        print(f"[INFO] Streamlit is already running (pid={existing_pid})")
+        return 0
+
+    cmd = [
+        sys.executable,
+        "-m",
+        "streamlit",
+        "run",
+        app_name,
+        "--server.port",
+        str(port),
+        "--server.address",
+        host,
+    ]
+    DEFAULT_LOG.parent.mkdir(parents=True, exist_ok=True)
+    log_fp = DEFAULT_LOG.open("a", encoding="utf-8")
+    popen_kwargs = {
+        "cwd": str(ROOT_DIR),
+        "stdout": log_fp,
+        "stderr": log_fp,
+    }
+
+    if os.name == "nt":
+        popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+    else:  # pragma: no cover - platform dependent
+        popen_kwargs["preexec_fn"] = os.setsid
+
+    subprocess.Popen(cmd, **popen_kwargs)
+    time.sleep(1.0)
+    current_pid = _find_streamlit_pid(app_name)
+    if current_pid:
+        print(f"[OK] Started Streamlit (pid={current_pid}) http://{host}:{port}")
+        return 0
+
+    print("[ERR] Failed to detect a started Streamlit process; check app.log")
+    return 1
+
+
+def stop(app_name: str = APP_NAME) -> int:
+    pid = _find_streamlit_pid(app_name)
     if not pid:
-        print("⚠️  未运行"); return
-    os.kill(pid, signal.SIGTERM)
-    time.sleep(2)
-    if is_run():
-        os.kill(pid, signal.SIGKILL)
-    print("✅ 已停止")
+        print("[INFO] Streamlit is not running")
+        return 0
 
-menu = """1) 启动  2) 停止  3) 重启  4) 状态  5) 日志  0) 退出"""
-def main():
-    while True:
-        print(menu)
-        c = input("选 > ").strip()
-        if c == '1': start()
-        elif c == '2': stop()
-        elif c == '3': stop(); time.sleep(2); start()
-        elif c == '4':
-            pid = is_run()
-            print("✅ 运行中" if pid else "❌ 未运行")
-        elif c == '5': os.system("tail -n 50 " + LOG)
-        elif c == '0': break
-        else: print("无效")
-        input("\n回车继续 …")
+    try:
+        if psutil is not None:
+            proc = psutil.Process(pid)
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except psutil.TimeoutExpired:
+                proc.kill()
+        else:
+            os.kill(pid, signal.SIGTERM)
+    except Exception as exc:
+        print(f"[ERR] Failed to stop process {pid}: {exc}")
+        return 1
 
-if __name__ == "__main__": main()
-EOF
+    print(f"[OK] Stopped Streamlit (pid={pid})")
+    return 0
 
-# 3. 赋可执行权限
-chmod +x /www/wwwroot/aiagents-stock/stm
 
-# 4. 确保 PATH 包含当前目录（已加可忽略）
-echo 'export PATH="/www/wwwroot/aiagents-stock:$PATH"' >> ~/.bashrc
-source ~/.bashrc
+def status(app_name: str = APP_NAME) -> int:
+    pid = _find_streamlit_pid(app_name)
+    if pid:
+        print(f"[OK] Streamlit running (pid={pid})")
+    else:
+        print("[INFO] Streamlit not running")
+    return 0
 
-# 5. 运行
-stm
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Manage Streamlit process for this project.")
+    parser.add_argument("action", choices=["start", "stop", "restart", "status"])
+    parser.add_argument("--app", default=APP_NAME, help="App entry file, default: app.py")
+    parser.add_argument("--host", default=DEFAULT_HOST, help="Streamlit bind host")
+    parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="Streamlit port")
+    return parser
+
+
+def main() -> int:
+    parser = _build_parser()
+    args = parser.parse_args()
+    if args.action == "start":
+        return start(app_name=args.app, host=args.host, port=args.port)
+    if args.action == "stop":
+        return stop(app_name=args.app)
+    if args.action == "restart":
+        rc = stop(app_name=args.app)
+        if rc != 0:
+            return rc
+        return start(app_name=args.app, host=args.host, port=args.port)
+    return status(app_name=args.app)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

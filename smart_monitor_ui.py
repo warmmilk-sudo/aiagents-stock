@@ -16,6 +16,11 @@ from smart_monitor_engine import SmartMonitorEngine
 from smart_monitor_db import SmartMonitorDB
 from config_manager import config_manager  # 使用主程序的配置管理器
 from portfolio_manager import portfolio_manager
+from ui_state_keys import (
+    SMART_MONITOR_ACTIVE_TAB_KEY,
+    SMART_MONITOR_DB_KEY,
+    SMART_MONITOR_ENGINE_KEY,
+)
 from ui_shared import (
     format_price,
     get_dataframe_height,
@@ -29,7 +34,7 @@ from ui_shared import (
 load_dotenv()
 
 
-def smart_monitor_ui(lightweight_model=None, reasoning_model=None):
+def _legacy_smart_monitor_ui(lightweight_model=None, reasoning_model=None):
     """AI盯盘主界面"""
 
     # 使用说明
@@ -153,20 +158,20 @@ def smart_monitor_ui(lightweight_model=None, reasoning_model=None):
         reasoning_model = st.session_state.get('selected_reasoning_model', config.REASONING_MODEL_NAME)
 
     # 初始化组件（自动从配置读取）
-    if 'engine' not in st.session_state:
+    if SMART_MONITOR_ENGINE_KEY not in st.session_state:
         try:
             # SmartMonitorEngine会自动从config_manager读取配置
-            st.session_state.engine = SmartMonitorEngine(
+            st.session_state[SMART_MONITOR_ENGINE_KEY] = SmartMonitorEngine(
                 lightweight_model=lightweight_model,
                 reasoning_model=reasoning_model,
             )
-            st.session_state.db = SmartMonitorDB()
+            st.session_state[SMART_MONITOR_DB_KEY] = SmartMonitorDB()
         except Exception as e:
             st.error(f"初始化失败: {e}")
             st.error("请先在'环境配置'中完成基础配置")
             return
     else:
-        st.session_state.engine.set_model_overrides(
+        st.session_state[SMART_MONITOR_ENGINE_KEY].set_model_overrides(
             lightweight_model=lightweight_model,
             reasoning_model=reasoning_model,
         )
@@ -230,7 +235,7 @@ def render_realtime_analysis():
         
         # 显示进度
         with st.spinner('正在分析...'):
-            engine = st.session_state.engine
+            engine = st.session_state[SMART_MONITOR_ENGINE_KEY]
             result = engine.analyze_stock(
                 stock_code=stock_code,
                 auto_trade=auto_trade,
@@ -346,8 +351,8 @@ def render_monitor_tasks():
     
     st.header("监控任务管理")
     
-    db = st.session_state.db
-    engine = st.session_state.engine
+    db = st.session_state[SMART_MONITOR_DB_KEY]
+    engine = st.session_state[SMART_MONITOR_ENGINE_KEY]
     
     # 添加新任务
     with st.expander("添加新监控任务", expanded=True):
@@ -584,7 +589,7 @@ def render_position_management():
     
     st.header("持仓管理")
     
-    engine = st.session_state.engine
+    engine = st.session_state[SMART_MONITOR_ENGINE_KEY]
     qmt = engine.qmt
     
     # 获取账户信息
@@ -698,7 +703,7 @@ def render_history():
     
     st.header("历史记录")
     
-    db = st.session_state.db
+    db = st.session_state[SMART_MONITOR_DB_KEY]
     
     tab1, tab2, tab3 = st.tabs(["AI决策历史", "交易记录", "通知记录"])
     
@@ -852,19 +857,19 @@ def _ensure_smart_monitor_runtime(lightweight_model=None, reasoning_model=None):
     if reasoning_model is None:
         reasoning_model = st.session_state.get('selected_reasoning_model', config.REASONING_MODEL_NAME)
 
-    if 'engine' not in st.session_state:
-        st.session_state.engine = SmartMonitorEngine(
+    if SMART_MONITOR_ENGINE_KEY not in st.session_state:
+        st.session_state[SMART_MONITOR_ENGINE_KEY] = SmartMonitorEngine(
             lightweight_model=lightweight_model,
             reasoning_model=reasoning_model,
         )
-        st.session_state.db = SmartMonitorDB()
+        st.session_state[SMART_MONITOR_DB_KEY] = SmartMonitorDB()
     else:
-        st.session_state.engine.set_model_overrides(
+        st.session_state[SMART_MONITOR_ENGINE_KEY].set_model_overrides(
             lightweight_model=lightweight_model,
             reasoning_model=reasoning_model,
         )
 
-    return st.session_state.engine, st.session_state.db
+    return st.session_state[SMART_MONITOR_ENGINE_KEY], st.session_state[SMART_MONITOR_DB_KEY]
 
 
 def render_ai_monitor_tasks_panel():
@@ -872,7 +877,7 @@ def render_ai_monitor_tasks_panel():
 
     st.header("AI监控任务")
 
-    db = st.session_state.db
+    db = st.session_state[SMART_MONITOR_DB_KEY]
     service_status = "运行中" if monitor_service.running else "已停止"
     st.caption(f"监测服务状态: {service_status}。启用中的任务会由统一监测服务按分钟调度执行。")
 
@@ -987,7 +992,7 @@ def smart_monitor_ui(lightweight_model=None, reasoning_model=None):
 
     _ensure_smart_monitor_runtime(lightweight_model, reasoning_model)
 
-    desired_tab = st.session_state.get('smart_monitor_active_tab', 'realtime')
+    desired_tab = st.session_state.get(SMART_MONITOR_ACTIVE_TAB_KEY, "realtime")
     tab_labels = [
         "实时分析",
         "AI监控任务",
@@ -1005,7 +1010,7 @@ def smart_monitor_ui(lightweight_model=None, reasoning_model=None):
 
     if desired_tab in tab_key_to_label and desired_tab != "realtime":
         st.caption(f"已打开 AI 盯盘，请切换到“{tab_key_to_label[desired_tab]}”标签查看目标内容。")
-        st.session_state.pop('smart_monitor_active_tab', None)
+        st.session_state.pop(SMART_MONITOR_ACTIVE_TAB_KEY, None)
 
     tabs = st.tabs(tab_labels)
 

@@ -20,15 +20,20 @@ from stock_data import StockDataFetcher
 from stock_data_cache import extract_cache_meta, strip_cache_meta
 from miniqmt_interface import miniqmt, get_miniqmt_status, QuantStrategyConfig
 from ui_shared import format_price, get_recommendation_color
+from ui_state_keys import (
+    MONITOR_DELETING_STOCK_ID_KEY,
+    MONITOR_EDITING_STOCK_ID_KEY,
+    MONITOR_JUMP_HIGHLIGHT_KEY,
+)
 
-def display_monitor_manager():
+def _legacy_display_monitor_manager():
     """显示监测管理主页面"""
 
     # 检查是否有跳转提示
-    if 'monitor_jump_highlight' in st.session_state:
-        symbol = st.session_state.monitor_jump_highlight
+    if MONITOR_JUMP_HIGHLIGHT_KEY in st.session_state:
+        symbol = st.session_state[MONITOR_JUMP_HIGHLIGHT_KEY]
         st.success(f"✅ {symbol} 已成功加入监测列表！您可以在下方查看。")
-        del st.session_state.monitor_jump_highlight
+        del st.session_state[MONITOR_JUMP_HIGHLIGHT_KEY]
     
     # 监测服务状态
     display_monitor_status()
@@ -238,12 +243,12 @@ def display_monitored_stocks():
         display_stock_card(stock)
     
     # 显示编辑对话框
-    if 'editing_stock_id' in st.session_state:
-        display_edit_dialog(st.session_state.editing_stock_id)
+    if MONITOR_EDITING_STOCK_ID_KEY in st.session_state:
+        display_edit_dialog(st.session_state[MONITOR_EDITING_STOCK_ID_KEY])
     
     # 显示删除确认对话框
-    if 'deleting_stock_id' in st.session_state:
-        display_delete_confirm_dialog(st.session_state.deleting_stock_id)
+    if MONITOR_DELETING_STOCK_ID_KEY in st.session_state:
+        display_delete_confirm_dialog(st.session_state[MONITOR_DELETING_STOCK_ID_KEY])
 
 def display_stock_card(stock: Dict):
     """显示单个股票监测卡片"""
@@ -324,7 +329,7 @@ def display_stock_card(stock: Dict):
 
         with action_col2:
             if st.button("编辑", key=f"edit_{stock['id']}"):
-                st.session_state.editing_stock_id = stock['id']
+                st.session_state[MONITOR_EDITING_STOCK_ID_KEY] = stock['id']
                 st.rerun()
 
         toggle_col, delete_col = st.columns(2)
@@ -344,7 +349,7 @@ def display_stock_card(stock: Dict):
 
         with delete_col:
             if st.button("删除", key=f"delete_{stock['id']}"):
-                st.session_state.deleting_stock_id = stock['id']
+                st.session_state[MONITOR_DELETING_STOCK_ID_KEY] = stock['id']
                 st.rerun()
 
         st.markdown(
@@ -352,13 +357,13 @@ def display_stock_card(stock: Dict):
             unsafe_allow_html=True,
         )
 
-def display_edit_dialog(stock_id: int):
+def _legacy_display_edit_dialog(stock_id: int):
     """显示编辑股票对话框"""
     
     stock = monitor_db.get_stock_by_id(stock_id)
     if not stock:
         st.error("❌ 股票不存在")
-        del st.session_state.editing_stock_id
+        del st.session_state[MONITOR_EDITING_STOCK_ID_KEY]
         return
     
     st.markdown("---")
@@ -430,7 +435,7 @@ def display_edit_dialog(stock_id: int):
                     )
                     
                     st.success("✅ 修改已保存")
-                    del st.session_state.editing_stock_id
+                    del st.session_state[MONITOR_EDITING_STOCK_ID_KEY]
                     st.rerun()
                 except Exception as e:
                     st.error(f"❌ 保存失败: {str(e)}")
@@ -438,17 +443,17 @@ def display_edit_dialog(stock_id: int):
                 st.error("❌ 请输入有效的进场区间")
         
         if cancel:
-            del st.session_state.editing_stock_id
+            del st.session_state[MONITOR_EDITING_STOCK_ID_KEY]
             st.rerun()
 
-def display_delete_confirm_dialog(stock_id: int):
+def _legacy_display_delete_confirm_dialog(stock_id: int):
     """显示删除确认对话框"""
     
     stock = monitor_db.get_stock_by_id(stock_id)
     if not stock:
         st.error("❌ 股票不存在或已被删除")
-        if 'deleting_stock_id' in st.session_state:
-            del st.session_state.deleting_stock_id
+        if MONITOR_DELETING_STOCK_ID_KEY in st.session_state:
+            del st.session_state[MONITOR_DELETING_STOCK_ID_KEY]
         st.rerun()
         return
     
@@ -475,8 +480,8 @@ def display_delete_confirm_dialog(stock_id: int):
                 result = monitor_db.remove_monitored_stock(stock_id)
                 if result:
                     # 清理session state
-                    if 'deleting_stock_id' in st.session_state:
-                        del st.session_state.deleting_stock_id
+                    if MONITOR_DELETING_STOCK_ID_KEY in st.session_state:
+                        del st.session_state[MONITOR_DELETING_STOCK_ID_KEY]
                     
                     st.success("✅ 已成功删除监测")
                     st.balloons()
@@ -485,19 +490,19 @@ def display_delete_confirm_dialog(stock_id: int):
                 else:
                     st.error("❌ 删除失败：股票不存在或已被删除")
                     time.sleep(1)
-                    if 'deleting_stock_id' in st.session_state:
-                        del st.session_state.deleting_stock_id
+                    if MONITOR_DELETING_STOCK_ID_KEY in st.session_state:
+                        del st.session_state[MONITOR_DELETING_STOCK_ID_KEY]
                     st.rerun()
             except Exception as e:
                 st.error(f"❌ 删除失败：{str(e)}")
                 time.sleep(1)
-                if 'deleting_stock_id' in st.session_state:
-                    del st.session_state.deleting_stock_id
+                if MONITOR_DELETING_STOCK_ID_KEY in st.session_state:
+                    del st.session_state[MONITOR_DELETING_STOCK_ID_KEY]
                 st.rerun()
     
     with col2:
         if st.button("❌ 取消", width='stretch', key=f"cancel_delete_{stock_id}"):
-            del st.session_state.deleting_stock_id
+            del st.session_state[MONITOR_DELETING_STOCK_ID_KEY]
             st.rerun()
 
 def display_notification_management():
@@ -849,7 +854,7 @@ def display_scheduler_section():
             if st.button("🔄 刷新状态", width='stretch'):
                 st.rerun()
 
-def get_monitor_summary():
+def _legacy_get_monitor_summary():
     """获取监测摘要信息"""
     stocks = monitor_db.get_monitored_stocks()
     
@@ -864,10 +869,10 @@ def get_monitor_summary():
 
 
 def _show_monitor_jump_success():
-    if 'monitor_jump_highlight' in st.session_state:
-        symbol = st.session_state.monitor_jump_highlight
+    if MONITOR_JUMP_HIGHLIGHT_KEY in st.session_state:
+        symbol = st.session_state[MONITOR_JUMP_HIGHLIGHT_KEY]
         st.success(f"{symbol} 已成功加入价格预警。")
-        del st.session_state.monitor_jump_highlight
+        del st.session_state[MONITOR_JUMP_HIGHLIGHT_KEY]
 
 
 def display_price_alert_workspace():
@@ -982,7 +987,7 @@ def display_edit_dialog(stock_id: int):
     stock = monitor_db.get_stock_by_id(stock_id)
     if not stock:
         st.error("价格预警不存在。")
-        st.session_state.pop('editing_stock_id', None)
+        st.session_state.pop(MONITOR_EDITING_STOCK_ID_KEY, None)
         return
 
     st.markdown("---")
@@ -999,7 +1004,7 @@ def display_edit_dialog(stock_id: int):
             if submit:
                 monitor_db.toggle_notification(stock_id, notification_enabled)
                 st.success("通知设置已更新。")
-                st.session_state.pop('editing_stock_id', None)
+                st.session_state.pop(MONITOR_EDITING_STOCK_ID_KEY, None)
                 st.rerun()
         else:
             col1, col2 = st.columns(2)
@@ -1029,11 +1034,11 @@ def display_edit_dialog(stock_id: int):
                         notification_enabled=notification_enabled,
                     )
                     st.success("价格预警已更新。")
-                    st.session_state.pop('editing_stock_id', None)
+                    st.session_state.pop(MONITOR_EDITING_STOCK_ID_KEY, None)
                     st.rerun()
 
     if st.button("取消编辑", key=f"cancel_edit_price_alert_{stock_id}", width='stretch'):
-        st.session_state.pop('editing_stock_id', None)
+        st.session_state.pop(MONITOR_EDITING_STOCK_ID_KEY, None)
         st.rerun()
 
 
@@ -1042,7 +1047,7 @@ def display_delete_confirm_dialog(stock_id: int):
     stock = monitor_db.get_stock_by_id(stock_id)
     if not stock:
         st.error("价格预警不存在或已删除。")
-        st.session_state.pop('deleting_stock_id', None)
+        st.session_state.pop(MONITOR_DELETING_STOCK_ID_KEY, None)
         st.rerun()
         return
 
@@ -1052,7 +1057,7 @@ def display_delete_confirm_dialog(stock_id: int):
     if stock.get('managed_by_portfolio'):
         st.warning("该价格预警来自持仓分析托管，不能在这里删除。请到持仓分析源头移除。")
         if st.button("关闭", key=f"close_delete_blocked_{stock_id}", width='stretch'):
-            st.session_state.pop('deleting_stock_id', None)
+            st.session_state.pop(MONITOR_DELETING_STOCK_ID_KEY, None)
             st.rerun()
         return
 
@@ -1064,9 +1069,9 @@ def display_delete_confirm_dialog(stock_id: int):
         if st.button("确认删除", type="primary", key=f"confirm_delete_price_alert_{stock_id}", width='stretch'):
             monitor_db.remove_monitored_stock(stock_id)
             st.success("价格预警已删除。")
-            st.session_state.pop('deleting_stock_id', None)
+            st.session_state.pop(MONITOR_DELETING_STOCK_ID_KEY, None)
             st.rerun()
     with col2:
         if st.button("取消", key=f"cancel_delete_price_alert_{stock_id}", width='stretch'):
-            st.session_state.pop('deleting_stock_id', None)
+            st.session_state.pop(MONITOR_DELETING_STOCK_ID_KEY, None)
             st.rerun()

@@ -15,6 +15,7 @@ from model_config import get_lightweight_model_options, get_reasoning_model_opti
 from stock_data import StockDataFetcher
 from stock_data_cache import clear_stock_data_cache, extract_cache_meta, strip_cache_meta
 from ai_agents import StockAnalysisAgents
+from batch_analysis_service import analyze_single_stock_for_batch as analyze_single_stock_for_batch_service
 from pdf_generator import display_pdf_export_section
 from database import db
 from monitor_manager import display_monitor_manager, get_monitor_summary
@@ -1485,11 +1486,11 @@ def parse_stock_list(stock_input):
 
     return unique_list
 
-def analyze_single_stock_for_batch(symbol, period, enabled_analysts_config=None,
-                                   selected_model=None,
-                                   selected_lightweight_model=None,
-                                   selected_reasoning_model=None,
-                                   save_to_global_history=True):
+def _legacy_analyze_single_stock_for_batch(symbol, period, enabled_analysts_config=None,
+                                           selected_model=None,
+                                           selected_lightweight_model=None,
+                                           selected_reasoning_model=None,
+                                           save_to_global_history=True):
     """单个股票分析（用于批量分析）
 
     Args:
@@ -1647,6 +1648,23 @@ def analyze_single_stock_for_batch(symbol, period, enabled_analysts_config=None,
 
     except Exception as e:
         return {"symbol": symbol, "error": str(e), "success": False}
+
+def analyze_single_stock_for_batch(symbol, period, enabled_analysts_config=None,
+                                   selected_model=None,
+                                   selected_lightweight_model=None,
+                                   selected_reasoning_model=None,
+                                   save_to_global_history=True):
+    """Compatibility wrapper delegating batch single-stock analysis to shared service."""
+    return analyze_single_stock_for_batch_service(
+        symbol=symbol,
+        period=period,
+        enabled_analysts_config=enabled_analysts_config,
+        selected_model=selected_model,
+        selected_lightweight_model=selected_lightweight_model,
+        selected_reasoning_model=selected_reasoning_model,
+        save_to_global_history=save_to_global_history,
+    )
+
 
 def run_batch_analysis(stock_list, period, batch_mode="顺序分析"):
     """运行批量股票分析"""
@@ -2202,7 +2220,7 @@ def display_final_decision(final_decision, stock_info, agents_results=None, disc
     else:
         st.warning("PDF导出功能需要完整的分析数据")
 
-def show_example_interface():
+def _legacy_show_example_interface():
     """显示示例界面"""
     st.subheader("使用说明")
 
