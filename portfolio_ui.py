@@ -1492,6 +1492,25 @@ def display_analysis_history():
         display_history_record(record)
 
 
+def _render_history_delete_action(record: Dict):
+    """在历史记录详情底部渲染删除按钮。"""
+    analysis_id = record.get("id")
+    if not analysis_id:
+        return
+
+    st.markdown("---")
+    col1, col2 = st.columns([1, 4])
+    with col1:
+        if st.button("删除记录", key=f"portfolio_history_delete_{analysis_id}", width="content"):
+            success, msg = portfolio_manager.delete_analysis_record(int(analysis_id))
+            if success:
+                st.success(msg)
+                st.rerun()
+            st.error(msg)
+    with col2:
+        st.caption("删除后该条分析历史将不可恢复。")
+
+
 def display_history_record(record: Dict):
     """显示单条历史记录"""
     
@@ -1561,6 +1580,7 @@ def display_history_record(record: Dict):
                 include_agents=False,
                 extra_sections=[("最终决策推理", decision_reasoning)] if decision_reasoning else None,
             )
+            _render_history_delete_action(record)
             return
 
         st.markdown(
@@ -1596,4 +1616,6 @@ def display_history_record(record: Dict):
         if summary:
             st.markdown("**分析摘要**")
             st.info(summary)
+
+        _render_history_delete_action(record)
 

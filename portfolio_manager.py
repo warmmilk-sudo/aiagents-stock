@@ -2183,6 +2183,16 @@ class PortfolioManager:
     def get_analysis_history(self, stock_id: int, limit: int = 10) -> List[Dict]:
         """获取股票分析历史"""
         return self.db.get_analysis_history(stock_id, limit)
+
+    def delete_analysis_record(self, analysis_id: int) -> Tuple[bool, str]:
+        """删除单条分析历史记录。"""
+        try:
+            deleted = self.db.delete_analysis_record(analysis_id)
+            if deleted:
+                return True, "分析历史记录已删除"
+            return False, "未找到对应的分析历史记录"
+        except Exception as e:
+            return False, f"删除分析历史记录失败: {e}"
     
     def get_latest_analysis(self, stock_id: int) -> Optional[Dict]:
         """获取最新一次分析"""

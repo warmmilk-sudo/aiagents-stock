@@ -174,6 +174,23 @@ class PortfolioHistoryPersistenceTests(unittest.TestCase):
         self.assertEqual(payload["rating"], "持有")
         self.assertEqual(payload["summary"], "评级: 持有")
 
+    def test_delete_analysis_record_removes_single_history_entry(self):
+        stock_id = self._add_stock("000001")
+        analysis_id = self.portfolio_db.save_analysis(
+            stock_id=stock_id,
+            rating="买入",
+            confidence=7.5,
+            current_price=12.3,
+            target_price=13.8,
+            summary="测试删除",
+            analysis_source="portfolio_single_analysis",
+            has_full_report=False,
+        )
+
+        success, msg = self.manager.delete_analysis_record(analysis_id)
+        self.assertTrue(success, msg)
+        self.assertEqual(self.portfolio_db.get_analysis_history(stock_id, limit=10), [])
+
     def test_build_stock_card_view_model_formats_name_pnl_and_summary(self):
         view_model = self.manager.build_stock_card_view_model(
             stock={

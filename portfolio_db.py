@@ -800,7 +800,28 @@ class PortfolioDB:
             分析历史记录列表（按时间倒序）
         """
         return self.get_analysis_history(stock_id, limit)
-    
+
+    def delete_analysis_record(self, analysis_id: int) -> bool:
+        """删除单条分析历史记录。"""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute(
+                '''
+                DELETE FROM portfolio_analysis_history
+                WHERE id = ?
+                ''',
+                (analysis_id,),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
     def get_latest_analysis(self, stock_id: int) -> Optional[Dict]:
         """
         获取股票的最新一次分析记录
