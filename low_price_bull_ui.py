@@ -12,6 +12,7 @@ from low_price_bull_strategy import LowPriceBullStrategy
 from notification_service import notification_service
 from low_price_bull_monitor import low_price_bull_monitor
 from low_price_bull_service import low_price_bull_service
+from ui_shared import get_dataframe_height
 
 def display_stock_results(stocks_df: pd.DataFrame, selector):
     """显示选股结果"""
@@ -112,7 +113,11 @@ def display_stock_results(stocks_df: pd.DataFrame, selector):
     final_cols = [col for col in display_cols if col in stocks_df.columns]
     
     if final_cols:
-        st.dataframe(stocks_df[final_cols], width='content', height=400)
+        st.dataframe(
+            stocks_df[final_cols],
+            width='content',
+            height=get_dataframe_height(len(stocks_df[final_cols]), max_rows=40),
+        )
         
         # 下载按钮
         csv = stocks_df[final_cols].to_csv(index=False, encoding='utf-8-sig')

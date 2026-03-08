@@ -26,6 +26,25 @@ NON_MARKET_PALETTE = {
 }
 
 
+def get_dataframe_height(
+    row_count: int,
+    *,
+    min_rows: int = 4,
+    max_rows: int = 50,
+    row_px: int = 35,
+    header_px: int = 38,
+    padding_px: int = 8,
+) -> int:
+    """Return an expanded dataframe height so most tables use page scrolling."""
+    try:
+        rows = max(int(row_count), 0)
+    except (TypeError, ValueError):
+        rows = 0
+
+    visible_rows = min(max(rows, min_rows), max_rows)
+    return header_px + visible_rows * row_px + padding_px
+
+
 def _safe_text(value: Any) -> str:
     return html.escape("" if value is None else str(value))
 

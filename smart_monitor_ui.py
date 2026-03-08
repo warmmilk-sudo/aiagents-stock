@@ -18,6 +18,7 @@ from config_manager import config_manager  # 使用主程序的配置管理器
 from portfolio_manager import portfolio_manager
 from ui_shared import (
     format_price,
+    get_dataframe_height,
     get_action_color,
     get_market_color,
     render_a_share_change_metric,
@@ -660,7 +661,8 @@ def render_position_management():
             "source": "来源",
         },
         hide_index=True,
-        width='stretch'
+        width='stretch',
+        height=get_dataframe_height(len(df), max_rows=40),
     )
     
     # 单只股票操作
@@ -751,7 +753,8 @@ def render_history():
                     "profit_loss": "盈亏"
                 },
                 hide_index=True,
-                width='stretch'
+                width='stretch',
+                height=get_dataframe_height(len(df), max_rows=50),
             )
     
     # 通知记录

@@ -9,6 +9,7 @@ import plotly.express as px
 import pandas as pd
 from datetime import datetime, timedelta
 import time
+from ui_shared import get_dataframe_height
 
 
 def display_news_flow_monitor(lightweight_model=None, reasoning_model=None):
@@ -330,7 +331,7 @@ def display_wordcloud_and_top_news():
                     df_news[['排名', '平台', '类别', '标题', '综合分']],
                     width='stretch',
                     hide_index=True,
-                    height=400
+                    height=get_dataframe_height(len(df_news), max_rows=40)
                 )
                 
                 st.caption(f"共 {len(df_news)} 条新闻 | 数据来源: {multi_result.get('success_count', 0)} 个平台")

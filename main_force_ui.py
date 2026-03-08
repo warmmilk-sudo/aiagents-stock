@@ -12,6 +12,7 @@ from main_force_analysis import MainForceAnalyzer
 from main_force_pdf_generator import display_report_download_section
 from main_force_history_ui import display_batch_history
 import pandas as pd
+from ui_shared import get_dataframe_height
 
 
 def build_main_force_display_context(analyzer=None):
@@ -292,7 +293,11 @@ def display_analysis_results(result: dict, analyzer):
 
         # 显示DataFrame
         display_df = analyzer.raw_stocks[final_cols].copy()
-        st.dataframe(display_df, width='content', height=400)
+        st.dataframe(
+            display_df,
+            width='content',
+            height=get_dataframe_height(len(display_df), max_rows=40),
+        )
 
         # 显示统计
         st.caption(f"共 {len(display_df)} 只候选股票，显示 {len(final_cols)} 个字段")
@@ -884,7 +889,11 @@ def display_main_force_batch_results(batch_results):
             if col in df_display.columns:
                 df_display[col] = df_display[col].astype(str)
 
-        st.dataframe(df_display, width='content', height=400)
+        st.dataframe(
+            df_display,
+            width='content',
+            height=get_dataframe_height(len(df_display), max_rows=40),
+        )
 
         # 详细分析结果（可展开）
         st.markdown("---")

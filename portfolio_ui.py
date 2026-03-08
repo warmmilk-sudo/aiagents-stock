@@ -18,6 +18,7 @@ from portfolio_manager import portfolio_manager
 from portfolio_scheduler import portfolio_scheduler
 from ui_shared import (
     _resolve_final_decision_content,
+    get_dataframe_height,
     get_recommendation_color,
     render_agents_analysis_tabs,
     render_final_decision,
@@ -517,6 +518,7 @@ def display_portfolio_risk():
                 df_ind[["industry", "市值", "占比"]].rename(columns={"industry": "行业"}),
                 hide_index=True,
                 width="stretch",
+                height=get_dataframe_height(len(df_ind), max_rows=20),
             )
             
     with col2:
@@ -532,6 +534,7 @@ def display_portfolio_risk():
                 df_st[["name", "市值", "占比", "盈亏比例"]].rename(columns={"name": "股票"}),
                 hide_index=True,
                 width="stretch",
+                height=get_dataframe_height(len(df_st), max_rows=20),
             )
 
 

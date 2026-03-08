@@ -9,6 +9,7 @@ import pandas as pd
 from datetime import datetime
 from value_stock_selector import ValueStockSelector
 from value_stock_strategy import ValueStockStrategy
+from ui_shared import get_dataframe_height
 
 
 def build_value_stock_filter_summary(
@@ -302,7 +303,11 @@ def display_stock_results(stocks_df: pd.DataFrame, selector):
     final_cols = [col for col in display_cols if col in stocks_df.columns]
 
     if final_cols:
-        st.dataframe(stocks_df[final_cols], width='content', height=400)
+        st.dataframe(
+            stocks_df[final_cols],
+            width='content',
+            height=get_dataframe_height(len(stocks_df[final_cols]), max_rows=40),
+        )
 
         csv = stocks_df[final_cols].to_csv(index=False, encoding='utf-8-sig')
         st.download_button(

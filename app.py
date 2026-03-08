@@ -27,6 +27,7 @@ from longhubang_ui import display_longhubang
 from smart_monitor_ui import smart_monitor_ui
 from news_flow_ui import display_news_flow_monitor
 from ui_shared import (
+    get_dataframe_height,
     get_recommendation_color,
     render_a_share_change_metric,
     render_final_decision as shared_render_final_decision,
@@ -3208,7 +3209,7 @@ def display_comparison_table(results):
     st.dataframe(
         df,
         width='stretch',
-        height=400
+        height=get_dataframe_height(len(df), max_rows=40)
     )
 
     # 添加评级说明
