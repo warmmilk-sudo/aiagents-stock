@@ -6,9 +6,13 @@
 
 import time
 import re
-from typing import List, Dict, Optional, Tuple
+import math
+from datetime import date, datetime, timedelta
+from typing import Any, Dict, List, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
+
+import numpy as np
+import pandas as pd
 
 # 导入必要的模块
 from portfolio_db import portfolio_db
@@ -21,6 +25,9 @@ class PortfolioManager:
 
     DEFAULT_SMART_MONITOR_CHECK_INTERVAL = 300
     DEFAULT_REALTIME_MONITOR_CHECK_INTERVAL = 60
+    DEFAULT_RISK_FREE_RATE = 0.015
+    AGGREGATE_ACCOUNT_NAME = "全部账户"
+    DEFAULT_ANALYSIS_AGENTS = ["technical", "fundamental", "fund_flow", "risk"]
     
     def __init__(self, model=None, lightweight_model=None, reasoning_model=None,
                  portfolio_store=None,
@@ -38,6 +45,7 @@ class PortfolioManager:
         self.realtime_monitor_db = realtime_monitor_store or realtime_monitor_db
         self.smart_monitor_db = smart_monitor_store or SmartMonitorDB()
         self._integrations_reconcile_pending = True
+        self._stock_data_fetcher = None
 
     def _mark_integrations_reconcile_pending(self) -> None:
         self._integrations_reconcile_pending = True
@@ -179,8 +187,17 @@ class PortfolioManager:
                 return False, f"股票代码 {code} 已存在", None
             
             # 添加到数据库
-            stock_id = self.db.add_stock(code, final_name, cost_price, quantity, note, auto_monitor)
+            stock_id = self.db.add_stock(
+                code,
+                final_name,
+                cost_price,
+                quantity,
+                note,
+                auto_monitor,
+                account_name,
+            )
             self._mark_integrations_reconcile_pending()
+            self.capture_daily_snapshot(account_name=account_name, source="manual")
             warning = ""
             if auto_monitor:
                 try:
@@ -221,6 +238,10 @@ class PortfolioManager:
                     self.remove_managed_integrations_for_code(old_code)
 
                 try:
+                    self.capture_daily_snapshot(
+                        account_name=updated_stock.get("account_name", existing.get("account_name", "默认账户")),
+                        source="manual",
+                    )
                     if updated_stock.get("auto_monitor"):
                         self._sync_stock_to_smart_monitor(updated_stock)
                     else:
@@ -252,6 +273,10 @@ class PortfolioManager:
             success = self.db.delete_stock(stock_id)
             if success:
                 self._mark_integrations_reconcile_pending()
+                self.capture_daily_snapshot(
+                    account_name=existing.get("account_name", "默认账户"),
+                    source="manual",
+                )
                 warning = ""
                 try:
                     self.remove_managed_integrations_for_code(existing["code"])
@@ -263,6 +288,132 @@ class PortfolioManager:
         except Exception as e:
             return False, f"删除失败: {str(e)}"
     
+    def _normalize_trade_type(self, trade_type: str) -> str:
+        normalized = str(trade_type or "").strip().lower()
+        if normalized in {"buy", "加仓", "买入", "建仓"}:
+            return "buy"
+        if normalized in {"sell", "减仓", "卖出"}:
+            return "sell"
+        return ""
+
+    def seed_initial_trade(
+        self,
+        stock_id: int,
+        trade_date: Optional[Any] = None,
+        note: str = "",
+    ) -> Tuple[bool, str]:
+        """为新增持仓补写首笔建仓记录，不改变当前持仓数量。"""
+        stock = self.db.get_stock(stock_id)
+        if not stock:
+            return False, f"未找到股票ID: {stock_id}"
+
+        quantity = self._safe_int(stock.get("quantity"))
+        cost_price = self._safe_float(stock.get("cost_price"))
+        if quantity <= 0 or cost_price <= 0:
+            return False, "当前持仓缺少成本价或数量，无法写入首笔建仓记录"
+
+        summary = self.db.get_trade_summary_map([stock_id]).get(stock_id, {})
+        if summary.get("trade_count", 0) > 0:
+            return True, "已有交易记录，跳过首笔建仓记录补写"
+
+        self.db.add_trade_history(
+            stock_id=stock_id,
+            trade_type="buy",
+            trade_date=self._format_date_value(trade_date) or datetime.now().strftime("%Y-%m-%d"),
+            price=cost_price,
+            quantity=quantity,
+            note=(note or "").strip(),
+            trade_source="initial_position",
+        )
+        return True, "已补写首笔建仓记录"
+
+    def record_trade(
+        self,
+        stock_id: int,
+        trade_type: str,
+        quantity: int,
+        price: float,
+        trade_date: Optional[Any] = None,
+        note: str = "",
+    ) -> Tuple[bool, str, Optional[Dict]]:
+        """记录加仓/减仓交易，并同步更新当前持仓。"""
+        normalized_trade_type = self._normalize_trade_type(trade_type)
+        if normalized_trade_type not in {"buy", "sell"}:
+            return False, "交易类型仅支持加仓/减仓", None
+
+        stock = self.db.get_stock(stock_id)
+        if not stock:
+            return False, f"未找到股票ID: {stock_id}", None
+
+        trade_quantity = self._safe_int(quantity)
+        trade_price = self._safe_float(price)
+        if trade_quantity <= 0:
+            return False, "交易数量必须大于 0", None
+        if trade_price <= 0:
+            return False, "成交价格必须大于 0", None
+
+        current_quantity = self._safe_int(stock.get("quantity"))
+        current_cost_price = stock.get("cost_price")
+        current_cost_value = self._safe_float(current_cost_price)
+
+        if normalized_trade_type == "buy":
+            if current_quantity > 0 and current_cost_value <= 0:
+                return False, "当前持仓缺少成本价，请先编辑持仓后再执行加仓", None
+            new_quantity = current_quantity + trade_quantity
+            total_cost_value = (current_cost_value * current_quantity) + (trade_price * trade_quantity)
+            new_cost_price = total_cost_value / new_quantity if new_quantity > 0 else None
+        else:
+            if current_quantity <= 0:
+                return False, "当前没有可减仓的持仓数量", None
+            if trade_quantity > current_quantity:
+                return False, "减仓数量不能超过当前持仓数量", None
+            new_quantity = current_quantity - trade_quantity
+            new_cost_price = current_cost_price if new_quantity > 0 else None
+
+        formatted_trade_date = self._format_date_value(trade_date) or datetime.now().strftime("%Y-%m-%d")
+
+        try:
+            self.db.add_trade_history(
+                stock_id=stock_id,
+                trade_type=normalized_trade_type,
+                trade_date=formatted_trade_date,
+                price=trade_price,
+                quantity=trade_quantity,
+                note=(note or "").strip(),
+                trade_source="manual",
+            )
+            self.db.update_stock(
+                stock_id,
+                cost_price=new_cost_price,
+                quantity=new_quantity if new_quantity > 0 else None,
+            )
+            self._mark_integrations_reconcile_pending()
+
+            updated_stock = self.db.get_stock(stock_id)
+            warning = ""
+            try:
+                account_name = (updated_stock or stock).get("account_name", "默认账户")
+                self.capture_daily_snapshot(account_name=account_name, source="manual")
+                if updated_stock and updated_stock.get("auto_monitor"):
+                    self._sync_stock_to_smart_monitor(updated_stock)
+            except Exception as e:
+                warning = f"（联动同步失败: {e}）"
+
+            action_label = "加仓" if normalized_trade_type == "buy" else "减仓"
+            return True, f"{action_label}记录已保存{warning}", updated_stock
+        except Exception as e:
+            return False, f"保存交易记录失败: {e}", None
+
+    def get_trade_history(self, stock_id: int, limit: int = 20) -> List[Dict]:
+        """获取指定持仓的交易流水。"""
+        return self.db.get_trade_history(stock_id, limit=limit)
+
+    def get_trade_summary_map(self, stock_ids: List[int]) -> Dict[int, Dict]:
+        """批量获取持仓交易摘要。"""
+        if not stock_ids:
+            return {}
+        return self.db.get_trade_summary_map(stock_ids)
+
     def get_stock(self, stock_id: int) -> Optional[Dict]:
         """获取单只持仓股票信息"""
         return self.db.get_stock(stock_id)
@@ -278,6 +429,824 @@ class PortfolioManager:
     def get_stock_count(self) -> int:
         """获取持仓股票总数"""
         return self.db.get_stock_count()
+
+    def _get_stock_data_fetcher(self):
+        if self._stock_data_fetcher is None:
+            from stock_data import StockDataFetcher
+
+            self._stock_data_fetcher = StockDataFetcher()
+        return self._stock_data_fetcher
+
+    def _parse_date_value(self, value: Optional[Any]) -> Optional[pd.Timestamp]:
+        if value in (None, ""):
+            return None
+        parsed = pd.to_datetime(value, errors="coerce")
+        if pd.isna(parsed):
+            return None
+        return pd.Timestamp(parsed).normalize()
+
+    def _format_date_value(self, value: Optional[Any]) -> Optional[str]:
+        parsed = self._parse_date_value(value)
+        return parsed.strftime("%Y-%m-%d") if parsed is not None else None
+
+    def _get_account_display_name(self, account_name: Optional[str]) -> str:
+        return account_name or self.AGGREGATE_ACCOUNT_NAME
+
+    def _filter_stocks_for_account(self, stocks: List[Dict], account_name: Optional[str] = None) -> List[Dict]:
+        if not account_name or account_name == self.AGGREGATE_ACCOUNT_NAME:
+            return list(stocks)
+        return [stock for stock in stocks if stock.get("account_name", "默认账户") == account_name]
+
+    def _safe_int(self, value: Any) -> int:
+        try:
+            return int(value) if value not in (None, "") else 0
+        except (TypeError, ValueError):
+            return 0
+
+    def _safe_float(self, value: Any) -> float:
+        try:
+            return float(value) if value not in (None, "") else 0.0
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _get_latest_price_and_industry(self, stock: Dict) -> Tuple[float, str]:
+        current_price = self._safe_float(stock.get("current_price"))
+        industry = "未知行业"
+
+        stock_info = stock.get("stock_info")
+        if isinstance(stock_info, dict):
+            if current_price <= 0:
+                current_price = self._extract_first_number(stock_info.get("current_price"), allow_zero=True) or 0.0
+            industry = stock_info.get("industry", industry) or industry
+
+        if current_price <= 0:
+            latest_analysis = self.get_latest_analysis(stock["id"])
+            if latest_analysis:
+                current_price = self._safe_float(latest_analysis.get("current_price"))
+                latest_stock_info = latest_analysis.get("stock_info")
+                if isinstance(latest_stock_info, dict):
+                    if current_price <= 0:
+                        current_price = (
+                            self._extract_first_number(latest_stock_info.get("current_price"), allow_zero=True) or 0.0
+                        )
+                    industry = latest_stock_info.get("industry", industry) or industry
+
+        cost_price = self._safe_float(stock.get("cost_price"))
+        if current_price <= 0:
+            current_price = cost_price
+
+        return current_price, industry
+
+    def _build_portfolio_snapshot_payload(self, stocks: List[Dict], account_name: Optional[str] = None) -> Dict:
+        total_market_value = 0.0
+        total_cost_value = 0.0
+        holdings = []
+
+        for stock in self._filter_stocks_for_account(stocks, account_name):
+            quantity = self._safe_int(stock.get("quantity"))
+            cost_price = self._safe_float(stock.get("cost_price"))
+            if quantity <= 0:
+                continue
+
+            current_price, industry = self._get_latest_price_and_industry(stock)
+            market_value = current_price * quantity
+            cost_value = cost_price * quantity
+            pnl = market_value - cost_value
+            pnl_pct = (pnl / cost_value) if cost_value > 0 else 0.0
+
+            total_market_value += market_value
+            total_cost_value += cost_value
+            holdings.append(
+                {
+                    "stock_id": stock.get("id"),
+                    "account_name": stock.get("account_name", "默认账户"),
+                    "code": stock.get("code"),
+                    "name": stock.get("name"),
+                    "quantity": quantity,
+                    "cost_price": cost_price,
+                    "current_price": current_price,
+                    "market_value": market_value,
+                    "cost_value": cost_value,
+                    "pnl": pnl,
+                    "pnl_pct": pnl_pct,
+                    "industry": industry,
+                }
+            )
+
+        holdings.sort(key=lambda item: item.get("market_value", 0), reverse=True)
+        total_pnl = total_market_value - total_cost_value
+        return {
+            "account_name": self._get_account_display_name(account_name),
+            "total_market_value": total_market_value,
+            "total_cost_value": total_cost_value,
+            "total_pnl": total_pnl,
+            "holdings": holdings,
+        }
+
+    def _upsert_snapshot_for_account(
+        self,
+        account_name: str,
+        stocks: List[Dict],
+        snapshot_date: str,
+        source: str,
+    ) -> int:
+        payload = self._build_portfolio_snapshot_payload(
+            stocks,
+            None if account_name == self.AGGREGATE_ACCOUNT_NAME else account_name,
+        )
+        return self.db.upsert_daily_snapshot(
+            account_name=account_name,
+            snapshot_date=snapshot_date,
+            total_market_value=payload["total_market_value"],
+            total_cost_value=payload["total_cost_value"],
+            total_pnl=payload["total_pnl"],
+            holdings=payload["holdings"],
+            data_source=source,
+        )
+
+    def capture_daily_snapshot(self, account_name: Optional[str] = None, source: str = "manual") -> Dict:
+        """采集当日持仓快照，并按日 upsert。"""
+        snapshot_date = datetime.now().strftime("%Y-%m-%d")
+        all_stocks = self.get_all_stocks()
+        accounts = sorted({stock.get("account_name", "默认账户") for stock in all_stocks})
+        captured_accounts: List[str] = []
+
+        if account_name and account_name != self.AGGREGATE_ACCOUNT_NAME:
+            self._upsert_snapshot_for_account(account_name, all_stocks, snapshot_date, source)
+            captured_accounts.append(account_name)
+            self._upsert_snapshot_for_account(self.AGGREGATE_ACCOUNT_NAME, all_stocks, snapshot_date, source)
+            captured_accounts.append(self.AGGREGATE_ACCOUNT_NAME)
+        else:
+            for name in accounts:
+                self._upsert_snapshot_for_account(name, all_stocks, snapshot_date, source)
+                captured_accounts.append(name)
+            self._upsert_snapshot_for_account(self.AGGREGATE_ACCOUNT_NAME, all_stocks, snapshot_date, source)
+            captured_accounts.append(self.AGGREGATE_ACCOUNT_NAME)
+
+        return {
+            "snapshot_date": snapshot_date,
+            "accounts": captured_accounts,
+            "captured": len(captured_accounts),
+        }
+
+    def ensure_daily_snapshot(self, account_name: Optional[str] = None, source: str = "page_load") -> Dict:
+        """确保今日快照存在，缺失时自动补采。"""
+        snapshot_date = datetime.now().strftime("%Y-%m-%d")
+        all_stocks = self.get_all_stocks()
+        accounts = sorted({stock.get("account_name", "默认账户") for stock in all_stocks})
+        required_accounts: List[str] = []
+
+        if account_name and account_name != self.AGGREGATE_ACCOUNT_NAME:
+            required_accounts.append(account_name)
+        else:
+            required_accounts.extend(accounts)
+        required_accounts.append(self.AGGREGATE_ACCOUNT_NAME)
+
+        missing = [
+            account
+            for account in required_accounts
+            if not self.db.has_snapshot_for_date(account, snapshot_date)
+        ]
+        if missing:
+            return self.capture_daily_snapshot(account_name=account_name, source=source)
+        return {"snapshot_date": snapshot_date, "accounts": required_accounts, "captured": 0}
+
+    def get_risk_free_rate_annual(self) -> float:
+        raw_value = self.db.get_setting("risk_free_rate_annual", self.DEFAULT_RISK_FREE_RATE)
+        try:
+            value = float(raw_value)
+        except (TypeError, ValueError):
+            value = self.DEFAULT_RISK_FREE_RATE
+        return max(0.0, value)
+
+    def set_risk_free_rate_annual(self, value: float) -> float:
+        normalized = max(0.0, float(value))
+        self.db.set_setting("risk_free_rate_annual", normalized)
+        return normalized
+
+    def _resolve_history_period(self, start_date: Optional[str], end_date: Optional[str]) -> str:
+        start_ts = self._parse_date_value(start_date)
+        end_ts = self._parse_date_value(end_date) or pd.Timestamp.now().normalize()
+        if start_ts is None:
+            return "1y"
+        delta_days = max((end_ts - start_ts).days, 1)
+        if delta_days <= 31:
+            return "1mo"
+        if delta_days <= 93:
+            return "3mo"
+        if delta_days <= 186:
+            return "6mo"
+        return "1y"
+
+    def _normalize_price_series(self, frame: Any) -> pd.Series:
+        if isinstance(frame, dict) or frame is None:
+            return pd.Series(dtype=float)
+
+        if isinstance(frame, pd.Series):
+            series = pd.to_numeric(frame, errors="coerce")
+            series.index = pd.to_datetime(series.index, errors="coerce")
+            series = series[~series.index.isna()]
+            series.index = pd.DatetimeIndex(series.index).normalize()
+            return series.dropna().sort_index()
+
+        if not isinstance(frame, pd.DataFrame) or frame.empty:
+            return pd.Series(dtype=float)
+
+        working = frame.copy()
+        date_col = next((col for col in ["Date", "date", "日期"] if col in working.columns), None)
+        if date_col:
+            working[date_col] = pd.to_datetime(working[date_col], errors="coerce")
+            working = working.dropna(subset=[date_col]).set_index(date_col)
+        else:
+            working.index = pd.to_datetime(working.index, errors="coerce")
+            working = working[~working.index.isna()]
+
+        close_col = next(
+            (
+                col
+                for col in [
+                    "Close",
+                    "close",
+                    "收盘",
+                    "close_price",
+                ]
+                if col in working.columns
+            ),
+            None,
+        )
+        if close_col is None:
+            return pd.Series(dtype=float)
+
+        series = pd.to_numeric(working[close_col], errors="coerce").dropna()
+        series.index = pd.DatetimeIndex(series.index).normalize()
+        return series.sort_index()
+
+    def _fetch_price_series(
+        self,
+        symbol: str,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> pd.Series:
+        fetcher = self._get_stock_data_fetcher()
+        period = self._resolve_history_period(start_date, end_date)
+        data = fetcher.get_stock_data(symbol, period=period, interval="1d")
+        series = self._normalize_price_series(data)
+        if series.empty:
+            return series
+
+        start_ts = self._parse_date_value(start_date)
+        end_ts = self._parse_date_value(end_date)
+        if start_ts is not None:
+            series = series[series.index >= start_ts]
+        if end_ts is not None:
+            series = series[series.index <= end_ts]
+        return series.sort_index()
+
+    def _fetch_benchmark_price_series(
+        self,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> Tuple[pd.Series, str]:
+        start_token = (self._format_date_value(start_date) or "").replace("-", "")
+        end_token = (self._format_date_value(end_date) or datetime.now().strftime("%Y%m%d")).replace("-", "")
+
+        try:
+            import akshare as ak
+
+            loaders = [
+                lambda: ak.index_zh_a_hist(
+                    symbol="000300",
+                    period="daily",
+                    start_date=start_token,
+                    end_date=end_token,
+                ),
+                lambda: ak.stock_zh_index_daily_em(symbol="sh000300"),
+                lambda: ak.stock_zh_index_daily(symbol="sh000300"),
+            ]
+            for loader in loaders:
+                try:
+                    series = self._normalize_price_series(loader())
+                except Exception:
+                    series = pd.Series(dtype=float)
+                if not series.empty:
+                    start_ts = self._parse_date_value(start_date)
+                    end_ts = self._parse_date_value(end_date)
+                    if start_ts is not None:
+                        series = series[series.index >= start_ts]
+                    if end_ts is not None:
+                        series = series[series.index <= end_ts]
+                    if not series.empty:
+                        return series, "沪深300"
+        except Exception as exc:
+            print(f"[WARN] 获取沪深300指数日线失败，尝试 510300 ETF 回退: {exc}")
+
+        fallback_series = self._fetch_price_series("510300", start_date=start_date, end_date=end_date)
+        return fallback_series, "沪深300"
+
+    def _load_snapshot_series(
+        self,
+        account_name: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> pd.DataFrame:
+        snapshot_account = self._get_account_display_name(account_name)
+        rows = self.db.get_daily_snapshots(
+            account_name=snapshot_account,
+            start_date=self._format_date_value(start_date),
+            end_date=self._format_date_value(end_date),
+        )
+        if not rows:
+            return pd.DataFrame()
+
+        frame = pd.DataFrame(rows)
+        frame["snapshot_date"] = pd.to_datetime(frame["snapshot_date"], errors="coerce")
+        frame = frame.dropna(subset=["snapshot_date"]).set_index("snapshot_date").sort_index()
+        frame.index = frame.index.normalize()
+        frame["source"] = "actual"
+        frame["total_market_value"] = pd.to_numeric(frame["total_market_value"], errors="coerce").fillna(0.0)
+        frame["total_cost_value"] = pd.to_numeric(frame["total_cost_value"], errors="coerce").fillna(0.0)
+        frame["total_pnl"] = pd.to_numeric(frame["total_pnl"], errors="coerce").fillna(
+            frame["total_market_value"] - frame["total_cost_value"]
+        )
+        return frame[["total_market_value", "total_cost_value", "total_pnl", "source"]]
+
+    def _build_estimated_portfolio_series(
+        self,
+        stocks: List[Dict],
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> pd.DataFrame:
+        market_value_series: List[pd.Series] = []
+        total_cost_value = 0.0
+
+        for stock in stocks:
+            quantity = self._safe_int(stock.get("quantity"))
+            if quantity <= 0:
+                continue
+            cost_price = self._safe_float(stock.get("cost_price"))
+            total_cost_value += cost_price * quantity
+
+            series = self._fetch_price_series(stock.get("code", ""), start_date=start_date, end_date=end_date)
+            if series.empty:
+                continue
+            market_value_series.append((series * quantity).rename(stock.get("code", "")))
+
+        if not market_value_series:
+            return pd.DataFrame()
+
+        market_frame = pd.concat(market_value_series, axis=1).sort_index().ffill()
+        total_market_value = market_frame.sum(axis=1, min_count=1).dropna()
+        if total_market_value.empty:
+            return pd.DataFrame()
+
+        estimated = pd.DataFrame(index=total_market_value.index)
+        estimated["total_market_value"] = total_market_value
+        estimated["total_cost_value"] = float(total_cost_value)
+        estimated["total_pnl"] = estimated["total_market_value"] - estimated["total_cost_value"]
+        estimated["source"] = "estimated"
+        return estimated
+
+    def build_portfolio_return_series(
+        self,
+        account_name: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        prefer_snapshots: bool = True,
+    ) -> pd.DataFrame:
+        """构建组合日度市值与盈亏时间序列。"""
+        stocks = self._filter_stocks_for_account(self.get_all_stocks(), account_name)
+        start_str = self._format_date_value(start_date)
+        end_str = self._format_date_value(end_date)
+        snapshot_series = self._load_snapshot_series(account_name, start_str, end_str) if prefer_snapshots else pd.DataFrame()
+        estimated_series = self._build_estimated_portfolio_series(stocks, start_date=start_str, end_date=end_str)
+
+        if snapshot_series.empty and estimated_series.empty:
+            return pd.DataFrame()
+
+        if snapshot_series.empty:
+            combined = estimated_series.copy()
+        elif estimated_series.empty:
+            combined = snapshot_series.copy()
+        else:
+            combined = estimated_series.copy()
+            combined = combined.reindex(combined.index.union(snapshot_series.index)).sort_index()
+            for column in ["total_market_value", "total_cost_value", "total_pnl", "source"]:
+                combined.loc[snapshot_series.index, column] = snapshot_series[column]
+
+        combined = combined.sort_index()
+        combined.index = pd.DatetimeIndex(combined.index).normalize()
+        combined["total_market_value"] = pd.to_numeric(combined["total_market_value"], errors="coerce")
+        combined["total_cost_value"] = pd.to_numeric(combined["total_cost_value"], errors="coerce")
+        combined = combined.dropna(subset=["total_market_value"]).copy()
+        combined["total_pnl"] = combined["total_market_value"] - combined["total_cost_value"]
+        combined["daily_pnl_change"] = combined["total_market_value"].diff().fillna(0.0)
+        combined["daily_return"] = combined["total_market_value"].pct_change().replace([np.inf, -np.inf], np.nan).fillna(0.0)
+
+        source_values = set(combined["source"].dropna().tolist())
+        if source_values == {"actual"}:
+            data_mode = "actual"
+        elif source_values == {"estimated"}:
+            data_mode = "estimated"
+        else:
+            data_mode = "mixed"
+
+        combined.attrs["data_mode"] = data_mode
+        combined.attrs["stock_count"] = len([stock for stock in stocks if self._safe_int(stock.get("quantity")) > 0])
+        combined.attrs["available_days"] = len(combined.index)
+        combined.attrs["contains_estimated"] = "estimated" in source_values
+        return combined
+
+    def _calculate_quantitative_risk_metrics(
+        self,
+        series: pd.DataFrame,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> Dict:
+        warnings: List[str] = []
+        if series.empty or "total_market_value" not in series.columns:
+            warnings.append("组合历史数据不足，暂无法计算量化风险指标。")
+            return {
+                "annual_volatility": None,
+                "beta_hs300": None,
+                "sharpe_ratio": None,
+                "annualized_return": None,
+                "risk_free_rate_annual": self.get_risk_free_rate_annual(),
+                "benchmark_label": "沪深300",
+                "metric_warnings": warnings,
+                "data_coverage": {
+                    "available_days": 0,
+                    "stock_count": 0,
+                    "data_mode": "estimated",
+                    "contains_estimated": False,
+                },
+            }
+
+        returns = pd.to_numeric(series["daily_return"], errors="coerce").replace([np.inf, -np.inf], np.nan).dropna()
+        if len(returns) < 20:
+            warnings.append("可用交易日不足 20 天，波动率/Beta/夏普比率仅供参考。")
+
+        annual_volatility = None
+        if len(returns) >= 2:
+            annual_volatility = float(returns.std(ddof=0) * math.sqrt(252))
+        else:
+            warnings.append("历史收益序列不足 2 个交易日，无法计算年化波动率。")
+
+        annualized_return = None
+        start_value = self._safe_float(series["total_market_value"].iloc[0])
+        end_value = self._safe_float(series["total_market_value"].iloc[-1])
+        if start_value > 0 and len(returns) > 0:
+            annualized_return = float((end_value / start_value) ** (252 / max(len(returns), 1)) - 1)
+        else:
+            warnings.append("组合起始市值无效，无法计算年化收益率。")
+
+        risk_free_rate = self.get_risk_free_rate_annual()
+        sharpe_ratio = None
+        if annual_volatility and annual_volatility > 0 and annualized_return is not None:
+            sharpe_ratio = float((annualized_return - risk_free_rate) / annual_volatility)
+        elif annual_volatility == 0:
+            warnings.append("组合波动率为 0，无法计算夏普比率。")
+
+        beta_hs300 = None
+        benchmark_series, benchmark_label = self._fetch_benchmark_price_series(start_date=start_date, end_date=end_date)
+        if benchmark_series.empty:
+            warnings.append("未获取到沪深300基准数据，无法计算 Beta。")
+        else:
+            benchmark_returns = benchmark_series.pct_change().replace([np.inf, -np.inf], np.nan)
+            merged = pd.concat(
+                [returns.rename("portfolio"), benchmark_returns.rename("benchmark")],
+                axis=1,
+            ).dropna()
+            if len(merged) < 20:
+                warnings.append("组合与基准重叠交易日不足 20 天，Beta 仅供参考。")
+            benchmark_variance = merged["benchmark"].var(ddof=0) if not merged.empty else 0.0
+            if benchmark_variance > 0:
+                covariance = merged[["portfolio", "benchmark"]].cov(ddof=0).iloc[0, 1]
+                beta_hs300 = float(covariance / benchmark_variance)
+            elif not merged.empty:
+                warnings.append("基准收益波动过低，无法计算 Beta。")
+
+        return {
+            "annual_volatility": annual_volatility,
+            "beta_hs300": beta_hs300,
+            "sharpe_ratio": sharpe_ratio,
+            "annualized_return": annualized_return,
+            "risk_free_rate_annual": risk_free_rate,
+            "benchmark_label": benchmark_label,
+            "metric_warnings": warnings,
+            "data_coverage": {
+                "available_days": len(series.index),
+                "stock_count": int(series.attrs.get("stock_count", 0)),
+                "data_mode": series.attrs.get("data_mode", "estimated"),
+                "contains_estimated": bool(series.attrs.get("contains_estimated", False)),
+            },
+        }
+
+    def build_pnl_calendar(
+        self,
+        account_name: Optional[str] = None,
+        view: str = "daily",
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> Dict:
+        """构建盈亏日历所需的日度或月度数据。"""
+        series = self.build_portfolio_return_series(
+            account_name=account_name,
+            start_date=start_date,
+            end_date=end_date,
+            prefer_snapshots=True,
+        )
+        if series.empty:
+            return {"status": "error", "message": "暂无足够的历史数据生成盈亏日历。"}
+
+        daily = series.reset_index().rename(columns={"index": "date"})
+        daily["date"] = pd.to_datetime(daily["date"], errors="coerce")
+        daily = daily.dropna(subset=["date"]).copy()
+        daily["date"] = daily["date"].dt.normalize()
+        daily["year"] = daily["date"].dt.year
+        daily["month"] = daily["date"].dt.month
+        daily["day"] = daily["date"].dt.day
+        daily["month_label"] = daily["date"].dt.strftime("%Y-%m")
+        daily["source_label"] = daily["source"].map({"actual": "真实", "estimated": "估算"}).fillna("混合")
+
+        if view == "monthly":
+            monthly = (
+                daily.groupby("month_label", as_index=False)
+                .agg(
+                    date=("date", "max"),
+                    pnl=("daily_pnl_change", "sum"),
+                    total_market_value=("total_market_value", "last"),
+                    total_pnl=("total_pnl", "last"),
+                    source=(
+                        "source",
+                        lambda values: "mixed" if len(set(values)) > 1 else next(iter(set(values)), "estimated"),
+                    ),
+                )
+                .sort_values("date")
+            )
+            monthly["source_label"] = monthly["source"].map(
+                {"actual": "真实", "estimated": "估算", "mixed": "混合"}
+            ).fillna("混合")
+            records = monthly.to_dict("records")
+        else:
+            records = daily.to_dict("records")
+
+        return {
+            "status": "success",
+            "view": view,
+            "records": records,
+            "data_mode": series.attrs.get("data_mode", "estimated"),
+            "available_days": len(daily.index),
+        }
+
+    def _resolve_review_period(self, period_type: str, reference: Optional[date] = None) -> Tuple[date, date]:
+        today = reference or datetime.now().date()
+        if period_type == "week":
+            current_week_start = today - timedelta(days=today.weekday())
+            end_date = current_week_start - timedelta(days=1)
+            start_date = end_date - timedelta(days=6)
+            return start_date, end_date
+        if period_type == "quarter":
+            current_quarter = (today.month - 1) // 3 + 1
+            quarter_end_month = (current_quarter - 1) * 3
+            if quarter_end_month == 0:
+                year = today.year - 1
+                quarter_end_month = 12
+            else:
+                year = today.year
+            end_date = (pd.Timestamp(date(year, quarter_end_month, 1)) + pd.offsets.MonthEnd(0)).date()
+            start_date = date(end_date.year, end_date.month - 2, 1)
+            return start_date, end_date
+
+        first_day_this_month = today.replace(day=1)
+        end_date = first_day_this_month - timedelta(days=1)
+        start_date = end_date.replace(day=1)
+        return start_date, end_date
+
+    def _calculate_stock_contributions(
+        self,
+        stocks: List[Dict],
+        start_date: str,
+        end_date: str,
+    ) -> List[Dict]:
+        contributions = []
+        history_start = (pd.to_datetime(start_date) - timedelta(days=10)).strftime("%Y-%m-%d")
+        for stock in stocks:
+            quantity = self._safe_int(stock.get("quantity"))
+            if quantity <= 0:
+                continue
+            series = self._fetch_price_series(stock.get("code", ""), start_date=history_start, end_date=end_date)
+            if series.empty:
+                continue
+            period_series = series[series.index >= pd.to_datetime(start_date)]
+            if period_series.empty:
+                continue
+            start_price = self._safe_float(period_series.iloc[0])
+            end_price = self._safe_float(period_series.iloc[-1])
+            pnl = (end_price - start_price) * quantity
+            return_pct = ((end_price - start_price) / start_price) if start_price > 0 else 0.0
+            contributions.append(
+                {
+                    "code": stock.get("code"),
+                    "name": stock.get("name"),
+                    "pnl": pnl,
+                    "return_pct": return_pct,
+                }
+            )
+        contributions.sort(key=lambda item: item["pnl"], reverse=True)
+        return contributions
+
+    def _build_review_markdown(
+        self,
+        account_label: str,
+        period_type: str,
+        start_date: str,
+        end_date: str,
+        summary: Dict,
+    ) -> str:
+        top_contributors = summary.get("top_contributors", [])
+        worst_contributors = summary.get("worst_contributors", [])
+        risk_metrics = summary.get("risk_metrics", {})
+        concentration = summary.get("concentration_summary", {})
+
+        lines = [
+            f"# {account_label} {period_type.upper()} 投资复盘报告",
+            "",
+            f"- 周期: {start_date} 至 {end_date}",
+            f"- 数据口径: {summary.get('data_mode_label', '估算')}",
+            f"- 参考基准: {risk_metrics.get('benchmark_label', '沪深300')}",
+            "",
+            "## 组合表现",
+            "",
+            f"- 期初组合市值: ¥{summary.get('start_market_value', 0):,.2f}",
+            f"- 期末组合市值: ¥{summary.get('end_market_value', 0):,.2f}",
+            f"- 周期累计盈亏: ¥{summary.get('cumulative_pnl', 0):,.2f}",
+            f"- 周期收益率: {summary.get('cumulative_return_pct', 0):.2f}%",
+            f"- 盈利天数 / 亏损天数: {summary.get('winning_days', 0)} / {summary.get('losing_days', 0)}",
+            f"- 胜率: {summary.get('win_rate_pct', 0):.2f}%",
+            f"- 最大单日盈利: ¥{summary.get('best_day_pnl', 0):,.2f}",
+            f"- 最大单日亏损: ¥{summary.get('worst_day_pnl', 0):,.2f}",
+            "",
+            "## 风险指标",
+            "",
+            f"- 年化波动率: {summary.get('annual_volatility_text', 'N/A')}",
+            f"- Beta(沪深300): {summary.get('beta_text', 'N/A')}",
+            f"- 夏普比率: {summary.get('sharpe_text', 'N/A')}",
+            "",
+            "## 持仓结构",
+            "",
+            f"- 期末持仓数量: {summary.get('position_count', 0)}",
+            f"- 最大单票权重: {concentration.get('top_stock', 'N/A')}",
+            f"- 最大行业权重: {concentration.get('top_industry', 'N/A')}",
+            "",
+            "## 最佳贡献",
+            "",
+        ]
+
+        if top_contributors:
+            for item in top_contributors:
+                lines.append(
+                    f"- {item.get('code')} {item.get('name')}: ¥{item.get('pnl', 0):,.2f} ({item.get('return_pct', 0) * 100:.2f}%)"
+                )
+        else:
+            lines.append("- 暂无可计算的持仓贡献数据")
+
+        lines.extend(["", "## 最差贡献", ""])
+        if worst_contributors:
+            for item in worst_contributors:
+                lines.append(
+                    f"- {item.get('code')} {item.get('name')}: ¥{item.get('pnl', 0):,.2f} ({item.get('return_pct', 0) * 100:.2f}%)"
+                )
+        else:
+            lines.append("- 暂无可计算的持仓贡献数据")
+
+        metric_warnings = risk_metrics.get("metric_warnings", [])
+        if metric_warnings:
+            lines.extend(["", "## 数据提示", ""])
+            for warning in metric_warnings:
+                lines.append(f"- {warning}")
+
+        return "\n".join(lines).strip()
+
+    def generate_review_report(
+        self,
+        account_name: Optional[str] = None,
+        period_type: str = "month",
+    ) -> Dict:
+        """生成并保存周/月/季持仓复盘报告。"""
+        start_dt, end_dt = self._resolve_review_period(period_type)
+        account_label = self._get_account_display_name(account_name)
+        history_start = (pd.Timestamp(start_dt) - timedelta(days=10)).strftime("%Y-%m-%d")
+        start_str = start_dt.strftime("%Y-%m-%d")
+        end_str = end_dt.strftime("%Y-%m-%d")
+
+        series = self.build_portfolio_return_series(
+            account_name=account_name,
+            start_date=history_start,
+            end_date=end_str,
+            prefer_snapshots=True,
+        )
+        if series.empty:
+            return {"status": "error", "message": "暂无足够的组合历史数据生成复盘报告。"}
+
+        window = series[(series.index >= pd.Timestamp(start_str)) & (series.index <= pd.Timestamp(end_str))].copy()
+        if window.empty:
+            return {"status": "error", "message": "所选周期内没有可用的组合数据。"}
+
+        risk_metrics = self._calculate_quantitative_risk_metrics(window, start_date=start_str, end_date=end_str)
+        cumulative_pnl = self._safe_float(window["total_market_value"].iloc[-1] - window["total_market_value"].iloc[0])
+        cumulative_return = (
+            cumulative_pnl / self._safe_float(window["total_market_value"].iloc[0])
+            if self._safe_float(window["total_market_value"].iloc[0]) > 0
+            else 0.0
+        )
+        daily_changes = pd.to_numeric(window["daily_pnl_change"], errors="coerce").fillna(0.0)
+        winning_days = int((daily_changes > 0).sum())
+        losing_days = int((daily_changes < 0).sum())
+        total_trading_days = int(((daily_changes > 0) | (daily_changes < 0)).sum())
+        win_rate = (winning_days / total_trading_days) if total_trading_days else 0.0
+
+        stocks = self._filter_stocks_for_account(self.get_all_stocks(), account_name)
+        concentration_data = self.calculate_portfolio_risk(account_name=account_name)
+        stock_distribution = concentration_data.get("stock_distribution", [])
+        industry_distribution = concentration_data.get("industry_distribution", [])
+        contributions = self._calculate_stock_contributions(stocks, start_str, end_str)
+        summary = {
+            "start_market_value": self._safe_float(window["total_market_value"].iloc[0]),
+            "end_market_value": self._safe_float(window["total_market_value"].iloc[-1]),
+            "cumulative_pnl": cumulative_pnl,
+            "cumulative_return_pct": cumulative_return * 100,
+            "winning_days": winning_days,
+            "losing_days": losing_days,
+            "win_rate_pct": win_rate * 100,
+            "best_day_pnl": self._safe_float(daily_changes.max()) if not daily_changes.empty else 0.0,
+            "worst_day_pnl": self._safe_float(daily_changes.min()) if not daily_changes.empty else 0.0,
+            "annual_volatility_text": (
+                f"{risk_metrics['annual_volatility'] * 100:.2f}%"
+                if risk_metrics.get("annual_volatility") is not None
+                else "N/A"
+            ),
+            "beta_text": (
+                f"{risk_metrics['beta_hs300']:.3f}"
+                if risk_metrics.get("beta_hs300") is not None
+                else "N/A"
+            ),
+            "sharpe_text": (
+                f"{risk_metrics['sharpe_ratio']:.3f}"
+                if risk_metrics.get("sharpe_ratio") is not None
+                else "N/A"
+            ),
+            "position_count": len([stock for stock in stocks if self._safe_int(stock.get("quantity")) > 0]),
+            "concentration_summary": {
+                "top_stock": (
+                    f"{stock_distribution[0]['name']} {stock_distribution[0]['weight'] * 100:.1f}%"
+                    if stock_distribution
+                    else "N/A"
+                ),
+                "top_industry": (
+                    f"{industry_distribution[0]['industry']} {industry_distribution[0]['weight'] * 100:.1f}%"
+                    if industry_distribution
+                    else "N/A"
+                ),
+            },
+            "top_contributors": contributions[:3],
+            "worst_contributors": list(reversed(contributions[-3:])) if contributions else [],
+            "data_mode_label": {
+                "actual": "真实",
+                "estimated": "估算",
+                "mixed": "混合",
+            }.get(window.attrs.get("data_mode", "estimated"), "估算"),
+            "risk_metrics": risk_metrics,
+        }
+        markdown = self._build_review_markdown(account_label, period_type, start_str, end_str, summary)
+        report_id = self.db.save_review_report(
+            account_name=account_label,
+            period_type=period_type,
+            period_start=start_str,
+            period_end=end_str,
+            data_mode=window.attrs.get("data_mode", "estimated"),
+            report_markdown=markdown,
+            report_json=summary,
+        )
+        return {
+            "status": "success",
+            "report_id": report_id,
+            "account_name": account_label,
+            "period_type": period_type,
+            "period_start": start_str,
+            "period_end": end_str,
+            "data_mode": window.attrs.get("data_mode", "estimated"),
+            "report_markdown": markdown,
+            "summary": summary,
+        }
+
+    def get_review_reports(
+        self,
+        account_name: Optional[str] = None,
+        limit: int = 20,
+        period_type: Optional[str] = None,
+    ) -> List[Dict]:
+        account_label = self._get_account_display_name(account_name) if account_name else None
+        return self.db.get_review_reports(account_name=account_label, limit=limit, period_type=period_type)
 
     def _extract_first_number(self, value, allow_zero: bool = False) -> Optional[float]:
         """从数值或字符串中提取首个数字。"""
@@ -788,6 +1757,17 @@ class PortfolioManager:
             codes = [item.get("code") for item in analysis_results.get("results", []) if item.get("code")]
             sync_result = self.sync_latest_analysis_to_realtime_monitor(codes=codes)
 
+        affected_accounts = set()
+        for item in analysis_results.get("results", []):
+            code = item.get("code")
+            if not code:
+                continue
+            for stock in self.db.get_stocks_by_code(code):
+                affected_accounts.add(stock.get("account_name", "默认账户"))
+        if affected_accounts:
+            for account in affected_accounts:
+                self.capture_daily_snapshot(account_name=account, source="analysis")
+
         return {"saved_ids": saved_ids, "sync_result": sync_result}
     
     # ==================== 单只股票分析 ====================
@@ -1222,7 +2202,7 @@ class PortfolioManager:
     
     def calculate_portfolio_risk(self, account_name: Optional[str] = None) -> Dict:
         """
-        计算持仓风险指标评估，包括单票集中度、行业集中度等。
+        计算持仓风险指标评估，包括集中度与量化风险指标。
         
         Args:
             account_name: 指定账户名称进行过滤，若为None则计算所有账户。
@@ -1230,82 +2210,37 @@ class PortfolioManager:
         Returns:
             Dict: 包含风险指标评估结果的字典
         """
-        stocks = self.get_all_stocks()
-        if account_name:
-            stocks = [s for s in stocks if s.get("account_name", "默认账户") == account_name]
-            
+        stocks = self._filter_stocks_for_account(self.get_all_stocks(), account_name)
         if not stocks:
             return {"status": "error", "message": "没有持仓记录，无法评估风险"}
-            
-        total_market_value = 0.0
-        total_cost_value = 0.0
-        stock_values = []
-        industry_values = {}
-        
-        for stock in stocks:
-            quantity = stock.get('quantity')
-            try:
-                quantity_value = int(quantity) if quantity not in (None, "") else 0
-            except (TypeError, ValueError):
-                quantity_value = 0
-                
-            latest_analysis = self.get_latest_analysis(stock['id'])
-            
-            # 获取当前价格
-            current_price = None
-            industry = "未知行业"
-            
-            if latest_analysis:
-                current_price = latest_analysis.get('current_price')
-                stock_info = latest_analysis.get('stock_info')
-                if isinstance(stock_info, dict):
-                    if current_price is None or current_price == 0:
-                        try:
-                            # 尝试获取字符串中的第一个浮点数
-                            cp_str = str(stock_info.get("current_price", ""))
-                            import re
-                            match = re.search(r'\d+(\.\d+)?', cp_str)
-                            if match:
-                                current_price = float(match.group())
-                        except:
-                            pass
-                    industry = stock_info.get("industry", "未知行业")
-            
-            cost_price = float(stock.get("cost_price", 0) or 0.0)
-            if current_price is None or current_price == 0:
-                current_price = cost_price
-                
-            market_value = current_price * quantity_value
-            cost_value = cost_price * quantity_value
-            total_market_value += market_value
-            total_cost_value += cost_value
-            
-            
-            pnl = market_value - cost_value
-            pnl_pct = (pnl / cost_value) if cost_value > 0 else 0.0
 
-            stock_values.append({
-                "code": stock['code'],
-                "name": stock['name'],
-                "market_value": market_value,
-                "cost_value": cost_value,
-                "pnl": pnl,
-                "pnl_pct": pnl_pct,
-                "industry": industry
-            })
-            
-            industry_values[industry] = industry_values.get(industry, 0) + market_value
-            
+        snapshot = self._build_portfolio_snapshot_payload(stocks, account_name)
+        total_market_value = snapshot["total_market_value"]
+        total_cost_value = snapshot["total_cost_value"]
+        stock_values = []
+        industry_values: Dict[str, float] = {}
+
         if total_market_value == 0:
             return {"status": "error", "message": "持仓总市值为空，请更新价格或数量"}
-            
-        # 计算单票权重
-        for sv in stock_values:
-            sv["weight"] = sv["market_value"] / total_market_value
-            
+
+        for holding in snapshot["holdings"]:
+            stock_values.append(
+                {
+                    "code": holding["code"],
+                    "name": holding["name"],
+                    "market_value": holding["market_value"],
+                    "cost_value": holding["cost_value"],
+                    "pnl": holding["pnl"],
+                    "pnl_pct": holding["pnl_pct"],
+                    "industry": holding["industry"],
+                    "weight": (holding["market_value"] / total_market_value) if total_market_value > 0 else 0.0,
+                }
+            )
+            industry = holding["industry"] or "未知行业"
+            industry_values[industry] = industry_values.get(industry, 0.0) + holding["market_value"]
+
         stock_values.sort(key=lambda x: x["weight"], reverse=True)
         
-        # 计算行业权重
         industry_distribution = []
         for ind, val in industry_values.items():
             industry_distribution.append({
@@ -1333,6 +2268,18 @@ class PortfolioManager:
             
         total_pnl = total_market_value - total_cost_value
         total_pnl_pct = (total_pnl / total_cost_value) if total_cost_value > 0 else 0.0
+        history_start = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
+        return_series = self.build_portfolio_return_series(
+            account_name=account_name,
+            start_date=history_start,
+            end_date=datetime.now().strftime("%Y-%m-%d"),
+            prefer_snapshots=True,
+        )
+        quant_metrics = self._calculate_quantitative_risk_metrics(
+            return_series,
+            start_date=history_start,
+            end_date=datetime.now().strftime("%Y-%m-%d"),
+        )
 
         return {
             "status": "success",
@@ -1343,7 +2290,15 @@ class PortfolioManager:
             "stock_distribution": stock_values,
             "industry_distribution": industry_distribution,
             "high_concentration": high_concentration,
-            "risk_warnings": risk_warnings
+            "risk_warnings": risk_warnings,
+            "annual_volatility": quant_metrics.get("annual_volatility"),
+            "beta_hs300": quant_metrics.get("beta_hs300"),
+            "sharpe_ratio": quant_metrics.get("sharpe_ratio"),
+            "annualized_return": quant_metrics.get("annualized_return"),
+            "risk_free_rate_annual": quant_metrics.get("risk_free_rate_annual"),
+            "benchmark_label": quant_metrics.get("benchmark_label"),
+            "metric_warnings": quant_metrics.get("metric_warnings", []),
+            "data_coverage": quant_metrics.get("data_coverage", {}),
         }
 # 创建全局实例
 portfolio_manager = PortfolioManager()

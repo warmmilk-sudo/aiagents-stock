@@ -87,6 +87,7 @@ class SmartMonitorEngine:
         
         # 监控控制(保留字典为了停止特定监控时注销事件)
         self.monitoring_stocks = set()
+        self.monitoring_contexts = {}
         
         # 注册事件总线监听
         event_bus.subscribe(Events.STOCK_ABNORMAL_FLUCTUATION, self._on_radar_event)
@@ -235,7 +236,11 @@ class SmartMonitorEngine:
                     stock_name=market_data.get('name'),
                     decision=decision,
                     execution_result=execution_result,
-                    market_data=market_data
+                    market_data=market_data,
+                    has_position=has_position,
+                    position_cost=position_cost,
+                    position_quantity=position_quantity,
+                    session_info=session_info,
                 )
             
             return {
@@ -599,6 +604,182 @@ class SmartMonitorEngine:
                 
         except Exception as e:
             self.logger.error(f"[{stock_code}] 处理雷达事件异常: {e}")
+
+
+    def _send_notification(
+        self,
+        stock_code: str,
+        stock_name: str,
+        decision: Dict,
+        execution_result: Optional[Dict],
+        market_data: Dict,
+        has_position: Optional[bool] = None,
+        position_cost: Optional[float] = None,
+        position_quantity: Optional[int] = None,
+        session_info: Optional[Dict] = None,
+    ):
+        try:
+            action = str(decision.get('action', '')).upper()
+            if action not in ['BUY', 'SELL']:
+                self.logger.info(f"[{stock_code}] 决策为 {action}，不发送通知")
+                return
+
+            task = self.db.get_monitor_task_by_code(stock_code)
+            task_config = task or {}
+            if has_position is None:
+                has_position = bool(task_config.get('has_position', 0))
+            if position_cost is None:
+                position_cost = float(task_config.get('position_cost', 0) or 0)
+            if position_quantity is None:
+                position_quantity = int(task_config.get('position_quantity', 0) or 0)
+            if session_info is None:
+                session_info = self.deepseek.get_trading_session()
+
+            current_price = float(market_data.get('current_price', 0) or 0)
+            profit_loss_pct = 'N/A'
+            if has_position and position_cost:
+                profit_loss_pct = f"{((current_price - position_cost) / position_cost * 100):+.2f}"
+
+            action_text = {'BUY': '买入', 'SELL': '卖出'}.get(action, action)
+            reasoning = decision.get('reasoning', '')
+            reasoning_summary = reasoning[:150] + '...' if len(reasoning) > 150 else reasoning
+            key_levels = decision.get('key_price_levels', {}) or {}
+
+            message = f"{action_text}信号 - {stock_name}({stock_code})"
+            content = (
+                f"{action_text}信号\n"
+                f"股票: {stock_name}({stock_code})\n"
+                f"当前价格: {current_price:.2f}\n"
+                f"涨跌幅: {market_data.get('change_pct', 0):+.2f}%\n"
+                f"信心度: {decision.get('confidence', 'N/A')}%\n"
+                f"风险等级: {decision.get('risk_level', 'N/A')}\n"
+                f"支撑位: {key_levels.get('support', 'N/A')}\n"
+                f"压力位: {key_levels.get('resistance', 'N/A')}\n"
+                f"止盈: {decision.get('take_profit_pct', 'N/A')}%\n"
+                f"止损: {decision.get('stop_loss_pct', 'N/A')}%\n"
+                f"核心理由: {reasoning_summary}\n"
+                f"触发时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            )
+            if execution_result:
+                if execution_result.get('success'):
+                    content += "\n自动交易已执行"
+                else:
+                    content += f"\n自动交易失败: {execution_result.get('error', '未知错误')}"
+
+            notification_data = {
+                'symbol': stock_code,
+                'name': stock_name,
+                'type': '智能盯盘',
+                'message': message,
+                'details': content,
+                'triggered_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'current_price': f"{current_price:.2f}" if current_price else 'N/A',
+                'change_pct': f"{market_data.get('change_pct', 0):+.2f}",
+                'change_amount': f"{market_data.get('change_amount', 0):+.2f}",
+                'volume': market_data.get('volume', 'N/A'),
+                'turnover_rate': f"{market_data.get('turnover_rate', 0):.2f}",
+                'position_status': '已持仓' if has_position else '未持仓',
+                'position_cost': f"{position_cost:.2f}" if has_position and position_cost else 'N/A',
+                'position_quantity': position_quantity if has_position else 0,
+                'profit_loss_pct': profit_loss_pct,
+                'trading_session': session_info.get('session', '未知'),
+            }
+
+            success = self.notification.send_notification(notification_data)
+            if success:
+                self.logger.info(f"[{stock_code}] {action_text}通知已发送")
+            else:
+                self.logger.warning(f"[{stock_code}] {action_text}通知发送失败")
+
+            self.db.save_notification({
+                'stock_code': stock_code,
+                'notify_type': 'decision',
+                'subject': f"智能盯盘 - {message}",
+                'content': content,
+                'status': 'sent' if success else 'failed',
+            })
+
+            task_item = self.db.monitoring_repository.get_item_by_symbol(stock_code, monitor_type='ai_task')
+            if task_item:
+                self.db.monitoring_repository.record_event(
+                    item_id=task_item['id'],
+                    event_type=action.lower(),
+                    message=message,
+                    details=content,
+                    notification_pending=False,
+                    sent=success,
+                )
+        except Exception as exc:
+            self.logger.error(f"[{stock_code}] 发送通知失败: {exc}")
+
+    def start_monitor(
+        self,
+        stock_code: str,
+        check_interval: int = 300,
+        auto_trade: bool = False,
+        notify: bool = True,
+        has_position: bool = False,
+        position_cost: float = 0,
+        position_quantity: int = 0,
+        trading_hours_only: bool = True,
+    ):
+        if not hasattr(self, 'monitoring_contexts'):
+            self.monitoring_contexts = {}
+        self.monitoring_stocks.add(stock_code)
+        self.monitoring_contexts[stock_code] = {
+            'check_interval': check_interval,
+            'auto_trade': auto_trade,
+            'notify': notify,
+            'has_position': has_position,
+            'position_cost': position_cost,
+            'position_quantity': position_quantity,
+            'trading_hours_only': trading_hours_only,
+        }
+        self.logger.info(
+            f"[{stock_code}] 启动AI监控: interval={check_interval}s "
+            f"auto_trade={auto_trade} trading_hours_only={trading_hours_only}"
+        )
+
+    def stop_monitor(self, stock_code: str):
+        self.monitoring_stocks.discard(stock_code)
+        if hasattr(self, 'monitoring_contexts'):
+            self.monitoring_contexts.pop(stock_code, None)
+        self.logger.info(f"[{stock_code}] 停止AI监控")
+
+    def _on_radar_event(self, **kwargs):
+        stock_code = kwargs.get('stock_code')
+        if not stock_code or stock_code not in self.monitoring_stocks:
+            return
+
+        context = {}
+        if hasattr(self, 'monitoring_contexts'):
+            context = dict(self.monitoring_contexts.get(stock_code, {}))
+
+        task = self.db.get_monitor_task_by_code(stock_code)
+        if task:
+            context.setdefault('auto_trade', bool(task.get('auto_trade', 0)))
+            context.setdefault('notify', True)
+            context.setdefault('has_position', bool(task.get('has_position', 0)))
+            context.setdefault('position_cost', float(task.get('position_cost', 0) or 0))
+            context.setdefault('position_quantity', int(task.get('position_quantity', 0) or 0))
+            context.setdefault('trading_hours_only', bool(task.get('trading_hours_only', 1)))
+
+        result = self.analyze_stock(
+            stock_code=stock_code,
+            auto_trade=bool(context.get('auto_trade', False)),
+            notify=bool(context.get('notify', True)),
+            has_position=bool(context.get('has_position', False)),
+            position_cost=float(context.get('position_cost', 0) or 0),
+            position_quantity=int(context.get('position_quantity', 0) or 0),
+            trading_hours_only=bool(context.get('trading_hours_only', True)),
+        )
+
+        if result.get('skipped'):
+            self.logger.info(f"[{stock_code}] 雷达事件触发后跳过执行: {result.get('error')}")
+        elif result.get('success'):
+            self.logger.info(f"[{stock_code}] 雷达事件分析完成: {result['decision']['action']}")
+        else:
+            self.logger.error(f"[{stock_code}] 雷达事件分析失败: {result.get('error')}")
 
 
 if __name__ == '__main__':

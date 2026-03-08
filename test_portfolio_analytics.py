@@ -1,0 +1,258 @@
+import tempfile
+import unittest
+from datetime import date, datetime
+
+import pandas as pd
+
+from monitor_db import StockMonitorDatabase
+from portfolio_db import PortfolioDB
+from portfolio_manager import PortfolioManager
+from portfolio_scheduler import PortfolioAnalysisTaskConfig, PortfolioScheduler
+from smart_monitor_db import SmartMonitorDB
+
+
+def build_price_series(base_price: float, returns: list[float], start: str) -> pd.Series:
+    index = pd.bdate_range(start=start, periods=len(returns))
+    values = [base_price]
+    for daily_return in returns[1:]:
+        values.append(values[-1] * (1 + daily_return))
+    return pd.Series(values, index=index)
+
+
+class PortfolioAnalyticsTests(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        base = self.temp_dir.name
+        self.portfolio_db = PortfolioDB(f"{base}/portfolio.db")
+        self.realtime_monitor_db = StockMonitorDatabase(f"{base}/monitor.db")
+        self.smart_monitor_db = SmartMonitorDB(f"{base}/smart.db")
+        self.manager = PortfolioManager(
+            portfolio_store=self.portfolio_db,
+            realtime_monitor_store=self.realtime_monitor_db,
+            smart_monitor_store=self.smart_monitor_db,
+        )
+        self.manager._resolve_stock_name = lambda code: f"Stock{code}"
+
+        benchmark_returns = [
+            0.0,
+            0.010,
+            -0.006,
+            0.012,
+            -0.004,
+            0.009,
+            0.005,
+            -0.007,
+            0.011,
+            -0.003,
+        ] * 5
+        stock_returns = [ret * 1.2 + 0.001 for ret in benchmark_returns]
+        self.price_series = {
+            "000001": build_price_series(10.0, stock_returns, "2026-01-02"),
+            "510300": build_price_series(100.0, benchmark_returns, "2026-01-02"),
+        }
+        self.benchmark_series = self.price_series["510300"]
+        self.manager._fetch_price_series = (
+            lambda symbol, start_date=None, end_date=None: self._slice_series(
+                self.price_series.get(symbol, pd.Series(dtype=float)),
+                start_date,
+                end_date,
+            )
+        )
+        self.manager._fetch_benchmark_price_series = (
+            lambda start_date=None, end_date=None: (
+                self._slice_series(self.benchmark_series, start_date, end_date),
+                "沪深300",
+            )
+        )
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
+
+    def _slice_series(self, series: pd.Series, start_date=None, end_date=None) -> pd.Series:
+        result = series.copy()
+        if start_date:
+            result = result[result.index >= pd.Timestamp(start_date)]
+        if end_date:
+            result = result[result.index <= pd.Timestamp(end_date)]
+        return result
+
+    def _add_stock(self, code: str = "000001", cost_price: float = 10.0, quantity: int = 100) -> int:
+        success, msg, stock_id = self.manager.add_stock(
+            code=code,
+            name=None,
+            cost_price=cost_price,
+            quantity=quantity,
+            note="analytics-test",
+            auto_monitor=True,
+        )
+        self.assertTrue(success, msg)
+        self.assertIsNotNone(stock_id)
+        return stock_id
+
+    def test_calculate_portfolio_risk_includes_quant_metrics_and_settings(self):
+        self._add_stock()
+        self.manager.set_risk_free_rate_annual(0.02)
+
+        result = self.manager.calculate_portfolio_risk(account_name="默认账户")
+
+        self.assertEqual(result["status"], "success")
+        self.assertIsNotNone(result["annual_volatility"])
+        self.assertIsNotNone(result["beta_hs300"])
+        self.assertIsNotNone(result["sharpe_ratio"])
+        self.assertAlmostEqual(result["risk_free_rate_annual"], 0.02)
+        self.assertGreater(result["data_coverage"]["available_days"], 20)
+        self.assertEqual(result["benchmark_label"], "沪深300")
+
+    def test_return_series_prefers_actual_snapshots_and_calendar_aggregates_daily_changes(self):
+        self._add_stock()
+        snapshot_date = "2026-01-05"
+        self.portfolio_db.upsert_daily_snapshot(
+            account_name="默认账户",
+            snapshot_date=snapshot_date,
+            total_market_value=1500.0,
+            total_cost_value=1000.0,
+            total_pnl=500.0,
+            holdings=[],
+            data_source="manual",
+        )
+        self.portfolio_db.upsert_daily_snapshot(
+            account_name="全部账户",
+            snapshot_date=snapshot_date,
+            total_market_value=1500.0,
+            total_cost_value=1000.0,
+            total_pnl=500.0,
+            holdings=[],
+            data_source="manual",
+        )
+
+        series = self.manager.build_portfolio_return_series(
+            account_name="默认账户",
+            start_date="2026-01-02",
+            end_date="2026-01-09",
+        )
+
+        self.assertEqual(series.loc[pd.Timestamp(snapshot_date), "source"], "actual")
+        self.assertEqual(series.loc[pd.Timestamp(snapshot_date), "total_market_value"], 1500.0)
+
+        calendar_result = self.manager.build_pnl_calendar(
+            account_name="默认账户",
+            view="monthly",
+            start_date="2026-01-02",
+            end_date="2026-01-31",
+        )
+        self.assertEqual(calendar_result["status"], "success")
+        self.assertTrue(calendar_result["records"])
+        self.assertEqual(calendar_result["records"][0]["month_label"], "2026-01")
+
+    def test_generate_review_report_persists_saved_markdown(self):
+        self._add_stock()
+        self.manager._resolve_review_period = lambda period_type, reference=None: (date(2026, 1, 5), date(2026, 1, 30))
+
+        result = self.manager.generate_review_report(account_name="默认账户", period_type="month")
+
+        self.assertEqual(result["status"], "success")
+        self.assertIn("投资复盘报告", result["report_markdown"])
+        saved_reports = self.portfolio_db.get_review_reports(account_name="默认账户", limit=5)
+        self.assertEqual(len(saved_reports), 1)
+        self.assertEqual(saved_reports[0]["id"], result["report_id"])
+
+
+    def test_seed_initial_trade_creates_opening_record_and_summary(self):
+        stock_id = self._add_stock()
+
+        success, msg = self.manager.seed_initial_trade(
+            stock_id,
+            trade_date="2026-01-06",
+            note="initial position",
+        )
+
+        self.assertTrue(success, msg)
+        history = self.manager.get_trade_history(stock_id, limit=5)
+        self.assertEqual(len(history), 1)
+        self.assertEqual(history[0]["trade_type"], "buy")
+        self.assertEqual(history[0]["trade_date"], "2026-01-06")
+        self.assertEqual(history[0]["quantity"], 100)
+        summary = self.manager.get_trade_summary_map([stock_id])[stock_id]
+        self.assertEqual(summary["trade_count"], 1)
+        self.assertEqual(summary["first_buy_date"], "2026-01-06")
+
+    def test_record_trade_buy_updates_weighted_cost_and_snapshot(self):
+        stock_id = self._add_stock(cost_price=10.0, quantity=100)
+
+        success, msg, updated_stock = self.manager.record_trade(
+            stock_id=stock_id,
+            trade_type="buy",
+            quantity=100,
+            price=12.0,
+            trade_date="2026-01-07",
+            note="add position",
+        )
+
+        self.assertTrue(success, msg)
+        self.assertIsNotNone(updated_stock)
+        self.assertEqual(updated_stock["quantity"], 200)
+        self.assertAlmostEqual(updated_stock["cost_price"], 11.0)
+
+        history = self.manager.get_trade_history(stock_id, limit=5)
+        self.assertEqual(len(history), 1)
+        self.assertEqual(history[0]["trade_type"], "buy")
+        self.assertEqual(history[0]["price"], 12.0)
+
+        snapshot_date = datetime.now().strftime("%Y-%m-%d")
+        self.assertTrue(
+            self.portfolio_db.has_snapshot_for_date(updated_stock["account_name"], snapshot_date)
+        )
+
+    def test_record_trade_sell_keeps_remaining_cost_and_rejects_oversell(self):
+        stock_id = self._add_stock(cost_price=10.0, quantity=200)
+
+        success, msg, updated_stock = self.manager.record_trade(
+            stock_id=stock_id,
+            trade_type="sell",
+            quantity=50,
+            price=13.0,
+            trade_date="2026-01-08",
+            note="trim position",
+        )
+
+        self.assertTrue(success, msg)
+        self.assertEqual(updated_stock["quantity"], 150)
+        self.assertAlmostEqual(updated_stock["cost_price"], 10.0)
+
+        failed, error_msg, _ = self.manager.record_trade(
+            stock_id=stock_id,
+            trade_type="sell",
+            quantity=999,
+            price=13.0,
+            trade_date="2026-01-09",
+            note="invalid oversell",
+        )
+        self.assertFalse(failed)
+        self.assertIn("减仓数量", error_msg)
+
+
+class PortfolioSchedulerConfigTests(unittest.TestCase):
+    def test_scheduler_exposes_shared_task_config(self):
+        scheduler = PortfolioScheduler()
+        config = PortfolioAnalysisTaskConfig(
+            analysis_mode="parallel",
+            max_workers=4,
+            auto_monitor_sync=False,
+            notification_enabled=False,
+            selected_agents=["technical", "risk"],
+        )
+
+        scheduler.set_task_config(config)
+        status = scheduler.get_status()
+        current = scheduler.get_task_config()
+
+        self.assertEqual(current.analysis_mode, "parallel")
+        self.assertEqual(current.max_workers, 4)
+        self.assertFalse(current.auto_monitor_sync)
+        self.assertFalse(current.notification_enabled)
+        self.assertEqual(current.selected_agents, ["technical", "risk"])
+        self.assertEqual(status["selected_agents"], ["technical", "risk"])
+
+
+if __name__ == "__main__":
+    unittest.main()

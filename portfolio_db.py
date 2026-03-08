@@ -7,7 +7,7 @@
 import json
 import sqlite3
 from datetime import datetime
-from typing import List, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 import os
 
 # 数据库文件路径
@@ -83,6 +83,22 @@ class PortfolioDB:
         record["has_full_report"] = bool(record.get("has_full_report"))
         return record
 
+    def _deserialize_snapshot_row(self, row) -> Dict:
+        record = dict(row)
+        holdings = self._deserialize_flexible_value(record.get("holdings_json"), default=[])
+        record["holdings"] = holdings if isinstance(holdings, list) else []
+        record.pop("holdings_json", None)
+        return record
+
+    def _deserialize_review_report_row(self, row) -> Dict:
+        record = dict(row)
+        report_json = self._deserialize_flexible_value(record.get("report_json"), default={})
+        record["report_json"] = report_json if isinstance(report_json, dict) else {}
+        return record
+
+    def _deserialize_trade_row(self, row) -> Dict:
+        return dict(row)
+
     def _init_database(self):
         """初始化数据库表结构"""
         conn = self._get_connection()
@@ -152,6 +168,21 @@ class PortfolioDB:
                 )
             ''')
 
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS portfolio_trade_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    portfolio_stock_id INTEGER NOT NULL,
+                    trade_date TEXT NOT NULL,
+                    trade_type TEXT NOT NULL,
+                    price REAL NOT NULL,
+                    quantity INTEGER NOT NULL,
+                    note TEXT,
+                    trade_source TEXT DEFAULT 'manual',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (portfolio_stock_id) REFERENCES portfolio_stocks(id) ON DELETE CASCADE
+                )
+            ''')
+
             analysis_columns = {
                 "stock_info_json": "TEXT",
                 "agents_results_json": "TEXT",
@@ -174,6 +205,74 @@ class PortfolioDB:
                 CREATE INDEX IF NOT EXISTS idx_portfolio_analysis_time 
                 ON portfolio_analysis_history(analysis_time DESC)
             ''')
+
+            cursor.execute('''
+                CREATE INDEX IF NOT EXISTS idx_portfolio_trade_stock_date
+                ON portfolio_trade_history(portfolio_stock_id, trade_date DESC, id DESC)
+            ''')
+
+            cursor.execute('''
+                CREATE INDEX IF NOT EXISTS idx_portfolio_trade_type
+                ON portfolio_trade_history(trade_type, trade_date DESC)
+            ''')
+
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS portfolio_daily_snapshots (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    account_name TEXT NOT NULL,
+                    snapshot_date TEXT NOT NULL,
+                    total_market_value REAL DEFAULT 0,
+                    total_cost_value REAL DEFAULT 0,
+                    total_pnl REAL DEFAULT 0,
+                    holdings_json TEXT,
+                    data_source TEXT DEFAULT 'manual',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(account_name, snapshot_date)
+                )
+            ''')
+            cursor.execute('''
+                CREATE INDEX IF NOT EXISTS idx_portfolio_snapshots_date
+                ON portfolio_daily_snapshots(snapshot_date DESC)
+            ''')
+            cursor.execute('''
+                CREATE INDEX IF NOT EXISTS idx_portfolio_snapshots_account_date
+                ON portfolio_daily_snapshots(account_name, snapshot_date DESC)
+            ''')
+
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS portfolio_review_reports (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    account_name TEXT NOT NULL,
+                    period_type TEXT NOT NULL,
+                    period_start TEXT NOT NULL,
+                    period_end TEXT NOT NULL,
+                    data_mode TEXT DEFAULT 'estimated',
+                    report_markdown TEXT NOT NULL,
+                    report_json TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            cursor.execute('''
+                CREATE INDEX IF NOT EXISTS idx_portfolio_review_reports_created_at
+                ON portfolio_review_reports(created_at DESC)
+            ''')
+            cursor.execute('''
+                CREATE INDEX IF NOT EXISTS idx_portfolio_review_reports_account_period
+                ON portfolio_review_reports(account_name, period_type, period_end DESC)
+            ''')
+
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS portfolio_settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            cursor.execute('''
+                INSERT OR IGNORE INTO portfolio_settings (key, value, updated_at)
+                VALUES ('risk_free_rate_annual', '0.015', ?)
+            ''', (datetime.now(),))
             
             conn.commit()
             print(f"[OK] 数据库初始化成功: {self.db_path}")
@@ -461,6 +560,104 @@ class PortfolioDB:
     
     # ==================== 分析历史记录操作 ====================
     
+    def add_trade_history(
+        self,
+        stock_id: int,
+        trade_type: str,
+        trade_date: str,
+        price: float,
+        quantity: int,
+        note: str = "",
+        trade_source: str = "manual",
+    ) -> int:
+        """保存持仓交易流水。"""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute(
+                '''
+                INSERT INTO portfolio_trade_history (
+                    portfolio_stock_id, trade_date, trade_type, price, quantity,
+                    note, trade_source, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ''',
+                (
+                    stock_id,
+                    trade_date,
+                    trade_type,
+                    price,
+                    quantity,
+                    note,
+                    trade_source,
+                    datetime.now(),
+                ),
+            )
+            conn.commit()
+            return cursor.lastrowid
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def get_trade_history(self, stock_id: int, limit: int = 20) -> List[Dict]:
+        """获取指定持仓的交易流水。"""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute(
+                '''
+                SELECT *
+                FROM portfolio_trade_history
+                WHERE portfolio_stock_id = ?
+                ORDER BY trade_date DESC, id DESC
+                LIMIT ?
+                ''',
+                (stock_id, limit),
+            )
+            rows = cursor.fetchall()
+            return [self._deserialize_trade_row(row) for row in rows]
+        finally:
+            conn.close()
+
+    def get_trade_summary_map(self, stock_ids: Optional[List[int]] = None) -> Dict[int, Dict]:
+        """批量获取持仓交易摘要。"""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        try:
+            query = [
+                '''
+                SELECT
+                    portfolio_stock_id,
+                    COUNT(*) AS trade_count,
+                    MIN(CASE WHEN trade_type = 'buy' THEN trade_date END) AS first_buy_date,
+                    MAX(trade_date) AS last_trade_date
+                FROM portfolio_trade_history
+                '''
+            ]
+            params: List[Any] = []
+            if stock_ids:
+                placeholders = ','.join('?' for _ in stock_ids)
+                query.append(f'WHERE portfolio_stock_id IN ({placeholders})')
+                params.extend(stock_ids)
+            query.append('GROUP BY portfolio_stock_id')
+            cursor.execute(' '.join(query), params)
+            rows = cursor.fetchall()
+            return {
+                int(row["portfolio_stock_id"]): {
+                    "trade_count": int(row["trade_count"] or 0),
+                    "first_buy_date": row["first_buy_date"],
+                    "last_trade_date": row["last_trade_date"],
+                }
+                for row in rows
+            }
+        finally:
+            conn.close()
+
     def save_analysis(self, stock_id: int, rating: str, confidence: float,
                      current_price: float, target_price: Optional[float] = None,
                      entry_min: Optional[float] = None, entry_max: Optional[float] = None,
@@ -743,6 +940,242 @@ class PortfolioDB:
             rows = cursor.fetchall()
             return [self._deserialize_analysis_row(row) for row in rows]
             
+        finally:
+            conn.close()
+
+    # ==================== 快照 / 报告 / 设置 ====================
+
+    def upsert_daily_snapshot(
+        self,
+        account_name: str,
+        snapshot_date: str,
+        total_market_value: float,
+        total_cost_value: float,
+        total_pnl: float,
+        holdings: Optional[List[Dict]] = None,
+        data_source: str = "manual",
+    ) -> int:
+        """按日写入或更新持仓快照。"""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute(
+                '''
+                INSERT INTO portfolio_daily_snapshots (
+                    account_name, snapshot_date, total_market_value, total_cost_value,
+                    total_pnl, holdings_json, data_source, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(account_name, snapshot_date) DO UPDATE SET
+                    total_market_value = excluded.total_market_value,
+                    total_cost_value = excluded.total_cost_value,
+                    total_pnl = excluded.total_pnl,
+                    holdings_json = excluded.holdings_json,
+                    data_source = excluded.data_source,
+                    updated_at = excluded.updated_at
+                ''',
+                (
+                    account_name,
+                    snapshot_date,
+                    total_market_value,
+                    total_cost_value,
+                    total_pnl,
+                    self._serialize_json(holdings or []),
+                    data_source,
+                    datetime.now(),
+                    datetime.now(),
+                ),
+            )
+            conn.commit()
+            row_id = cursor.lastrowid
+            if not row_id:
+                cursor.execute(
+                    '''
+                    SELECT id FROM portfolio_daily_snapshots
+                    WHERE account_name = ? AND snapshot_date = ?
+                    ''',
+                    (account_name, snapshot_date),
+                )
+                row = cursor.fetchone()
+                row_id = row["id"] if row else 0
+            return row_id
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def has_snapshot_for_date(self, account_name: str, snapshot_date: str) -> bool:
+        """检查指定账户在某日是否已有快照。"""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute(
+                '''
+                SELECT 1
+                FROM portfolio_daily_snapshots
+                WHERE account_name = ? AND snapshot_date = ?
+                LIMIT 1
+                ''',
+                (account_name, snapshot_date),
+            )
+            return cursor.fetchone() is not None
+        finally:
+            conn.close()
+
+    def get_daily_snapshots(
+        self,
+        account_name: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> List[Dict]:
+        """按时间范围查询持仓快照。"""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        try:
+            query = ['SELECT * FROM portfolio_daily_snapshots WHERE 1 = 1']
+            params: List[Any] = []
+            if account_name:
+                query.append('AND account_name = ?')
+                params.append(account_name)
+            if start_date:
+                query.append('AND snapshot_date >= ?')
+                params.append(start_date)
+            if end_date:
+                query.append('AND snapshot_date <= ?')
+                params.append(end_date)
+            query.append('ORDER BY snapshot_date ASC, account_name ASC')
+            cursor.execute(' '.join(query), params)
+            rows = cursor.fetchall()
+            return [self._deserialize_snapshot_row(row) for row in rows]
+        finally:
+            conn.close()
+
+    def save_review_report(
+        self,
+        account_name: str,
+        period_type: str,
+        period_start: str,
+        period_end: str,
+        data_mode: str,
+        report_markdown: str,
+        report_json: Optional[Dict] = None,
+    ) -> int:
+        """保存周期复盘报告。"""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute(
+                '''
+                INSERT INTO portfolio_review_reports (
+                    account_name, period_type, period_start, period_end,
+                    data_mode, report_markdown, report_json, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ''',
+                (
+                    account_name,
+                    period_type,
+                    period_start,
+                    period_end,
+                    data_mode,
+                    report_markdown,
+                    self._serialize_json(report_json or {}),
+                    datetime.now(),
+                ),
+            )
+            conn.commit()
+            return cursor.lastrowid
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def get_review_reports(
+        self,
+        account_name: Optional[str] = None,
+        limit: int = 20,
+        period_type: Optional[str] = None,
+    ) -> List[Dict]:
+        """查询已保存的复盘报告。"""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        try:
+            query = ['SELECT * FROM portfolio_review_reports WHERE 1 = 1']
+            params: List[Any] = []
+            if account_name:
+                query.append('AND account_name = ?')
+                params.append(account_name)
+            if period_type:
+                query.append('AND period_type = ?')
+                params.append(period_type)
+            query.append('ORDER BY created_at DESC LIMIT ?')
+            params.append(limit)
+            cursor.execute(' '.join(query), params)
+            rows = cursor.fetchall()
+            return [self._deserialize_review_report_row(row) for row in rows]
+        finally:
+            conn.close()
+
+    def get_review_report(self, report_id: int) -> Optional[Dict]:
+        """根据 ID 获取复盘报告详情。"""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute(
+                'SELECT * FROM portfolio_review_reports WHERE id = ?',
+                (report_id,),
+            )
+            row = cursor.fetchone()
+            return self._deserialize_review_report_row(row) if row else None
+        finally:
+            conn.close()
+
+    def set_setting(self, key: str, value: Any) -> None:
+        """写入持仓域设置。"""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute(
+                '''
+                INSERT INTO portfolio_settings (key, value, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET
+                    value = excluded.value,
+                    updated_at = excluded.updated_at
+                ''',
+                (key, self._serialize_json(value), datetime.now()),
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def get_setting(self, key: str, default: Any = None) -> Any:
+        """读取持仓域设置。"""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute(
+                'SELECT value FROM portfolio_settings WHERE key = ? LIMIT 1',
+                (key,),
+            )
+            row = cursor.fetchone()
+            if not row:
+                return default
+            value = self._deserialize_flexible_value(row["value"], default=default)
+            return default if value in (None, "") else value
         finally:
             conn.close()
 

@@ -842,146 +842,183 @@ def render_settings():
 
 
 def _render_task_kline_and_decisions(task: Dict, db: SmartMonitorDB, engine):
-    """
-    渲染单个任务的K线图和AI决策
-    
-    Args:
-        task: 任务信息
-        db: 数据库实例
-        engine: 监控引擎实例
-    """
-    from smart_monitor_kline import SmartMonitorKline
-    from smart_monitor_data import SmartMonitorDataFetcher
-    
-    stock_code = task['stock_code']
-    stock_name = task.get('stock_name', stock_code)
-    
-    # 创建两列：左侧K线图，右侧AI决策列表
-    col_chart, col_decisions = st.columns([2, 1])
-    
-    with col_chart:
-        st.markdown("#### K线图")
-        
-        # 添加刷新按钮
-        if st.button("刷新K线", key=f"refresh_kline_{task['id']}"):
-            st.rerun()
-        
-        # 获取K线数据
-        try:
-            kline = SmartMonitorKline()
-            data_fetcher = SmartMonitorDataFetcher()
-            
-            # 获取K线数据（60天）
-            with st.spinner(f"正在获取 {stock_code} 的K线数据..."):
-                kline_data = kline.get_kline_data(stock_code, days=60, data_fetcher=data_fetcher)
-            
-            if kline_data is not None and not kline_data.empty:
-                # 获取AI决策历史（最近100条，用于K线图标注）
-                ai_decisions = db.get_ai_decisions(
-                    stock_code=stock_code,
-                    limit=100
-                )
-                
-                # 过滤最近30天的决策（用于K线图标注）
-                from datetime import timedelta
-                if ai_decisions:
-                    start_date = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
-                    ai_decisions = [
-                        d for d in ai_decisions 
-                        if d.get('decision_time', '').split()[0] >= start_date
-                    ]
-                
-                # 创建K线图
-                fig = kline.create_kline_with_decisions(
-                    stock_code=stock_code,
-                    stock_name=stock_name,
-                    kline_data=kline_data,
-                    ai_decisions=ai_decisions,
-                    show_volume=True,
-                    show_ma=True,
-                    height=500
-                )
-                
-                # 显示图表
-                st.plotly_chart(fig, width='stretch', config={'responsive': True})
-                
-                st.caption(f"数据时间范围：{kline_data['日期'].min()} ~ {kline_data['日期'].max()}")
+    """旧版任务详情保留占位，避免历史入口报错。"""
+    st.info("新版 AI 工作台已简化此区域，如需单任务详情请使用“立即分析”或查看历史记录。")
+
+
+def _ensure_smart_monitor_runtime(lightweight_model=None, reasoning_model=None):
+    if lightweight_model is None:
+        lightweight_model = st.session_state.get('selected_lightweight_model', config.LIGHTWEIGHT_MODEL_NAME)
+    if reasoning_model is None:
+        reasoning_model = st.session_state.get('selected_reasoning_model', config.REASONING_MODEL_NAME)
+
+    if 'engine' not in st.session_state:
+        st.session_state.engine = SmartMonitorEngine(
+            lightweight_model=lightweight_model,
+            reasoning_model=reasoning_model,
+        )
+        st.session_state.db = SmartMonitorDB()
+    else:
+        st.session_state.engine.set_model_overrides(
+            lightweight_model=lightweight_model,
+            reasoning_model=reasoning_model,
+        )
+
+    return st.session_state.engine, st.session_state.db
+
+
+def render_ai_monitor_tasks_panel():
+    from monitor_service import monitor_service
+
+    st.header("AI监控任务")
+
+    db = st.session_state.db
+    service_status = "运行中" if monitor_service.running else "已停止"
+    st.caption(f"监测服务状态: {service_status}。启用中的任务会由统一监测服务按分钟调度执行。")
+
+    with st.expander("新增 AI 监控任务", expanded=False):
+        with st.form("ai_monitor_task_form", clear_on_submit=False):
+            col1, col2 = st.columns(2)
+
+            with col1:
+                task_name = st.text_input("任务名称", placeholder="例如: 茅台 AI 监控")
+                stock_code = st.text_input("股票代码", placeholder="例如: 600519")
+                stock_name = st.text_input("股票名称", placeholder="可选")
+                interval_minutes = st.slider("检查间隔(分钟)", 1, 240, 5)
+                has_position = st.checkbox("已有持仓", value=False)
+                position_cost = st.number_input("持仓成本", min_value=0.0, value=0.0, step=0.01)
+                position_quantity = st.number_input("持仓数量", min_value=0, value=0, step=100)
+
+            with col2:
+                auto_trade = st.checkbox("自动交易", value=False)
+                trading_hours_only = st.checkbox("仅交易时段执行", value=True)
+                position_size_pct = st.slider("仓位百分比", 5, 50, 20)
+                stop_loss_pct = st.slider("止损百分比", 1, 20, 5)
+                take_profit_pct = st.slider("止盈百分比", 1, 30, 10)
+                notify_email = st.text_input("通知邮箱", placeholder="可选")
+
+            submitted = st.form_submit_button("保存 AI 任务", type="primary", width='stretch')
+
+        if submitted:
+            if not task_name or not stock_code:
+                st.error("请填写任务名称和股票代码。")
             else:
-                st.error(f"无法获取 {stock_code} 的K线数据")
-                
-        except Exception as e:
-            st.error(f"K线图加载失败: {str(e)}")
-            import traceback
-            st.text(traceback.format_exc())
-    
-    with col_decisions:
-        st.markdown("#### AI决策历史")
-        
-        # 添加刷新按钮
-        if st.button("刷新决策", key=f"refresh_decisions_{task['id']}"):
-            st.rerun()
-        
-        # 获取最近的AI决策（最近5条）
-        try:
-            recent_decisions = db.get_ai_decisions(
-                stock_code=stock_code,
-                limit=5
+                db.upsert_monitor_task({
+                    'task_name': task_name,
+                    'stock_code': stock_code.strip(),
+                    'stock_name': stock_name.strip() or stock_code.strip(),
+                    'enabled': 1,
+                    'check_interval': interval_minutes * 60,
+                    'auto_trade': 1 if auto_trade else 0,
+                    'trading_hours_only': 1 if trading_hours_only else 0,
+                    'position_size_pct': position_size_pct,
+                    'stop_loss_pct': stop_loss_pct,
+                    'take_profit_pct': take_profit_pct,
+                    'notify_email': notify_email.strip() or None,
+                    'has_position': 1 if has_position else 0,
+                    'position_cost': position_cost,
+                    'position_quantity': position_quantity,
+                })
+                st.success(f"{stock_code} AI 监控任务已保存。")
+                st.rerun()
+
+    tasks = db.get_monitor_tasks(enabled_only=False)
+    if not tasks:
+        st.info("暂无 AI 监控任务。")
+        return
+
+    st.markdown("### 任务列表")
+    for task in tasks:
+        interval_minutes = max(1, int(task.get('check_interval', 60) / 60))
+        source_text = "持仓托管" if task.get('managed_by_portfolio') else "手工"
+        status_text = "启用" if task.get('enabled') else "停用"
+
+        with st.container():
+            head_col, status_col = st.columns([4, 1.2])
+            with head_col:
+                st.markdown(f"**{task['stock_code']}** {task.get('stock_name') or task['stock_code']}")
+                st.caption(
+                    f"{task.get('task_name') or task['stock_code']} | {interval_minutes} 分钟 | "
+                    f"{'自动交易' if task.get('auto_trade') else '仅分析'} | {source_text}"
+                )
+            with status_col:
+                st.markdown(f"**{status_text}**")
+
+            if task.get('managed_by_portfolio'):
+                st.caption("该任务由持仓分析托管，同步来源中的核心策略参数不可在此修改。")
+
+            action_col1, action_col2, action_col3 = st.columns(3)
+            with action_col1:
+                if st.button("立即分析", key=f"run_ai_task_{task['id']}", width='stretch'):
+                    from monitor_service import monitor_service
+
+                    if monitor_service.manual_update_stock(task['id']):
+                        st.success("已触发一次 AI 分析。")
+                    else:
+                        st.error("触发 AI 分析失败。")
+                    st.rerun()
+            with action_col2:
+                toggle_label = "停用" if task.get('enabled') else "启用"
+                if st.button(toggle_label, key=f"toggle_ai_task_{task['id']}", width='stretch'):
+                    db.update_monitor_task(task['stock_code'], {'enabled': 0 if task.get('enabled') else 1})
+                    st.success(f"任务已{toggle_label}。")
+                    st.rerun()
+            with action_col3:
+                delete_disabled = bool(task.get('managed_by_portfolio'))
+                if st.button(
+                    "删除" if not delete_disabled else "源头删除",
+                    key=f"delete_ai_task_{task['id']}",
+                    width='stretch',
+                    disabled=delete_disabled,
+                ):
+                    db.delete_monitor_task(task['id'])
+                    st.success("任务已删除。")
+                    st.rerun()
+
+            st.markdown(
+                "<div style='margin:0.45rem 0 0.7rem 0; border-bottom:1px solid rgba(148,163,184,0.18);'></div>",
+                unsafe_allow_html=True,
             )
-            
-            if recent_decisions:
-                for idx, decision in enumerate(recent_decisions):
-                    action = decision.get('action', 'unknown')
-                    decision_time = decision.get('decision_time', '')
-                    confidence = decision.get('confidence', 0)
-                    reasoning = decision.get('reasoning', '无')
-                    executed = decision.get('executed', 0)
-                    
-                    action_colors = {
-                        'buy': get_action_color('buy'),
-                        'sell': get_action_color('sell'),
-                        'add_position': get_action_color('add_position'),
-                        'reduce_position': get_action_color('reduce_position'),
-                        'hold': get_action_color('hold')
-                    }
-                    
-                    action_names = {
-                        'buy': '买入',
-                        'sell': '卖出',
-                        'add_position': '加仓',
-                        'reduce_position': '减仓',
-                        'hold': '持有'
-                    }
-                    
-                    color = action_colors.get(action, '#000000')
-                    action_name = action_names.get(action, action)
-                    execution_text = '已执行' if executed else '待执行'
-                    
-                    # 显示决策卡片
-                    with st.container():
-                        st.markdown(f"""
-                        <div style="border-left: 4px solid {color}; padding-left: 10px; margin-bottom: 10px;">
-                            <p style="margin: 0;">
-                                <strong>{action_name}</strong> · {execution_text}
-                            </p>
-                            <p class="ui-meta-text" style="margin: 5px 0; color: gray;">
-                                {decision_time}
-                            </p>
-                            <p class="ui-body-text" style="margin: 5px 0;">
-                                <strong>置信度:</strong> {confidence}%
-                            </p>
-                            <p class="ui-body-text" style="margin: 5px 0;">
-                                <strong>推理:</strong> {reasoning[:100]}{'...' if len(reasoning) > 100 else ''}
-                            </p>
-                        </div>
-                        """, unsafe_allow_html=True)
-                        
-                        st.markdown("---")
-            else:
-                st.info("暂无AI决策记录。")
-                st.caption("启动监控后，AI会定期分析并记录决策")
-                
-        except Exception as e:
-            st.error(f"加载决策历史失败: {str(e)}")
+
+
+def smart_monitor_ui(lightweight_model=None, reasoning_model=None):
+    """AI盯盘主界面（重构版）。"""
+    from monitor_manager import display_price_alert_workspace
+
+    _ensure_smart_monitor_runtime(lightweight_model, reasoning_model)
+
+    desired_tab = st.session_state.get('smart_monitor_active_tab', 'realtime')
+    tab_labels = [
+        "实时分析",
+        "AI监控任务",
+        "价格预警",
+        "历史记录",
+        "系统设置",
+    ]
+    tab_key_to_label = {
+        "realtime": "实时分析",
+        "ai_task": "AI监控任务",
+        "price_alert": "价格预警",
+        "history": "历史记录",
+        "settings": "系统设置",
+    }
+
+    if desired_tab in tab_key_to_label and desired_tab != "realtime":
+        st.caption(f"已打开 AI 盯盘，请切换到“{tab_key_to_label[desired_tab]}”标签查看目标内容。")
+        st.session_state.pop('smart_monitor_active_tab', None)
+
+    tabs = st.tabs(tab_labels)
+
+    with tabs[0]:
+        render_realtime_analysis()
+    with tabs[1]:
+        render_ai_monitor_tasks_panel()
+    with tabs[2]:
+        display_price_alert_workspace()
+    with tabs[3]:
+        render_history()
+    with tabs[4]:
+        render_settings()
 
 
 if __name__ == '__main__':

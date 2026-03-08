@@ -7,12 +7,26 @@
 import schedule
 import threading
 import time
+from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional, Callable
+from typing import Callable, List, Optional
 import traceback
 
 from portfolio_manager import portfolio_manager
 from notification_service import NotificationService
+
+
+@dataclass
+class PortfolioAnalysisTaskConfig:
+    """持仓分析任务的共享配置模型。"""
+
+    analysis_mode: str = "sequential"
+    max_workers: int = 3
+    auto_monitor_sync: bool = True
+    notification_enabled: bool = True
+    selected_agents: Optional[List[str]] = field(
+        default_factory=lambda: ["technical", "fundamental", "fund_flow", "risk"]
+    )
 
 
 class PortfolioScheduler:
@@ -21,16 +35,52 @@ class PortfolioScheduler:
     def __init__(self):
         """初始化调度器"""
         self.schedule_times = ["09:30"]  # 支持多个定时时间点
-        self.analysis_mode = "sequential"  # 默认顺序分析
         self._is_running = False  # 使用私有属性
         self.thread = None
         self.last_run_time = None
         self.next_run_time = None
-        self.auto_monitor_sync = True  # 默认启用自动监测同步
-        self.notification_enabled = True  # 默认启用通知
-        self.selected_agents = None  # None表示全部分析师
         self.notification_service = NotificationService()
-        self.max_workers = 3  # 并行模式的线程数
+        self.task_config = PortfolioAnalysisTaskConfig()
+
+    @property
+    def analysis_mode(self) -> str:
+        return self.task_config.analysis_mode
+
+    @analysis_mode.setter
+    def analysis_mode(self, value: str) -> None:
+        self.task_config.analysis_mode = value
+
+    @property
+    def auto_monitor_sync(self) -> bool:
+        return self.task_config.auto_monitor_sync
+
+    @auto_monitor_sync.setter
+    def auto_monitor_sync(self, value: bool) -> None:
+        self.task_config.auto_monitor_sync = bool(value)
+
+    @property
+    def notification_enabled(self) -> bool:
+        return self.task_config.notification_enabled
+
+    @notification_enabled.setter
+    def notification_enabled(self, value: bool) -> None:
+        self.task_config.notification_enabled = bool(value)
+
+    @property
+    def selected_agents(self) -> Optional[List[str]]:
+        return list(self.task_config.selected_agents) if self.task_config.selected_agents else None
+
+    @selected_agents.setter
+    def selected_agents(self, value: Optional[List[str]]) -> None:
+        self.task_config.selected_agents = list(value) if value else None
+
+    @property
+    def max_workers(self) -> int:
+        return self.task_config.max_workers
+
+    @max_workers.setter
+    def max_workers(self, value: int) -> None:
+        self.task_config.max_workers = max(1, int(value))
     
     # 兼容旧代码的属性
     @property
@@ -165,28 +215,46 @@ class PortfolioScheduler:
             mode: "sequential" 或 "parallel"
         """
         if mode in ["sequential", "parallel"]:
-            self.analysis_mode = mode
+            self.task_config.analysis_mode = mode
             print(f"[OK] 设置分析模式: {mode}")
         else:
             print(f"[ERROR] 无效的分析模式: {mode}")
     
     def set_auto_monitor_sync(self, enabled: bool):
         """设置是否启用自动监测同步"""
-        self.auto_monitor_sync = enabled
+        self.task_config.auto_monitor_sync = enabled
         print(f"[OK] 自动监测同步: {'启用' if enabled else '禁用'}")
     
     def set_notification_enabled(self, enabled: bool):
         """设置是否启用通知"""
-        self.notification_enabled = enabled
+        self.task_config.notification_enabled = enabled
         print(f"[OK] 通知推送: {'启用' if enabled else '禁用'}")
     
     def set_selected_agents(self, agents: Optional[list]):
         """设置参与分析的AI分析师"""
-        self.selected_agents = agents
+        self.task_config.selected_agents = list(agents) if agents else None
         if agents:
             print(f"[OK] 选择分析师: {', '.join(agents)}")
         else:
             print("[OK] 选择分析师: 全部")
+
+    def get_task_config(self) -> PortfolioAnalysisTaskConfig:
+        """获取当前共享分析任务配置。"""
+        return PortfolioAnalysisTaskConfig(
+            analysis_mode=self.analysis_mode,
+            max_workers=self.max_workers,
+            auto_monitor_sync=self.auto_monitor_sync,
+            notification_enabled=self.notification_enabled,
+            selected_agents=self.selected_agents,
+        )
+
+    def set_task_config(self, config: PortfolioAnalysisTaskConfig) -> None:
+        """整体替换共享分析任务配置。"""
+        self.set_analysis_mode(config.analysis_mode)
+        self.max_workers = config.max_workers
+        self.set_auto_monitor_sync(config.auto_monitor_sync)
+        self.set_notification_enabled(config.notification_enabled)
+        self.set_selected_agents(config.selected_agents)
     
     def _scheduled_job(self):
         """定时任务执行的作业"""
@@ -195,12 +263,13 @@ class PortfolioScheduler:
         print("="*60 + "\n")
         
         try:
+            config = self.get_task_config()
             # 1. 执行批量分析
             print("[1/4] 执行持仓批量分析...")
             analysis_results = portfolio_manager.batch_analyze_portfolio(
-                mode=self.analysis_mode,
-                max_workers=self.max_workers,
-                selected_agents=self.selected_agents
+                mode=config.analysis_mode,
+                max_workers=config.max_workers,
+                selected_agents=config.selected_agents,
             )
             
             if not analysis_results.get("success"):
@@ -208,7 +277,7 @@ class PortfolioScheduler:
                 print(f"[ERROR] 批量分析失败: {error_msg}")
                 
                 # 发送错误通知
-                if self.notification_enabled:
+                if config.notification_enabled:
                     self._send_error_notification(error_msg)
                 
                 self.last_run_time = datetime.now()
@@ -218,7 +287,7 @@ class PortfolioScheduler:
             print("\n[2/4] 保存分析结果...")
             persistence_result = portfolio_manager.persist_analysis_results(
                 analysis_results,
-                sync_realtime_monitor=self.auto_monitor_sync,
+                sync_realtime_monitor=config.auto_monitor_sync,
                 analysis_source="portfolio_scheduler",
                 analysis_period="1y",
             )
@@ -227,7 +296,7 @@ class PortfolioScheduler:
             
             # 3. 自动监测同步
             sync_result = persistence_result["sync_result"]
-            if self.auto_monitor_sync:
+            if config.auto_monitor_sync:
                 print("\n[3/4] 自动同步到监测列表...")
                 if sync_result is None:
                     sync_result = {"added": 0, "updated": 0, "failed": 0, "total": 0}
@@ -236,7 +305,7 @@ class PortfolioScheduler:
                 print("\n[3/4] 跳过监测同步（已禁用）")
             
             # 4. 发送通知
-            if self.notification_enabled:
+            if config.notification_enabled:
                 print("\n[4/4] 发送通知...")
                 self._send_notification(analysis_results, sync_result)
             else:
@@ -554,8 +623,10 @@ class PortfolioScheduler:
             "is_running": self._is_running,
             "schedule_time": self.schedule_time,
             "analysis_mode": self.analysis_mode,
+            "max_workers": self.max_workers,
             "auto_monitor_sync": self.auto_monitor_sync,
             "notification_enabled": self.notification_enabled,
+            "selected_agents": self.selected_agents,
             "last_run_time": self.last_run_time.strftime("%Y-%m-%d %H:%M:%S") if self.last_run_time else None,
             "next_run_time": self.next_run_time.strftime("%Y-%m-%d %H:%M:%S") if self.next_run_time else None,
             "portfolio_count": portfolio_manager.get_stock_count()
@@ -572,9 +643,15 @@ class PortfolioScheduler:
             return self.next_run_time.strftime("%H:%M")
         return None
     
-    def update_config(self, schedule_time: str = None, analysis_mode: str = None,
-                     max_workers: int = None, auto_sync_monitor: bool = None,
-                     send_notification: bool = None):
+    def update_config(
+        self,
+        schedule_time: str = None,
+        analysis_mode: str = None,
+        max_workers: int = None,
+        auto_sync_monitor: bool = None,
+        send_notification: bool = None,
+        selected_agents: Optional[List[str]] = None,
+    ):
         """
         更新调度器配置
         
@@ -600,6 +677,9 @@ class PortfolioScheduler:
         
         if send_notification is not None:
             self.set_notification_enabled(send_notification)
+
+        if selected_agents is not None:
+            self.set_selected_agents(selected_agents)
         
         print("[OK] 配置已更新")
     

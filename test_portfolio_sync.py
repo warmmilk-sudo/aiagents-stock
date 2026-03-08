@@ -49,6 +49,9 @@ class PortfolioIntegrationTests(unittest.TestCase):
 
     def test_add_and_update_stock_syncs_to_smart_monitor(self):
         stock_id = self._add_stock("000001", cost_price=10.5, quantity=200)
+        snapshots = self.portfolio_db.get_daily_snapshots(account_name="默认账户")
+        self.assertTrue(snapshots)
+        self.assertEqual(snapshots[-1]["account_name"], "默认账户")
 
         task = self.smart_monitor_db.get_monitor_task_by_code("000001", managed_only=True)
         self.assertIsNotNone(task)
@@ -60,6 +63,8 @@ class PortfolioIntegrationTests(unittest.TestCase):
 
         success, msg = self.manager.update_stock(stock_id, cost_price=12.3, quantity=500, auto_monitor=True)
         self.assertTrue(success, msg)
+        updated_snapshots = self.portfolio_db.get_daily_snapshots(account_name="默认账户")
+        self.assertTrue(updated_snapshots[-1]["total_market_value"] >= 12.3 * 500)
 
         updated_task = self.smart_monitor_db.get_monitor_task_by_code("000001", managed_only=True)
         self.assertIsNotNone(updated_task)
@@ -96,6 +101,8 @@ class PortfolioIntegrationTests(unittest.TestCase):
 
         result = self.manager.persist_analysis_results(analysis_results, sync_realtime_monitor=True)
         self.assertEqual(len(result["saved_ids"]), 1)
+        snapshots = self.portfolio_db.get_daily_snapshots(account_name="默认账户")
+        self.assertTrue(snapshots)
 
         history = self.portfolio_db.get_analysis_history(stock_id, limit=10)
         self.assertEqual(len(history), 1)

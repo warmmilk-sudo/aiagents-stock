@@ -91,9 +91,9 @@ def display_monitor_status():
 def display_add_stock_section():
     """显示添加股票监测区域"""
     
-    st.markdown("### ➕ 添加股票监测")
+    st.markdown("### 添加价格预警")
     
-    with st.expander("点击展开添加股票监测", expanded=False):
+    with st.expander("点击展开添加价格预警", expanded=False):
         col1, col2 = st.columns([1, 1])
         
         with col1:
@@ -154,7 +154,7 @@ def display_add_stock_section():
                 auto_take_profit = st.checkbox("自动止盈", value=True)
         
         # 添加按钮
-        if st.button("✅ 添加监测", type="primary", width='stretch'):
+        if st.button("保存价格预警", type="primary", width='stretch'):
             if symbol and entry_min > 0 and entry_max > 0 and entry_max > entry_min:
                 try:
                     # 准备数据
@@ -184,7 +184,7 @@ def display_add_stock_section():
                         quant_config=quant_config
                     )
                     
-                    st.success(f"✅ 已成功添加 {symbol} 到监测列表")
+                    st.success(f"已成功添加 {symbol} 到价格预警")
                     st.balloons()
                     
                     # 立即更新一次价格
@@ -201,12 +201,12 @@ def display_add_stock_section():
 def display_monitored_stocks():
     """显示监测股票列表 - 卡片式布局"""
     
-    st.markdown("### 监测股票列表")
+    st.markdown("### 价格预警列表")
     
     stocks = monitor_db.get_monitored_stocks()
     
     if not stocks:
-        st.info("暂无监测股票，请添加股票开始监测")
+        st.info("暂无价格预警，请先添加预警标的。")
         return
     
     # 筛选和搜索
@@ -861,3 +861,212 @@ def get_monitor_summary():
     }
     
     return summary
+
+
+def _show_monitor_jump_success():
+    if 'monitor_jump_highlight' in st.session_state:
+        symbol = st.session_state.monitor_jump_highlight
+        st.success(f"{symbol} 已成功加入价格预警。")
+        del st.session_state.monitor_jump_highlight
+
+
+def display_price_alert_workspace():
+    """价格预警工作台，供 AI 盯盘页复用。"""
+    st.header("价格预警")
+    _show_monitor_jump_success()
+    display_add_stock_section()
+    display_monitored_stocks()
+
+
+def display_monitoring_registry():
+    """监测服务注册表，只读展示统一监控项。"""
+    import pandas as pd
+
+    st.markdown("### 监控注册表")
+
+    col1, col2, col3 = st.columns([1.2, 1, 1])
+    with col1:
+        monitor_type = st.selectbox("类型过滤", ["全部", "AI监控任务", "价格预警"], index=0)
+    with col2:
+        source_filter = st.selectbox("来源过滤", ["全部", "手工", "持仓"], index=0)
+    with col3:
+        enabled_only = st.checkbox("仅显示启用项", value=False)
+
+    monitor_type_value = None
+    if monitor_type == "AI监控任务":
+        monitor_type_value = "ai_task"
+    elif monitor_type == "价格预警":
+        monitor_type_value = "price_alert"
+
+    managed_filter = None
+    if source_filter == "手工":
+        managed_filter = False
+    elif source_filter == "持仓":
+        managed_filter = True
+
+    items = monitor_service.get_registry_items(
+        monitor_type=monitor_type_value,
+        managed_by_portfolio=managed_filter,
+        enabled_only=enabled_only,
+    )
+
+    if not items:
+        st.info("当前没有可展示的监控项。")
+        return
+
+    rows = []
+    for item in items:
+        rows.append({
+            "代码": item["symbol"],
+            "名称": item.get("name") or item["symbol"],
+            "类型": "AI监控任务" if item["monitor_type"] == "ai_task" else "价格预警",
+            "来源": "持仓" if item.get("managed_by_portfolio") else "手工",
+            "启用": "是" if item.get("enabled") else "否",
+            "间隔(分钟)": item.get("interval_minutes"),
+            "交易时段": "仅交易时段" if item.get("trading_hours_only") else "全天",
+            "最后状态": item.get("last_status") or "-",
+            "最后检查": item.get("last_checked") or "-",
+        })
+
+    df = pd.DataFrame(rows)
+    st.dataframe(
+        df,
+        hide_index=True,
+        width='stretch',
+        height=min(680, max(220, 38 * (len(df) + 1))),
+    )
+
+
+def display_recent_monitor_events():
+    """展示统一事件流。"""
+    st.markdown("### 最近事件")
+    events = monitor_service.get_recent_events(limit=30)
+    if not events:
+        st.info("暂无事件记录。")
+        return
+
+    for event in events[:20]:
+        event_time = event.get("created_at", "-")
+        event_type = event.get("event_type", "-")
+        sent_text = "已发送" if event.get("sent") else "未发送"
+        st.caption(
+            f"{event_time} | {event.get('symbol')} | {event_type} | {sent_text} | "
+            f"{event.get('message')}"
+        )
+
+
+def display_monitor_manager():
+    """监测服务页，只承担运维与状态展示。"""
+    st.header("监测服务")
+    display_monitor_status()
+    display_monitoring_registry()
+    display_recent_monitor_events()
+    display_notification_management()
+
+
+def get_monitor_summary():
+    """获取统一监控摘要信息。"""
+    items = monitor_service.get_registry_items()
+    price_alerts = [item for item in items if item["monitor_type"] == "price_alert"]
+
+    return {
+        'total_stocks': len(price_alerts),
+        'stocks_needing_update': len(monitor_service.get_stocks_needing_update()),
+        'pending_notifications': len(monitor_db.get_pending_notifications()),
+        'active_monitoring': monitor_service.running,
+    }
+
+
+def display_edit_dialog(stock_id: int):
+    """重构后的价格预警编辑框。"""
+    stock = monitor_db.get_stock_by_id(stock_id)
+    if not stock:
+        st.error("价格预警不存在。")
+        st.session_state.pop('editing_stock_id', None)
+        return
+
+    st.markdown("---")
+    st.markdown(f"### 编辑价格预警 - {stock['symbol']} {stock['name']}")
+
+    managed = bool(stock.get('managed_by_portfolio'))
+    if managed:
+        st.info("该价格预警来自持仓分析托管。这里仅允许调整通知开关，核心价位请回到持仓分析源头修改。")
+
+    with st.form(key=f"price_alert_edit_{stock_id}"):
+        if managed:
+            notification_enabled = st.checkbox("启用通知", value=stock['notification_enabled'])
+            submit = st.form_submit_button("保存", type="primary", width='stretch')
+            if submit:
+                monitor_db.toggle_notification(stock_id, notification_enabled)
+                st.success("通知设置已更新。")
+                st.session_state.pop('editing_stock_id', None)
+                st.rerun()
+        else:
+            col1, col2 = st.columns(2)
+            entry_range = stock.get('entry_range', {}) or {}
+            with col1:
+                entry_min = st.number_input("进场区间最低价", value=float(entry_range.get('min', 0) or 0), step=0.01, format="%.2f")
+                entry_max = st.number_input("进场区间最高价", value=float(entry_range.get('max', 0) or 0), step=0.01, format="%.2f")
+                take_profit = st.number_input("止盈价", value=float(stock['take_profit'] or 0), step=0.01, format="%.2f")
+                stop_loss = st.number_input("止损价", value=float(stock['stop_loss'] or 0), step=0.01, format="%.2f")
+            with col2:
+                check_interval = st.slider("监测间隔(分钟)", 5, 240, int(stock['check_interval']))
+                rating = st.selectbox("投资评级", ["买入", "持有", "卖出"], index=["买入", "持有", "卖出"].index(stock['rating']) if stock['rating'] in ["买入", "持有", "卖出"] else 0)
+                notification_enabled = st.checkbox("启用通知", value=stock['notification_enabled'])
+
+            submit = st.form_submit_button("保存", type="primary", width='stretch')
+            if submit:
+                if entry_min <= 0 or entry_max <= 0 or entry_max <= entry_min:
+                    st.error("请输入有效的进场区间。")
+                else:
+                    monitor_db.update_monitored_stock(
+                        stock_id=stock_id,
+                        rating=rating,
+                        entry_range={"min": entry_min, "max": entry_max},
+                        take_profit=take_profit if take_profit > 0 else None,
+                        stop_loss=stop_loss if stop_loss > 0 else None,
+                        check_interval=check_interval,
+                        notification_enabled=notification_enabled,
+                    )
+                    st.success("价格预警已更新。")
+                    st.session_state.pop('editing_stock_id', None)
+                    st.rerun()
+
+    if st.button("取消编辑", key=f"cancel_edit_price_alert_{stock_id}", width='stretch'):
+        st.session_state.pop('editing_stock_id', None)
+        st.rerun()
+
+
+def display_delete_confirm_dialog(stock_id: int):
+    """重构后的删除确认框。"""
+    stock = monitor_db.get_stock_by_id(stock_id)
+    if not stock:
+        st.error("价格预警不存在或已删除。")
+        st.session_state.pop('deleting_stock_id', None)
+        st.rerun()
+        return
+
+    st.markdown("---")
+    st.markdown("### 删除价格预警")
+
+    if stock.get('managed_by_portfolio'):
+        st.warning("该价格预警来自持仓分析托管，不能在这里删除。请到持仓分析源头移除。")
+        if st.button("关闭", key=f"close_delete_blocked_{stock_id}", width='stretch'):
+            st.session_state.pop('deleting_stock_id', None)
+            st.rerun()
+        return
+
+    st.warning(
+        f"确认删除 {stock['symbol']} {stock['name']} 的价格预警？此操作不可撤销。"
+    )
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("确认删除", type="primary", key=f"confirm_delete_price_alert_{stock_id}", width='stretch'):
+            monitor_db.remove_monitored_stock(stock_id)
+            st.success("价格预警已删除。")
+            st.session_state.pop('deleting_stock_id', None)
+            st.rerun()
+    with col2:
+        if st.button("取消", key=f"cancel_delete_price_alert_{stock_id}", width='stretch'):
+            st.session_state.pop('deleting_stock_id', None)
+            st.rerun()

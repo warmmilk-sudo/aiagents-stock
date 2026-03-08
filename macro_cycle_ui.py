@@ -8,6 +8,36 @@ import time
 from datetime import datetime
 from macro_cycle_engine import MacroCycleEngine
 from macro_cycle_pdf import MacroCyclePDFGenerator, generate_macro_cycle_markdown
+from ui_shared import _split_analysis_report_sections, render_reasoning_process
+
+
+def _render_macro_agent_report(agent_result, *, empty_message: str, report_heading: str | None = None):
+    """Render macro analysis report body first and keep reasoning collapsed at the end."""
+    analysis_text = ""
+    if isinstance(agent_result, dict):
+        analysis_text = agent_result.get("analysis", "") or ""
+
+    report_body, reasoning_text = _split_analysis_report_sections(analysis_text)
+
+    if report_heading:
+        st.markdown(f"#### {report_heading}")
+
+    if report_body:
+        st.markdown(report_body)
+    elif reasoning_text:
+        st.info("未提取到结构化报告正文，已将推理过程保留在下方折叠区。")
+    else:
+        st.info(empty_message)
+
+    if reasoning_text:
+        render_reasoning_process(
+            agents_results={},
+            discussion_result="",
+            expanded=False,
+            include_agents=False,
+            include_discussion=False,
+            extra_sections=[("推理过程", reasoning_text)],
+        )
 
 
 def display_macro_cycle(lightweight_model=None, reasoning_model=None):
@@ -216,7 +246,11 @@ def display_analysis_results(result, show_export=True, key_prefix="macro"):
                 </p>
             </div>
             """, unsafe_allow_html=True)
-            st.markdown(chief.get("analysis", "暂无分析结果"))
+            _render_macro_agent_report(
+                chief,
+                empty_message="暂无综合策略分析结果",
+                report_heading="综合判断与投资策略",
+            )
         else:
             st.info("暂无综合策略分析结果")
 
@@ -234,7 +268,7 @@ def display_analysis_results(result, show_export=True, key_prefix="macro"):
                 </p>
             </div>
             """, unsafe_allow_html=True)
-            st.markdown(kondratieff.get("analysis", "暂无分析结果"))
+            _render_macro_agent_report(kondratieff, empty_message="暂无康波周期分析结果")
         else:
             st.info("暂无康波周期分析结果")
 
@@ -252,7 +286,7 @@ def display_analysis_results(result, show_export=True, key_prefix="macro"):
                 </p>
             </div>
             """, unsafe_allow_html=True)
-            st.markdown(merrill.get("analysis", "暂无分析结果"))
+            _render_macro_agent_report(merrill, empty_message="暂无美林时钟分析结果")
         else:
             st.info("暂无美林时钟分析结果")
 
@@ -270,7 +304,7 @@ def display_analysis_results(result, show_export=True, key_prefix="macro"):
                 </p>
             </div>
             """, unsafe_allow_html=True)
-            st.markdown(policy.get("analysis", "暂无分析结果"))
+            _render_macro_agent_report(policy, empty_message="暂无政策分析结果")
         else:
             st.info("暂无政策分析结果")
 

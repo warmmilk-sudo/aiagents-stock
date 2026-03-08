@@ -291,6 +291,24 @@ class UiSharedNormalizationTests(unittest.TestCase):
         self.assertEqual(body, "直接给出报告正文")
         self.assertEqual(reasoning, "")
 
+    def test_split_analysis_report_sections_extracts_macro_cycle_body_after_reasoning(self):
+        body, reasoning = _split_analysis_report_sections(
+            "【推理过程】\n先综合三位分析师的结论，再组织成最终策略。\n"
+            "## 一、周期仪表盘（双指针+政策风向标）\n"
+            "这里开始是宏观周期分析报告正文。\n"
+            "## 二、综合资产配置建议\n"
+            "继续正文内容。"
+        )
+
+        self.assertEqual(
+            body,
+            "## 一、周期仪表盘（双指针+政策风向标）\n"
+            "这里开始是宏观周期分析报告正文。\n"
+            "## 二、综合资产配置建议\n"
+            "继续正文内容。",
+        )
+        self.assertEqual(reasoning, "先综合三位分析师的结论，再组织成最终策略。")
+
     def test_resolve_final_decision_content_extracts_embedded_json(self):
         final_decision, invalid, reasoning = _resolve_final_decision_content(
             {

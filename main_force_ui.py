@@ -933,8 +933,8 @@ def display_main_force_batch_results(batch_results):
                 advice = final_decision.get('operation_advice', final_decision.get('advice', '暂无建议'))
                 st.info(advice)
 
-                # 加入监测按钮
-                if st.button("加入监测列表", key=f"monitor_{symbol}"):
+                # 加入价格预警按钮
+                if st.button("加入价格预警", key=f"monitor_{symbol}"):
                     # 解析进场区间
                     entry_range = final_decision.get('entry_range', '')
                     entry_min, entry_max = None, None
@@ -967,8 +967,8 @@ def display_main_force_batch_results(batch_results):
                         except:
                             pass
 
-                    # 调用监测管理器添加
-                    from monitor_db import monitor_db
+                    # 调用统一价格预警服务
+                    from price_alert_service import create_price_alert, jump_to_price_alert_workspace
 
                     try:
                         # 准备进场区间数据
@@ -976,16 +976,16 @@ def display_main_force_batch_results(batch_results):
                         if entry_min and entry_max:
                             entry_range_dict = {"min": entry_min, "max": entry_max}
 
-                        # 添加到监测列表
-                        monitor_db.add_monitored_stock(
+                        create_price_alert(
                             symbol=symbol,
                             name=name,
                             rating=rating,
                             entry_range=entry_range_dict if entry_range_dict else None,
                             take_profit=take_profit,
-                            stop_loss=stop_loss
+                            stop_loss=stop_loss,
                         )
-                        st.success(f"{symbol} - {name} 已加入监测列表。")
+                        jump_to_price_alert_workspace(symbol)
+                        st.success(f"{symbol} - {name} 已加入价格预警。")
                     except Exception as e:
                         st.error(f"添加失败: {str(e)}")
 

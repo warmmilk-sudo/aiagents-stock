@@ -10,7 +10,7 @@ import re
 import uuid
 import streamlit as st
 import pandas as pd
-from datetime import datetime
+from datetime import date, datetime
 from typing import List, Dict
 
 from portfolio_analysis_tasks import portfolio_analysis_task_manager
@@ -25,9 +25,40 @@ from ui_shared import (
 )
 
 
+AGENT_OPTIONS = [
+    ("technical", "技术分析"),
+    ("fundamental", "基本面"),
+    ("fund_flow", "资金面"),
+    ("risk", "风险管理"),
+    ("sentiment", "市场情绪"),
+    ("news", "新闻事件"),
+]
+
+
 def _render_static_table(df: pd.DataFrame) -> None:
     """Render small summary tables without the heavier dataframe grid."""
     st.table(df.reset_index(drop=True).style.hide(axis="index"))
+
+
+def _format_percent(value, digits: int = 2) -> str:
+    if value is None:
+        return "N/A"
+    return f"{float(value) * 100:.{digits}f}%"
+
+
+def _format_ratio(value, digits: int = 3) -> str:
+    if value is None:
+        return "N/A"
+    return f"{float(value):.{digits}f}"
+
+
+def _get_portfolio_account_options(stocks: List[Dict]) -> List[str]:
+    accounts = sorted({stock.get("account_name", "默认账户") for stock in stocks})
+    return ["全部账户"] + accounts
+
+
+def _resolve_portfolio_account_filter(selected_account: str) -> str | None:
+    return None if selected_account == "全部账户" else selected_account
 
 
 def format_price(value) -> str:
@@ -243,6 +274,7 @@ def _start_batch_analysis_task(
     *,
     analysis_mode: str,
     max_workers: int,
+    selected_agents: List[str] | None,
     auto_sync: bool,
     send_notification: bool,
     lightweight_model=None,
@@ -276,6 +308,7 @@ def _start_batch_analysis_task(
         result = portfolio_manager.batch_analyze_portfolio(
             mode=analysis_mode,
             max_workers=max_workers,
+            selected_agents=selected_agents,
             progress_callback=progress_callback,
             lightweight_model=lightweight_model,
             reasoning_model=reasoning_model,
@@ -311,6 +344,7 @@ def _start_batch_analysis_task(
             "task_type": "batch",
             "analysis_result": result,
             "persistence_result": persistence_result,
+            "selected_agents": selected_agents,
             "auto_sync": auto_sync,
             "send_notification": send_notification,
         }
@@ -320,7 +354,11 @@ def _start_batch_analysis_task(
         task_type="batch",
         label="持仓批量分析任务",
         runner=runner,
-        metadata={"stock_count": total, "analysis_mode": analysis_mode},
+        metadata={
+            "stock_count": total,
+            "analysis_mode": analysis_mode,
+            "selected_agents": selected_agents or portfolio_manager.DEFAULT_ANALYSIS_AGENTS,
+        },
     )
 
 
@@ -423,11 +461,10 @@ def display_portfolio_manager(lightweight_model=None, reasoning_model=None):
     _render_portfolio_analysis_task_notice()
     
     # 创建标签页
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    tab1, tab2, tab3, tab4 = st.tabs([
         "持仓管理",
         "风险评估",
-        "批量分析",
-        "定时任务",
+        "分析任务",
         "分析历史"
     ])
     
@@ -438,31 +475,48 @@ def display_portfolio_manager(lightweight_model=None, reasoning_model=None):
         display_portfolio_risk()
     
     with tab3:
-        display_batch_analysis(lightweight_model, reasoning_model)
+        display_analysis_task_center(lightweight_model, reasoning_model)
     
     with tab4:
-        display_scheduler_management()
-    
-    with tab5:
         display_analysis_history()
 
 
 
-def display_portfolio_risk():
+def _legacy_display_portfolio_risk():
     """显示持仓风险评估"""
     st.markdown("### 🛡️ 组合风险评估")
     
-    # 账号筛选
     all_stocks = portfolio_manager.get_all_stocks()
     if not all_stocks:
         st.info("暂无持仓股票，无法评估组合风险。")
         return
-        
-    accounts = ["全部账户"] + list(sorted(set(s.get("account_name", "默认账户") for s in all_stocks)))
-    selected_account = st.selectbox("选择账户进行评估", accounts, key="risk_account_selector")
-    
-    account_filter = None if selected_account == "全部账户" else selected_account
-    
+
+    controls_col, config_col = st.columns([2.5, 1.2], gap="large")
+    with controls_col:
+        selected_account = st.selectbox(
+            "选择账户进行评估",
+            _get_portfolio_account_options(all_stocks),
+            key="risk_account_selector",
+        )
+        account_filter = _resolve_portfolio_account_filter(selected_account)
+    with config_col:
+        current_rate_pct = portfolio_manager.get_risk_free_rate_annual() * 100
+        risk_free_rate_pct = st.number_input(
+            "无风险利率(年化%)",
+            min_value=0.0,
+            max_value=10.0,
+            value=float(current_rate_pct),
+            step=0.1,
+            format="%.2f",
+            key="portfolio_risk_free_rate_input",
+            help="用于计算组合夏普比率，默认 1.50%",
+        )
+        if st.button("保存口径", key="save_portfolio_risk_free_rate", width="content"):
+            portfolio_manager.set_risk_free_rate_annual(risk_free_rate_pct / 100)
+            st.success("无风险利率已更新。")
+            st.rerun()
+
+    portfolio_manager.ensure_daily_snapshot(account_filter, source="page_load")
     result = portfolio_manager.calculate_portfolio_risk(account_name=account_filter)
     
     if result.get("status") == "error":
@@ -473,14 +527,14 @@ def display_portfolio_risk():
     total_cost = result.get("total_cost_value", 0)
     total_pnl = result.get("total_pnl", 0)
     total_pnl_pct = result.get("total_pnl_pct", 0) * 100
-    
-    m1, m2, m3, m4 = st.columns(4)
+    coverage = result.get("data_coverage", {})
+    m1, m2, m3 = st.columns(3)
     m1.metric("总持仓市值", f"¥{total_val:,.2f}")
     m2.metric("总持仓成本", f"¥{total_cost:,.2f}")
-    m3.metric("总浮动盈亏", f"¥{total_pnl:,.2f}", delta=f"{total_pnl_pct:.2f}%", delta_color="normal")
+    m3.metric("总浮动盈亏", f"¥{total_pnl:,.2f}", delta=f"{total_pnl_pct:.2f}%", delta_color="inverse")
     
     st.markdown("---")
-    # 显示警告
+
     warnings = result.get("risk_warnings", [])
     if result.get("high_concentration"):
         for w in warnings:
@@ -488,7 +542,23 @@ def display_portfolio_risk():
     else:
         for w in warnings:
             st.success(w)
-            
+
+    st.markdown("#### 定量风险指标")
+    q1, q2, q3 = st.columns(3)
+    q1.metric("年化波动率", _format_percent(result.get("annual_volatility")))
+    q2.metric("Beta(沪深300)", _format_ratio(result.get("beta_hs300")))
+    q3.metric("夏普比率", _format_ratio(result.get("sharpe_ratio")))
+
+    metric_warnings = result.get("metric_warnings", [])
+    if metric_warnings:
+        for warning in metric_warnings:
+            st.warning(warning)
+
+    st.caption(
+        f"参与计算持仓数 {coverage.get('stock_count', 0)} 只；"
+        f"参考基准 {result.get('benchmark_label', '沪深300')}"
+    )
+
     col1, col2 = st.columns(2)
     
     with col1:
@@ -516,32 +586,140 @@ def display_portfolio_risk():
             )
 
 
+def display_portfolio_risk():
+    """显示持仓风险评估。"""
+    st.markdown("### 组合风险评估")
+
+    all_stocks = portfolio_manager.get_all_stocks()
+    if not all_stocks:
+        st.info("暂无持仓股票，无法评估组合风险。")
+        return
+
+    selected_account = st.selectbox(
+        "选择账户进行评估",
+        _get_portfolio_account_options(all_stocks),
+        key="risk_account_selector",
+    )
+    account_filter = _resolve_portfolio_account_filter(selected_account)
+
+    portfolio_manager.ensure_daily_snapshot(account_filter, source="page_load")
+    result = portfolio_manager.calculate_portfolio_risk(account_name=account_filter)
+
+    if result.get("status") == "error":
+        st.warning(result.get("message", "评估失败"))
+        return
+
+    total_val = result.get("total_market_value", 0)
+    total_cost = result.get("total_cost_value", 0)
+    total_pnl = result.get("total_pnl", 0)
+    total_pnl_pct = result.get("total_pnl_pct", 0) * 100
+    coverage = result.get("data_coverage", {})
+    m1, m2, m3 = st.columns(3)
+    m1.metric("总持仓市值", f"¥{total_val:,.2f}")
+    m2.metric("总持仓成本", f"¥{total_cost:,.2f}")
+    m3.metric("总浮动盈亏", f"¥{total_pnl:,.2f}", delta=f"{total_pnl_pct:.2f}%", delta_color="inverse")
+
+    st.markdown("---")
+
+    warnings = result.get("risk_warnings", [])
+    if result.get("high_concentration"):
+        for warning in warnings:
+            st.error(warning)
+    else:
+        for warning in warnings:
+            st.success(warning)
+
+    st.markdown("#### 定量风险指标")
+    q1, q2, q3 = st.columns(3)
+    q1.metric("年化波动率", _format_percent(result.get("annual_volatility")))
+    q2.metric("Beta(沪深300)", _format_ratio(result.get("beta_hs300")))
+    q3.metric("夏普比率", _format_ratio(result.get("sharpe_ratio")))
+
+    metric_warnings = result.get("metric_warnings", [])
+    if metric_warnings:
+        for warning in metric_warnings:
+            st.warning(warning)
+
+    st.caption(
+        f"参与计算持仓数 {coverage.get('stock_count', 0)} 只；"
+        f"参考基准：{result.get('benchmark_label', '沪深300')}"
+    )
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("#### 行业集中度")
+        industry_data = result.get("industry_distribution", [])
+        if industry_data:
+            df_ind = pd.DataFrame(industry_data)
+            df_ind["占比"] = df_ind["weight"].apply(lambda x: f"{x * 100:.1f}%")
+            df_ind["市值"] = df_ind["market_value"].apply(lambda x: f"¥{x:,.2f}")
+            _render_static_table(
+                df_ind[["industry", "市值", "占比"]].rename(columns={"industry": "行业"})
+            )
+
+    with col2:
+        st.markdown("#### 单票集中度")
+        stock_data = result.get("stock_distribution", [])
+        if stock_data:
+            df_st = pd.DataFrame(stock_data)
+            df_st["占比"] = df_st["weight"].apply(lambda x: f"{x * 100:.1f}%")
+            df_st["市值"] = df_st["market_value"].apply(lambda x: f"¥{x:,.2f}")
+            df_st["盈亏比例"] = df_st["pnl_pct"].apply(lambda x: f"{x * 100:.2f}%")
+            _render_static_table(
+                df_st[["name", "市值", "占比", "盈亏比例"]].rename(columns={"name": "股票"})
+            )
+
+
 def display_portfolio_stocks(lightweight_model=None, reasoning_model=None):
     """显示持仓股票列表和管理"""
-    
     st.markdown("### 持仓股票管理")
     _render_single_analysis_feedback()
-    
-    # 添加新股票表单
+
     with st.expander("➕ 添加持仓股票", expanded=False):
         display_add_stock_form()
-    
-    # 获取所有持仓股票
+
     all_stocks = portfolio_manager.get_all_latest_analysis()
-    
-    accounts = ["全部账户"] + list(sorted(set(s.get("account_name", "默认账户") for s in all_stocks)))
-    selected_account = st.selectbox("账号筛选", accounts, key="portfolio_account_selector")
-    
-    if selected_account == "全部账户":
-        stocks = all_stocks
-    else:
-        stocks = [s for s in all_stocks if s.get("account_name", "默认账户") == selected_account]
-        
-    if not stocks:
+    if not all_stocks:
         st.info("暂无持仓股票，请添加股票代码开始管理。")
         return
-    
-    # 显示统计
+
+    selected_account = st.selectbox(
+        "账号筛选",
+        _get_portfolio_account_options(all_stocks),
+        key="portfolio_account_selector",
+    )
+    account_filter = _resolve_portfolio_account_filter(selected_account)
+    stocks = [
+        stock for stock in all_stocks
+        if account_filter is None or stock.get("account_name", "默认账户") == account_filter
+    ]
+    trade_summary_map = portfolio_manager.get_trade_summary_map(
+        [stock.get("id") for stock in stocks if stock.get("id")]
+    )
+    for stock in stocks:
+        stock.update(trade_summary_map.get(stock.get("id"), {}))
+
+    portfolio_manager.ensure_daily_snapshot(account_filter, source="page_load")
+    subtab_list, subtab_review = st.tabs(["持仓列表", "复盘报告"])
+
+    with subtab_list:
+        _render_portfolio_stock_list(stocks, lightweight_model=lightweight_model, reasoning_model=reasoning_model)
+
+    with subtab_review:
+        display_portfolio_review_reports(account_filter)
+
+
+def _render_portfolio_stock_list(
+    stocks: List[Dict],
+    *,
+    lightweight_model=None,
+    reasoning_model=None,
+) -> None:
+    if not stocks:
+        st.info("当前账户暂无持仓股票。")
+        return
+
     col1, col2, col3 = st.columns(3)
     with col1:
         st.metric("持仓股票数", len(stocks))
@@ -558,7 +736,6 @@ def display_portfolio_stocks(lightweight_model=None, reasoning_model=None):
     
     st.markdown("---")
     
-    # 显示股票列表（卡片式布局）
     for stock in stocks:
         display_stock_card(
             stock,
@@ -566,6 +743,244 @@ def display_portfolio_stocks(lightweight_model=None, reasoning_model=None):
             lightweight_model=lightweight_model,
             reasoning_model=reasoning_model,
         )
+
+
+def display_portfolio_review_reports(account_filter: str | None) -> None:
+    st.markdown("#### 周期复盘报告")
+    account_label = account_filter or "全部账户"
+    st.caption("默认生成最近一个完整的周 / 月 / 季复盘报告。")
+
+    col1, col2, col3 = st.columns(3)
+    period_specs = [
+        ("week", "生成周报", col1),
+        ("month", "生成月报", col2),
+        ("quarter", "生成季报", col3),
+    ]
+    for period_type, label, col in period_specs:
+        with col:
+            if st.button(label, key=f"generate_review_{period_type}_{account_label}", width="stretch"):
+                result = portfolio_manager.generate_review_report(account_name=account_filter, period_type=period_type)
+                if result.get("status") == "success":
+                    st.session_state["portfolio_latest_review_report"] = result
+                    st.success(f"{label}已生成。")
+                    st.rerun()
+                else:
+                    st.error(result.get("message", "生成复盘报告失败。"))
+
+    latest_report = st.session_state.get("portfolio_latest_review_report")
+    if (
+        latest_report
+        and latest_report.get("status") == "success"
+        and latest_report.get("account_name") == account_label
+    ):
+        st.markdown("##### 最新生成")
+        st.code(latest_report.get("report_markdown", ""), language="markdown")
+        st.download_button(
+            "下载最新 Markdown",
+            data=latest_report.get("report_markdown", ""),
+            file_name=f"portfolio_review_{latest_report.get('period_type', 'report')}.md",
+            mime="text/markdown",
+            key=f"download_latest_review_{account_label}",
+        )
+
+    reports = portfolio_manager.get_review_reports(account_name=account_filter, limit=12)
+    if not reports:
+        st.info("暂无已保存的复盘报告。")
+        return
+
+    st.markdown("##### 历史报告")
+    for report in reports:
+        with st.expander(
+            f"{report.get('created_at', '')} | {report.get('period_type', '').upper()} | "
+            f"{report.get('period_start', '')} ~ {report.get('period_end', '')}",
+            expanded=False,
+        ):
+            st.caption(
+                f"账户：{report.get('account_name', '全部账户')} | 数据口径："
+                f"{ {'actual': '真实', 'estimated': '估算', 'mixed': '混合'}.get(report.get('data_mode'), '估算') }"
+            )
+            st.code(report.get("report_markdown", ""), language="markdown")
+            st.download_button(
+                "下载 Markdown",
+                data=report.get("report_markdown", ""),
+                file_name=f"portfolio_review_{report.get('id')}.md",
+                mime="text/markdown",
+                key=f"download_review_{report.get('id')}",
+            )
+
+
+def display_analysis_task_center(lightweight_model=None, reasoning_model=None):
+    st.markdown("### 🔄 分析任务中心")
+    _render_batch_analysis_feedback()
+
+    stocks = portfolio_manager.get_all_stocks()
+    if not stocks:
+        st.warning("暂无持仓股票，请先添加股票。")
+        return
+
+    status = portfolio_scheduler.get_status()
+    task_config = portfolio_scheduler.get_task_config()
+    queue_active = bool(_get_pending_portfolio_analysis_tasks())
+    batch_pending = bool(_get_pending_portfolio_analysis_tasks("batch"))
+
+    st.session_state.setdefault("portfolio_task_analysis_mode", task_config.analysis_mode)
+    st.session_state.setdefault("portfolio_task_max_workers", task_config.max_workers)
+    st.session_state.setdefault(
+        "portfolio_task_selected_agents",
+        task_config.selected_agents or portfolio_manager.DEFAULT_ANALYSIS_AGENTS,
+    )
+    st.session_state.setdefault("portfolio_task_auto_sync", task_config.auto_monitor_sync)
+    st.session_state.setdefault("portfolio_task_notify", task_config.notification_enabled)
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("持仓股票数", len(stocks))
+    m2.metric("调度器状态", "运行中" if status.get("is_running") else "已停止")
+    m3.metric("队列状态", "任务排队中" if queue_active else "空闲")
+    m4.metric("下次运行", status.get("next_run_time") or "未设置")
+
+    st.markdown("#### 共享分析配置")
+    c1, c2 = st.columns(2)
+    with c1:
+        analysis_mode = st.selectbox(
+            "分析模式",
+            options=["sequential", "parallel"],
+            format_func=lambda value: "顺序分析" if value == "sequential" else "并行分析",
+            key="portfolio_task_analysis_mode",
+        )
+    with c2:
+        max_workers = st.number_input(
+            "并行线程数",
+            min_value=1,
+            max_value=10,
+            disabled=(analysis_mode == "sequential"),
+            key="portfolio_task_max_workers",
+        )
+
+    selected_agents = st.multiselect(
+        "参与分析的分析师",
+        options=[code for code, _ in AGENT_OPTIONS],
+        format_func=lambda code: dict(AGENT_OPTIONS).get(code, code),
+        key="portfolio_task_selected_agents",
+    )
+    effective_agents = selected_agents or portfolio_manager.DEFAULT_ANALYSIS_AGENTS
+
+    opt1, opt2 = st.columns(2)
+    with opt1:
+        auto_sync = st.checkbox(
+            "自动同步到监测",
+            key="portfolio_task_auto_sync",
+        )
+    with opt2:
+        send_notification = st.checkbox(
+            "发送完成通知",
+            key="portfolio_task_notify",
+        )
+
+    if st.button("保存任务配置", key="save_portfolio_task_config", type="primary", width="content"):
+        portfolio_scheduler.update_config(
+            analysis_mode=analysis_mode,
+            max_workers=max_workers if analysis_mode == "parallel" else 1,
+            auto_sync_monitor=auto_sync,
+            send_notification=send_notification,
+            selected_agents=effective_agents,
+        )
+        st.success("任务配置已更新。")
+        st.rerun()
+
+    st.markdown("---")
+    st.markdown("#### 任务操作")
+    action1, action2, action3 = st.columns(3)
+    with action1:
+        action_label = "批量分析中" if batch_pending else "加入批量队列" if queue_active else "立即执行一次"
+        if st.button(
+            action_label,
+            key="portfolio_task_run_once",
+            width="stretch",
+            disabled=batch_pending,
+        ):
+            portfolio_scheduler.update_config(
+                analysis_mode=analysis_mode,
+                max_workers=max_workers if analysis_mode == "parallel" else 1,
+                auto_sync_monitor=auto_sync,
+                send_notification=send_notification,
+                selected_agents=effective_agents,
+            )
+            try:
+                _start_batch_analysis_task(
+                    stocks,
+                    analysis_mode=analysis_mode,
+                    max_workers=max_workers if analysis_mode == "parallel" else 1,
+                    selected_agents=effective_agents,
+                    auto_sync=auto_sync,
+                    send_notification=send_notification,
+                    lightweight_model=lightweight_model,
+                    reasoning_model=reasoning_model,
+                )
+            except RuntimeError as exc:
+                st.warning(str(exc))
+                return
+            st.success("分析任务已提交到后台队列。")
+            st.rerun()
+    with action2:
+        if status.get("is_running"):
+            if st.button("停止调度器", key="portfolio_task_stop_scheduler", width="stretch"):
+                portfolio_scheduler.stop_scheduler()
+                st.success("调度器已停止。")
+                st.rerun()
+        else:
+            if st.button("启动调度器", key="portfolio_task_start_scheduler", width="stretch", type="primary"):
+                portfolio_scheduler.update_config(
+                    analysis_mode=analysis_mode,
+                    max_workers=max_workers if analysis_mode == "parallel" else 1,
+                    auto_sync_monitor=auto_sync,
+                    send_notification=send_notification,
+                    selected_agents=effective_agents,
+                )
+                if portfolio_scheduler.start_scheduler():
+                    st.success("调度器已启动。")
+                else:
+                    st.warning("调度器启动失败，请检查持仓数量和时间配置。")
+                st.rerun()
+    with action3:
+        if st.button("刷新状态", key="portfolio_task_refresh", width="stretch"):
+            st.rerun()
+
+    st.markdown("---")
+    st.markdown("#### 定时时间")
+    schedule_times = portfolio_scheduler.get_schedule_times()
+    if schedule_times:
+        time_cols = st.columns(min(4, max(1, len(schedule_times))))
+        for index, time_str in enumerate(schedule_times):
+            with time_cols[index % len(time_cols)]:
+                st.info(f"⏰ {time_str}")
+                if st.button("删除", key=f"portfolio_delete_schedule_{time_str}", width="content"):
+                    if len(schedule_times) > 1:
+                        portfolio_scheduler.remove_schedule_time(time_str)
+                        st.success(f"已删除 {time_str}")
+                        st.rerun()
+                    else:
+                        st.error("至少保留一个定时时间。")
+    else:
+        st.warning("暂无定时时间配置。")
+
+    with st.expander("➕ 添加定时时间", expanded=False):
+        add_col, add_btn_col = st.columns([3, 1])
+        with add_col:
+            new_time = st.time_input(
+                "选择时间",
+                value=datetime.strptime("15:05", "%H:%M").time(),
+                key="portfolio_new_schedule_time",
+            )
+        with add_btn_col:
+            st.write("")
+            st.write("")
+            if st.button("添加", key="portfolio_add_schedule_btn", type="primary", width="stretch"):
+                time_str = new_time.strftime("%H:%M")
+                if portfolio_scheduler.add_schedule_time(time_str):
+                    st.success(f"已添加 {time_str}")
+                else:
+                    st.warning(f"{time_str} 已存在")
+                st.rerun()
 
 
 def display_stock_card(
@@ -590,7 +1005,15 @@ def display_stock_card(
     note_text = view_model.get("note_text", "")
     display_name = view_model.get("display_name") or code
     edit_state_key = f"portfolio_editing_{stock_id}"
+    trade_state_key = f"portfolio_trading_{stock_id}"
     auto_monitor_key = f"portfolio_auto_monitor_{stock_id}"
+    trade_type_key = f"portfolio_trade_type_{stock_id}"
+    trade_date_key = f"portfolio_trade_date_{stock_id}"
+    trade_price_key = f"portfolio_trade_price_{stock_id}"
+    trade_quantity_key = f"portfolio_trade_quantity_{stock_id}"
+    trade_note_key = f"portfolio_trade_note_{stock_id}"
+    first_buy_date = stock.get("first_buy_date")
+    trade_count = int(stock.get("trade_count") or 0)
     stock_pending_task = _get_stock_pending_analysis_task(stock_id)
     queue_active = bool(_get_pending_portfolio_analysis_tasks())
     analysis_disabled = bool(stock_pending_task)
@@ -602,6 +1025,11 @@ def display_stock_card(
         analysis_button_label = "加入队列"
     else:
         analysis_button_label = "分析"
+
+    try:
+        default_trade_price = float((latest_analysis or {}).get("current_price"))
+    except (TypeError, ValueError):
+        default_trade_price = float(cost_price) if cost_price not in (None, "") else 0.0
 
     with st.container(border=True):
         header_col, rating_col = st.columns([4.5, 1.2], gap="small")
@@ -634,7 +1062,18 @@ def display_stock_card(
         if note_text:
             st.caption(f"备注：{note_text}")
 
-        action_col1, action_col2, action_col3, action_col4 = st.columns([1.15, 1, 1, 1], gap="small")
+        meta_bits = []
+        if first_buy_date:
+            meta_bits.append(f"建仓日期：{first_buy_date}")
+        if trade_count:
+            meta_bits.append(f"交易笔数：{trade_count}")
+        if meta_bits:
+            st.caption(" | ".join(meta_bits))
+
+        action_col1, action_col2, action_col3, action_col4, action_col5 = st.columns(
+            [1.15, 1, 1, 1, 1],
+            gap="small",
+        )
         with action_col1:
             toggle_value = st.toggle(
                 "监测",
@@ -667,13 +1106,30 @@ def display_stock_card(
         with action_col3:
             if st.button("编辑", key=f"edit_{stock_id}", help="编辑"):
                 st.session_state[edit_state_key] = True
+                st.session_state.pop(trade_state_key, None)
                 st.rerun()
         with action_col4:
+            if st.button("交易", key=f"trade_{stock_id}", help="记录加仓或减仓"):
+                st.session_state[trade_state_key] = True
+                st.session_state[trade_type_key] = "buy"
+                st.session_state[trade_date_key] = date.today()
+                st.session_state[trade_price_key] = default_trade_price
+                st.session_state[trade_quantity_key] = 100
+                st.session_state[trade_note_key] = ""
+                st.session_state.pop(edit_state_key, None)
+                st.rerun()
+        with action_col5:
             if st.button("删除", key=f"del_{stock_id}", help="删除"):
                 success, msg = portfolio_manager.delete_stock(stock_id)
                 if success:
                     st.session_state.pop(auto_monitor_key, None)
                     st.session_state.pop(edit_state_key, None)
+                    st.session_state.pop(trade_state_key, None)
+                    st.session_state.pop(trade_type_key, None)
+                    st.session_state.pop(trade_date_key, None)
+                    st.session_state.pop(trade_price_key, None)
+                    st.session_state.pop(trade_quantity_key, None)
+                    st.session_state.pop(trade_note_key, None)
                     st.success(msg)
                 else:
                     st.error(msg)
@@ -725,6 +1181,99 @@ def display_stock_card(
                         st.rerun()
 
 
+        if st.session_state.get(trade_state_key):
+            st.session_state.setdefault(trade_type_key, "buy")
+            st.session_state.setdefault(trade_date_key, date.today())
+            st.session_state.setdefault(trade_price_key, default_trade_price)
+            st.session_state.setdefault(trade_quantity_key, 100)
+            st.session_state.setdefault(trade_note_key, "")
+
+            with st.form(key=f"trade_form_{stock_id}"):
+                st.markdown(f"#### 加仓 / 减仓 - {display_name}")
+
+                trade_col1, trade_col2 = st.columns(2)
+                with trade_col1:
+                    trade_type = st.radio(
+                        "交易类型",
+                        options=["buy", "sell"],
+                        format_func=lambda value: "加仓" if value == "buy" else "减仓",
+                        key=trade_type_key,
+                        horizontal=True,
+                    )
+                    trade_date = st.date_input("成交日期", key=trade_date_key)
+
+                with trade_col2:
+                    trade_price = st.number_input(
+                        "成交价格",
+                        min_value=0.0,
+                        step=0.001,
+                        format="%.3f",
+                        key=trade_price_key,
+                    )
+                    trade_quantity = st.number_input(
+                        "成交数量",
+                        min_value=1,
+                        step=1,
+                        key=trade_quantity_key,
+                    )
+
+                trade_note = st.text_area(
+                    "交易备注",
+                    key=trade_note_key,
+                    height=80,
+                    placeholder="可选，例如：补仓、止盈减仓、调仓",
+                )
+
+                trade_submit_col, trade_cancel_col = st.columns(2)
+                with trade_submit_col:
+                    if st.form_submit_button("保存交易", type="primary"):
+                        success, msg, _ = portfolio_manager.record_trade(
+                            stock_id=stock_id,
+                            trade_type=trade_type,
+                            quantity=int(trade_quantity),
+                            price=float(trade_price),
+                            trade_date=trade_date,
+                            note=trade_note,
+                        )
+                        if success:
+                            st.session_state.pop(trade_state_key, None)
+                            st.session_state.pop(trade_type_key, None)
+                            st.session_state.pop(trade_date_key, None)
+                            st.session_state.pop(trade_price_key, None)
+                            st.session_state.pop(trade_quantity_key, None)
+                            st.session_state.pop(trade_note_key, None)
+                            st.success(msg)
+                        else:
+                            st.error(msg)
+                        st.rerun()
+                with trade_cancel_col:
+                    if st.form_submit_button("取消"):
+                        st.session_state.pop(trade_state_key, None)
+                        st.session_state.pop(trade_type_key, None)
+                        st.session_state.pop(trade_date_key, None)
+                        st.session_state.pop(trade_price_key, None)
+                        st.session_state.pop(trade_quantity_key, None)
+                        st.session_state.pop(trade_note_key, None)
+                        st.rerun()
+
+            recent_trades = portfolio_manager.get_trade_history(stock_id, limit=5)
+            if recent_trades:
+                st.caption("最近 5 笔交易")
+                recent_trade_df = pd.DataFrame(
+                    [
+                        {
+                            "日期": item.get("trade_date"),
+                            "类型": "加仓" if item.get("trade_type") == "buy" else "减仓",
+                            "价格": format_price(item.get("price")),
+                            "数量": item.get("quantity"),
+                            "备注": item.get("note") or "",
+                        }
+                        for item in recent_trades
+                    ]
+                )
+                _render_static_table(recent_trade_df)
+
+
 def run_single_stock_analysis(stock: Dict, lightweight_model=None, reasoning_model=None):
     """启动单只持仓后台分析任务。"""
     code = stock.get("code", "")
@@ -753,6 +1302,7 @@ def display_add_stock_form():
     st.session_state.setdefault("portfolio_add_quantity", 0)
     st.session_state.setdefault("portfolio_add_note", "")
     st.session_state.setdefault("portfolio_add_auto_monitor", True)
+    st.session_state.setdefault("portfolio_add_buy_date", date.today())
     
     with st.form(key="add_stock_form"):
         col1, col2 = st.columns(2)
@@ -783,6 +1333,11 @@ def display_add_stock_form():
                 help="可选，单位：股",
                 key="portfolio_add_quantity",
             )
+            buy_date = st.date_input(
+                "建仓日期",
+                key="portfolio_add_buy_date",
+                help="填写成本价和数量时，会将这一天记为首笔建仓日期。",
+            )
         
         note = st.text_area("备注", height=80, placeholder="可选，记录买入理由等信息", key="portfolio_add_note")
         auto_monitor = st.checkbox("分析后自动同步到监测", key="portfolio_add_auto_monitor")
@@ -792,7 +1347,7 @@ def display_add_stock_form():
                 st.error("请输入股票代码")
             else:
                 try:
-                    success, msg, _ = portfolio_manager.add_stock(
+                    success, msg, stock_id = portfolio_manager.add_stock(
                         code=code.strip().upper(),
                         name=None,
                         cost_price=cost_price if cost_price > 0 else None,
@@ -804,11 +1359,18 @@ def display_add_stock_form():
                     if not success:
                         st.error(msg)
                         return
+                    if stock_id and cost_price > 0 and quantity > 0:
+                        portfolio_manager.seed_initial_trade(
+                            stock_id,
+                            trade_date=buy_date,
+                            note=note.strip() if note else "",
+                        )
                     st.session_state["portfolio_add_code"] = ""
                     st.session_state["portfolio_add_cost_price"] = 0.0
                     st.session_state["portfolio_add_quantity"] = 0
                     st.session_state["portfolio_add_note"] = ""
                     st.session_state["portfolio_add_auto_monitor"] = True
+                    st.session_state["portfolio_add_buy_date"] = date.today()
                     st.success(msg)
                     st.rerun()
                 except Exception as e:
@@ -816,91 +1378,8 @@ def display_add_stock_form():
 
 
 def display_batch_analysis(lightweight_model=None, reasoning_model=None):
-    """显示批量分析功能"""
-    
-    st.markdown("### 🔄 批量分析持仓股票")
-    _render_batch_analysis_feedback()
-    
-    stocks = portfolio_manager.get_all_stocks()
-    
-    if not stocks:
-        st.warning("暂无持仓股票，请先添加股票。")
-        return
-
-    queue_active = bool(_get_pending_portfolio_analysis_tasks())
-    batch_pending = bool(_get_pending_portfolio_analysis_tasks("batch"))
-    
-    # 分析选项
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.metric("持仓股票数", len(stocks))
-    
-    with col2:
-        analysis_mode = st.selectbox(
-            "分析模式",
-            options=["sequential", "parallel"],
-            format_func=lambda x: "顺序分析" if x == "sequential" else "并行分析",
-            help="顺序分析较慢但稳定，并行分析更快但消耗更多资源"
-        )
-    
-    with col3:
-        if analysis_mode == "parallel":
-            max_workers = st.number_input(
-                "并行线程数",
-                min_value=2,
-                max_value=10,
-                value=3,
-                help="同时分析的股票数量"
-            )
-        else:
-            max_workers = 1
-    
-    st.markdown("---")
-    
-    # 同步和通知选项
-    col_a, col_b = st.columns(2)
-    
-    with col_a:
-        auto_sync = st.checkbox(
-            "自动同步到监测",
-            value=True,
-            help="分析完成后自动将评级结果同步到实时监测列表"
-        )
-    
-    with col_b:
-        send_notification = st.checkbox(
-            "发送完成通知",
-            value=True,
-            help="通过邮件或Webhook发送分析完成通知"
-        )
-    
-    # 立即分析按钮
-    if st.button(
-        "批量分析中" if batch_pending else "加入批量队列" if queue_active else "立即开始分析",
-        type="primary",
-        width="content",
-        disabled=batch_pending,
-        help="当前已有批量分析任务在执行或排队中" if batch_pending else "加入当前分析队列" if queue_active else None,
-    ):
-        try:
-            _start_batch_analysis_task(
-                stocks,
-                analysis_mode=analysis_mode,
-                max_workers=max_workers,
-                auto_sync=auto_sync,
-                send_notification=send_notification,
-                lightweight_model=lightweight_model,
-                reasoning_model=reasoning_model,
-            )
-        except RuntimeError as exc:
-            st.warning(str(exc))
-            return
-        if queue_active:
-            st.success("批量分析已加入队列，会在前序任务完成后自动执行。")
-        else:
-            st.success("已开始后台批量分析，切换页面后状态会保留。")
-        st.rerun()
+    """兼容旧入口，转向新的分析任务中心。"""
+    display_analysis_task_center(lightweight_model, reasoning_model)
 
 
 def display_analysis_result_card(item: Dict):
@@ -948,171 +1427,8 @@ def display_analysis_result_card(item: Dict):
 
 
 def display_scheduler_management():
-    """显示定时任务管理"""
-    
-    st.markdown("### ⏰ 定时任务管理")
-    
-    # 调度器状态
-    is_running = portfolio_scheduler.is_running()
-    schedule_times = portfolio_scheduler.get_schedule_times()
-    
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        if is_running:
-            st.info("调度器运行中")
-        else:
-            st.warning("调度器已停止")
-    
-    with col2:
-        st.info(f"⏰ 定时数量: {len(schedule_times)}个")
-    
-    with col3:
-        next_run = portfolio_scheduler.get_next_run_time()
-        if next_run:
-            st.info(f"⏭️ 下次运行: {next_run}")
-        else:
-            st.info("⏭️ 下次运行: 未设置")
-    
-    st.markdown("---")
-    
-    # 显示所有定时时间点
-    st.markdown("#### 已配置的定时时间")
-    
-    if schedule_times:
-        cols_per_row = 4
-        for i in range(0, len(schedule_times), cols_per_row):
-            cols = st.columns(cols_per_row)
-            for j, col in enumerate(cols):
-                idx = i + j
-                if idx < len(schedule_times):
-                    time_str = schedule_times[idx]
-                    with col:
-                        col_time, col_del = st.columns([3, 1])
-                        with col_time:
-                            st.info(f"⏰ {time_str}")
-                        with col_del:
-                            if st.button("🗑️", key=f"del_time_{idx}", help="删除"):
-                                if len(schedule_times) > 1:
-                                    portfolio_scheduler.remove_schedule_time(time_str)
-                                    st.success(f"已删除 {time_str}")
-                                    st.rerun()
-                                else:
-                                    st.error("至少保留一个定时时间")
-    else:
-        st.warning("暂无定时配置")
-    
-    # 添加新的定时时间
-    with st.expander("➕ 添加定时时间", expanded=False):
-        col_input, col_add = st.columns([3, 1])
-        with col_input:
-            new_time = st.time_input(
-                "选择时间",
-                value=datetime.strptime("15:05", "%H:%M").time(),
-                help="添加新的每日分析时间"
-            )
-        with col_add:
-            st.write("")  # 占位，对齐按钮
-            st.write("")
-            if st.button("➕ 添加", type="primary", width='content'):
-                time_str = new_time.strftime("%H:%M")
-                if portfolio_scheduler.add_schedule_time(time_str):
-                    st.success(f"已添加 {time_str}")
-                    st.rerun()
-                else:
-                    st.warning(f"{time_str} 已存在")
-    
-    st.markdown("---")
-    
-    # 任务配置
-    with st.form(key="scheduler_config_form"):
-        st.markdown("#### 分析配置")
-        
-        col_a, col_b = st.columns(2)
-        
-        with col_a:
-            analysis_mode = st.selectbox(
-                "分析模式",
-                options=["sequential", "parallel"],
-                format_func=lambda x: "顺序分析" if x == "sequential" else "并行分析",
-                index=0 if portfolio_scheduler.analysis_mode == "sequential" else 1
-            )
-        
-        with col_b:
-            max_workers = st.number_input(
-                "并行线程数",
-                min_value=2,
-                max_value=10,
-                value=portfolio_scheduler.max_workers,
-                disabled=(analysis_mode == "sequential"),
-                help="仅在并行模式下生效"
-            )
-        
-        auto_sync_monitor = st.checkbox(
-            "自动同步到监测", 
-            value=portfolio_scheduler.auto_monitor_sync,
-            help="分析完成后自动将结果同步到实时监测列表"
-        )
-        send_notification = st.checkbox(
-            "发送完成通知", 
-            value=portfolio_scheduler.notification_enabled,
-            help="通过邮件或Webhook发送分析结果"
-        )
-        
-        col_update, col_reset = st.columns(2)
-        
-        with col_update:
-            if st.form_submit_button("💾 更新配置", type="primary"):
-                portfolio_scheduler.update_config(
-                    analysis_mode=analysis_mode,
-                    max_workers=max_workers if analysis_mode == "parallel" else 1,
-                    auto_sync_monitor=auto_sync_monitor,
-                    send_notification=send_notification
-                )
-                st.success("配置已更新！")
-                st.rerun()
-        
-        with col_reset:
-            if st.form_submit_button("🔄 恢复默认"):
-                portfolio_scheduler.set_schedule_times(["09:30"])
-                portfolio_scheduler.update_config(
-                    analysis_mode="sequential",
-                    max_workers=1,
-                    auto_sync_monitor=True,
-                    send_notification=True
-                )
-                st.success("已恢复默认配置！")
-                st.rerun()
-    
-    st.markdown("---")
-    
-    # 控制按钮
-    col_btn1, col_btn2, col_btn3 = st.columns(3)
-    
-    with col_btn1:
-        if is_running:
-            if st.button("⏹️ 停止调度器", type="secondary", width='content'):
-                portfolio_scheduler.stop_scheduler()
-                st.success("调度器已停止")
-                st.rerun()
-        else:
-            if st.button("▶️ 启动调度器", type="primary", width='content'):
-                portfolio_scheduler.start_scheduler()
-                st.success("调度器已启动")
-                st.rerun()
-    
-    with col_btn2:
-        if st.button("立即执行一次", type="primary", width='content'):
-            with st.spinner("正在执行持仓分析..."):
-                try:
-                    portfolio_scheduler.run_analysis_now()
-                    st.success("执行完成！请查看分析历史。")
-                except Exception as e:
-                    st.error(f"执行失败: {str(e)}")
-    
-    with col_btn3:
-        if st.button("🔄 刷新状态", width='content'):
-            st.rerun()
+    """兼容旧入口，转向新的分析任务中心。"""
+    display_analysis_task_center()
 
 
 def display_analysis_history():

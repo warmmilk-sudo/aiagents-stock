@@ -20,6 +20,7 @@ from database import db
 from monitor_manager import display_monitor_manager, get_monitor_summary
 from monitor_service import monitor_service
 from notification_service import notification_service
+from price_alert_service import create_price_alert_from_analysis, jump_to_price_alert_workspace
 from config_manager import config_manager
 from main_force_ui import display_main_force_selector
 from sector_strategy_ui import display_sector_strategy
@@ -821,6 +822,7 @@ def get_selected_models():
 
 NAV_VIEW_KEYS = [
     "show_history",
+    "show_monitor_service",
     "show_monitor",
     "show_main_force",
     "show_low_price_bull",
@@ -838,7 +840,8 @@ NAV_VIEW_KEYS = [
 
 VIEW_TITLES = {
     "show_history": "历史记录",
-    "show_monitor": "投资管理-实时监测",
+    "show_monitor_service": "投资管理-监测服务",
+    "show_monitor": "投资管理-监测服务",
     "show_main_force": "选股板块-主力选股",
     "show_low_price_bull": "选股板块-低价擒牛",
     "show_small_cap": "选股板块-小市值策略",
@@ -932,7 +935,7 @@ def main():
 
         # 投资管理
         with st.expander("投资管理", expanded=True):
-            st.markdown("**持仓跟踪与实时监测**")
+            st.markdown("**持仓跟踪、AI盯盘与监测服务**")
 
             if st.button("持仓分析", width='stretch', key="nav_portfolio", help="投资组合分析与定时跟踪"):
                 activate_view("show_portfolio")
@@ -940,8 +943,8 @@ def main():
             if st.button("AI盯盘", width='stretch', key="nav_smart_monitor", help="DeepSeek AI自动盯盘决策交易（支持A股T+1）"):
                 activate_view("show_smart_monitor")
 
-            if st.button("实时监测", width='stretch', key="nav_monitor", help="价格监控与预警提醒"):
-                activate_view("show_monitor")
+            if st.button("监测服务", width='stretch', key="nav_monitor", help="统一监测服务状态、调度与事件"):
+                activate_view("show_monitor_service")
 
         st.markdown("---")
 
@@ -1023,7 +1026,10 @@ def main():
         return
 
     # 检查是否显示监测面板
-    if 'show_monitor' in st.session_state and st.session_state.show_monitor:
+    if (
+        ('show_monitor_service' in st.session_state and st.session_state.show_monitor_service)
+        or ('show_monitor' in st.session_state and st.session_state.show_monitor)
+    ):
         display_monitor_manager()
         return
 
@@ -2241,7 +2247,7 @@ def display_history_records():
                     st.session_state.viewing_record_id = record['id']
 
             with col4:
-                if st.button("加入监测", key=f"add_monitor_{record['id']}"):
+                if st.button("加入价格预警", key=f"add_monitor_{record['id']}"):
                     st.session_state.add_to_monitor_id = record['id']
                     st.session_state.viewing_record_id = record['id']
 
@@ -2260,9 +2266,9 @@ def display_history_records():
         display_record_detail(st.session_state.viewing_record_id)
 
 def display_add_to_monitor_dialog(record):
-    """显示加入监测的对话框"""
+    """显示加入价格预警的对话框"""
     st.markdown("---")
-    st.subheader("加入监测")
+    st.subheader("加入价格预警")
 
     final_decision = record['final_decision']
 
@@ -2336,13 +2342,13 @@ def display_add_to_monitor_dialog(record):
         # 获取评级
         rating = final_decision.get('rating', '买入')
 
-        # 检查是否已经在监测列表中
+        # 检查是否已经在价格预警列表中
         from monitor_db import monitor_db
         existing_stocks = monitor_db.get_monitored_stocks()
         is_duplicate = any(stock['symbol'] == record['symbol'] for stock in existing_stocks)
 
         if is_duplicate:
-            st.warning(f"{record['symbol']} 已经在监测列表中。继续添加将创建重复监测项。")
+            st.warning(f"{record['symbol']} 已经在价格预警列表中。继续添加将创建重复预警项。")
 
         st.info(f"""
         **从分析结果中提取的数据：**
@@ -2375,7 +2381,7 @@ def display_add_to_monitor_dialog(record):
             col_a, col_b, col_c = st.columns(3)
 
             with col_a:
-                submit = st.form_submit_button("确认加入监测", type="primary", width='stretch')
+                submit = st.form_submit_button("确认加入价格预警", type="primary", width='stretch')
 
             with col_b:
                 cancel = st.form_submit_button("取消", width='stretch')
@@ -2383,21 +2389,19 @@ def display_add_to_monitor_dialog(record):
             if submit:
                 if new_entry_min > 0 and new_entry_max > 0 and new_entry_max > new_entry_min:
                     try:
-                        # 添加到监测数据库
-                        entry_range = {"min": new_entry_min, "max": new_entry_max}
-
-                        stock_id = monitor_db.add_monitored_stock(
+                        stock_id = create_price_alert_from_analysis(
                             symbol=record['symbol'],
                             name=record['stock_name'],
+                            entry_min=new_entry_min,
+                            entry_max=new_entry_max,
                             rating=new_rating,
-                            entry_range=entry_range,
                             take_profit=new_take_profit if new_take_profit > 0 else None,
                             stop_loss=new_stop_loss if new_stop_loss > 0 else None,
                             check_interval=check_interval,
-                            notification_enabled=notification_enabled
+                            notification_enabled=notification_enabled,
                         )
 
-                        st.success(f"已成功将 {record['symbol']} 加入监测列表！")
+                        st.success(f"已成功将 {record['symbol']} 加入价格预警。")
                         st.balloons()
 
                         # 立即更新一次价格
@@ -2412,15 +2416,13 @@ def display_add_to_monitor_dialog(record):
                         if 'show_history' in st.session_state:
                             del st.session_state.show_history
 
-                        # 设置跳转到监测页面
-                        st.session_state.show_monitor = True
-                        st.session_state.monitor_jump_highlight = record['symbol']  # 标记要高亮显示的股票
+                        jump_to_price_alert_workspace(record['symbol'])
 
                         time.sleep(1.5)
                         st.rerun()
 
                     except Exception as e:
-                        st.error(f"加入监测失败: {str(e)}")
+                        st.error(f"加入价格预警失败: {str(e)}")
                 else:
                     st.error("请输入有效的进场区间（最低价应小于最高价，且都大于0）")
 
@@ -2472,11 +2474,11 @@ def display_record_detail(record_id):
     # 推理过程放在最后，默认折叠
     shared_render_reasoning_process(agents_results, discussion_result, expanded=False)
 
-    # 加入监测功能
+    # 加入价格预警功能
     st.markdown("---")
     st.subheader("操作")
 
-    # 检查是否需要显示加入监测的对话框
+    # 检查是否需要显示加入价格预警的对话框
     if 'add_to_monitor_id' in st.session_state and st.session_state.add_to_monitor_id == record_id:
         display_add_to_monitor_dialog(record)
     else:
@@ -2484,7 +2486,7 @@ def display_record_detail(record_id):
         col1, col2 = st.columns([1, 3])
 
         with col1:
-            if st.button("加入监测", type="primary", width='stretch'):
+            if st.button("加入价格预警", type="primary", width='stretch'):
                 st.session_state.add_to_monitor_id = record_id
                 st.rerun()
 

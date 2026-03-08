@@ -1552,16 +1552,16 @@ def display_longhubang_batch_results(batch_results: dict):
                 st.markdown("**投资建议**")
                 st.info(advice)
             
-            # 添加到监测按钮
-            if st.button(f"➕ 加入监测", key=f"add_monitor_{code}"):
+            # 添加到价格预警按钮
+            if st.button("加入价格预警", key=f"add_monitor_{code}"):
                 add_to_monitor_from_longhubang(code, stock_info.get('name', ''), final_decision)
 
 
 def add_to_monitor_from_longhubang(code: str, name: str, final_decision: dict):
-    """从龙虎榜分析结果添加到监测列表"""
+    """从龙虎榜分析结果添加到价格预警"""
     try:
-        from monitor_db import monitor_db
         import re
+        from price_alert_service import create_price_alert, jump_to_price_alert_workspace
         
         # 提取数据（使用统一字段名和解析逻辑）
         rating = final_decision.get("rating", "持有")
@@ -1602,8 +1602,8 @@ def add_to_monitor_from_longhubang(code: str, name: str, final_decision: dict):
             st.error("❌ 分析结果缺少完整的进场区间和止盈止损信息")
             return
         
-        # 添加到监测
-        monitor_db.add_monitored_stock(
+        # 添加到价格预警
+        create_price_alert(
             symbol=code,
             name=name,
             rating=rating,
@@ -1611,13 +1611,14 @@ def add_to_monitor_from_longhubang(code: str, name: str, final_decision: dict):
             take_profit=take_profit,
             stop_loss=stop_loss,
             check_interval=60,
-            notification_enabled=True
+            notification_enabled=True,
         )
+        jump_to_price_alert_workspace(code)
         
-        st.success(f"✅ {code} 已成功加入监测列表！")
+        st.success(f"{code} 已成功加入价格预警。")
         
     except Exception as e:
-        st.error(f"❌ 添加监测失败: {str(e)}")
+        st.error(f"加入价格预警失败: {str(e)}")
 
 
 # 测试函数

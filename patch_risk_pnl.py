@@ -96,7 +96,7 @@ new_ui_metrics = '''    total_val = result.get("total_market_value", 0)
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("总持仓市值", f"¥{total_val:,.2f}")
     m2.metric("总持仓成本", f"¥{total_cost:,.2f}")
-    m3.metric("总浮动盈亏", f"¥{total_pnl:,.2f}", delta=f"{total_pnl_pct:.2f}%", delta_color="normal")
+    m3.metric("总浮动盈亏", f"¥{total_pnl:,.2f}", delta=f"{total_pnl_pct:.2f}%", delta_color="inverse")
     
     st.markdown("---")
     # 显示警告'''

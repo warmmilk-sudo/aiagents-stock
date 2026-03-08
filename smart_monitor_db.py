@@ -9,6 +9,8 @@ from typing import Dict, List, Optional
 from datetime import datetime
 import json
 
+from monitoring_repository import MonitoringRepository, resolve_monitoring_db_path
+
 
 class SmartMonitorDB:
     """智能盯盘数据库"""
@@ -23,6 +25,8 @@ class SmartMonitorDB:
         self.db_file = db_file
         self.logger = logging.getLogger(__name__)
         self._init_database()
+        self.monitoring_repository = MonitoringRepository(resolve_monitoring_db_path(db_file))
+        self.monitoring_repository.migrate_legacy_smart_db(db_file)
     
     def _init_database(self):
         """初始化数据库表结构"""
@@ -418,6 +422,184 @@ class SmartMonitorDB:
     
     # ========== AI决策记录 ==========
     
+    @staticmethod
+    def _seconds_to_interval_minutes(check_interval: Optional[int]) -> int:
+        seconds = int(check_interval or 300)
+        return max(1, (seconds + 59) // 60)
+
+    def _task_config_from_data(self, task_data: Dict) -> Dict:
+        return {
+            'task_name': task_data.get('task_name'),
+            'auto_trade': bool(task_data.get('auto_trade', 0)),
+            'position_size_pct': task_data.get('position_size_pct', 20),
+            'stop_loss_pct': task_data.get('stop_loss_pct', 5),
+            'take_profit_pct': task_data.get('take_profit_pct', 10),
+            'qmt_account_id': task_data.get('qmt_account_id'),
+            'notify_email': task_data.get('notify_email'),
+            'notify_webhook': task_data.get('notify_webhook'),
+            'has_position': bool(task_data.get('has_position', 0)),
+            'position_cost': task_data.get('position_cost', 0),
+            'position_quantity': task_data.get('position_quantity', 0),
+            'position_date': task_data.get('position_date'),
+        }
+
+    def _item_to_task(self, item: Dict) -> Dict:
+        config = item.get('config') or {}
+        interval_minutes = int(item.get('interval_minutes') or 1)
+        return {
+            'id': item['id'],
+            'task_name': config.get('task_name') or f"{item['symbol']} AI监控任务",
+            'stock_code': item['symbol'],
+            'stock_name': item.get('name'),
+            'enabled': 1 if item.get('enabled', True) else 0,
+            'check_interval': interval_minutes * 60,
+            'auto_trade': 1 if config.get('auto_trade', False) else 0,
+            'trading_hours_only': 1 if item.get('trading_hours_only', True) else 0,
+            'position_size_pct': config.get('position_size_pct', 20),
+            'stop_loss_pct': config.get('stop_loss_pct', 5),
+            'take_profit_pct': config.get('take_profit_pct', 10),
+            'qmt_account_id': config.get('qmt_account_id'),
+            'notify_email': config.get('notify_email'),
+            'notify_webhook': config.get('notify_webhook'),
+            'has_position': 1 if config.get('has_position', False) else 0,
+            'position_cost': config.get('position_cost', 0),
+            'position_quantity': config.get('position_quantity', 0),
+            'position_date': config.get('position_date'),
+            'managed_by_portfolio': 1 if item.get('managed_by_portfolio', False) else 0,
+            'created_at': item.get('created_at'),
+            'updated_at': item.get('updated_at'),
+        }
+
+    def add_monitor_task(self, task_data: Dict) -> int:
+        stock_code = task_data.get('stock_code')
+        if not stock_code:
+            raise ValueError('stock_code 不能为空')
+
+        task_id = self.monitoring_repository.create_item({
+            'symbol': stock_code,
+            'name': task_data.get('stock_name'),
+            'monitor_type': 'ai_task',
+            'source': 'portfolio' if task_data.get('managed_by_portfolio') else 'ai_monitor',
+            'enabled': bool(task_data.get('enabled', 1)),
+            'interval_minutes': self._seconds_to_interval_minutes(task_data.get('check_interval', 300)),
+            'trading_hours_only': bool(task_data.get('trading_hours_only', 1)),
+            'notification_enabled': True,
+            'managed_by_portfolio': bool(task_data.get('managed_by_portfolio', 0)),
+            'config': self._task_config_from_data(task_data),
+        })
+
+        position_info = ""
+        if task_data.get('has_position'):
+            position_info = (
+                f" (持仓 {task_data.get('position_quantity', 0)}股 @ "
+                f"{float(task_data.get('position_cost', 0) or 0):.2f}元)"
+            )
+        self.logger.info(
+            f"添加监控任务: {stock_code} - {task_data.get('task_name') or stock_code}{position_info}"
+        )
+        return task_id
+
+    def get_monitor_tasks(self, enabled_only: bool = True) -> List[Dict]:
+        items = self.monitoring_repository.list_items(
+            monitor_type='ai_task',
+            enabled_only=enabled_only,
+        )
+        return [self._item_to_task(item) for item in items]
+
+    def update_monitor_task(self, stock_code: str, task_data: Dict):
+        item = self.monitoring_repository.get_item_by_symbol(stock_code, monitor_type='ai_task')
+        if not item:
+            return False
+
+        updates: Dict[str, object] = {}
+        config = dict(item.get('config') or {})
+        config_updates = self._task_config_from_data(task_data)
+
+        if 'stock_name' in task_data:
+            updates['name'] = task_data.get('stock_name')
+        if 'enabled' in task_data:
+            updates['enabled'] = bool(task_data.get('enabled'))
+        if 'check_interval' in task_data:
+            updates['interval_minutes'] = self._seconds_to_interval_minutes(task_data.get('check_interval'))
+        if 'trading_hours_only' in task_data:
+            updates['trading_hours_only'] = bool(task_data.get('trading_hours_only'))
+        if 'managed_by_portfolio' in task_data:
+            managed = bool(task_data.get('managed_by_portfolio'))
+            updates['managed_by_portfolio'] = managed
+            updates['source'] = 'portfolio' if managed else 'ai_monitor'
+
+        tracked_keys = {
+            'task_name',
+            'auto_trade',
+            'position_size_pct',
+            'stop_loss_pct',
+            'take_profit_pct',
+            'qmt_account_id',
+            'notify_email',
+            'notify_webhook',
+            'has_position',
+            'position_cost',
+            'position_quantity',
+            'position_date',
+        }
+        if any(key in task_data for key in tracked_keys):
+            for key in tracked_keys:
+                if key in task_data:
+                    config[key] = config_updates[key]
+            updates['config'] = config
+
+        if not updates:
+            return False
+
+        changed = self.monitoring_repository.update_item(item['id'], updates)
+        if changed:
+            self.logger.info(f"更新监控任务: {stock_code}")
+        return changed
+
+    def get_monitor_task_by_code(self, stock_code: str, managed_only: Optional[bool] = None) -> Optional[Dict]:
+        item = self.monitoring_repository.get_item_by_symbol(
+            stock_code,
+            monitor_type='ai_task',
+            managed_only=managed_only,
+        )
+        if not item:
+            return None
+        return self._item_to_task(item)
+
+    def upsert_monitor_task(self, task_data: Dict) -> int:
+        stock_code = task_data.get('stock_code')
+        if not stock_code:
+            raise ValueError('stock_code 不能为空')
+
+        managed_sync = bool(task_data.get('managed_by_portfolio'))
+        existing = self.monitoring_repository.get_item_by_symbol(stock_code, monitor_type='ai_task')
+        if managed_sync and existing and not existing.get('managed_by_portfolio'):
+            self.logger.info(f"跳过持仓同步任务 {stock_code}，同代码手工任务已存在")
+            return int(existing['id'])
+
+        return self.monitoring_repository.upsert_item({
+            'symbol': stock_code,
+            'name': task_data.get('stock_name'),
+            'monitor_type': 'ai_task',
+            'source': 'portfolio' if managed_sync else 'ai_monitor',
+            'enabled': bool(task_data.get('enabled', 1)),
+            'interval_minutes': self._seconds_to_interval_minutes(task_data.get('check_interval', 300)),
+            'trading_hours_only': bool(task_data.get('trading_hours_only', 1)),
+            'notification_enabled': True,
+            'managed_by_portfolio': managed_sync,
+            'config': self._task_config_from_data(task_data),
+        })
+
+    def delete_monitor_task(self, task_id: int):
+        return self.monitoring_repository.delete_item(task_id)
+
+    def delete_monitor_task_by_code(self, stock_code: str, managed_only: bool = False) -> bool:
+        return self.monitoring_repository.delete_by_symbol(
+            stock_code,
+            monitor_type='ai_task',
+            managed_only=managed_only,
+        )
+
     def save_ai_decision(self, decision_data: Dict) -> int:
         """保存AI决策"""
         conn = sqlite3.connect(self.db_file)
