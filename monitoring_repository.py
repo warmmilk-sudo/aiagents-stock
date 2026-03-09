@@ -5,18 +5,20 @@ import sqlite3
 from datetime import datetime, timedelta
 from typing import Dict, Iterable, List, Optional
 
+from investment_db_utils import DEFAULT_ACCOUNT_NAME, resolve_investment_db_path
+
 
 def resolve_monitoring_db_path(seed_db_path: str) -> str:
-    """Resolve the canonical monitoring database path from any legacy DB path."""
-    directory = os.path.dirname(seed_db_path) if seed_db_path else ""
-    return os.path.join(directory, "monitoring.db") if directory else "monitoring.db"
+    """Backwards-compatible alias pointing all monitor facades to investment.db."""
+    return resolve_investment_db_path(seed_db_path)
 
 
 class MonitoringRepository:
     """Canonical monitoring storage for AI tasks and price alerts."""
 
-    def __init__(self, db_path: str = "monitoring.db"):
-        self.db_path = db_path
+    def __init__(self, db_path: str = "investment.db"):
+        self.seed_db_path = db_path
+        self.db_path = resolve_investment_db_path(db_path)
         db_dir = os.path.dirname(self.db_path)
         if db_dir and not os.path.exists(db_dir):
             os.makedirs(db_dir, exist_ok=True)
@@ -44,6 +46,9 @@ class MonitoringRepository:
                 trading_hours_only INTEGER DEFAULT 1,
                 notification_enabled INTEGER DEFAULT 1,
                 managed_by_portfolio INTEGER DEFAULT 0,
+                account_name TEXT,
+                portfolio_stock_id INTEGER,
+                origin_analysis_id INTEGER,
                 current_price REAL,
                 last_checked TEXT,
                 last_status TEXT,
@@ -56,16 +61,42 @@ class MonitoringRepository:
         )
         cursor.execute(
             """
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_monitoring_ai_task_symbol
-            ON monitoring_items(symbol)
+            CREATE TABLE IF NOT EXISTS migration_conflicts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_db TEXT NOT NULL,
+                source_table TEXT NOT NULL,
+                source_key TEXT NOT NULL,
+                symbol TEXT,
+                conflict_type TEXT NOT NULL,
+                payload_json TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        cursor.execute(
+            """
+            DROP INDEX IF EXISTS idx_monitoring_ai_task_symbol
+            """
+        )
+        cursor.execute(
+            """
+            DROP INDEX IF EXISTS idx_monitoring_managed_alert_symbol
+            """
+        )
+        cursor.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_monitoring_ai_task_account_symbol
+            ON monitoring_items(account_name, symbol)
             WHERE monitor_type = 'ai_task'
             """
         )
         cursor.execute(
             """
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_monitoring_managed_alert_symbol
-            ON monitoring_items(symbol)
-            WHERE monitor_type = 'price_alert' AND managed_by_portfolio = 1
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_monitoring_managed_alert_position
+            ON monitoring_items(portfolio_stock_id, monitor_type)
+            WHERE monitor_type = 'price_alert'
+              AND managed_by_portfolio = 1
+              AND portfolio_stock_id IS NOT NULL
             """
         )
         cursor.execute(
@@ -106,8 +137,18 @@ class MonitoringRepository:
             )
             """
         )
+        self._ensure_column(cursor, "monitoring_items", "account_name", "TEXT")
+        self._ensure_column(cursor, "monitoring_items", "portfolio_stock_id", "INTEGER")
+        self._ensure_column(cursor, "monitoring_items", "origin_analysis_id", "INTEGER")
         conn.commit()
         conn.close()
+
+    @staticmethod
+    def _ensure_column(cursor, table: str, column: str, definition: str) -> None:
+        cursor.execute(f"PRAGMA table_info({table})")
+        existing_columns = {row[1] for row in cursor.fetchall()}
+        if column not in existing_columns:
+            cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
     @staticmethod
     def _normalize_interval_minutes(value: Optional[int]) -> int:
@@ -163,6 +204,9 @@ class MonitoringRepository:
 
     def create_item(self, item_data: Dict) -> int:
         config = dict(item_data.get("config") or {})
+        account_name = item_data.get("account_name")
+        if item_data.get("monitor_type") == "ai_task":
+            account_name = account_name or DEFAULT_ACCOUNT_NAME
         conn = self._connect()
         cursor = conn.cursor()
         cursor.execute(
@@ -170,9 +214,10 @@ class MonitoringRepository:
             INSERT INTO monitoring_items (
                 symbol, name, monitor_type, source, enabled, interval_minutes,
                 trading_hours_only, notification_enabled, managed_by_portfolio,
+                account_name, portfolio_stock_id, origin_analysis_id,
                 current_price, last_checked, last_status, last_message, config_json
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 item_data["symbol"],
@@ -184,6 +229,9 @@ class MonitoringRepository:
                 1 if item_data.get("trading_hours_only", True) else 0,
                 1 if item_data.get("notification_enabled", True) else 0,
                 1 if item_data.get("managed_by_portfolio", False) else 0,
+                account_name,
+                item_data.get("portfolio_stock_id"),
+                item_data.get("origin_analysis_id"),
                 item_data.get("current_price"),
                 item_data.get("last_checked"),
                 item_data.get("last_status"),
@@ -212,6 +260,9 @@ class MonitoringRepository:
             "trading_hours_only",
             "notification_enabled",
             "managed_by_portfolio",
+            "account_name",
+            "portfolio_stock_id",
+            "origin_analysis_id",
             "current_price",
             "last_checked",
             "last_status",
@@ -262,11 +313,15 @@ class MonitoringRepository:
         symbol: str,
         monitor_type: Optional[str] = None,
         managed_only: Optional[bool] = None,
+        account_name: Optional[str] = None,
+        portfolio_stock_id: Optional[int] = None,
     ) -> Optional[Dict]:
         items = self.list_items(
             monitor_type=monitor_type,
             symbol=symbol,
             managed_by_portfolio=managed_only,
+            account_name=account_name,
+            portfolio_stock_id=portfolio_stock_id,
         )
         return items[0] if items else None
 
@@ -277,6 +332,8 @@ class MonitoringRepository:
         managed_by_portfolio: Optional[bool] = None,
         enabled_only: bool = False,
         symbol: Optional[str] = None,
+        account_name: Optional[str] = None,
+        portfolio_stock_id: Optional[int] = None,
     ) -> List[Dict]:
         conn = self._connect()
         cursor = conn.cursor()
@@ -297,6 +354,12 @@ class MonitoringRepository:
         if symbol:
             clauses.append("symbol = ?")
             params.append(symbol)
+        if account_name is not None:
+            clauses.append("account_name = ?")
+            params.append(account_name)
+        if portfolio_stock_id is not None:
+            clauses.append("portfolio_stock_id = ?")
+            params.append(portfolio_stock_id)
 
         sql = "SELECT * FROM monitoring_items"
         if clauses:
@@ -312,16 +375,25 @@ class MonitoringRepository:
         monitor_type = item_data["monitor_type"]
         symbol = item_data["symbol"]
         managed = bool(item_data.get("managed_by_portfolio", False))
+        account_name = item_data.get("account_name")
 
         existing = None
         if monitor_type == "ai_task":
-            existing = self.get_item_by_symbol(symbol, monitor_type="ai_task")
-        elif monitor_type == "price_alert" and managed:
             existing = self.get_item_by_symbol(
                 symbol,
-                monitor_type="price_alert",
-                managed_only=True,
+                monitor_type="ai_task",
+                account_name=account_name or DEFAULT_ACCOUNT_NAME,
             )
+        elif monitor_type == "price_alert" and managed:
+            portfolio_stock_id = item_data.get("portfolio_stock_id")
+            if portfolio_stock_id is not None:
+                existing = self.get_item_by_symbol(
+                    symbol,
+                    monitor_type="price_alert",
+                    managed_only=True,
+                    account_name=account_name,
+                    portfolio_stock_id=portfolio_stock_id,
+                )
 
         if not existing:
             return self.create_item(item_data)
@@ -336,6 +408,9 @@ class MonitoringRepository:
             "trading_hours_only": item_data.get("trading_hours_only", existing["trading_hours_only"]),
             "notification_enabled": item_data.get("notification_enabled", existing["notification_enabled"]),
             "managed_by_portfolio": managed,
+            "account_name": account_name if monitor_type == "ai_task" else item_data.get("account_name", existing.get("account_name")),
+            "portfolio_stock_id": item_data.get("portfolio_stock_id", existing.get("portfolio_stock_id")),
+            "origin_analysis_id": item_data.get("origin_analysis_id", existing.get("origin_analysis_id")),
             "current_price": item_data.get("current_price", existing.get("current_price")),
             "last_checked": item_data.get("last_checked", existing.get("last_checked")),
             "last_status": item_data.get("last_status", existing.get("last_status")),
@@ -361,11 +436,15 @@ class MonitoringRepository:
         symbol: str,
         monitor_type: Optional[str] = None,
         managed_only: bool = False,
+        account_name: Optional[str] = None,
+        portfolio_stock_id: Optional[int] = None,
     ) -> bool:
         items = self.list_items(
             monitor_type=monitor_type,
             symbol=symbol,
             managed_by_portfolio=True if managed_only else None,
+            account_name=account_name,
+            portfolio_stock_id=portfolio_stock_id,
         )
         deleted = False
         for item in items:
@@ -440,6 +519,7 @@ class MonitoringRepository:
         event_type: str,
         message: str,
         notification_pending: bool = False,
+        sent: bool = False,
         details: Optional[Dict] = None,
         created_at: Optional[str] = None,
     ) -> int:
@@ -463,7 +543,7 @@ class MonitoringRepository:
                 message,
                 json.dumps(details or {}, ensure_ascii=False),
                 1 if notification_pending else 0,
-                0,
+                1 if sent else 0,
                 created_at or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             ),
         )
@@ -593,8 +673,69 @@ class MonitoringRepository:
     def _build_stock_migration_key(db_path: str) -> str:
         return f"migrated_stock::{os.path.abspath(db_path)}"
 
+    def record_migration_conflict(
+        self,
+        *,
+        source_db: str,
+        source_table: str,
+        source_key: str,
+        symbol: Optional[str],
+        conflict_type: str,
+        payload: Optional[Dict] = None,
+    ) -> int:
+        conn = self._connect()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO migration_conflicts (
+                source_db, source_table, source_key, symbol, conflict_type, payload_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                source_db,
+                source_table,
+                source_key,
+                symbol,
+                conflict_type,
+                json.dumps(payload or {}, ensure_ascii=False),
+            ),
+        )
+        conflict_id = int(cursor.lastrowid)
+        conn.commit()
+        conn.close()
+        return conflict_id
+
+    def _resolve_portfolio_binding(self, symbol: str) -> Optional[Dict]:
+        conn = self._connect()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                """
+                SELECT id, account_name, code, position_status
+                FROM portfolio_stocks
+                WHERE code = ?
+                  AND COALESCE(position_status, 'active') = 'active'
+                ORDER BY id ASC
+                """,
+                (symbol,),
+            )
+            rows = cursor.fetchall()
+        except sqlite3.OperationalError:
+            rows = []
+        finally:
+            conn.close()
+        if len(rows) == 1:
+            return {
+                "portfolio_stock_id": rows[0]["id"],
+                "account_name": rows[0]["account_name"] or DEFAULT_ACCOUNT_NAME,
+            }
+        return None
+
     def migrate_legacy_smart_db(self, legacy_db_path: str) -> int:
         if not legacy_db_path or not os.path.exists(legacy_db_path):
+            return 0
+        if os.path.abspath(legacy_db_path) == os.path.abspath(self.db_path):
             return 0
 
         key = self._build_smart_migration_key(legacy_db_path)
@@ -616,6 +757,28 @@ class MonitoringRepository:
         migrated = 0
         for row in cursor.fetchall():
             task = dict(row)
+            binding = self._resolve_portfolio_binding(task["stock_code"])
+            account_name = DEFAULT_ACCOUNT_NAME
+            portfolio_stock_id = None
+            enabled = bool(task.get("enabled", 1))
+            source = "portfolio" if task.get("managed_by_portfolio") else "manual"
+
+            if task.get("managed_by_portfolio") or task.get("has_position"):
+                if binding:
+                    account_name = binding["account_name"]
+                    portfolio_stock_id = binding["portfolio_stock_id"]
+                else:
+                    enabled = False
+                    source = "legacy_conflict"
+                    self.record_migration_conflict(
+                        source_db=os.path.abspath(legacy_db_path),
+                        source_table="monitor_tasks",
+                        source_key=str(task.get("id")),
+                        symbol=task.get("stock_code"),
+                        conflict_type="portfolio_binding_ambiguous",
+                        payload=task,
+                    )
+
             config = {
                 "task_name": task.get("task_name"),
                 "auto_trade": bool(task.get("auto_trade", 0)),
@@ -635,12 +798,14 @@ class MonitoringRepository:
                     "symbol": task["stock_code"],
                     "name": task.get("stock_name") or task.get("task_name") or task["stock_code"],
                     "monitor_type": "ai_task",
-                    "source": "portfolio" if task.get("managed_by_portfolio") else "manual",
-                    "enabled": bool(task.get("enabled", 1)),
+                    "source": source,
+                    "enabled": enabled,
                     "interval_minutes": max(1, int(math.ceil((task.get("check_interval") or 60) / 60))),
                     "trading_hours_only": bool(task.get("trading_hours_only", 1)),
                     "notification_enabled": True,
                     "managed_by_portfolio": bool(task.get("managed_by_portfolio", 0)),
+                    "account_name": account_name,
+                    "portfolio_stock_id": portfolio_stock_id,
                     "config": config,
                     "last_checked": task.get("updated_at"),
                 }
@@ -653,6 +818,8 @@ class MonitoringRepository:
 
     def migrate_legacy_stock_db(self, legacy_db_path: str) -> int:
         if not legacy_db_path or not os.path.exists(legacy_db_path):
+            return 0
+        if os.path.abspath(legacy_db_path) == os.path.abspath(self.db_path):
             return 0
 
         key = self._build_stock_migration_key(legacy_db_path)
@@ -674,6 +841,22 @@ class MonitoringRepository:
         migrated = 0
         for row in cursor.fetchall():
             stock = dict(row)
+            binding = self._resolve_portfolio_binding(stock["symbol"]) if stock.get("managed_by_portfolio") else None
+            account_name = binding["account_name"] if binding else None
+            portfolio_stock_id = binding["portfolio_stock_id"] if binding else None
+            enabled = True
+            source = "portfolio" if stock.get("managed_by_portfolio") else "manual"
+            if stock.get("managed_by_portfolio") and not binding:
+                enabled = False
+                source = "legacy_conflict"
+                self.record_migration_conflict(
+                    source_db=os.path.abspath(legacy_db_path),
+                    source_table="monitored_stocks",
+                    source_key=str(stock.get("id")),
+                    symbol=stock.get("symbol"),
+                    conflict_type="portfolio_binding_ambiguous",
+                    payload=stock,
+                )
             config = {
                 "rating": stock.get("rating", "持有"),
                 "entry_range": self._safe_json_loads(stock.get("entry_range"), {}),
@@ -686,12 +869,14 @@ class MonitoringRepository:
                 "symbol": stock["symbol"],
                 "name": stock.get("name") or stock["symbol"],
                 "monitor_type": "price_alert",
-                "source": "portfolio" if stock.get("managed_by_portfolio") else "manual",
-                "enabled": True,
+                "source": source,
+                "enabled": enabled,
                 "interval_minutes": self._normalize_interval_minutes(stock.get("check_interval", 30)),
                 "trading_hours_only": bool(stock.get("trading_hours_only", 1)),
                 "notification_enabled": bool(stock.get("notification_enabled", 1)),
                 "managed_by_portfolio": bool(stock.get("managed_by_portfolio", 0)),
+                "account_name": account_name,
+                "portfolio_stock_id": portfolio_stock_id,
                 "current_price": stock.get("current_price"),
                 "last_checked": stock.get("last_checked"),
                 "config": config,

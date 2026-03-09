@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List
 import json
 
+from investment_db_utils import DEFAULT_ACCOUNT_NAME
 from monitor_db import monitor_db
 from monitor_service import monitor_service
 from notification_service import notification_service
@@ -21,6 +22,7 @@ from stock_data_cache import extract_cache_meta, strip_cache_meta
 from miniqmt_interface import miniqmt, get_miniqmt_status, QuantStrategyConfig
 from ui_shared import format_price, get_recommendation_color
 from ui_state_keys import (
+    INVESTMENT_PRICE_ALERT_PREFILL_KEY,
     MONITOR_DELETING_STOCK_ID_KEY,
     MONITOR_EDITING_STOCK_ID_KEY,
     MONITOR_JUMP_HIGHLIGHT_KEY,
@@ -95,17 +97,56 @@ def display_monitor_status():
 
 def display_add_stock_section():
     """显示添加股票监测区域"""
-    
+
+    prefill = st.session_state.pop(INVESTMENT_PRICE_ALERT_PREFILL_KEY, None)
+    if prefill:
+        strategy_context = prefill.get("strategy_context") or {}
+        st.session_state["price_alert_form_account_name"] = prefill.get("account_name") or DEFAULT_ACCOUNT_NAME
+        st.session_state["price_alert_form_symbol"] = prefill.get("symbol") or ""
+        st.session_state["price_alert_form_name"] = prefill.get("stock_name") or ""
+        st.session_state["price_alert_form_entry_min"] = float(strategy_context.get("entry_min") or 0.0)
+        st.session_state["price_alert_form_entry_max"] = float(strategy_context.get("entry_max") or 0.0)
+        st.session_state["price_alert_form_take_profit"] = float(strategy_context.get("take_profit") or 0.0)
+        st.session_state["price_alert_form_stop_loss"] = float(strategy_context.get("stop_loss") or 0.0)
+        st.session_state["price_alert_form_rating"] = strategy_context.get("rating") or "买入"
+        st.session_state["price_alert_form_origin_analysis_id"] = prefill.get("origin_analysis_id")
+        st.session_state["price_alert_form_strategy_context"] = strategy_context
+        st.session_state["price_alert_form_notice"] = f"{prefill.get('symbol')} 的策略价位已带入价格预警表单。"
+
+    st.session_state.setdefault("price_alert_form_account_name", DEFAULT_ACCOUNT_NAME)
+    st.session_state.setdefault("price_alert_form_symbol", "")
+    st.session_state.setdefault("price_alert_form_name", "")
+    st.session_state.setdefault("price_alert_form_entry_min", 0.0)
+    st.session_state.setdefault("price_alert_form_entry_max", 0.0)
+    st.session_state.setdefault("price_alert_form_take_profit", 0.0)
+    st.session_state.setdefault("price_alert_form_stop_loss", 0.0)
+    st.session_state.setdefault("price_alert_form_rating", "买入")
+    st.session_state.setdefault("price_alert_form_origin_analysis_id", None)
+    st.session_state.setdefault("price_alert_form_strategy_context", {})
+
     st.markdown("### 添加价格预警")
-    
-    with st.expander("点击展开添加价格预警", expanded=False):
+
+    with st.expander("点击展开添加价格预警", expanded=bool(st.session_state.get("price_alert_form_symbol"))):
+        if st.session_state.get("price_alert_form_notice"):
+            st.info(st.session_state["price_alert_form_notice"])
         col1, col2 = st.columns([1, 1])
         
         with col1:
             # 股票信息输入
             st.subheader("📈 股票信息")
-            symbol = st.text_input("股票代码", placeholder="例如: AAPL, 000001", help="支持美股和A股代码")
-            name = st.text_input("股票名称", placeholder="例如: 苹果公司", help="可选，用于显示")
+            account_name = st.text_input("账户名称", key="price_alert_form_account_name")
+            symbol = st.text_input(
+                "股票代码",
+                placeholder="例如: AAPL, 000001",
+                help="支持美股和A股代码",
+                key="price_alert_form_symbol",
+            )
+            name = st.text_input(
+                "股票名称",
+                placeholder="例如: 苹果公司",
+                help="可选，用于显示",
+                key="price_alert_form_name",
+            )
             
             # 获取股票基本信息
             if symbol:
@@ -136,10 +177,10 @@ def display_add_stock_section():
             
             # 关键位置设置
             st.markdown("**🎯 关键位置设置**")
-            entry_min = st.number_input("进场区间最低价", value=0.0, step=0.01, format="%.2f")
-            entry_max = st.number_input("进场区间最高价", value=0.0, step=0.01, format="%.2f")
-            take_profit = st.number_input("止盈价位", value=0.0, step=0.01, format="%.2f", help="可选")
-            stop_loss = st.number_input("止损价位", value=0.0, step=0.01, format="%.2f", help="可选")
+            entry_min = st.number_input("进场区间最低价", step=0.01, format="%.2f", key="price_alert_form_entry_min")
+            entry_max = st.number_input("进场区间最高价", step=0.01, format="%.2f", key="price_alert_form_entry_max")
+            take_profit = st.number_input("止盈价位", step=0.01, format="%.2f", help="可选", key="price_alert_form_take_profit")
+            stop_loss = st.number_input("止损价位", step=0.01, format="%.2f", help="可选", key="price_alert_form_stop_loss")
             
             # 监测参数
             st.markdown("**⏰ 监测参数**")
@@ -147,7 +188,14 @@ def display_add_stock_section():
             notification_enabled = st.checkbox("启用通知", value=True)
             
             # 投资评级
-            rating = st.selectbox("投资评级", ["买入", "持有", "卖出"], index=0)
+            rating_options = ["买入", "持有", "卖出"]
+            rating_value = st.session_state.get("price_alert_form_rating", "买入")
+            rating = st.selectbox(
+                "投资评级",
+                rating_options,
+                index=rating_options.index(rating_value) if rating_value in rating_options else 0,
+                key="price_alert_form_rating",
+            )
             
             # 量化交易设置
             st.markdown("**🤖 量化交易（MiniQMT）**")
@@ -177,7 +225,7 @@ def display_add_stock_section():
                     
                     # 添加到数据库
                     stock_id = monitor_db.add_monitored_stock(
-                        symbol=symbol,
+                        symbol=symbol.strip().upper(),
                         name=name or symbol,
                         rating=rating,
                         entry_range=entry_range,
@@ -186,9 +234,22 @@ def display_add_stock_section():
                         check_interval=check_interval,
                         notification_enabled=notification_enabled,
                         quant_enabled=quant_enabled,
-                        quant_config=quant_config
+                        quant_config=quant_config,
+                        account_name=(account_name or DEFAULT_ACCOUNT_NAME).strip() or DEFAULT_ACCOUNT_NAME,
+                        origin_analysis_id=st.session_state.get("price_alert_form_origin_analysis_id"),
                     )
                     
+                    st.session_state["price_alert_form_account_name"] = DEFAULT_ACCOUNT_NAME
+                    st.session_state["price_alert_form_symbol"] = ""
+                    st.session_state["price_alert_form_name"] = ""
+                    st.session_state["price_alert_form_entry_min"] = 0.0
+                    st.session_state["price_alert_form_entry_max"] = 0.0
+                    st.session_state["price_alert_form_take_profit"] = 0.0
+                    st.session_state["price_alert_form_stop_loss"] = 0.0
+                    st.session_state["price_alert_form_rating"] = "买入"
+                    st.session_state["price_alert_form_origin_analysis_id"] = None
+                    st.session_state["price_alert_form_strategy_context"] = {}
+                    st.session_state.pop("price_alert_form_notice", None)
                     st.success(f"已成功添加 {symbol} 到价格预警")
                     st.balloons()
                     

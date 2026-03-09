@@ -17,6 +17,7 @@ import pandas as pd
 # 导入必要的模块
 from portfolio_db import portfolio_db
 from monitor_db import monitor_db as realtime_monitor_db
+from investment_lifecycle_service import InvestmentLifecycleService, investment_lifecycle_service
 from smart_monitor_db import SmartMonitorDB
 
 
@@ -31,7 +32,7 @@ class PortfolioManager:
     
     def __init__(self, model=None, lightweight_model=None, reasoning_model=None,
                  portfolio_store=None,
-                 realtime_monitor_store=None, smart_monitor_store=None):
+                 realtime_monitor_store=None, smart_monitor_store=None, lifecycle_service=None):
         """
         初始化持仓管理器
         
@@ -44,6 +45,12 @@ class PortfolioManager:
         self.db = portfolio_store or portfolio_db
         self.realtime_monitor_db = realtime_monitor_store or realtime_monitor_db
         self.smart_monitor_db = smart_monitor_store or SmartMonitorDB()
+        self.lifecycle_service = lifecycle_service or InvestmentLifecycleService(
+            portfolio_store=self.db,
+            realtime_monitor_store=self.realtime_monitor_db,
+            analysis_store=getattr(self.db, "analysis_repository", None),
+            monitoring_store=getattr(self.smart_monitor_db, "monitoring_repository", None),
+        )
         self._integrations_reconcile_pending = True
         self._stock_data_fetcher = None
 
@@ -153,8 +160,9 @@ class PortfolioManager:
     # ==================== 持仓股票管理 ====================
     
     def add_stock(self, code: str, name: Optional[str], cost_price: Optional[float] = None,
-                  quantity: Optional[int] = None, note: str = "", 
-                  auto_monitor: bool = True, account_name: str = "默认账户") -> Tuple[bool, str, Optional[int]]:
+                  quantity: Optional[int] = None, note: str = "",
+                  auto_monitor: bool = True, account_name: str = "默认账户",
+                  origin_analysis_id: Optional[int] = None) -> Tuple[bool, str, Optional[int]]:
         """
         添加持仓股票
         
@@ -183,30 +191,24 @@ class PortfolioManager:
             
             # 检查股票代码是否已存在
             existing = self.db.get_stock_by_code(code, account_name)
-            if existing:
+            if existing and existing.get("position_status", "active") == "active":
                 return False, f"股票代码 {code} 已存在", None
-            
-            # 添加到数据库
-            stock_id = self.db.add_stock(
-                code,
-                final_name,
-                cost_price,
-                quantity,
-                note,
-                auto_monitor,
-                account_name,
+
+            success, message, stock_id = self.lifecycle_service.create_position_from_analysis(
+                symbol=code,
+                stock_name=final_name,
+                account_name=account_name,
+                cost_price=cost_price,
+                quantity=quantity,
+                note=note,
+                auto_monitor=auto_monitor,
+                origin_analysis_id=origin_analysis_id,
             )
+            if not success or stock_id is None:
+                return False, message, None
             self._mark_integrations_reconcile_pending()
             self.capture_daily_snapshot(account_name=account_name, source="manual")
-            warning = ""
-            if auto_monitor:
-                try:
-                    created_stock = self.db.get_stock(stock_id)
-                    if created_stock:
-                        self._sync_stock_to_smart_monitor(created_stock)
-                except Exception as e:
-                    warning = f"；AI盯盘同步失败: {e}"
-            return True, f"添加持仓股票成功: {code} {final_name}{warning}", stock_id
+            return True, f"添加持仓股票成功: {code} {final_name}", stock_id
             
         except Exception as e:
             return False, f"添加失败: {str(e)}", None
@@ -232,20 +234,16 @@ class PortfolioManager:
             if success:
                 self._mark_integrations_reconcile_pending()
                 updated_stock = self.db.get_stock(stock_id)
-                warning = ""
-
                 if old_code != updated_stock["code"]:
                     self.remove_managed_integrations_for_code(old_code)
 
+                warning = ""
                 try:
                     self.capture_daily_snapshot(
                         account_name=updated_stock.get("account_name", existing.get("account_name", "默认账户")),
                         source="manual",
                     )
-                    if updated_stock.get("auto_monitor"):
-                        self._sync_stock_to_smart_monitor(updated_stock)
-                    else:
-                        self.remove_managed_integrations_for_code(updated_stock["code"])
+                    self.lifecycle_service.sync_position(stock_id=stock_id)
                 except Exception as e:
                     warning = f"（联动同步失败: {e}）"
 
@@ -279,7 +277,7 @@ class PortfolioManager:
                 )
                 warning = ""
                 try:
-                    self.remove_managed_integrations_for_code(existing["code"])
+                    self.lifecycle_service._delete_managed_items_for_position(existing)
                 except Exception as e:
                     warning = f"（下游清理失败: {e}）"
                 return True, f"删除成功{warning}"
@@ -382,11 +380,13 @@ class PortfolioManager:
                 note=(note or "").strip(),
                 trade_source="manual",
             )
-            self.db.update_stock(
-                stock_id,
-                cost_price=new_cost_price,
-                quantity=new_quantity if new_quantity > 0 else None,
-            )
+            update_payload = {
+                "cost_price": new_cost_price,
+                "quantity": new_quantity if new_quantity > 0 else None,
+                "position_status": "active" if new_quantity > 0 else "closed",
+                "last_trade_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            }
+            self.db.update_stock(stock_id, **update_payload)
             self._mark_integrations_reconcile_pending()
 
             updated_stock = self.db.get_stock(stock_id)
@@ -394,8 +394,7 @@ class PortfolioManager:
             try:
                 account_name = (updated_stock or stock).get("account_name", "默认账户")
                 self.capture_daily_snapshot(account_name=account_name, source="manual")
-                if updated_stock and updated_stock.get("auto_monitor"):
-                    self._sync_stock_to_smart_monitor(updated_stock)
+                self.lifecycle_service.sync_position(stock_id=stock_id)
             except Exception as e:
                 warning = f"（联动同步失败: {e}）"
 
@@ -1646,52 +1645,45 @@ class PortfolioManager:
         """同步单只持仓到 AI 盯盘任务。"""
         if not stock or not stock.get("auto_monitor"):
             return False
-
-        existing_task = self.smart_monitor_db.get_monitor_task_by_code(stock["code"], managed_only=True)
-        task_data = self._build_smart_monitor_task_data(stock, existing_task)
-        self.smart_monitor_db.upsert_monitor_task(task_data)
-        return True
+        result = self.lifecycle_service.sync_position(stock_id=stock["id"])
+        return bool(result.get("ai_tasks_upserted"))
 
     def sync_portfolio_to_smart_monitor(self) -> Dict[str, int]:
         """同步所有启用自动监测的持仓到 AI 盯盘。"""
         synced = 0
         failed = 0
-
         for stock in self.get_all_stocks(auto_monitor_only=True):
             try:
-                if self._sync_stock_to_smart_monitor(stock):
+                result = self.lifecycle_service.sync_position(stock_id=stock["id"])
+                if result.get("ai_tasks_upserted"):
                     synced += 1
             except Exception as e:
                 failed += 1
                 print(f"[ERROR] 同步 AI盯盘任务失败 ({stock['code']}): {e}")
-
         return {"synced": synced, "failed": failed, "total": synced + failed}
 
     def sync_latest_analysis_to_realtime_monitor(self, codes: Optional[List[str]] = None) -> Dict[str, int]:
         """将最新持仓分析结果同步到实时监测。"""
-        monitors_to_sync = []
-        stocks = self.db.get_all_latest_analysis()
+        added = 0
+        stocks = self.db.get_all_stocks(auto_monitor_only=True)
         if codes:
             code_set = {self._normalize_stock_code(code) for code in codes if code}
             stocks = [stock for stock in stocks if stock["code"] in code_set]
-
         for stock in stocks:
-            if not stock.get("auto_monitor"):
-                continue
-            monitor_payload = self._build_realtime_monitor_payload(stock, stock)
-            if monitor_payload:
-                monitors_to_sync.append(monitor_payload)
-
-        if not monitors_to_sync:
-            return {"added": 0, "updated": 0, "failed": 0, "total": 0}
-
-        return self.realtime_monitor_db.batch_add_or_update_monitors(monitors_to_sync)
+            result = self.lifecycle_service.sync_position(stock_id=stock["id"])
+            if result.get("price_alerts_upserted"):
+                added += int(result.get("price_alerts_upserted", 0))
+        return {"added": added, "updated": 0, "failed": 0, "total": added}
 
     def remove_managed_integrations_for_code(self, code: str) -> Dict[str, int]:
         """移除指定股票的持仓托管下游记录。"""
         normalized_code = self._normalize_stock_code(code)
-        smart_deleted = 1 if self.smart_monitor_db.delete_monitor_task_by_code(normalized_code, managed_only=True) else 0
-        monitor_deleted = 1 if self.realtime_monitor_db.remove_monitor_by_code(normalized_code, managed_only=True) else 0
+        smart_deleted = 0
+        monitor_deleted = 0
+        for stock in self.db.get_stocks_by_code(normalized_code):
+            deleted = self.lifecycle_service._delete_managed_items_for_position(stock)
+            smart_deleted += deleted["ai_task_deleted"]
+            monitor_deleted += deleted["price_alert_deleted"]
         return {
             "smart_monitor_deleted": smart_deleted,
             "realtime_monitor_deleted": monitor_deleted,
@@ -1705,12 +1697,22 @@ class PortfolioManager:
 
         for task in self.smart_monitor_db.get_monitor_tasks(enabled_only=False):
             if task.get("managed_by_portfolio") and task["stock_code"] not in active_codes:
-                if self.smart_monitor_db.delete_monitor_task_by_code(task["stock_code"], managed_only=True):
+                if self.smart_monitor_db.delete_monitor_task_by_code(
+                    task["stock_code"],
+                    managed_only=True,
+                    account_name=task.get("account_name"),
+                    portfolio_stock_id=task.get("portfolio_stock_id"),
+                ):
                     cleaned_smart += 1
 
         for monitor in self.realtime_monitor_db.get_monitored_stocks():
             if monitor.get("managed_by_portfolio") and monitor["symbol"] not in active_codes:
-                if self.realtime_monitor_db.remove_monitor_by_code(monitor["symbol"], managed_only=True):
+                if self.realtime_monitor_db.remove_monitor_by_code(
+                    monitor["symbol"],
+                    managed_only=True,
+                    account_name=monitor.get("account_name"),
+                    portfolio_stock_id=monitor.get("portfolio_stock_id"),
+                ):
                     cleaned_monitor += 1
 
         return {

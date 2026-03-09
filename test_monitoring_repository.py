@@ -89,6 +89,8 @@ class MonitoringRepositoryTests(unittest.TestCase):
         self.assertEqual(ai_task["interval_minutes"], 2)
         self.assertTrue(ai_task["config"]["auto_trade"])
         self.assertTrue(ai_task["config"]["has_position"])
+        self.assertFalse(ai_task["enabled"])
+        self.assertEqual(ai_task["source"], "legacy_conflict")
 
         price_alerts = self.repo.list_items(monitor_type="price_alert", symbol="000001")
         self.assertEqual(len(price_alerts), 3)
@@ -96,6 +98,14 @@ class MonitoringRepositoryTests(unittest.TestCase):
         manual_items = [item for item in price_alerts if not item["managed_by_portfolio"]]
         self.assertEqual(len(managed_items), 1)
         self.assertEqual(len(manual_items), 2)
+        self.assertFalse(managed_items[0]["enabled"])
+
+        conn = self.repo._connect()
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) AS total FROM migration_conflicts")
+        conflict_count = int(cursor.fetchone()["total"])
+        conn.close()
+        self.assertEqual(conflict_count, 2)
 
     def _create_legacy_smart_db(self, db_path: Path):
         conn = sqlite3.connect(db_path)

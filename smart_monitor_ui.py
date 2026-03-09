@@ -12,11 +12,13 @@ from typing import Dict
 from dotenv import load_dotenv
 import config
 
+from investment_db_utils import DEFAULT_ACCOUNT_NAME
 from smart_monitor_engine import SmartMonitorEngine
 from smart_monitor_db import SmartMonitorDB
 from config_manager import config_manager  # 使用主程序的配置管理器
 from portfolio_manager import portfolio_manager
 from ui_state_keys import (
+    INVESTMENT_AI_TASK_PREFILL_KEY,
     SMART_MONITOR_ACTIVE_TAB_KEY,
     SMART_MONITOR_DB_KEY,
     SMART_MONITOR_ENGINE_KEY,
@@ -881,37 +883,70 @@ def render_ai_monitor_tasks_panel():
     service_status = "运行中" if monitor_service.running else "已停止"
     st.caption(f"监测服务状态: {service_status}。启用中的任务会由统一监测服务按分钟调度执行。")
 
-    with st.expander("新增 AI 监控任务", expanded=False):
+    prefill = st.session_state.pop(INVESTMENT_AI_TASK_PREFILL_KEY, None)
+    if prefill:
+        st.session_state["ai_task_form_account_name"] = prefill.get("account_name") or DEFAULT_ACCOUNT_NAME
+        st.session_state["ai_task_form_task_name"] = prefill.get("task_name") or f"{prefill.get('stock_name') or prefill.get('symbol')}盯盘"
+        st.session_state["ai_task_form_stock_code"] = prefill.get("symbol") or ""
+        st.session_state["ai_task_form_stock_name"] = prefill.get("stock_name") or ""
+        st.session_state["ai_task_form_interval_minutes"] = int(prefill.get("interval_minutes") or 5)
+        st.session_state["ai_task_form_has_position"] = bool(prefill.get("has_position", False))
+        st.session_state["ai_task_form_position_cost"] = float(prefill.get("position_cost") or 0.0)
+        st.session_state["ai_task_form_position_quantity"] = int(prefill.get("position_quantity") or 0)
+        st.session_state["ai_task_form_auto_trade"] = bool(prefill.get("auto_trade", False))
+        st.session_state["ai_task_form_trading_hours_only"] = bool(prefill.get("trading_hours_only", True))
+        st.session_state["ai_task_form_position_size_pct"] = int(prefill.get("position_size_pct") or 20)
+        st.session_state["ai_task_form_stop_loss_pct"] = int(prefill.get("stop_loss_pct") or 5)
+        st.session_state["ai_task_form_take_profit_pct"] = int(prefill.get("take_profit_pct") or 10)
+        st.session_state["ai_task_form_notify_email"] = prefill.get("notify_email") or ""
+        st.session_state["ai_task_form_strategy_context"] = prefill.get("strategy_context") or {}
+        st.session_state["ai_task_form_origin_analysis_id"] = prefill.get("origin_analysis_id")
+        st.session_state["ai_task_form_notice"] = f"{prefill.get('symbol')} 的战略基线已带入 AI 盯盘表单。"
+
+    strategy_context = st.session_state.get("ai_task_form_strategy_context") or {}
+
+    with st.expander("新增 AI 监控任务", expanded=bool(st.session_state.get("ai_task_form_stock_code"))):
+        if st.session_state.get("ai_task_form_notice"):
+            st.info(st.session_state["ai_task_form_notice"])
+        if strategy_context:
+            st.caption(
+                f"战略基线: 评级 {strategy_context.get('rating') or 'N/A'} | "
+                f"进场 {strategy_context.get('entry_min') or '-'} - {strategy_context.get('entry_max') or '-'} | "
+                f"止盈 {strategy_context.get('take_profit') or '-'} | 止损 {strategy_context.get('stop_loss') or '-'}"
+            )
         with st.form("ai_monitor_task_form", clear_on_submit=False):
             col1, col2 = st.columns(2)
 
             with col1:
-                task_name = st.text_input("任务名称", placeholder="例如: 茅台 AI 监控")
-                stock_code = st.text_input("股票代码", placeholder="例如: 600519")
-                stock_name = st.text_input("股票名称", placeholder="可选")
-                interval_minutes = st.slider("检查间隔(分钟)", 1, 240, 5)
-                has_position = st.checkbox("已有持仓", value=False)
-                position_cost = st.number_input("持仓成本", min_value=0.0, value=0.0, step=0.01)
-                position_quantity = st.number_input("持仓数量", min_value=0, value=0, step=100)
+                account_name = st.text_input("账户名称", key="ai_task_form_account_name")
+                task_name = st.text_input("任务名称", placeholder="例如: 茅台 AI 监控", key="ai_task_form_task_name")
+                stock_code = st.text_input("股票代码", placeholder="例如: 600519", key="ai_task_form_stock_code")
+                stock_name = st.text_input("股票名称", placeholder="可选", key="ai_task_form_stock_name")
+                interval_minutes = st.slider("检查间隔(分钟)", 1, 240, 5, key="ai_task_form_interval_minutes")
+                has_position = st.checkbox("已有持仓", value=False, key="ai_task_form_has_position")
+                position_cost = st.number_input("持仓成本", min_value=0.0, value=0.0, step=0.01, key="ai_task_form_position_cost")
+                position_quantity = st.number_input("持仓数量", min_value=0, value=0, step=100, key="ai_task_form_position_quantity")
 
             with col2:
-                auto_trade = st.checkbox("自动交易", value=False)
-                trading_hours_only = st.checkbox("仅交易时段执行", value=True)
-                position_size_pct = st.slider("仓位百分比", 5, 50, 20)
-                stop_loss_pct = st.slider("止损百分比", 1, 20, 5)
-                take_profit_pct = st.slider("止盈百分比", 1, 30, 10)
-                notify_email = st.text_input("通知邮箱", placeholder="可选")
+                auto_trade = st.checkbox("自动交易", value=False, key="ai_task_form_auto_trade")
+                trading_hours_only = st.checkbox("仅交易时段执行", value=True, key="ai_task_form_trading_hours_only")
+                position_size_pct = st.slider("仓位百分比", 5, 50, 20, key="ai_task_form_position_size_pct")
+                stop_loss_pct = st.slider("止损百分比", 1, 20, 5, key="ai_task_form_stop_loss_pct")
+                take_profit_pct = st.slider("止盈百分比", 1, 30, 10, key="ai_task_form_take_profit_pct")
+                notify_email = st.text_input("通知邮箱", placeholder="可选", key="ai_task_form_notify_email")
 
             submitted = st.form_submit_button("保存 AI 任务", type="primary", width='stretch')
 
         if submitted:
-            if not task_name or not stock_code:
-                st.error("请填写任务名称和股票代码。")
+            normalized_account = (account_name or DEFAULT_ACCOUNT_NAME).strip() or DEFAULT_ACCOUNT_NAME
+            normalized_code = (stock_code or "").strip().upper()
+            if not task_name or not normalized_code:
+                st.error("请填写账户、任务名称和股票代码。")
             else:
                 db.upsert_monitor_task({
                     'task_name': task_name,
-                    'stock_code': stock_code.strip(),
-                    'stock_name': stock_name.strip() or stock_code.strip(),
+                    'stock_code': normalized_code,
+                    'stock_name': stock_name.strip() or normalized_code,
                     'enabled': 1,
                     'check_interval': interval_minutes * 60,
                     'auto_trade': 1 if auto_trade else 0,
@@ -923,8 +958,28 @@ def render_ai_monitor_tasks_panel():
                     'has_position': 1 if has_position else 0,
                     'position_cost': position_cost,
                     'position_quantity': position_quantity,
+                    'account_name': normalized_account,
+                    'origin_analysis_id': st.session_state.get("ai_task_form_origin_analysis_id"),
+                    'strategy_context': st.session_state.get("ai_task_form_strategy_context") or {},
                 })
-                st.success(f"{stock_code} AI 监控任务已保存。")
+                st.session_state["ai_task_form_account_name"] = DEFAULT_ACCOUNT_NAME
+                st.session_state["ai_task_form_task_name"] = ""
+                st.session_state["ai_task_form_stock_code"] = ""
+                st.session_state["ai_task_form_stock_name"] = ""
+                st.session_state["ai_task_form_interval_minutes"] = 5
+                st.session_state["ai_task_form_has_position"] = False
+                st.session_state["ai_task_form_position_cost"] = 0.0
+                st.session_state["ai_task_form_position_quantity"] = 0
+                st.session_state["ai_task_form_auto_trade"] = False
+                st.session_state["ai_task_form_trading_hours_only"] = True
+                st.session_state["ai_task_form_position_size_pct"] = 20
+                st.session_state["ai_task_form_stop_loss_pct"] = 5
+                st.session_state["ai_task_form_take_profit_pct"] = 10
+                st.session_state["ai_task_form_notify_email"] = ""
+                st.session_state["ai_task_form_strategy_context"] = {}
+                st.session_state["ai_task_form_origin_analysis_id"] = None
+                st.session_state.pop("ai_task_form_notice", None)
+                st.success(f"{normalized_code} AI 监控任务已保存。")
                 st.rerun()
 
     tasks = db.get_monitor_tasks(enabled_only=False)
@@ -971,7 +1026,8 @@ def render_ai_monitor_tasks_panel():
                 st.markdown(f"**{task['stock_code']}** {task.get('stock_name') or task['stock_code']}")
                 st.caption(
                     f"{task.get('task_name') or task['stock_code']} | {interval_minutes} 分钟 | "
-                    f"{'自动交易' if task.get('auto_trade') else '仅分析'} | {source_text}"
+                    f"{'自动交易' if task.get('auto_trade') else '仅分析'} | {source_text} | "
+                    f"账户 {task.get('account_name') or DEFAULT_ACCOUNT_NAME}"
                 )
             with status_col:
                 st.markdown(f"**{status_text}**")
@@ -992,7 +1048,14 @@ def render_ai_monitor_tasks_panel():
             with action_col2:
                 toggle_label = "停用" if task.get('enabled') else "启用"
                 if st.button(toggle_label, key=f"toggle_ai_task_{task['id']}", width='stretch'):
-                    db.update_monitor_task(task['stock_code'], {'enabled': 0 if task.get('enabled') else 1})
+                    db.update_monitor_task(
+                        task['stock_code'],
+                        {
+                            'enabled': 0 if task.get('enabled') else 1,
+                            'account_name': task.get('account_name') or DEFAULT_ACCOUNT_NAME,
+                            'portfolio_stock_id': task.get('portfolio_stock_id'),
+                        },
+                    )
                     st.success(f"任务已{toggle_label}。")
                     st.rerun()
             with action_col3:

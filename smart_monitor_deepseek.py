@@ -201,7 +201,10 @@ class SmartMonitorDeepSeek:
 
     def analyze_stock_and_decide(self, stock_code: str, market_data: Dict,
                                  account_info: Dict, has_position: bool = False,
-                                 position_cost: float = 0, position_quantity: int = 0) -> Dict:
+                                 position_cost: float = 0, position_quantity: int = 0,
+                                 account_name: str = "默认账户",
+                                 portfolio_stock_id: Optional[int] = None,
+                                 strategy_context: Optional[Dict] = None) -> Dict:
         """
         分析股票并做出交易决策（A股T+1规则）
         
@@ -222,10 +225,17 @@ class SmartMonitorDeepSeek:
         # 构建Prompt
         prompt = self._build_a_stock_prompt(
             stock_code, market_data, account_info, 
-            has_position, session_info, position_cost, position_quantity
+            has_position, session_info, position_cost, position_quantity,
+            account_name=account_name,
+            portfolio_stock_id=portfolio_stock_id,
+            strategy_context=strategy_context,
         )
         
         system_prompt = """你是一位资深的A股量化交易专家，拥有15年实战经验。
+
+你的职责是盘中战术执行，而不是重新做一遍盘后投资研究。
+如果提供了 strategy_context，请把它视为最新的战略基线，只围绕实时行情、持仓盈亏和该基线决定是否执行 BUY / SELL / HOLD。
+不要重新给出新的长期估值框架，不要扩展新的长期目标价体系。
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ⚠️ A股交易规则（与币圈完全不同！）
@@ -361,6 +371,7 @@ MACD金叉且柱状图持续放大，RSI 62处于健康区间。今日成交量�
             
             # 解析JSON决策
             decision = self._parse_decision(ai_response)
+            decision = self._enforce_action_policy(decision, has_position=has_position)
             
             return {
                 'success': True,
@@ -377,8 +388,11 @@ MACD金叉且柱状图持续放大，RSI 62处于健康区间。今日成交量�
 
     def _build_a_stock_prompt(self, stock_code: str, market_data: Dict,
                              account_info: Dict, has_position: bool,
-                             session_info: Dict, position_cost: float = 0, 
-                             position_quantity: int = 0) -> str:
+                             session_info: Dict, position_cost: float = 0,
+                             position_quantity: int = 0,
+                             account_name: str = "默认账户",
+                             portfolio_stock_id: Optional[int] = None,
+                             strategy_context: Optional[Dict] = None) -> str:
         """构建A股分析提示词"""
         
         prompt = f"""
@@ -442,6 +456,24 @@ KDJ:
 可用资金: ¥{account_info.get('available_cash', 0):,.2f}
 总资产: ¥{account_info.get('total_value', 0):,.2f}
 持仓数量: {account_info.get('positions_count', 0)}
+账户名称: {account_name}
+持仓ID: {portfolio_stock_id or 'N/A'}
+"""
+        if strategy_context:
+            prompt += f"""
+[STRATEGY_CONTEXT] 最新战略基线（来自盘后研究） ⭐ 重要
+═══════════════════════════════════════════════════════════
+分析时间: {strategy_context.get('analysis_date', 'N/A')}
+分析来源: {strategy_context.get('analysis_source', 'N/A')}
+战略评级: {strategy_context.get('rating', 'N/A')}
+战略摘要: {strategy_context.get('summary', 'N/A')}
+进场区间: {strategy_context.get('entry_min', 'N/A')} - {strategy_context.get('entry_max', 'N/A')}
+止盈位: {strategy_context.get('take_profit', 'N/A')}
+止损位: {strategy_context.get('stop_loss', 'N/A')}
+
+执行要求:
+- 优先沿用上述战略基线，不要重新发明长期结论
+- 你的任务是判断当前盘中是否需要执行、等待或退出
 """
         # --- 注入语义化标签分析 ---
         labels = market_data.get('semantic_labels', [])
@@ -557,4 +589,19 @@ KDJ:
                 'take_profit_pct': 10.0,
                 'risk_level': 'high'
             }
+
+    def _enforce_action_policy(self, decision: Dict, has_position: bool) -> Dict:
+        allowed_actions = {"SELL", "HOLD"} if has_position else {"BUY", "HOLD"}
+        action = str(decision.get("action", "HOLD") or "HOLD").upper()
+        if action not in allowed_actions:
+            decision["action"] = "HOLD"
+            original_reasoning = str(decision.get("reasoning") or "").strip()
+            if original_reasoning:
+                decision["reasoning"] = f"{original_reasoning}\n\n[动作约束] 原始动作 {action} 不在允许集合 {sorted(allowed_actions)} 中，已降级为 HOLD。"
+            else:
+                decision["reasoning"] = f"原始动作 {action} 不在允许集合 {sorted(allowed_actions)} 中，已降级为 HOLD。"
+            decision["risk_level"] = "high"
+        else:
+            decision["action"] = action
+        return decision
 

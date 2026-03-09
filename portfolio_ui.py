@@ -22,6 +22,10 @@ from ui_shared import (
     render_final_decision,
     render_reasoning_process,
 )
+from ui_state_keys import (
+    PORTFOLIO_ADD_ACCOUNT_NAME_KEY,
+    PORTFOLIO_ADD_ORIGIN_ANALYSIS_ID_KEY,
+)
 
 
 AGENT_OPTIONS = [
@@ -812,7 +816,7 @@ def display_portfolio_stocks(lightweight_model=None, reasoning_model=None):
     st.markdown("### 持仓股票管理")
     _render_single_analysis_feedback()
 
-    with st.expander("➕ 添加持仓股票", expanded=False):
+    with st.expander("➕ 添加持仓股票", expanded=bool(st.session_state.get("portfolio_add_code"))):
         display_add_stock_form()
 
     all_stocks = portfolio_manager.get_all_latest_analysis()
@@ -1430,18 +1434,27 @@ def run_single_stock_analysis(stock: Dict, lightweight_model=None, reasoning_mod
 
 def display_add_stock_form():
     """显示添加股票表单"""
+    st.session_state.setdefault(PORTFOLIO_ADD_ACCOUNT_NAME_KEY, "默认账户")
+    st.session_state.setdefault(PORTFOLIO_ADD_ORIGIN_ANALYSIS_ID_KEY, None)
     st.session_state.setdefault("portfolio_add_code", "")
     st.session_state.setdefault("portfolio_add_cost_price", 0.0)
     st.session_state.setdefault("portfolio_add_quantity", 0)
     st.session_state.setdefault("portfolio_add_note", "")
     st.session_state.setdefault("portfolio_add_auto_monitor", True)
     st.session_state.setdefault("portfolio_add_buy_date", date.today())
+
+    if st.session_state.get(PORTFOLIO_ADD_ORIGIN_ANALYSIS_ID_KEY):
+        st.info("已从分析结果预填持仓表单，补充数量后即可直接入账。")
     
     with st.form(key="add_stock_form"):
         col1, col2 = st.columns(2)
         
         with col1:
-            account_name = st.text_input("账户名称", value="默认账户", help="隔离不同账户的持仓")
+            account_name = st.text_input(
+                "账户名称",
+                key=PORTFOLIO_ADD_ACCOUNT_NAME_KEY,
+                help="隔离不同账户的持仓",
+            )
             code = st.text_input(
                 "股票代码*", 
                 placeholder="例如: 600519、000001.SZ、00700.HK、AAPL",
@@ -1487,7 +1500,8 @@ def display_add_stock_form():
                         quantity=quantity if quantity > 0 else None,
                         note=note.strip() if note else None,
                         auto_monitor=auto_monitor,
-                        account_name=account_name.strip()
+                        account_name=account_name.strip(),
+                        origin_analysis_id=st.session_state.get(PORTFOLIO_ADD_ORIGIN_ANALYSIS_ID_KEY),
                     )
                     if not success:
                         st.error(msg)
@@ -1498,6 +1512,8 @@ def display_add_stock_form():
                             trade_date=buy_date,
                             note=note.strip() if note else "",
                         )
+                    st.session_state[PORTFOLIO_ADD_ACCOUNT_NAME_KEY] = "默认账户"
+                    st.session_state[PORTFOLIO_ADD_ORIGIN_ANALYSIS_ID_KEY] = None
                     st.session_state["portfolio_add_code"] = ""
                     st.session_state["portfolio_add_cost_price"] = 0.0
                     st.session_state["portfolio_add_quantity"] = 0

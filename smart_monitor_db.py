@@ -1,103 +1,57 @@
-"""
-智能盯盘 - 数据库模块
-记录AI决策、交易记录、监控配置等
-"""
-
-import sqlite3
-import logging
-from typing import Dict, List, Optional
-from datetime import datetime
 import json
+import logging
+import os
+import sqlite3
+from datetime import datetime
+from typing import Dict, List, Optional
 
-from monitoring_repository import MonitoringRepository, resolve_monitoring_db_path
+from analysis_repository import AnalysisRepository
+from investment_db_utils import DEFAULT_ACCOUNT_NAME, get_metadata, resolve_investment_db_path, set_metadata
+from monitoring_repository import MonitoringRepository
+from portfolio_db import PortfolioDB
 
 
 class SmartMonitorDB:
-    """智能盯盘数据库"""
-    
-    def __init__(self, db_file: str = 'smart_monitor.db'):
-        """
-        初始化数据库
-        
-        Args:
-            db_file: 数据库文件路径
-        """
-        self.db_file = db_file
-        self.logger = logging.getLogger(__name__)
-        self._init_database()
-        self.monitoring_repository = MonitoringRepository(resolve_monitoring_db_path(db_file))
-        self.monitoring_repository.migrate_legacy_smart_db(db_file)
-    
-    def _init_database(self):
-        """初始化数据库表结构"""
-        conn = sqlite3.connect(self.db_file)
-        cursor = conn.cursor()
-        
-        # 1. 监控任务表
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS monitor_tasks (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                task_name TEXT NOT NULL,
-                stock_code TEXT NOT NULL,
-                stock_name TEXT,
-                enabled INTEGER DEFAULT 1,
-                check_interval INTEGER DEFAULT 300,
-                auto_trade INTEGER DEFAULT 0,
-                position_size_pct REAL DEFAULT 20,
-                stop_loss_pct REAL DEFAULT 5,
-                take_profit_pct REAL DEFAULT 10,
-                qmt_account_id TEXT,
-                notify_email TEXT,
-                notify_webhook TEXT,
-                has_position INTEGER DEFAULT 0,
-                position_cost REAL DEFAULT 0,
-                position_quantity INTEGER DEFAULT 0,
-                position_date TEXT,
-                managed_by_portfolio INTEGER DEFAULT 0,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(stock_code)
-            )
-        ''')
-        
-        # 添加持仓相关字段（如果表已存在但缺少这些字段）
-        try:
-            cursor.execute("ALTER TABLE monitor_tasks ADD COLUMN has_position INTEGER DEFAULT 0")
-        except sqlite3.OperationalError:
-            pass
-        
-        try:
-            cursor.execute("ALTER TABLE monitor_tasks ADD COLUMN position_cost REAL DEFAULT 0")
-        except sqlite3.OperationalError:
-            pass
-        
-        try:
-            cursor.execute("ALTER TABLE monitor_tasks ADD COLUMN position_quantity INTEGER DEFAULT 0")
-        except sqlite3.OperationalError:
-            pass
-        
-        try:
-            cursor.execute("ALTER TABLE monitor_tasks ADD COLUMN position_date TEXT")
-        except sqlite3.OperationalError:
-            pass
-        
-        # 添加交易时段监控字段
-        try:
-            cursor.execute("ALTER TABLE monitor_tasks ADD COLUMN trading_hours_only INTEGER DEFAULT 1")
-        except sqlite3.OperationalError:
-            pass
+    """Repository-backed smart monitor facade."""
 
-        try:
-            cursor.execute("ALTER TABLE monitor_tasks ADD COLUMN managed_by_portfolio INTEGER DEFAULT 0")
-        except sqlite3.OperationalError:
-            pass
-        
-        # 2. AI决策记录表
-        cursor.execute('''
+    def __init__(self, db_file: str = "smart_monitor.db"):
+        self.seed_db_file = db_file
+        self.db_file = resolve_investment_db_path(db_file)
+        self.legacy_db_file = db_file if os.path.abspath(db_file) != os.path.abspath(self.db_file) else "smart_monitor.db"
+        self.logger = logging.getLogger(__name__)
+        self.monitoring_repository = MonitoringRepository(self.db_file)
+        self.portfolio_db = PortfolioDB(self.db_file)
+        self.analysis_repository = AnalysisRepository(self.db_file, legacy_analysis_db_path="")
+        from investment_lifecycle_service import InvestmentLifecycleService
+        from monitor_db import StockMonitorDatabase
+
+        self.lifecycle_service = InvestmentLifecycleService(
+            portfolio_store=self.portfolio_db,
+            realtime_monitor_store=StockMonitorDatabase(self.db_file),
+            analysis_store=self.analysis_repository,
+            monitoring_store=self.monitoring_repository,
+        )
+        self._init_database()
+        self.monitoring_repository.migrate_legacy_smart_db(self.legacy_db_file)
+        self._migrate_legacy_history_db(self.legacy_db_file)
+
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self.db_file)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    def _init_database(self):
+        conn = self._connect()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS ai_decisions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 stock_code TEXT NOT NULL,
                 stock_name TEXT,
+                account_name TEXT,
+                portfolio_stock_id INTEGER,
+                origin_analysis_id INTEGER,
                 decision_time TEXT NOT NULL,
                 trading_session TEXT,
                 action TEXT NOT NULL,
@@ -114,55 +68,10 @@ class SmartMonitorDB:
                 execution_result TEXT,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
-        ''')
-        
-        # 3. 交易记录表
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS trade_records (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                stock_code TEXT NOT NULL,
-                stock_name TEXT,
-                trade_type TEXT NOT NULL,
-                quantity INTEGER,
-                price REAL,
-                amount REAL,
-                order_id TEXT,
-                order_status TEXT,
-                ai_decision_id INTEGER,
-                trade_time TEXT NOT NULL,
-                commission REAL DEFAULT 0,
-                tax REAL DEFAULT 0,
-                profit_loss REAL DEFAULT 0,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY(ai_decision_id) REFERENCES ai_decisions(id)
-            )
-        ''')
-        
-        # 4. 持仓监控表
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS position_monitor (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                stock_code TEXT NOT NULL,
-                stock_name TEXT,
-                quantity INTEGER,
-                cost_price REAL,
-                current_price REAL,
-                profit_loss REAL,
-                profit_loss_pct REAL,
-                holding_days INTEGER,
-                buy_date TEXT,
-                stop_loss_price REAL,
-                take_profit_price REAL,
-                last_check_time TEXT,
-                status TEXT DEFAULT 'holding',
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(stock_code)
-            )
-        ''')
-        
-        # 5. 通知记录表
-        cursor.execute('''
+            """
+        )
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS notifications (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 stock_code TEXT,
@@ -175,253 +84,106 @@ class SmartMonitorDB:
                 sent_at TEXT,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
-        ''')
-        
-        # 6. 系统日志表
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS system_logs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                log_level TEXT,
-                module TEXT,
-                message TEXT,
-                details TEXT,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        conn.commit()
-        conn.close()
-        self.logger.info(f"数据库初始化完成: {self.db_file}")
-    
-    # ========== 监控任务管理 ==========
-    
-    def add_monitor_task(self, task_data: Dict) -> int:
-        """添加监控任务"""
-        conn = sqlite3.connect(self.db_file)
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            INSERT INTO monitor_tasks 
-            (task_name, stock_code, stock_name, enabled, check_interval, 
-             auto_trade, trading_hours_only, position_size_pct, stop_loss_pct, take_profit_pct,
-             qmt_account_id, notify_email, notify_webhook,
-             has_position, position_cost, position_quantity, position_date, managed_by_portfolio)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            task_data.get('task_name'),
-            task_data.get('stock_code'),
-            task_data.get('stock_name'),
-            task_data.get('enabled', 1),
-            task_data.get('check_interval', 300),
-            task_data.get('auto_trade', 0),
-            task_data.get('trading_hours_only', 1),
-            task_data.get('position_size_pct', 20),
-            task_data.get('stop_loss_pct', 5),
-            task_data.get('take_profit_pct', 10),
-            task_data.get('qmt_account_id'),
-            task_data.get('notify_email'),
-            task_data.get('notify_webhook'),
-            task_data.get('has_position', 0),
-            task_data.get('position_cost', 0),
-            task_data.get('position_quantity', 0),
-            task_data.get('position_date'),
-            task_data.get('managed_by_portfolio', 0)
-        ))
-        
-        task_id = cursor.lastrowid
-        conn.commit()
-        conn.close()
-        
-        position_info = f"（持仓: {task_data.get('position_quantity')}股 @ {task_data.get('position_cost')}元）" if task_data.get('has_position') else ""
-        self.logger.info(f"添加监控任务: {task_data.get('stock_code')} - {task_data.get('task_name')} {position_info}")
-        return task_id
-    
-    def get_monitor_tasks(self, enabled_only: bool = True) -> List[Dict]:
-        """获取监控任务列表"""
-        conn = sqlite3.connect(self.db_file)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        
-        if enabled_only:
-            cursor.execute('SELECT * FROM monitor_tasks WHERE enabled = 1 ORDER BY id DESC')
-        else:
-            cursor.execute('SELECT * FROM monitor_tasks ORDER BY id DESC')
-        
-        rows = cursor.fetchall()
-        conn.close()
-        
-        return [dict(row) for row in rows]
-    
-    def update_monitor_task(self, stock_code: str, task_data: Dict):
-        """更新监控任务"""
-        conn = sqlite3.connect(self.db_file)
-        cursor = conn.cursor()
-        
-        # 构建更新语句
-        update_fields = []
-        values = []
-        
-        if 'task_name' in task_data:
-            update_fields.append('task_name = ?')
-            values.append(task_data['task_name'])
-        
-        if 'check_interval' in task_data:
-            update_fields.append('check_interval = ?')
-            values.append(task_data['check_interval'])
-
-        if 'stock_name' in task_data:
-            update_fields.append('stock_name = ?')
-            values.append(task_data['stock_name'])
-
-        if 'enabled' in task_data:
-            update_fields.append('enabled = ?')
-            values.append(task_data['enabled'])
-
-        if 'auto_trade' in task_data:
-            update_fields.append('auto_trade = ?')
-            values.append(task_data['auto_trade'])
-        
-        if 'trading_hours_only' in task_data:
-            update_fields.append('trading_hours_only = ?')
-            values.append(task_data['trading_hours_only'])
-        
-        if 'position_size_pct' in task_data:
-            update_fields.append('position_size_pct = ?')
-            values.append(task_data['position_size_pct'])
-
-        if 'stop_loss_pct' in task_data:
-            update_fields.append('stop_loss_pct = ?')
-            values.append(task_data['stop_loss_pct'])
-
-        if 'take_profit_pct' in task_data:
-            update_fields.append('take_profit_pct = ?')
-            values.append(task_data['take_profit_pct'])
-
-        if 'has_position' in task_data:
-            update_fields.append('has_position = ?')
-            values.append(task_data['has_position'])
-        
-        if 'position_cost' in task_data:
-            update_fields.append('position_cost = ?')
-            values.append(task_data['position_cost'])
-        
-        if 'position_quantity' in task_data:
-            update_fields.append('position_quantity = ?')
-            values.append(task_data['position_quantity'])
-        
-        if 'position_date' in task_data:
-            update_fields.append('position_date = ?')
-            values.append(task_data['position_date'])
-        
-        if 'notify_email' in task_data:
-            update_fields.append('notify_email = ?')
-            values.append(task_data['notify_email'])
-
-        if 'notify_webhook' in task_data:
-            update_fields.append('notify_webhook = ?')
-            values.append(task_data['notify_webhook'])
-
-        if 'managed_by_portfolio' in task_data:
-            update_fields.append('managed_by_portfolio = ?')
-            values.append(task_data['managed_by_portfolio'])
-
-        if not update_fields:
-            conn.close()
-            return False
-
-        # 添加更新时间
-        update_fields.append('updated_at = CURRENT_TIMESTAMP')
-        
-        # 添加WHERE条件
-        values.append(stock_code)
-        
-        sql = f"UPDATE monitor_tasks SET {', '.join(update_fields)} WHERE stock_code = ?"
-        cursor.execute(sql, values)
-        
-        conn.commit()
-        conn.close()
-        
-        self.logger.info(f"更新监控任务: {stock_code}")
-        return cursor.rowcount > 0
-
-    def get_monitor_task_by_code(self, stock_code: str, managed_only: Optional[bool] = None) -> Optional[Dict]:
-        """根据股票代码获取监控任务。"""
-        conn = sqlite3.connect(self.db_file)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-
-        sql = 'SELECT * FROM monitor_tasks WHERE stock_code = ?'
-        if managed_only is True:
-            sql += ' AND managed_by_portfolio = 1'
-        elif managed_only is False:
-            sql += ' AND managed_by_portfolio = 0'
-
-        cursor.execute(sql, (stock_code,))
-        row = cursor.fetchone()
-        conn.close()
-        return dict(row) if row else None
-
-    def upsert_monitor_task(self, task_data: Dict) -> int:
-        """按股票代码新增或更新监控任务。"""
-        stock_code = task_data.get('stock_code')
-        if not stock_code:
-            raise ValueError("stock_code 不能为空")
-
-        managed_sync = bool(task_data.get('managed_by_portfolio'))
-        existing = self.get_monitor_task_by_code(
-            stock_code,
-            managed_only=True if managed_sync else None,
+            """
         )
-        if existing:
-            updates = {
-                'task_name': task_data.get('task_name', existing.get('task_name')),
-                'stock_name': task_data.get('stock_name', existing.get('stock_name')),
-                'has_position': task_data.get('has_position', existing.get('has_position', 0)),
-                'position_cost': task_data.get('position_cost', existing.get('position_cost', 0)),
-                'position_quantity': task_data.get('position_quantity', existing.get('position_quantity', 0)),
-                'position_date': task_data.get('position_date', existing.get('position_date')),
-                'managed_by_portfolio': task_data.get('managed_by_portfolio', existing.get('managed_by_portfolio', 0)),
-            }
-            if all(existing.get(key) == value for key, value in updates.items()):
-                return existing['id']
-            self.update_monitor_task(stock_code, updates)
-            return existing['id']
-
-        if managed_sync:
-            manual_task = self.get_monitor_task_by_code(stock_code, managed_only=False)
-            if manual_task:
-                self.logger.info(f"跳过持仓同步任务 {stock_code}，同代码手工任务已存在")
-                return manual_task['id']
-
-        return self.add_monitor_task(task_data)
-
-    def delete_monitor_task(self, task_id: int):
-        """删除监控任务"""
-        conn = sqlite3.connect(self.db_file)
-        cursor = conn.cursor()
-        
-        cursor.execute('DELETE FROM monitor_tasks WHERE id = ?', (task_id,))
-        
         conn.commit()
         conn.close()
 
-    def delete_monitor_task_by_code(self, stock_code: str, managed_only: bool = False) -> bool:
-        """按股票代码删除监控任务。"""
-        conn = sqlite3.connect(self.db_file)
-        cursor = conn.cursor()
+    def _migrate_legacy_history_db(self, legacy_db_path: str) -> int:
+        if not legacy_db_path or not os.path.exists(legacy_db_path):
+            return 0
+        if os.path.abspath(legacy_db_path) == os.path.abspath(self.db_file):
+            return 0
 
-        sql = 'DELETE FROM monitor_tasks WHERE stock_code = ?'
-        if managed_only:
-            sql += ' AND managed_by_portfolio = 1'
-
-        cursor.execute(sql, (stock_code,))
-        deleted = cursor.rowcount > 0
-        conn.commit()
+        conn = self._connect()
+        key = f"migrated_smart_history::{os.path.abspath(legacy_db_path)}"
+        if get_metadata(conn, key):
+            conn.close()
+            return 0
         conn.close()
-        return deleted
-    
-    # ========== AI决策记录 ==========
-    
+
+        legacy_conn = sqlite3.connect(legacy_db_path)
+        legacy_conn.row_factory = sqlite3.Row
+        legacy_cursor = legacy_conn.cursor()
+        migrated = 0
+
+        conn = self._connect()
+        cursor = conn.cursor()
+        try:
+            legacy_cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            tables = {row["name"] for row in legacy_cursor.fetchall()}
+
+            if "ai_decisions" in tables:
+                legacy_cursor.execute("SELECT * FROM ai_decisions ORDER BY id ASC")
+                for row in legacy_cursor.fetchall():
+                    decision = dict(row)
+                    cursor.execute(
+                        """
+                        INSERT INTO ai_decisions (
+                            stock_code, stock_name, decision_time, trading_session,
+                            action, confidence, reasoning, position_size_pct, stop_loss_pct,
+                            take_profit_pct, risk_level, key_price_levels, market_data,
+                            account_info, executed, execution_result, created_at
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            decision.get("stock_code"),
+                            decision.get("stock_name"),
+                            decision.get("decision_time") or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            decision.get("trading_session"),
+                            decision.get("action"),
+                            decision.get("confidence"),
+                            decision.get("reasoning"),
+                            decision.get("position_size_pct"),
+                            decision.get("stop_loss_pct"),
+                            decision.get("take_profit_pct"),
+                            decision.get("risk_level"),
+                            decision.get("key_price_levels"),
+                            decision.get("market_data"),
+                            decision.get("account_info"),
+                            decision.get("executed", 0),
+                            decision.get("execution_result"),
+                            decision.get("created_at") or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        ),
+                    )
+                    migrated += 1
+
+            if "notifications" in tables:
+                legacy_cursor.execute("SELECT * FROM notifications ORDER BY id ASC")
+                for row in legacy_cursor.fetchall():
+                    notification = dict(row)
+                    cursor.execute(
+                        """
+                        INSERT INTO notifications (
+                            stock_code, notify_type, notify_target, subject,
+                            content, status, error_msg, sent_at, created_at
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            notification.get("stock_code"),
+                            notification.get("notify_type"),
+                            notification.get("notify_target"),
+                            notification.get("subject"),
+                            notification.get("content"),
+                            notification.get("status", "pending"),
+                            notification.get("error_msg"),
+                            notification.get("sent_at"),
+                            notification.get("created_at") or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        ),
+                    )
+
+            set_metadata(cursor.connection, key, str(migrated))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+            legacy_conn.close()
+        return migrated
+
     @staticmethod
     def _seconds_to_interval_minutes(check_interval: Optional[int]) -> int:
         seconds = int(check_interval or 300)
@@ -429,501 +191,474 @@ class SmartMonitorDB:
 
     def _task_config_from_data(self, task_data: Dict) -> Dict:
         return {
-            'task_name': task_data.get('task_name'),
-            'auto_trade': bool(task_data.get('auto_trade', 0)),
-            'position_size_pct': task_data.get('position_size_pct', 20),
-            'stop_loss_pct': task_data.get('stop_loss_pct', 5),
-            'take_profit_pct': task_data.get('take_profit_pct', 10),
-            'qmt_account_id': task_data.get('qmt_account_id'),
-            'notify_email': task_data.get('notify_email'),
-            'notify_webhook': task_data.get('notify_webhook'),
-            'has_position': bool(task_data.get('has_position', 0)),
-            'position_cost': task_data.get('position_cost', 0),
-            'position_quantity': task_data.get('position_quantity', 0),
-            'position_date': task_data.get('position_date'),
+            "task_name": task_data.get("task_name"),
+            "auto_trade": bool(task_data.get("auto_trade", 0)),
+            "position_size_pct": task_data.get("position_size_pct", 20),
+            "stop_loss_pct": task_data.get("stop_loss_pct", 5),
+            "take_profit_pct": task_data.get("take_profit_pct", 10),
+            "qmt_account_id": task_data.get("qmt_account_id"),
+            "notify_email": task_data.get("notify_email"),
+            "notify_webhook": task_data.get("notify_webhook"),
+            "has_position": bool(task_data.get("has_position", 0)),
+            "position_cost": task_data.get("position_cost", 0),
+            "position_quantity": task_data.get("position_quantity", 0),
+            "position_date": task_data.get("position_date"),
+            "strategy_context": task_data.get("strategy_context") or {},
         }
 
     def _item_to_task(self, item: Dict) -> Dict:
-        config = item.get('config') or {}
-        interval_minutes = int(item.get('interval_minutes') or 1)
+        config = item.get("config") or {}
+        interval_minutes = int(item.get("interval_minutes") or 1)
         return {
-            'id': item['id'],
-            'task_name': config.get('task_name') or f"{item['symbol']} AI监控任务",
-            'stock_code': item['symbol'],
-            'stock_name': item.get('name'),
-            'enabled': 1 if item.get('enabled', True) else 0,
-            'check_interval': interval_minutes * 60,
-            'auto_trade': 1 if config.get('auto_trade', False) else 0,
-            'trading_hours_only': 1 if item.get('trading_hours_only', True) else 0,
-            'position_size_pct': config.get('position_size_pct', 20),
-            'stop_loss_pct': config.get('stop_loss_pct', 5),
-            'take_profit_pct': config.get('take_profit_pct', 10),
-            'qmt_account_id': config.get('qmt_account_id'),
-            'notify_email': config.get('notify_email'),
-            'notify_webhook': config.get('notify_webhook'),
-            'has_position': 1 if config.get('has_position', False) else 0,
-            'position_cost': config.get('position_cost', 0),
-            'position_quantity': config.get('position_quantity', 0),
-            'position_date': config.get('position_date'),
-            'managed_by_portfolio': 1 if item.get('managed_by_portfolio', False) else 0,
-            'created_at': item.get('created_at'),
-            'updated_at': item.get('updated_at'),
+            "id": item["id"],
+            "task_name": config.get("task_name") or f"{item['symbol']} AI监控任务",
+            "stock_code": item["symbol"],
+            "stock_name": item.get("name"),
+            "enabled": 1 if item.get("enabled", True) else 0,
+            "check_interval": interval_minutes * 60,
+            "auto_trade": 1 if config.get("auto_trade", False) else 0,
+            "trading_hours_only": 1 if item.get("trading_hours_only", True) else 0,
+            "position_size_pct": config.get("position_size_pct", 20),
+            "stop_loss_pct": config.get("stop_loss_pct", 5),
+            "take_profit_pct": config.get("take_profit_pct", 10),
+            "qmt_account_id": config.get("qmt_account_id"),
+            "notify_email": config.get("notify_email"),
+            "notify_webhook": config.get("notify_webhook"),
+            "has_position": 1 if config.get("has_position", False) else 0,
+            "position_cost": config.get("position_cost", 0),
+            "position_quantity": config.get("position_quantity", 0),
+            "position_date": config.get("position_date"),
+            "managed_by_portfolio": 1 if item.get("managed_by_portfolio", False) else 0,
+            "account_name": item.get("account_name") or DEFAULT_ACCOUNT_NAME,
+            "portfolio_stock_id": item.get("portfolio_stock_id"),
+            "origin_analysis_id": item.get("origin_analysis_id"),
+            "strategy_context": config.get("strategy_context") or {},
+            "created_at": item.get("created_at"),
+            "updated_at": item.get("updated_at"),
         }
 
     def add_monitor_task(self, task_data: Dict) -> int:
-        stock_code = task_data.get('stock_code')
+        stock_code = task_data.get("stock_code")
         if not stock_code:
-            raise ValueError('stock_code 不能为空')
-
-        task_id = self.monitoring_repository.create_item({
-            'symbol': stock_code,
-            'name': task_data.get('stock_name'),
-            'monitor_type': 'ai_task',
-            'source': 'portfolio' if task_data.get('managed_by_portfolio') else 'ai_monitor',
-            'enabled': bool(task_data.get('enabled', 1)),
-            'interval_minutes': self._seconds_to_interval_minutes(task_data.get('check_interval', 300)),
-            'trading_hours_only': bool(task_data.get('trading_hours_only', 1)),
-            'notification_enabled': True,
-            'managed_by_portfolio': bool(task_data.get('managed_by_portfolio', 0)),
-            'config': self._task_config_from_data(task_data),
-        })
-
-        position_info = ""
-        if task_data.get('has_position'):
-            position_info = (
-                f" (持仓 {task_data.get('position_quantity', 0)}股 @ "
-                f"{float(task_data.get('position_cost', 0) or 0):.2f}元)"
-            )
-        self.logger.info(
-            f"添加监控任务: {stock_code} - {task_data.get('task_name') or stock_code}{position_info}"
+            raise ValueError("stock_code 不能为空")
+        account_name = task_data.get("account_name") or DEFAULT_ACCOUNT_NAME
+        return self.monitoring_repository.create_item(
+            {
+                "symbol": stock_code,
+                "name": task_data.get("stock_name"),
+                "monitor_type": "ai_task",
+                "source": "portfolio" if task_data.get("managed_by_portfolio") else "ai_monitor",
+                "enabled": bool(task_data.get("enabled", 1)),
+                "interval_minutes": self._seconds_to_interval_minutes(task_data.get("check_interval", 300)),
+                "trading_hours_only": bool(task_data.get("trading_hours_only", 1)),
+                "notification_enabled": True,
+                "managed_by_portfolio": bool(task_data.get("managed_by_portfolio", 0)),
+                "account_name": account_name,
+                "portfolio_stock_id": task_data.get("portfolio_stock_id"),
+                "origin_analysis_id": task_data.get("origin_analysis_id"),
+                "config": self._task_config_from_data(task_data),
+            }
         )
-        return task_id
 
     def get_monitor_tasks(self, enabled_only: bool = True) -> List[Dict]:
-        items = self.monitoring_repository.list_items(
-            monitor_type='ai_task',
-            enabled_only=enabled_only,
-        )
+        items = self.monitoring_repository.list_items(monitor_type="ai_task", enabled_only=enabled_only)
         return [self._item_to_task(item) for item in items]
 
     def update_monitor_task(self, stock_code: str, task_data: Dict):
-        item = self.monitoring_repository.get_item_by_symbol(stock_code, monitor_type='ai_task')
+        account_name = task_data.get("account_name")
+        portfolio_stock_id = task_data.get("portfolio_stock_id")
+        item = self.monitoring_repository.get_item_by_symbol(
+            stock_code,
+            monitor_type="ai_task",
+            account_name=account_name or DEFAULT_ACCOUNT_NAME,
+            portfolio_stock_id=portfolio_stock_id,
+        )
+        if not item:
+            item = self.monitoring_repository.get_item_by_symbol(stock_code, monitor_type="ai_task")
         if not item:
             return False
 
         updates: Dict[str, object] = {}
-        config = dict(item.get('config') or {})
+        config = dict(item.get("config") or {})
         config_updates = self._task_config_from_data(task_data)
 
-        if 'stock_name' in task_data:
-            updates['name'] = task_data.get('stock_name')
-        if 'enabled' in task_data:
-            updates['enabled'] = bool(task_data.get('enabled'))
-        if 'check_interval' in task_data:
-            updates['interval_minutes'] = self._seconds_to_interval_minutes(task_data.get('check_interval'))
-        if 'trading_hours_only' in task_data:
-            updates['trading_hours_only'] = bool(task_data.get('trading_hours_only'))
-        if 'managed_by_portfolio' in task_data:
-            managed = bool(task_data.get('managed_by_portfolio'))
-            updates['managed_by_portfolio'] = managed
-            updates['source'] = 'portfolio' if managed else 'ai_monitor'
+        if "stock_name" in task_data:
+            updates["name"] = task_data.get("stock_name")
+        if "enabled" in task_data:
+            updates["enabled"] = bool(task_data.get("enabled"))
+        if "check_interval" in task_data:
+            updates["interval_minutes"] = self._seconds_to_interval_minutes(task_data.get("check_interval"))
+        if "trading_hours_only" in task_data:
+            updates["trading_hours_only"] = bool(task_data.get("trading_hours_only"))
+        if "managed_by_portfolio" in task_data:
+            managed = bool(task_data.get("managed_by_portfolio"))
+            updates["managed_by_portfolio"] = managed
+            updates["source"] = "portfolio" if managed else "ai_monitor"
+        if "account_name" in task_data:
+            updates["account_name"] = task_data.get("account_name") or DEFAULT_ACCOUNT_NAME
+        if "portfolio_stock_id" in task_data:
+            updates["portfolio_stock_id"] = task_data.get("portfolio_stock_id")
+        if "origin_analysis_id" in task_data:
+            updates["origin_analysis_id"] = task_data.get("origin_analysis_id")
 
         tracked_keys = {
-            'task_name',
-            'auto_trade',
-            'position_size_pct',
-            'stop_loss_pct',
-            'take_profit_pct',
-            'qmt_account_id',
-            'notify_email',
-            'notify_webhook',
-            'has_position',
-            'position_cost',
-            'position_quantity',
-            'position_date',
+            "task_name",
+            "auto_trade",
+            "position_size_pct",
+            "stop_loss_pct",
+            "take_profit_pct",
+            "qmt_account_id",
+            "notify_email",
+            "notify_webhook",
+            "has_position",
+            "position_cost",
+            "position_quantity",
+            "position_date",
+            "strategy_context",
         }
         if any(key in task_data for key in tracked_keys):
             for key in tracked_keys:
                 if key in task_data:
                     config[key] = config_updates[key]
-            updates['config'] = config
+            updates["config"] = config
 
         if not updates:
             return False
-
-        changed = self.monitoring_repository.update_item(item['id'], updates)
-        if changed:
-            self.logger.info(f"更新监控任务: {stock_code}")
-        return changed
+        return self.monitoring_repository.update_item(item["id"], updates)
 
     def set_all_monitor_tasks_enabled(self, enabled: bool) -> int:
-        """批量启用或停用全部 AI 监控任务。"""
         changed_count = 0
         target_enabled = bool(enabled)
-        items = self.monitoring_repository.list_items(monitor_type='ai_task')
-
-        for item in items:
-            if bool(item.get('enabled', True)) == target_enabled:
+        for item in self.monitoring_repository.list_items(monitor_type="ai_task"):
+            if bool(item.get("enabled", True)) == target_enabled:
                 continue
-            if self.monitoring_repository.update_item(item['id'], {'enabled': target_enabled}):
+            if self.monitoring_repository.update_item(item["id"], {"enabled": target_enabled}):
                 changed_count += 1
-
-        if changed_count:
-            action = '启用' if target_enabled else '停用'
-            self.logger.info(f"批量{action}AI监控任务: {changed_count}个")
         return changed_count
 
-    def get_monitor_task_by_code(self, stock_code: str, managed_only: Optional[bool] = None) -> Optional[Dict]:
+    def get_monitor_task_by_code(
+        self,
+        stock_code: str,
+        managed_only: Optional[bool] = None,
+        account_name: Optional[str] = None,
+        portfolio_stock_id: Optional[int] = None,
+    ) -> Optional[Dict]:
         item = self.monitoring_repository.get_item_by_symbol(
             stock_code,
-            monitor_type='ai_task',
+            monitor_type="ai_task",
             managed_only=managed_only,
+            account_name=account_name if account_name is not None else None,
+            portfolio_stock_id=portfolio_stock_id,
         )
-        if not item:
-            return None
-        return self._item_to_task(item)
+        if not item and account_name is None and portfolio_stock_id is None:
+            item = self.monitoring_repository.get_item_by_symbol(
+                stock_code,
+                monitor_type="ai_task",
+                managed_only=managed_only,
+                account_name=DEFAULT_ACCOUNT_NAME,
+            )
+        return self._item_to_task(item) if item else None
 
     def upsert_monitor_task(self, task_data: Dict) -> int:
-        stock_code = task_data.get('stock_code')
+        stock_code = task_data.get("stock_code")
         if not stock_code:
-            raise ValueError('stock_code 不能为空')
+            raise ValueError("stock_code 不能为空")
+        managed_sync = bool(task_data.get("managed_by_portfolio"))
+        account_name = task_data.get("account_name") or DEFAULT_ACCOUNT_NAME
+        existing = self.monitoring_repository.get_item_by_symbol(
+            stock_code,
+            monitor_type="ai_task",
+            account_name=account_name,
+        )
+        if managed_sync and existing and not existing.get("managed_by_portfolio"):
+            self.logger.info(f"跳过持仓同步任务 {stock_code}，同账户下手工任务已存在")
+            return int(existing["id"])
 
-        managed_sync = bool(task_data.get('managed_by_portfolio'))
-        existing = self.monitoring_repository.get_item_by_symbol(stock_code, monitor_type='ai_task')
-        if managed_sync and existing and not existing.get('managed_by_portfolio'):
-            self.logger.info(f"跳过持仓同步任务 {stock_code}，同代码手工任务已存在")
-            return int(existing['id'])
-
-        return self.monitoring_repository.upsert_item({
-            'symbol': stock_code,
-            'name': task_data.get('stock_name'),
-            'monitor_type': 'ai_task',
-            'source': 'portfolio' if managed_sync else 'ai_monitor',
-            'enabled': bool(task_data.get('enabled', 1)),
-            'interval_minutes': self._seconds_to_interval_minutes(task_data.get('check_interval', 300)),
-            'trading_hours_only': bool(task_data.get('trading_hours_only', 1)),
-            'notification_enabled': True,
-            'managed_by_portfolio': managed_sync,
-            'config': self._task_config_from_data(task_data),
-        })
+        return self.monitoring_repository.upsert_item(
+            {
+                "symbol": stock_code,
+                "name": task_data.get("stock_name"),
+                "monitor_type": "ai_task",
+                "source": "portfolio" if managed_sync else "ai_monitor",
+                "enabled": bool(task_data.get("enabled", 1)),
+                "interval_minutes": self._seconds_to_interval_minutes(task_data.get("check_interval", 300)),
+                "trading_hours_only": bool(task_data.get("trading_hours_only", 1)),
+                "notification_enabled": True,
+                "managed_by_portfolio": managed_sync,
+                "account_name": account_name,
+                "portfolio_stock_id": task_data.get("portfolio_stock_id"),
+                "origin_analysis_id": task_data.get("origin_analysis_id"),
+                "config": self._task_config_from_data(task_data),
+            }
+        )
 
     def delete_monitor_task(self, task_id: int):
         return self.monitoring_repository.delete_item(task_id)
 
-    def delete_monitor_task_by_code(self, stock_code: str, managed_only: bool = False) -> bool:
+    def delete_monitor_task_by_code(
+        self,
+        stock_code: str,
+        managed_only: bool = False,
+        account_name: Optional[str] = None,
+        portfolio_stock_id: Optional[int] = None,
+    ) -> bool:
         return self.monitoring_repository.delete_by_symbol(
             stock_code,
-            monitor_type='ai_task',
+            monitor_type="ai_task",
             managed_only=managed_only,
+            account_name=account_name,
+            portfolio_stock_id=portfolio_stock_id,
         )
 
     def save_ai_decision(self, decision_data: Dict) -> int:
-        """保存AI决策"""
-        conn = sqlite3.connect(self.db_file)
+        conn = self._connect()
         cursor = conn.cursor()
-        
-        cursor.execute('''
-            INSERT INTO ai_decisions
-            (stock_code, stock_name, decision_time, trading_session,
-             action, confidence, reasoning, position_size_pct,
-             stop_loss_pct, take_profit_pct, risk_level,
-             key_price_levels, market_data, account_info)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            decision_data.get('stock_code'),
-            decision_data.get('stock_name'),
-            decision_data.get('decision_time', datetime.now().strftime('%Y-%m-%d %H:%M:%S')),
-            decision_data.get('trading_session'),
-            decision_data.get('action'),
-            decision_data.get('confidence'),
-            decision_data.get('reasoning'),
-            decision_data.get('position_size_pct'),
-            decision_data.get('stop_loss_pct'),
-            decision_data.get('take_profit_pct'),
-            decision_data.get('risk_level'),
-            json.dumps(decision_data.get('key_price_levels', {})),
-            json.dumps(decision_data.get('market_data', {})),
-            json.dumps(decision_data.get('account_info', {}))
-        ))
-        
-        decision_id = cursor.lastrowid
+        cursor.execute(
+            """
+            INSERT INTO ai_decisions (
+                stock_code, stock_name, account_name, portfolio_stock_id, origin_analysis_id,
+                decision_time, trading_session, action, confidence, reasoning, position_size_pct,
+                stop_loss_pct, take_profit_pct, risk_level, key_price_levels, market_data,
+                account_info
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                decision_data.get("stock_code"),
+                decision_data.get("stock_name"),
+                decision_data.get("account_name"),
+                decision_data.get("portfolio_stock_id"),
+                decision_data.get("origin_analysis_id"),
+                decision_data.get("decision_time", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+                decision_data.get("trading_session"),
+                decision_data.get("action"),
+                decision_data.get("confidence"),
+                decision_data.get("reasoning"),
+                decision_data.get("position_size_pct"),
+                decision_data.get("stop_loss_pct"),
+                decision_data.get("take_profit_pct"),
+                decision_data.get("risk_level"),
+                json.dumps(decision_data.get("key_price_levels", {}), ensure_ascii=False),
+                json.dumps(decision_data.get("market_data", {}), ensure_ascii=False),
+                json.dumps(decision_data.get("account_info", {}), ensure_ascii=False),
+            ),
+        )
+        record_id = int(cursor.lastrowid)
         conn.commit()
         conn.close()
-        
-        return decision_id
-    
+        return record_id
+
     def get_ai_decisions(self, stock_code: str = None, limit: int = 100) -> List[Dict]:
-        """获取AI决策历史"""
-        conn = sqlite3.connect(self.db_file)
-        conn.row_factory = sqlite3.Row
+        conn = self._connect()
         cursor = conn.cursor()
-        
         if stock_code:
-            cursor.execute('''
-                SELECT * FROM ai_decisions 
-                WHERE stock_code = ? 
-                ORDER BY decision_time DESC 
+            cursor.execute(
+                """
+                SELECT * FROM ai_decisions
+                WHERE stock_code = ?
+                ORDER BY datetime(decision_time) DESC, id DESC
                 LIMIT ?
-            ''', (stock_code, limit))
+                """,
+                (stock_code, limit),
+            )
         else:
-            cursor.execute('''
-                SELECT * FROM ai_decisions 
-                ORDER BY decision_time DESC 
+            cursor.execute(
+                """
+                SELECT * FROM ai_decisions
+                ORDER BY datetime(decision_time) DESC, id DESC
                 LIMIT ?
-            ''', (limit,))
-        
+                """,
+                (limit,),
+            )
         rows = cursor.fetchall()
         conn.close()
-        
         decisions = []
         for row in rows:
-            d = dict(row)
-            # 解析JSON字段
-            d['key_price_levels'] = json.loads(d['key_price_levels']) if d['key_price_levels'] else {}
-            d['market_data'] = json.loads(d['market_data']) if d['market_data'] else {}
-            d['account_info'] = json.loads(d['account_info']) if d['account_info'] else {}
-            decisions.append(d)
-        
+            decision = dict(row)
+            decision["key_price_levels"] = json.loads(decision["key_price_levels"]) if decision.get("key_price_levels") else {}
+            decision["market_data"] = json.loads(decision["market_data"]) if decision.get("market_data") else {}
+            decision["account_info"] = json.loads(decision["account_info"]) if decision.get("account_info") else {}
+            decisions.append(decision)
         return decisions
-    
+
     def update_decision_execution(self, decision_id: int, executed: bool, result: str):
-        """更新决策执行状态"""
-        conn = sqlite3.connect(self.db_file)
+        conn = self._connect()
         cursor = conn.cursor()
-        
-        cursor.execute('''
-            UPDATE ai_decisions 
+        cursor.execute(
+            """
+            UPDATE ai_decisions
             SET executed = ?, execution_result = ?
             WHERE id = ?
-        ''', (1 if executed else 0, result, decision_id))
-        
+            """,
+            (1 if executed else 0, result, decision_id),
+        )
         conn.commit()
         conn.close()
-    
-    # ========== 交易记录 ==========
-    
+
     def save_trade_record(self, trade_data: Dict) -> int:
-        """保存交易记录"""
-        conn = sqlite3.connect(self.db_file)
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            INSERT INTO trade_records
-            (stock_code, stock_name, trade_type, quantity, price, amount,
-             order_id, order_status, ai_decision_id, trade_time,
-             commission, tax, profit_loss)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            trade_data.get('stock_code'),
-            trade_data.get('stock_name'),
-            trade_data.get('trade_type'),
-            trade_data.get('quantity'),
-            trade_data.get('price'),
-            trade_data.get('amount'),
-            trade_data.get('order_id'),
-            trade_data.get('order_status'),
-            trade_data.get('ai_decision_id'),
-            trade_data.get('trade_time', datetime.now().strftime('%Y-%m-%d %H:%M:%S')),
-            trade_data.get('commission', 0),
-            trade_data.get('tax', 0),
-            trade_data.get('profit_loss', 0)
-        ))
-        
-        record_id = cursor.lastrowid
-        conn.commit()
-        conn.close()
-        
-        return record_id
-    
+        result = self.lifecycle_service.apply_monitor_execution(
+            stock_code=trade_data.get("stock_code"),
+            stock_name=trade_data.get("stock_name") or trade_data.get("stock_code"),
+            trade_type=str(trade_data.get("trade_type", "")).lower(),
+            quantity=int(trade_data.get("quantity") or 0),
+            price=float(trade_data.get("price") or 0),
+            account_name=trade_data.get("account_name") or DEFAULT_ACCOUNT_NAME,
+            portfolio_stock_id=trade_data.get("portfolio_stock_id"),
+            origin_analysis_id=trade_data.get("origin_analysis_id"),
+            ai_decision_id=trade_data.get("ai_decision_id"),
+            order_id=trade_data.get("order_id"),
+            order_status=trade_data.get("order_status"),
+            note=trade_data.get("note") or "",
+            trade_source=trade_data.get("trade_source", "ai_monitor"),
+        )
+        return int(result.get("portfolio_stock_id") or 0)
+
     def get_trade_records(self, stock_code: str = None, limit: int = 100) -> List[Dict]:
-        """获取交易记录"""
-        conn = sqlite3.connect(self.db_file)
-        conn.row_factory = sqlite3.Row
+        conn = self._connect()
         cursor = conn.cursor()
-        
+        sql = [
+            """
+            SELECT
+                t.id,
+                s.code AS stock_code,
+                s.name AS stock_name,
+                UPPER(t.trade_type) AS trade_type,
+                t.quantity,
+                t.price,
+                t.price * t.quantity AS amount,
+                NULL AS order_id,
+                NULL AS order_status,
+                NULL AS ai_decision_id,
+                t.trade_date AS trade_time,
+                0 AS commission,
+                0 AS tax,
+                0 AS profit_loss,
+                t.trade_source
+            FROM portfolio_trade_history t
+            INNER JOIN portfolio_stocks s
+                ON s.id = t.portfolio_stock_id
+            WHERE 1 = 1
+            """
+        ]
+        params: List[object] = []
         if stock_code:
-            cursor.execute('''
-                SELECT * FROM trade_records 
-                WHERE stock_code = ? 
-                ORDER BY trade_time DESC 
-                LIMIT ?
-            ''', (stock_code, limit))
-        else:
-            cursor.execute('''
-                SELECT * FROM trade_records 
-                ORDER BY trade_time DESC 
-                LIMIT ?
-            ''', (limit,))
-        
+            sql.append("AND s.code = ?")
+            params.append(stock_code)
+        sql.append("ORDER BY t.trade_date DESC, t.id DESC LIMIT ?")
+        params.append(limit)
+        cursor.execute(" ".join(sql), tuple(params))
         rows = cursor.fetchall()
         conn.close()
-        
-        return [dict(row) for row in rows]
-    
-    # ========== 持仓监控 ==========
-    
-    def save_position(self, position_data: Dict):
-        """保存/更新持仓信息"""
-        conn = sqlite3.connect(self.db_file)
-        cursor = conn.cursor()
-        
-        # 检查是否已存在
-        cursor.execute('SELECT id FROM position_monitor WHERE stock_code = ?', 
-                      (position_data.get('stock_code'),))
-        existing = cursor.fetchone()
-        
-        if existing:
-            # 更新
-            cursor.execute('''
-                UPDATE position_monitor
-                SET stock_name = ?, quantity = ?, cost_price = ?,
-                    current_price = ?, profit_loss = ?, profit_loss_pct = ?,
-                    holding_days = ?, stop_loss_price = ?, take_profit_price = ?,
-                    last_check_time = ?, updated_at = CURRENT_TIMESTAMP
+        if rows:
+            return [dict(row) for row in rows]
+
+        if stock_code and self.legacy_db_file and os.path.exists(self.legacy_db_file):
+            legacy_conn = sqlite3.connect(self.legacy_db_file)
+            legacy_conn.row_factory = sqlite3.Row
+            legacy_cursor = legacy_conn.cursor()
+            legacy_cursor.execute(
+                """
+                SELECT * FROM trade_records
                 WHERE stock_code = ?
-            ''', (
-                position_data.get('stock_name'),
-                position_data.get('quantity'),
-                position_data.get('cost_price'),
-                position_data.get('current_price'),
-                position_data.get('profit_loss'),
-                position_data.get('profit_loss_pct'),
-                position_data.get('holding_days'),
-                position_data.get('stop_loss_price'),
-                position_data.get('take_profit_price'),
-                datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                position_data.get('stock_code')
-            ))
-        else:
-            # 插入
-            cursor.execute('''
-                INSERT INTO position_monitor
-                (stock_code, stock_name, quantity, cost_price, current_price,
-                 profit_loss, profit_loss_pct, holding_days, buy_date,
-                 stop_loss_price, take_profit_price, last_check_time, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                position_data.get('stock_code'),
-                position_data.get('stock_name'),
-                position_data.get('quantity'),
-                position_data.get('cost_price'),
-                position_data.get('current_price'),
-                position_data.get('profit_loss'),
-                position_data.get('profit_loss_pct'),
-                position_data.get('holding_days'),
-                position_data.get('buy_date'),
-                position_data.get('stop_loss_price'),
-                position_data.get('take_profit_price'),
-                datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                'holding'
-            ))
-        
-        conn.commit()
-        conn.close()
-    
+                ORDER BY datetime(trade_time) DESC, id DESC
+                LIMIT ?
+                """,
+                (stock_code, limit),
+            )
+            legacy_rows = legacy_cursor.fetchall()
+            legacy_conn.close()
+            return [dict(row) for row in legacy_rows]
+        return []
+
+    def save_position(self, position_data: Dict):
+        success, _, stock_id = self.lifecycle_service.create_position_from_analysis(
+            symbol=position_data.get("stock_code"),
+            stock_name=position_data.get("stock_name") or position_data.get("stock_code"),
+            account_name=position_data.get("account_name") or DEFAULT_ACCOUNT_NAME,
+            cost_price=position_data.get("cost_price"),
+            quantity=position_data.get("quantity"),
+            note=position_data.get("note") or "",
+            auto_monitor=True,
+            origin_analysis_id=position_data.get("origin_analysis_id"),
+        )
+        return stock_id if success else 0
+
     def get_positions(self) -> List[Dict]:
-        """获取所有持仓"""
-        conn = sqlite3.connect(self.db_file)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        
-        cursor.execute('SELECT * FROM position_monitor WHERE status = "holding" ORDER BY id DESC')
-        
-        rows = cursor.fetchall()
-        conn.close()
-        
-        return [dict(row) for row in rows]
-    
-    def close_position(self, stock_code: str):
-        """关闭持仓记录"""
-        conn = sqlite3.connect(self.db_file)
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            UPDATE position_monitor 
-            SET status = 'closed', updated_at = CURRENT_TIMESTAMP
-            WHERE stock_code = ?
-        ''', (stock_code,))
-        
-        conn.commit()
-        conn.close()
-    
-    # ========== 通知记录 ==========
-    
+        positions = []
+        for stock in self.portfolio_db.get_all_stocks(auto_monitor_only=False):
+            positions.append(
+                {
+                    "stock_code": stock["code"],
+                    "stock_name": stock.get("name") or stock["code"],
+                    "quantity": stock.get("quantity"),
+                    "cost_price": stock.get("cost_price"),
+                    "current_price": None,
+                    "profit_loss": None,
+                    "profit_loss_pct": None,
+                    "holding_days": None,
+                    "buy_date": None,
+                    "status": "holding",
+                    "account_name": stock.get("account_name") or DEFAULT_ACCOUNT_NAME,
+                }
+            )
+        if positions:
+            return positions
+
+        if self.legacy_db_file and os.path.exists(self.legacy_db_file):
+            legacy_conn = sqlite3.connect(self.legacy_db_file)
+            legacy_conn.row_factory = sqlite3.Row
+            legacy_cursor = legacy_conn.cursor()
+            legacy_cursor.execute('SELECT * FROM position_monitor WHERE status = "holding" ORDER BY id DESC')
+            rows = legacy_cursor.fetchall()
+            legacy_conn.close()
+            return [dict(row) for row in rows]
+        return []
+
+    def close_position(self, stock_code: str, account_name: str = DEFAULT_ACCOUNT_NAME):
+        stock = self.portfolio_db.get_stock_by_code(stock_code, account_name)
+        if not stock:
+            return False
+        return self.portfolio_db.update_stock(
+            stock["id"],
+            quantity=None,
+            cost_price=None,
+            position_status="closed",
+            last_trade_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        )
+
     def save_notification(self, notify_data: Dict) -> int:
-        """保存通知记录"""
-        conn = sqlite3.connect(self.db_file)
+        conn = self._connect()
         cursor = conn.cursor()
-        
-        cursor.execute('''
+        cursor.execute(
+            """
             INSERT INTO notifications
             (stock_code, notify_type, notify_target, subject, content, status)
             VALUES (?, ?, ?, ?, ?, ?)
-        ''', (
-            notify_data.get('stock_code'),
-            notify_data.get('notify_type'),
-            notify_data.get('notify_target'),
-            notify_data.get('subject'),
-            notify_data.get('content'),
-            notify_data.get('status', 'pending')
-        ))
-        
-        notify_id = cursor.lastrowid
+            """,
+            (
+                notify_data.get("stock_code"),
+                notify_data.get("notify_type"),
+                notify_data.get("notify_target"),
+                notify_data.get("subject"),
+                notify_data.get("content"),
+                notify_data.get("status", "pending"),
+            ),
+        )
+        notify_id = int(cursor.lastrowid)
         conn.commit()
         conn.close()
-        
         return notify_id
-    
+
     def update_notification_status(self, notify_id: int, status: str, error_msg: str = None):
-        """更新通知状态"""
-        conn = sqlite3.connect(self.db_file)
+        conn = self._connect()
         cursor = conn.cursor()
-        
-        cursor.execute('''
-            UPDATE notifications 
+        cursor.execute(
+            """
+            UPDATE notifications
             SET status = ?, error_msg = ?, sent_at = CURRENT_TIMESTAMP
             WHERE id = ?
-        ''', (status, error_msg, notify_id))
-        
+            """,
+            (status, error_msg, notify_id),
+        )
         conn.commit()
         conn.close()
-    
-    # ========== 系统日志 ==========
-    
-    def log_system_event(self, level: str, module: str, message: str, details: str = None):
-        """记录系统日志"""
-        conn = sqlite3.connect(self.db_file)
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            INSERT INTO system_logs (log_level, module, message, details)
-            VALUES (?, ?, ?, ?)
-        ''', (level, module, message, details))
-        
-        conn.commit()
-        conn.close()
-
-
-if __name__ == '__main__':
-    # 测试数据库
-    logging.basicConfig(level=logging.INFO)
-    
-    db = SmartMonitorDB('test_smart_monitor.db')
-    
-    # 测试添加监控任务
-    task_id = db.add_monitor_task({
-        'task_name': '茅台盯盘',
-        'stock_code': '600519',
-        'stock_name': '贵州茅台',
-        'auto_trade': 1,
-        'notify_email': 'test@example.com'
-    })
-    
-    print(f"创建监控任务 ID: {task_id}")
-    
-    # 获取任务列表
-    tasks = db.get_monitor_tasks()
-    print(f"\n监控任务列表: {len(tasks)}个")
-    for task in tasks:
-        print(f"  - {task['stock_code']} {task['stock_name']}")
-

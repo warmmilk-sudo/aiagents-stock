@@ -18,6 +18,9 @@ from ai_agents import StockAnalysisAgents
 from batch_analysis_service import analyze_single_stock_for_batch as analyze_single_stock_for_batch_service
 from pdf_generator import display_pdf_export_section
 from database import db
+from investment_action_utils import build_analysis_action_payload
+from investment_db_utils import DEFAULT_ACCOUNT_NAME
+from investment_workspace_ui import display_investment_workspace, set_investment_workspace_tab
 from monitor_manager import display_monitor_manager, get_monitor_summary
 from monitor_service import monitor_service
 from notification_service import notification_service
@@ -42,6 +45,13 @@ from ui_shared import (
     render_final_decision as shared_render_final_decision,
     render_reasoning_process as shared_render_reasoning_process,
     render_stock_info_metrics as shared_render_stock_info_metrics,
+)
+from ui_state_keys import (
+    INVESTMENT_AI_TASK_PREFILL_KEY,
+    INVESTMENT_PRICE_ALERT_PREFILL_KEY,
+    INVESTMENT_WORKSPACE_ACTIVE_TAB_KEY,
+    PORTFOLIO_ADD_ACCOUNT_NAME_KEY,
+    PORTFOLIO_ADD_ORIGIN_ANALYSIS_ID_KEY,
 )
 
 # 页面配置（支持导航点击后单次强制收起侧边栏）
@@ -948,6 +958,7 @@ def get_selected_models():
     )
 
 NAV_VIEW_KEYS = [
+    "show_deep_analysis",
     "show_monitor_service",
     "show_monitor",
     "show_main_force",
@@ -965,8 +976,9 @@ NAV_VIEW_KEYS = [
 ]
 
 VIEW_TITLES = {
-    "show_monitor_service": "投资管理-监测服务",
-    "show_monitor": "投资管理-监测服务",
+    "show_deep_analysis": "深度分析",
+    "show_monitor_service": "投资工作台",
+    "show_monitor": "投资工作台",
     "show_main_force": "选股板块-主力选股",
     "show_low_price_bull": "选股板块-低价擒牛",
     "show_small_cap": "选股板块-小市值策略",
@@ -974,8 +986,8 @@ VIEW_TITLES = {
     "show_value_stock": "选股板块-低估值策略",
     "show_sector_strategy": "策略分析-智策板块",
     "show_longhubang": "策略分析-智瞰龙虎",
-    "show_smart_monitor": "投资管理-AI盯盘",
-    "show_portfolio": "投资管理-持仓分析",
+    "show_smart_monitor": "投资工作台",
+    "show_portfolio": "投资工作台",
     "show_news_flow": "策略分析-新闻流量",
     "show_macro_cycle": "策略分析-宏观周期",
     "show_config": "系统配置",
@@ -989,8 +1001,8 @@ def get_current_view_title() -> str:
     """返回当前主区域应显示的功能标题。"""
     for key in NAV_VIEW_KEYS:
         if st.session_state.get(key):
-            return VIEW_TITLES.get(key, "股票分析")
-    return "股票分析与历史"
+            return VIEW_TITLES.get(key, "深度分析")
+    return "深度分析"
 
 
 def activate_view(view_key: Optional[str] = None) -> None:
@@ -1004,6 +1016,101 @@ def activate_view(view_key: Optional[str] = None) -> None:
     st.rerun()
 
 
+def open_investment_workspace(tab_key: str, view_key: str) -> None:
+    set_investment_workspace_tab(tab_key)
+    activate_view(view_key)
+
+
+def _build_analysis_record_action_payload(record: Optional[Dict[str, Any]], analysis_source: str) -> Optional[Dict[str, Any]]:
+    if not record:
+        return None
+    symbol = str(record.get("symbol") or "").strip()
+    if not symbol:
+        return None
+    return build_analysis_action_payload(
+        symbol=symbol,
+        stock_name=record.get("stock_name") or record.get("name") or symbol,
+        final_decision=record.get("final_decision") or {},
+        origin_analysis_id=record.get("id"),
+        summary=record.get("summary"),
+        account_name=record.get("account_name") or DEFAULT_ACCOUNT_NAME,
+        analysis_scope=record.get("analysis_scope") or "research",
+        analysis_source=analysis_source,
+    )
+
+
+def _apply_portfolio_prefill(action_payload: Dict[str, Any]) -> None:
+    if not action_payload:
+        return
+    st.session_state[PORTFOLIO_ADD_ACCOUNT_NAME_KEY] = (
+        action_payload.get("account_name") or DEFAULT_ACCOUNT_NAME
+    )
+    st.session_state[PORTFOLIO_ADD_ORIGIN_ANALYSIS_ID_KEY] = action_payload.get("origin_analysis_id")
+    st.session_state["portfolio_add_code"] = action_payload.get("symbol") or ""
+    st.session_state["portfolio_add_cost_price"] = float(action_payload.get("default_cost_price") or 0.0)
+    st.session_state["portfolio_add_note"] = action_payload.get("default_note") or ""
+    st.session_state["portfolio_add_auto_monitor"] = True
+
+
+def _apply_ai_task_prefill(action_payload: Dict[str, Any]) -> None:
+    if not action_payload:
+        return
+    strategy_context = action_payload.get("strategy_context") or {}
+    st.session_state[INVESTMENT_AI_TASK_PREFILL_KEY] = {
+        "account_name": action_payload.get("account_name") or DEFAULT_ACCOUNT_NAME,
+        "symbol": action_payload.get("symbol"),
+        "stock_name": action_payload.get("stock_name"),
+        "task_name": f"{action_payload.get('stock_name') or action_payload.get('symbol')} AI盯盘",
+        "interval_minutes": 5,
+        "has_position": False,
+        "position_cost": float(action_payload.get("default_cost_price") or 0.0),
+        "position_quantity": 0,
+        "auto_trade": False,
+        "trading_hours_only": True,
+        "position_size_pct": 20,
+        "stop_loss_pct": 5,
+        "take_profit_pct": 10,
+        "notify_email": "",
+        "origin_analysis_id": action_payload.get("origin_analysis_id"),
+        "strategy_context": strategy_context,
+    }
+
+
+def _apply_price_alert_prefill(action_payload: Dict[str, Any]) -> None:
+    if not action_payload:
+        return
+    st.session_state[INVESTMENT_PRICE_ALERT_PREFILL_KEY] = {
+        "account_name": action_payload.get("account_name") or DEFAULT_ACCOUNT_NAME,
+        "symbol": action_payload.get("symbol"),
+        "stock_name": action_payload.get("stock_name"),
+        "origin_analysis_id": action_payload.get("origin_analysis_id"),
+        "strategy_context": action_payload.get("strategy_context") or {},
+    }
+
+
+def _render_investment_action_buttons(action_payload: Optional[Dict[str, Any]], *, key_prefix: str) -> None:
+    if not action_payload:
+        return
+
+    st.markdown("### 投资链路")
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        if st.button("创建AI盯盘任务", key=f"{key_prefix}_create_ai_task", width="stretch"):
+            _apply_ai_task_prefill(action_payload)
+            open_investment_workspace("ai_monitor", "show_smart_monitor")
+
+    with col2:
+        if st.button("加入价格预警", key=f"{key_prefix}_create_price_alert", width="stretch"):
+            _apply_price_alert_prefill(action_payload)
+            open_investment_workspace("price_alert", "show_smart_monitor")
+
+    with col3:
+        if st.button("加入持仓", key=f"{key_prefix}_create_position", width="stretch"):
+            _apply_portfolio_prefill(action_payload)
+            open_investment_workspace("portfolio", "show_portfolio")
+
+
 def _clear_single_analysis_state() -> None:
     for key in (
         "analysis_completed",
@@ -1011,6 +1118,7 @@ def _clear_single_analysis_state() -> None:
         "agents_results",
         "discussion_result",
         "final_decision",
+        "analysis_record_id",
         "just_completed",
     ):
         st.session_state.pop(key, None)
@@ -1036,6 +1144,7 @@ def _apply_home_analysis_result(payload: Dict[str, Any]) -> None:
     st.session_state.agents_results = payload.get("agents_results") or {}
     st.session_state.discussion_result = payload.get("discussion_result") or {}
     st.session_state.final_decision = payload.get("final_decision") or {}
+    st.session_state.analysis_record_id = payload.get("record_id")
     st.session_state.just_completed = False
     st.session_state.main_analysis_mode = "单个分析"
 
@@ -1062,7 +1171,7 @@ def _consume_finished_home_analysis_task() -> None:
         return
 
     if finished_task.get("status") != "success":
-        st.error(f"股票分析失败：{finished_task.get('error', '未知错误')}")
+        st.error(f"深度分析失败：{finished_task.get('error', '未知错误')}")
         return
 
     payload = finished_task.get("result") or {}
@@ -1073,24 +1182,24 @@ def _consume_finished_home_analysis_task() -> None:
         failed_count = int(payload.get("failed_count") or 0)
         saved_count = int(payload.get("saved_count") or 0)
         if success_count > 0:
-            st.success(f"批量分析完成：成功 {success_count} 只，失败 {failed_count} 只，已保存 {saved_count} 只。")
+            st.success(f"批量深度分析完成：成功 {success_count} 只，失败 {failed_count} 只，已保存 {saved_count} 只。")
         else:
-            st.error("批量分析完成，但没有成功分析的股票。")
+            st.error("批量深度分析完成，但没有成功分析的股票。")
         return
 
     if payload.get("saved_to_db"):
-        st.success("股票分析完成，结果已保存到分析历史。")
+        st.success("深度分析完成，结果已保存到分析历史。")
     elif payload.get("db_error"):
-        st.warning(f"股票分析完成，但保存历史记录失败：{payload.get('db_error')}")
+        st.warning(f"深度分析完成，但保存历史记录失败：{payload.get('db_error')}")
     else:
-        st.success("股票分析完成。")
+        st.success("深度分析完成。")
 
 
 @st.fragment(run_every=1.0)
 def _render_home_analysis_task_fragment():
     render_ui_analysis_task_live_card(
         task_type=HOME_ANALYSIS_TASK_TYPE,
-        title="股票分析任务状态",
+        title="深度分析任务状态",
         state_prefix="home_stock_analysis_live",
     )
 
@@ -1108,11 +1217,21 @@ def main():
         # 快捷导航 - 移到顶部
         st.markdown("### 功能导航")
 
-        # 单股分析（首页）
-        if st.button("股票分析", width='stretch', key="nav_home", help="进入股票分析工作区"):
-            activate_view()
+        # 投资管理
+        with st.expander("投资管理", expanded=True):
+            st.markdown("**深度分析 -> 盯盘观察 -> 持仓跟踪 -> 风控执行**")
 
-        st.markdown("---")
+            if st.button("深度分析", width='stretch', key="nav_deep_analysis", help="进入临时深度分析工作区"):
+                activate_view("show_deep_analysis")
+
+            if st.button("AI盯盘", width='stretch', key="nav_smart_monitor", help="DeepSeek AI自动盯盘决策交易（支持A股T+1）"):
+                open_investment_workspace("ai_monitor", "show_smart_monitor")
+
+            if st.button("持仓分析", width='stretch', key="nav_portfolio", help="投资组合分析与定时跟踪"):
+                open_investment_workspace("portfolio", "show_portfolio")
+
+            if st.button("监测服务", width='stretch', key="nav_monitor", help="统一监测服务状态、调度与事件"):
+                open_investment_workspace("activity", "show_monitor_service")
 
         # 选股板块
         with st.expander("选股板块", expanded=True):
@@ -1148,19 +1267,6 @@ def main():
 
             if st.button("宏观周期", width='stretch', key="nav_macro_cycle", help="康波周期 × 美林投资时钟 × 政策分析"):
                 activate_view("show_macro_cycle")
-
-        # 投资管理
-        with st.expander("投资管理", expanded=True):
-            st.markdown("**持仓跟踪、AI盯盘与监测服务**")
-
-            if st.button("持仓分析", width='stretch', key="nav_portfolio", help="投资组合分析与定时跟踪"):
-                activate_view("show_portfolio")
-
-            if st.button("AI盯盘", width='stretch', key="nav_smart_monitor", help="DeepSeek AI自动盯盘决策交易（支持A股T+1）"):
-                activate_view("show_smart_monitor")
-
-            if st.button("监测服务", width='stretch', key="nav_monitor", help="统一监测服务状态、调度与事件"):
-                activate_view("show_monitor_service")
 
         st.markdown("---")
 
@@ -1236,12 +1342,19 @@ def main():
     period = getattr(config, "DATA_PERIOD", "1y")
     selected_lightweight_model, selected_reasoning_model = get_selected_models()
 
+    if st.session_state.get("show_deep_analysis"):
+        display_home_workspace(api_key_status, period)
+        return
+
     # 检查是否显示监测面板
-    if (
-        ('show_monitor_service' in st.session_state and st.session_state.show_monitor_service)
-        or ('show_monitor' in st.session_state and st.session_state.show_monitor)
+    if any(
+        st.session_state.get(key)
+        for key in ("show_monitor_service", "show_monitor", "show_smart_monitor", "show_portfolio")
     ):
-        display_monitor_manager()
+        display_investment_workspace(
+            lightweight_model=selected_lightweight_model,
+            reasoning_model=selected_reasoning_model,
+        )
         return
 
     # 检查是否显示主力选股
@@ -1287,23 +1400,6 @@ def main():
     # 检查是否显示智瞰龙虎
     if 'show_longhubang' in st.session_state and st.session_state.show_longhubang:
         display_longhubang(
-            lightweight_model=selected_lightweight_model,
-            reasoning_model=selected_reasoning_model,
-        )
-        return
-
-    # 检查是否显示AI盯盘
-    if 'show_smart_monitor' in st.session_state and st.session_state.show_smart_monitor:
-        smart_monitor_ui(
-            lightweight_model=selected_lightweight_model,
-            reasoning_model=selected_reasoning_model,
-        )
-        return
-
-    # 检查是否显示持仓分析
-    if 'show_portfolio' in st.session_state and st.session_state.show_portfolio:
-        from portfolio_ui import display_portfolio_manager
-        display_portfolio_manager(
             lightweight_model=selected_lightweight_model,
             reasoning_model=selected_reasoning_model,
         )
@@ -1559,6 +1655,19 @@ def display_current_single_analysis_result(period: str) -> None:
     stock_data = strip_cache_meta(stock_data)
 
     display_final_decision(final_decision, stock_info, agents_results, discussion_result)
+    _render_investment_action_buttons(
+        _build_analysis_record_action_payload(
+            {
+                "id": st.session_state.get("analysis_record_id"),
+                "symbol": stock_info.get("symbol"),
+                "stock_name": stock_info.get("name"),
+                "final_decision": final_decision,
+                "analysis_scope": "research",
+            },
+            analysis_source="home_single_analysis",
+        ),
+        key_prefix=f"single_analysis_{stock_info.get('symbol', 'unknown')}",
+    )
     display_stock_info(stock_info, indicators)
 
     if stock_data is not None:
@@ -1670,7 +1779,7 @@ def _render_home_analysis_workbench(api_key_status: bool, period: str) -> None:
 
         action_label, action_disabled, action_help = get_ui_analysis_button_state(
             HOME_ANALYSIS_TASK_TYPE,
-            "开始分析",
+            "开始深度分析",
         )
         with col2:
             analyze_button = st.button(
@@ -1703,7 +1812,7 @@ def _render_home_analysis_workbench(api_key_status: bool, period: str) -> None:
                 try:
                     start_ui_analysis_task(
                         task_type=HOME_ANALYSIS_TASK_TYPE,
-                        label=f"股票分析 {symbol}",
+                        label=f"深度分析 {symbol}",
                         runner=lambda _task_id, report_progress: _run_home_single_analysis_task(
                             symbol=symbol,
                             period=period,
@@ -1714,7 +1823,7 @@ def _render_home_analysis_workbench(api_key_status: bool, period: str) -> None:
                         ),
                         metadata={"mode": "single", "symbol": symbol, "period": period},
                     )
-                    st.info("已提交后台分析任务，可切换到“分析历史”查看旧记录，结果完成后会自动同步。")
+                    st.info("已提交后台深度分析任务，可切换到“分析历史”查看旧记录，结果完成后会自动同步。")
                     st.rerun()
                 except RuntimeError as exc:
                     st.warning(str(exc))
@@ -1729,7 +1838,7 @@ def _render_home_analysis_workbench(api_key_status: bool, period: str) -> None:
 
         action_label, action_disabled, action_help = get_ui_analysis_button_state(
             HOME_ANALYSIS_TASK_TYPE,
-            "开始批量分析",
+            "开始批量深度分析",
         )
         col1, col2, col3 = st.columns(3)
         with col1:
@@ -1771,7 +1880,7 @@ def _render_home_analysis_workbench(api_key_status: bool, period: str) -> None:
                     try:
                         start_ui_analysis_task(
                             task_type=HOME_ANALYSIS_TASK_TYPE,
-                            label=f"批量分析 {len(stock_list)} 只股票",
+                            label=f"批量深度分析 {len(stock_list)} 只股票",
                             runner=lambda _task_id, report_progress: _run_home_batch_analysis_task(
                                 stock_list=stock_list,
                                 period=period,
@@ -1787,7 +1896,7 @@ def _render_home_analysis_workbench(api_key_status: bool, period: str) -> None:
                                 "batch_mode": batch_mode,
                             },
                         )
-                        st.info("已提交后台批量分析任务，可切换页面，返回后会自动同步进度和结果。")
+                        st.info("已提交后台批量深度分析任务，可切换页面，返回后会自动同步进度和结果。")
                         st.rerun()
                     except RuntimeError as exc:
                         st.warning(str(exc))
@@ -1805,7 +1914,7 @@ def display_home_workspace(api_key_status: bool, period: str) -> None:
     _restore_home_analysis_result_from_latest_task()
     _consume_finished_home_analysis_task()
 
-    tabs = st.tabs(["分析工作台", "分析历史"])
+    tabs = st.tabs(["深度分析", "分析历史"])
 
     with tabs[0]:
         _render_home_analysis_workbench(api_key_status, period)
@@ -1943,6 +2052,7 @@ def _legacy_analyze_single_stock_for_batch(symbol, period, enabled_analysts_conf
         final_decision = agents.make_final_decision(discussion_result, stock_info, indicators)
 
         saved_to_db = False
+        record_id = None
         db_error = None
         if save_to_global_history:
             try:
@@ -1969,6 +2079,7 @@ def _legacy_analyze_single_stock_for_batch(symbol, period, enabled_analysts_conf
             "agents_results": agents_results,
             "discussion_result": discussion_result,
             "final_decision": final_decision,
+            "record_id": record_id,
             "saved_to_db": saved_to_db,
             "db_error": db_error
         }
@@ -2557,7 +2668,7 @@ def _legacy_show_example_interface():
         st.markdown("""
         ### 如何使用
         1. **输入股票代码**：支持A股(如000001)、港股(如00700)和美股(如AAPL)
-        2. **点击开始分析**：系统将启动AI分析师团队
+        2. **点击开始深度分析**：系统将启动AI分析师团队
         3. **查看分析报告**：多位专业分析师将从不同角度分析
         4. **获得投资建议**：获得最终的投资评级和操作建议
         
@@ -2641,7 +2752,7 @@ def display_history_records():
         # 根据评级设置颜色和图标
         rating = record.get('rating', '未知')
         with st.expander(f"{record['stock_name']} ({record['symbol']}) - {record['analysis_date']} | {rating}"):
-            col1, col2, col3, col4 = st.columns([2, 2, 1, 1])
+            col1, col2, col3, col4, col5 = st.columns([2, 2, 1, 1, 1])
 
             with col1:
                 st.write(f"**股票代码:** {record['symbol']}")
@@ -2657,13 +2768,37 @@ def display_history_records():
                     st.session_state.viewing_record_id = record['id']
 
             with col4:
-                if st.button("加入价格预警", key=f"add_monitor_{record['id']}"):
-                    st.session_state.add_to_monitor_id = record['id']
-                    st.session_state.viewing_record_id = record['id']
+                if st.button("AI盯盘", key=f"history_ai_task_{record['id']}"):
+                    detail_record = db.get_record_by_id(record['id'])
+                    action_payload = _build_analysis_record_action_payload(
+                        detail_record,
+                        analysis_source="history_record",
+                    )
+                    _apply_ai_task_prefill(action_payload or {})
+                    open_investment_workspace("ai_monitor", "show_smart_monitor")
 
-            # 删除按钮（新增一行）
-            col5, _, _, _ = st.columns(4)
             with col5:
+                if st.button("价格预警", key=f"history_price_alert_{record['id']}"):
+                    detail_record = db.get_record_by_id(record['id'])
+                    action_payload = _build_analysis_record_action_payload(
+                        detail_record,
+                        analysis_source="history_record",
+                    )
+                    _apply_price_alert_prefill(action_payload or {})
+                    open_investment_workspace("price_alert", "show_smart_monitor")
+
+            col6, col7 = st.columns([1, 3])
+            with col6:
+                if st.button("加入持仓", key=f"history_add_position_{record['id']}"):
+                    detail_record = db.get_record_by_id(record['id'])
+                    action_payload = _build_analysis_record_action_payload(
+                        detail_record,
+                        analysis_source="history_record",
+                    )
+                    _apply_portfolio_prefill(action_payload or {})
+                    open_investment_workspace("portfolio", "show_portfolio")
+
+            with col7:
                 if st.button("删除", key=f"delete_{record['id']}"):
                     if db.delete_record(record['id']):
                         st.success("记录已删除")
@@ -2887,26 +3022,16 @@ def display_record_detail(record_id):
     # 加入价格预警功能
     st.markdown("---")
     st.subheader("操作")
-
-    # 检查是否需要显示加入价格预警的对话框
-    if 'add_to_monitor_id' in st.session_state and st.session_state.add_to_monitor_id == record_id:
-        display_add_to_monitor_dialog(record)
-    else:
-        # 只有在不显示对话框时才显示按钮
-        col1, col2 = st.columns([1, 3])
-
-        with col1:
-            if st.button("加入价格预警", type="primary", width='stretch'):
-                st.session_state.add_to_monitor_id = record_id
-                st.rerun()
+    _render_investment_action_buttons(
+        _build_analysis_record_action_payload(record, analysis_source="history_record_detail"),
+        key_prefix=f"history_detail_{record_id}",
+    )
 
     # 返回按钮
     st.markdown("---")
     if st.button("⬅️ 返回历史记录列表"):
         if 'viewing_record_id' in st.session_state:
             del st.session_state.viewing_record_id
-        if 'add_to_monitor_id' in st.session_state:
-            del st.session_state.add_to_monitor_id
         st.rerun()
 
 def display_config_manager():
