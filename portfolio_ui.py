@@ -154,6 +154,97 @@ def _format_task_time(timestamp) -> str:
         return ""
 
 
+def _format_task_progress_text(current: int, total: int) -> str:
+    if total > 0:
+        return f"已完成（{current}/{total}）"
+    return f"已完成（{current}）"
+
+
+def _dedupe_items(items: List[Dict], identity_builder, semantic_builder=None) -> List[Dict]:
+    unique_items: List[Dict] = []
+    seen_identity = set()
+    seen_semantic = set()
+    for item in items or []:
+        identity = identity_builder(item)
+        if identity in seen_identity:
+            continue
+        semantic = semantic_builder(item) if semantic_builder else None
+        if semantic_builder and semantic in seen_semantic:
+            continue
+        seen_identity.add(identity)
+        if semantic_builder:
+            seen_semantic.add(semantic)
+        unique_items.append(item)
+    return unique_items
+
+
+def _build_stock_identity_key(stock: Dict) -> tuple:
+    stock_id = stock.get("id")
+    if stock_id not in (None, ""):
+        return ("id", stock_id)
+    return (
+        "stock",
+        stock.get("account_name", "默认账户"),
+        stock.get("code") or stock.get("symbol") or "",
+        stock.get("name") or stock.get("stock_name") or "",
+    )
+
+
+def _build_stock_semantic_key(stock: Dict) -> tuple:
+    return (
+        stock.get("account_name", "默认账户"),
+        stock.get("code") or stock.get("symbol") or "",
+    )
+
+
+def _build_review_report_identity_key(report: Dict) -> tuple:
+    report_id = report.get("id") or report.get("report_id")
+    if report_id not in (None, ""):
+        return ("id", report_id)
+    return _build_review_report_semantic_key(report)
+
+
+def _build_review_report_semantic_key(report: Dict) -> tuple:
+    return (
+        report.get("account_name", "全部账户"),
+        report.get("period_type", ""),
+        report.get("period_start", ""),
+        report.get("period_end", ""),
+        report.get("report_markdown", ""),
+    )
+
+
+def _get_history_record_time(record: Dict) -> str:
+    text = str(record.get("analysis_time") or record.get("analysis_date") or "").strip()
+    if not text:
+        return ""
+    for fmt in ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+        try:
+            parsed = datetime.strptime(text, fmt)
+            return parsed.strftime("%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            continue
+    return text
+
+
+def _build_history_record_identity_key(record: Dict) -> tuple:
+    record_id = record.get("id")
+    if record_id not in (None, ""):
+        return ("id", record_id)
+    return _build_history_record_semantic_key(record)
+
+
+def _build_history_record_semantic_key(record: Dict) -> tuple:
+    return (
+        record.get("code") or record.get("symbol") or "",
+        record.get("name") or record.get("stock_name") or "",
+        _get_history_record_time(record),
+        record.get("analysis_source") or "",
+        record.get("rating") or "",
+        record.get("summary") or "",
+    )
+
+
 def _get_portfolio_analysis_task(task_type: str | None = None) -> Dict | None:
     session_id = _ensure_portfolio_analysis_session_id()
     portfolio_analysis_task_manager.prune_session_tasks(session_id)
@@ -246,11 +337,11 @@ def _render_portfolio_analysis_live_status_card():
     refresh_signature = "|".join(
         [
             str(task_id or ""),
+            str(active_task.get("label") or ""),
             str(active_task.get("status") or ""),
             str(active_task.get("current") or 0),
             str(active_task.get("total") or 0),
-            str(active_task.get("step_code") or ""),
-            str(active_task.get("step_status") or ""),
+            str(active_task.get("started_at") or ""),
         ]
     )
     st.session_state[PORTFOLIO_ANALYSIS_LIVE_STATUS_KEY] = task_id
@@ -259,34 +350,15 @@ def _render_portfolio_analysis_live_status_card():
         if previous_signature is not None:
             st.rerun()
     task_label = active_task.get("label") or "当前分析任务"
-    message = active_task.get("message") or "分析正在后台执行，切换页面后状态会保留。"
     current = int(active_task.get("current") or 0)
     total = int(active_task.get("total") or 0)
     progress = float(active_task.get("progress") or 0.0)
-    step_code = active_task.get("step_code") or "--"
-    status = active_task.get("status") or "queued"
-    queued_count = sum(1 for task in pending_tasks if task.get("status") == "queued")
-    queue_size = len(pending_tasks)
-    started_at = _format_task_time(active_task.get("started_at") or active_task.get("created_at"))
+    started_at = _format_task_time(active_task.get("started_at"))
 
     with st.container(border=True):
         st.markdown(f"#### {task_label}")
-        st.write(message)
-        st.progress(progress, text=f"{int(progress * 100)}%")
-
-        meta_col1, meta_col2, meta_col3, meta_col4 = st.columns(4)
-        meta_col1.metric("执行状态", "进行中" if status == "running" else "排队中")
-        meta_col2.metric("当前步骤", step_code)
-        meta_col3.metric("已完成", f"{current}/{total}" if total else str(current))
-        meta_col4.metric("队列任务", queue_size)
-
-        detail_bits = []
-        if queued_count:
-            detail_bits.append(f"待执行 {queued_count} 个")
-        if started_at:
-            detail_bits.append(f"开始时间 {started_at}")
-        detail_bits.append("离开页面后可返回继续查看进度")
-        st.caption(" | ".join(detail_bits))
+        st.progress(progress, text=_format_task_progress_text(current, total))
+        st.caption(f"开始时间：{started_at or '待开始'}")
 
 
 @st.fragment(run_every=1.0)
@@ -819,7 +891,11 @@ def display_portfolio_stocks(lightweight_model=None, reasoning_model=None):
     with st.expander("➕ 添加持仓股票", expanded=bool(st.session_state.get("portfolio_add_code"))):
         display_add_stock_form()
 
-    all_stocks = portfolio_manager.get_all_latest_analysis()
+    all_stocks = _dedupe_items(
+        portfolio_manager.get_all_latest_analysis(),
+        _build_stock_identity_key,
+        _build_stock_semantic_key,
+    )
     if not all_stocks:
         st.info("暂无持仓股票，请添加股票代码开始管理。")
         return
@@ -830,10 +906,14 @@ def display_portfolio_stocks(lightweight_model=None, reasoning_model=None):
         key="portfolio_account_selector",
     )
     account_filter = _resolve_portfolio_account_filter(selected_account)
-    stocks = [
-        stock for stock in all_stocks
-        if account_filter is None or stock.get("account_name", "默认账户") == account_filter
-    ]
+    stocks = _dedupe_items(
+        [
+            stock for stock in all_stocks
+            if account_filter is None or stock.get("account_name", "默认账户") == account_filter
+        ],
+        _build_stock_identity_key,
+        _build_stock_semantic_key,
+    )
     trade_summary_map = portfolio_manager.get_trade_summary_map(
         [stock.get("id") for stock in stocks if stock.get("id")]
     )
@@ -856,6 +936,7 @@ def _render_portfolio_stock_list(
     lightweight_model=None,
     reasoning_model=None,
 ) -> None:
+    stocks = _dedupe_items(stocks, _build_stock_identity_key, _build_stock_semantic_key)
     if not stocks:
         st.info("当前账户暂无持仓股票。")
         return
@@ -908,11 +989,15 @@ def display_portfolio_review_reports(account_filter: str | None) -> None:
                     st.error(result.get("message", "生成复盘报告失败。"))
 
     latest_report = st.session_state.get("portfolio_latest_review_report")
+    latest_report_key = None
+    latest_report_id = None
     if (
         latest_report
         and latest_report.get("status") == "success"
         and latest_report.get("account_name") == account_label
     ):
+        latest_report_key = _build_review_report_semantic_key(latest_report)
+        latest_report_id = latest_report.get("report_id") or latest_report.get("id")
         st.markdown("##### 最新生成")
         st.code(latest_report.get("report_markdown", ""), language="markdown")
         st.download_button(
@@ -923,13 +1008,26 @@ def display_portfolio_review_reports(account_filter: str | None) -> None:
             key=f"download_latest_review_{account_label}",
         )
 
-    reports = portfolio_manager.get_review_reports(account_name=account_filter, limit=12)
-    if not reports:
-        st.info("暂无已保存的复盘报告。")
+    reports = _dedupe_items(
+        portfolio_manager.get_review_reports(account_name=account_filter, limit=12),
+        _build_review_report_identity_key,
+        _build_review_report_semantic_key,
+    )
+    history_reports = [
+        report
+        for report in reports
+        if (report.get("id") or report.get("report_id")) != latest_report_id
+        and _build_review_report_semantic_key(report) != latest_report_key
+    ]
+    if not history_reports:
+        if latest_report_key is not None:
+            st.caption("暂无其他历史报告。")
+        else:
+            st.info("暂无已保存的复盘报告。")
         return
 
     st.markdown("##### 历史报告")
-    for report in reports:
+    for report in history_reports:
         with st.expander(
             f"{report.get('created_at', '')} | {report.get('period_type', '').upper()} | "
             f"{report.get('period_start', '')} ~ {report.get('period_end', '')}",
@@ -953,7 +1051,11 @@ def display_analysis_task_center(lightweight_model=None, reasoning_model=None):
     st.markdown("### 🔄 分析任务中心")
     _render_batch_analysis_feedback()
 
-    stocks = portfolio_manager.get_all_stocks()
+    stocks = _dedupe_items(
+        portfolio_manager.get_all_stocks(),
+        _build_stock_identity_key,
+        _build_stock_semantic_key,
+    )
     if not stocks:
         st.warning("暂无持仓股票，请先添加股票。")
         return
@@ -1139,9 +1241,7 @@ def display_stock_card(
     auto_monitor = stock.get("auto_monitor", True)
     view_model = portfolio_manager.build_stock_card_view_model(stock, latest_analysis)
     rating = view_model.get("rating", "待分析")
-    rating_color = get_recommendation_color(rating)
     analysis_time_text = view_model.get("analysis_time_text") or "尚未分析"
-    note_text = view_model.get("note_text", "")
     display_name = view_model.get("display_name") or code
     edit_state_key = f"portfolio_editing_{stock_id}"
     trade_state_key = f"portfolio_trading_{stock_id}"
@@ -1170,18 +1270,12 @@ def display_stock_card(
     except (TypeError, ValueError):
         default_trade_price = float(cost_price) if cost_price not in (None, "") else 0.0
 
-    with st.container(border=True):
-        header_col, rating_col = st.columns([4.5, 1.2], gap="small")
-        with header_col:
-            st.markdown(f"#### {display_name}")
-        with rating_col:
-            st.markdown(
-                (
-                    "<div style='text-align:right; font-weight:600; "
-                    f"color:{rating_color}; padding-top:0.35rem;'>{_escape_text(rating)}</div>"
-                ),
-                unsafe_allow_html=True,
-            )
+    expander_label = f"{display_name} | {analysis_time_text} | {rating}"
+    is_expanded = bool(
+        st.session_state.get(edit_state_key) or st.session_state.get(trade_state_key)
+    )
+
+    with st.expander(expander_label, expanded=is_expanded):
 
         info_pairs = [
             ("成本", view_model.get("cost_text") or "未设置"),
@@ -1196,8 +1290,6 @@ def display_stock_card(
                 st.markdown(f"**{value}**")
 
         st.caption(f"最近分析：{analysis_time_text}")
-        if note_text:
-            st.caption(f"备注：{note_text}")
 
         meta_bits = []
         if first_buy_date:
@@ -1596,14 +1688,18 @@ def display_analysis_history():
     
     st.markdown("### 分析历史记录")
     
-    stocks = portfolio_manager.get_all_stocks()
+    stocks = _dedupe_items(
+        portfolio_manager.get_all_stocks(),
+        _build_stock_identity_key,
+        _build_stock_semantic_key,
+    )
     
     if not stocks:
         st.info("暂无持仓股票")
         return
     
     # 选择股票
-    stock_codes = [s["code"] for s in stocks]
+    stock_codes = list(dict.fromkeys(s["code"] for s in stocks))
     selected_code = st.selectbox(
         "选择股票",
         options=["全部"] + stock_codes,
@@ -1625,19 +1721,32 @@ def display_analysis_history():
             all_history.extend(history)
         
         # 按时间排序
-        all_history.sort(key=lambda x: x.get("analysis_time", ""), reverse=True)
-        history_list = all_history[:20]  # 只显示最近20条
+        all_history.sort(key=_get_history_record_time, reverse=True)
+        history_list = _dedupe_items(
+            all_history,
+            _build_history_record_identity_key,
+            _build_history_record_semantic_key,
+        )[:20]  # 只显示最近20条
     else:
         # 获取指定股票的历史
-        stock = next((s for s in stocks if s["code"] == selected_code), None)
-        if stock:
-            history_list = portfolio_manager.db.get_latest_analysis_history(
-                stock["id"],
-                limit=20,
+        matched_stocks = [s for s in stocks if s["code"] == selected_code]
+        if matched_stocks:
+            history_list = []
+            for stock in matched_stocks:
+                single_history = portfolio_manager.db.get_latest_analysis_history(
+                    stock["id"],
+                    limit=20,
+                )
+                for h in single_history:
+                    h["code"] = stock["code"]
+                    h["name"] = stock["name"]
+                history_list.extend(single_history)
+            history_list.sort(key=_get_history_record_time, reverse=True)
+            history_list = _dedupe_items(
+                history_list,
+                _build_history_record_identity_key,
+                _build_history_record_semantic_key,
             )
-            for h in history_list:
-                h["code"] = stock["code"]
-                h["name"] = stock["name"]
         else:
             history_list = []
     
@@ -1676,7 +1785,7 @@ def display_history_record(record: Dict):
     
     code = record.get("code", "")
     name = record.get("name", "")
-    analysis_time = record.get("analysis_time", "")
+    analysis_time = _get_history_record_time(record)
     rating = portfolio_manager._normalize_analysis_rating(record.get("rating"), default="待分析")
     confidence = record.get("confidence", 0)
     current_price = record.get("current_price")
@@ -1698,7 +1807,7 @@ def display_history_record(record: Dict):
     rating_color = get_recommendation_color(rating)
     
     with st.expander(
-        f"{code} {name} | {rating} | {analysis_time}",
+        f"{name or code}|{analysis_time}|{rating}",
         expanded=False
     ):
         if has_full_report:

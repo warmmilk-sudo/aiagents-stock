@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Callable, Dict, Optional
 
 import streamlit as st
@@ -22,13 +23,29 @@ def _build_refresh_signature(task: Optional[Dict[str, Any]]) -> str:
     return "|".join(
         [
             str(task.get("id") or ""),
+            str(task.get("label") or ""),
             str(task.get("status") or ""),
             str(task.get("current") or 0),
             str(task.get("total") or 0),
             str(task.get("progress") or 0.0),
-            str(task.get("message") or ""),
+            str(task.get("started_at") or ""),
         ]
     )
+
+
+def _format_task_time(timestamp: Any) -> str:
+    if not timestamp:
+        return ""
+    try:
+        return datetime.fromtimestamp(float(timestamp)).strftime("%Y-%m-%d %H:%M:%S")
+    except (TypeError, ValueError, OSError):
+        return ""
+
+
+def _format_progress_text(current: int, total: int) -> str:
+    if total > 0:
+        return f"已完成（{current}/{total}）"
+    return f"已完成（{current}）"
 
 
 def get_active_ui_analysis_task(task_type: str) -> Optional[Dict[str, Any]]:
@@ -91,29 +108,16 @@ def render_ui_analysis_task_card(task_type: str, title: str) -> None:
     if not active_task:
         return
 
-    status = active_task.get("status") or "queued"
     progress = float(active_task.get("progress") or 0.0)
-    message = active_task.get("message") or "任务处理中..."
     current = int(active_task.get("current") or 0)
     total = int(active_task.get("total") or 0)
-
-    queue_tasks = portfolio_analysis_task_manager.get_pending_tasks(_build_session_id(task_type))
-    queue_position = 0
-    for idx, queued_task in enumerate(queue_tasks, start=1):
-        if queued_task.get("id") == active_task.get("id"):
-            queue_position = idx
-            break
+    started_at = _format_task_time(active_task.get("started_at"))
+    display_title = active_task.get("label") or title
 
     with st.container(border=True):
-        st.markdown(f"#### {title}")
-        st.write(message)
-        st.progress(progress, text=f"{int(progress * 100)}%")
-
-        c1, c2, c3 = st.columns(3)
-        c1.metric("状态", "进行中" if status == "running" else "排队中")
-        c2.metric("进度", f"{current}/{total}" if total else str(current))
-        c3.metric("队列位置", queue_position or len(queue_tasks))
-        st.caption("分析在后台执行，可切换页面，返回后状态会自动同步。")
+        st.markdown(f"#### {display_title}")
+        st.progress(progress, text=_format_progress_text(current, total))
+        st.caption(f"开始时间：{started_at or '待开始'}")
 
 
 def render_ui_analysis_task_live_card(task_type: str, title: str, state_prefix: str) -> None:

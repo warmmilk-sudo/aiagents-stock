@@ -25,6 +25,22 @@ class AnalysisRepository:
         )
         self._init_database()
         self.migrate_legacy_analysis_db(self.legacy_analysis_db_path)
+        self.cleanup_duplicate_records()
+
+    @staticmethod
+    def _normalize_text(value: Any) -> str:
+        return str(value or "").strip()
+
+    @staticmethod
+    def _sort_json_text(value: Any) -> str:
+        if value in (None, ""):
+            return ""
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except json.JSONDecodeError:
+                return value.strip()
+        return json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
 
     def _connect(self) -> sqlite3.Connection:
         return connect_sqlite(self.db_path)
@@ -83,6 +99,174 @@ class AnalysisRepository:
         record["final_decision"] = self._safe_json_loads(record.pop("final_decision_json", None), {})
         record["has_full_report"] = bool(record.get("has_full_report"))
         return record
+
+    def _find_duplicate_record_id(
+        self,
+        cursor: sqlite3.Cursor,
+        *,
+        symbol: str,
+        period: str,
+        analysis_scope: str,
+        analysis_date: str,
+        rating: Optional[str],
+        summary: str,
+        final_decision: Optional[Dict],
+        asset_id: Optional[int],
+        portfolio_stock_id: Optional[int],
+    ) -> Optional[int]:
+        cursor.execute(
+            """
+            SELECT id, asset_id, portfolio_stock_id, rating, summary, final_decision_json
+            FROM analysis_records
+            WHERE analysis_scope = ?
+              AND symbol = ?
+              AND period = ?
+              AND analysis_date = ?
+            ORDER BY id DESC
+            """,
+            (analysis_scope, symbol, period, analysis_date),
+        )
+        target_rating = self._normalize_text(rating)
+        target_summary = self._normalize_text(summary)
+        target_final_decision = self._sort_json_text(final_decision or {})
+        current_asset_key = portfolio_stock_id or asset_id
+        for row in cursor.fetchall():
+            existing = dict(row)
+            if analysis_scope == "portfolio":
+                existing_asset_key = existing.get("portfolio_stock_id") or existing.get("asset_id")
+                if current_asset_key is not None and existing_asset_key not in {None, current_asset_key}:
+                    continue
+            if self._normalize_text(existing.get("rating")) != target_rating:
+                continue
+            if self._normalize_text(existing.get("summary")) != target_summary:
+                continue
+            existing_final_decision = self._sort_json_text(existing.get("final_decision_json"))
+            if target_final_decision and existing_final_decision and existing_final_decision != target_final_decision:
+                continue
+            return int(existing["id"])
+        return None
+
+    def _update_existing_record(
+        self,
+        cursor: sqlite3.Cursor,
+        record_id: int,
+        *,
+        stock_name: str,
+        account_name: str,
+        asset_id: Optional[int],
+        portfolio_stock_id: Optional[int],
+        analysis_source: str,
+        rating: Optional[str],
+        confidence: Optional[float],
+        current_price: Optional[float],
+        target_price: Optional[float],
+        entry_min: Optional[float],
+        entry_max: Optional[float],
+        take_profit: Optional[float],
+        stop_loss: Optional[float],
+        summary: str,
+        stock_info: Optional[Dict],
+        agents_results: Optional[Dict],
+        discussion_result: Optional[Any],
+        final_decision: Optional[Dict],
+        has_full_report: bool,
+        asset_status_snapshot: Optional[str],
+    ) -> None:
+        cursor.execute(
+            """
+            UPDATE analysis_records
+            SET stock_name = ?,
+                account_name = ?,
+                asset_id = ?,
+                portfolio_stock_id = ?,
+                analysis_source = ?,
+                rating = ?,
+                confidence = ?,
+                current_price = ?,
+                target_price = ?,
+                entry_min = ?,
+                entry_max = ?,
+                take_profit = ?,
+                stop_loss = ?,
+                summary = ?,
+                stock_info_json = ?,
+                agents_results_json = ?,
+                discussion_result = ?,
+                final_decision_json = ?,
+                has_full_report = ?,
+                asset_status_snapshot = ?
+            WHERE id = ?
+            """,
+            (
+                stock_name,
+                account_name,
+                asset_id,
+                portfolio_stock_id,
+                analysis_source,
+                rating,
+                confidence,
+                current_price,
+                target_price,
+                entry_min,
+                entry_max,
+                take_profit,
+                stop_loss,
+                summary,
+                self._serialize_json(stock_info),
+                self._serialize_json(agents_results),
+                self._serialize_json(discussion_result),
+                self._serialize_json(final_decision),
+                1 if has_full_report else 0,
+                asset_status_snapshot,
+                record_id,
+            ),
+        )
+
+    def cleanup_duplicate_records(self) -> int:
+        conn = self._connect()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT *
+            FROM analysis_records
+            ORDER BY COALESCE(has_full_report, 0) DESC,
+                     CASE WHEN portfolio_stock_id IS NOT NULL THEN 1 ELSE 0 END DESC,
+                     CASE WHEN asset_id IS NOT NULL THEN 1 ELSE 0 END DESC,
+                     CASE WHEN account_name IS NOT NULL AND account_name != '' THEN 1 ELSE 0 END DESC,
+                     datetime(created_at) DESC,
+                     id DESC
+            """
+        )
+        seen_keys = set()
+        duplicate_ids: List[int] = []
+        for row in cursor.fetchall():
+            record = dict(row)
+            scope = record.get("analysis_scope") or "research"
+            asset_key = (
+                record.get("symbol")
+                if scope == "research"
+                else (record.get("portfolio_stock_id") or record.get("asset_id") or record.get("symbol") or "")
+            )
+            key = (
+                scope,
+                asset_key,
+                self._normalize_text(record.get("symbol")),
+                self._normalize_text(record.get("period")),
+                self._normalize_text(record.get("analysis_date")),
+                self._normalize_text(record.get("rating")),
+                self._normalize_text(record.get("summary")),
+                self._sort_json_text(record.get("final_decision_json")),
+            )
+            if key in seen_keys:
+                duplicate_ids.append(int(record["id"]))
+                continue
+            seen_keys.add(key)
+        if duplicate_ids:
+            placeholders = ",".join("?" for _ in duplicate_ids)
+            cursor.execute(f"DELETE FROM analysis_records WHERE id IN ({placeholders})", duplicate_ids)
+            conn.commit()
+        conn.close()
+        return len(duplicate_ids)
 
     def _init_database(self) -> None:
         conn = self._connect()
@@ -259,6 +443,46 @@ class AnalysisRepository:
 
         conn = self._connect()
         cursor = conn.cursor()
+        existing_record_id = self._find_duplicate_record_id(
+            cursor,
+            symbol=symbol,
+            period=period,
+            analysis_scope=normalized_scope,
+            analysis_date=analysis_date,
+            rating=rating,
+            summary=summary,
+            final_decision=final_decision,
+            asset_id=asset_id,
+            portfolio_stock_id=portfolio_stock_id,
+        )
+        if existing_record_id is not None:
+            self._update_existing_record(
+                cursor,
+                existing_record_id,
+                stock_name=stock_name,
+                account_name=effective_account_name,
+                asset_id=asset_id,
+                portfolio_stock_id=portfolio_stock_id,
+                analysis_source=analysis_source,
+                rating=rating,
+                confidence=confidence,
+                current_price=current_price,
+                target_price=target_price,
+                entry_min=entry_min,
+                entry_max=entry_max,
+                take_profit=take_profit,
+                stop_loss=stop_loss,
+                summary=summary,
+                stock_info=stock_info,
+                agents_results=agents_results,
+                discussion_result=discussion_result,
+                final_decision=final_decision,
+                has_full_report=bool(has_full_report),
+                asset_status_snapshot=asset_status_snapshot,
+            )
+            conn.commit()
+            conn.close()
+            return existing_record_id
         cursor.execute(
             """
             INSERT INTO analysis_records (
@@ -371,37 +595,37 @@ class AnalysisRepository:
         symbol: Optional[str] = None,
         account_name: Optional[str] = None,
     ) -> Optional[Dict]:
+        def _fetch_one(clauses: List[str], params: List[Any]) -> Optional[Dict]:
+            sql = (
+                "SELECT * FROM analysis_records "
+                f"WHERE {' AND '.join(clauses)} "
+                "ORDER BY CASE WHEN analysis_scope = 'portfolio' THEN 0 ELSE 1 END, "
+                "datetime(analysis_date) DESC, id DESC LIMIT 1"
+            )
+            cursor.execute(sql, tuple(params))
+            row = cursor.fetchone()
+            return self._deserialize_row(row) if row else None
+
         conn = self._connect()
         cursor = conn.cursor()
-        clauses = ["COALESCE(has_full_report, 0) = 1"]
-        params: List[Any] = []
+        record = None
         if asset_id is not None:
-            clauses.append("asset_id = ?")
-            params.append(asset_id)
-        elif portfolio_stock_id is not None:
-            clauses.append("portfolio_stock_id = ?")
-            params.append(portfolio_stock_id)
-        elif symbol:
-            clauses.append("symbol = ?")
-            params.append(symbol)
+            record = _fetch_one(["COALESCE(has_full_report, 0) = 1", "asset_id = ?"], [asset_id])
+        if record is None and portfolio_stock_id is not None:
+            record = _fetch_one(
+                ["COALESCE(has_full_report, 0) = 1", "portfolio_stock_id = ?"],
+                [portfolio_stock_id],
+            )
+        if record is None and symbol:
+            clauses = ["COALESCE(has_full_report, 0) = 1", "symbol = ?"]
+            params: List[Any] = [symbol]
             if account_name:
-                clauses.append("(account_name = ? OR account_name IS NULL)")
-                params.append(account_name)
-        else:
-            conn.close()
-            return None
-        sql = (
-            "SELECT * FROM analysis_records "
-            f"WHERE {' AND '.join(clauses)} "
-            "ORDER BY CASE WHEN analysis_scope = 'portfolio' THEN 0 ELSE 1 END, "
-            "datetime(analysis_date) DESC, id DESC LIMIT 1"
-        )
-        cursor.execute(sql, tuple(params))
-        row = cursor.fetchone()
+                clauses.append("(account_name = ? OR account_name = ? OR account_name IS NULL)")
+                params.extend([account_name, DEFAULT_ACCOUNT_NAME])
+            record = _fetch_one(clauses, params)
         conn.close()
-        if not row:
+        if not record:
             return None
-        record = self._deserialize_row(row)
         return {
             "origin_analysis_id": record["id"],
             "asset_id": record.get("asset_id"),

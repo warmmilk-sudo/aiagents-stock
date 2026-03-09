@@ -1476,10 +1476,10 @@ class PortfolioManager:
             return ""
 
         text = str(value).strip()
-        for fmt in ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S"):
+        for fmt in ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
             try:
                 parsed = datetime.strptime(text, fmt)
-                return parsed.strftime("%Y-%m-%d %H:%M")
+                return parsed.strftime("%Y-%m-%d %H:%M:%S")
             except ValueError:
                 continue
         return text
@@ -1543,7 +1543,9 @@ class PortfolioManager:
             "pnl_amount_text": self._format_currency_text(pnl_amount, precision=2, signed=True) if pnl_amount is not None else "",
             "pnl_percent_text": self._format_percent_text(pnl_percent, signed=True) if pnl_percent is not None else "",
             "rating": rating,
-            "analysis_time_text": self._format_analysis_time_text(latest_analysis.get("analysis_time")),
+            "analysis_time_text": self._format_analysis_time_text(
+                latest_analysis.get("analysis_time") or latest_analysis.get("analysis_date")
+            ),
             "summary_text": summary_text,
             "note_text": str(stock.get("note") or "").strip(),
             "auto_monitor": bool(stock.get("auto_monitor", True)),

@@ -3007,7 +3007,7 @@ def display_record_detail(record_id):
     with col2:
         st.metric("股票名称", record['stock_name'])
     with col3:
-        st.metric("分析时间", record['analysis_date'])
+        st.metric("分析时间", record.get('analysis_date', ''))
 
     agents_results = record['agents_results']
     discussion_result = record['discussion_result']

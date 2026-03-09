@@ -864,6 +864,21 @@ class PortfolioDB:
             最新分析记录字典，不存在则返回None
         """
         return self.analysis_repository.get_latest_portfolio_record(stock_id)
+
+    def _resolve_latest_analysis_fallback(self, stock: Dict) -> Optional[Dict]:
+        origin_analysis_id = stock.get("origin_analysis_id")
+        if origin_analysis_id not in (None, ""):
+            try:
+                record = self.analysis_repository.get_record(int(origin_analysis_id))
+            except (TypeError, ValueError):
+                record = None
+            if record:
+                return record
+        return self.analysis_repository.get_latest_strategy_context(
+            portfolio_stock_id=stock.get("id"),
+            symbol=stock.get("code"),
+            account_name=stock.get("account_name", DEFAULT_ACCOUNT_NAME),
+        )
     
     def get_rating_changes(self, stock_id: int, days: int = 30) -> List[Tuple[str, str, str]]:
         """
@@ -932,8 +947,13 @@ class PortfolioDB:
         for stock in stocks:
             merged = dict(stock)
             latest = latest_map.get(stock["id"])
+            if not latest:
+                latest = self._resolve_latest_analysis_fallback(stock)
             if latest:
-                merged.update(latest)
+                latest_record = dict(latest)
+                if latest_record.get("analysis_date") and not latest_record.get("analysis_time"):
+                    latest_record["analysis_time"] = latest_record.get("analysis_date")
+                merged.update(latest_record)
             result.append(merged)
         return result
 
