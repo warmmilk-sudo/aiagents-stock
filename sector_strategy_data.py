@@ -34,6 +34,7 @@ class SectorStrategyDataFetcher:
         self.logger = logging.getLogger(__name__)
         self._tushare_api = None
         self._tushare_url = None
+        self._dc_index_cache = {}
         
         # 配置日志
         if not self.logger.handlers:
@@ -72,6 +73,7 @@ class SectorStrategyDataFetcher:
             "success": False,
             "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
             "sectors": {},
+            "concepts": {},
             "sector_fund_flow": {},
             "market_overview": {},
             "north_flow": {},
@@ -120,7 +122,14 @@ class SectorStrategyDataFetcher:
             if news_data:
                 data["news"] = news_data
                 print(f"    ✓ 成功获取 {len(news_data)} 条新闻")
-            
+
+            missing_core = [
+                key for key in ("sectors", "concepts", "sector_fund_flow")
+                if not data.get(key)
+            ]
+            if missing_core:
+                raise RuntimeError(f"核心板块数据缺失: {', '.join(missing_core)}")
+
             data["success"] = True
             print("[智策] ✓ 板块数据获取完成！")
             
@@ -132,6 +141,92 @@ class SectorStrategyDataFetcher:
             data["error"] = str(e)
         
         return data
+
+    def _ensure_tushare_api(self):
+        """按需初始化 Tushare 客户端。"""
+        if self._tushare_api is not None:
+            return self._tushare_api
+
+        tushare_token = os.getenv('TUSHARE_TOKEN', '').strip()
+        if not tushare_token:
+            self.logger.info("[Tushare] 未配置 Token，跳过备用数据源")
+            return None
+
+        try:
+            self._tushare_api, self._tushare_url = create_tushare_pro(
+                token=tushare_token,
+            )
+            if self._tushare_api:
+                self.logger.info(f"[Tushare] 初始化成功，地址: {self._tushare_url}")
+        except Exception as e:
+            self.logger.warning(f"[Tushare] 初始化失败: {e}")
+            self._tushare_api = None
+
+        return self._tushare_api
+
+    def _fetch_tushare_trade_data(self, api_name, *, max_days=7, **kwargs):
+        """按最近交易日回退查询 Tushare 数据。"""
+        pro = self._ensure_tushare_api()
+        if not pro:
+            return pd.DataFrame()
+
+        last_error = None
+        for offset in range(max_days):
+            trade_date = (datetime.now() - timedelta(days=offset)).strftime('%Y%m%d')
+            params = dict(kwargs)
+            params.setdefault('trade_date', trade_date)
+            try:
+                df = getattr(pro, api_name)(**params)
+                if df is not None and not df.empty:
+                    return df
+            except Exception as e:
+                last_error = e
+
+        if last_error:
+            self.logger.warning(f"[Tushare] {api_name} 获取失败: {last_error}")
+        return pd.DataFrame()
+
+    def _get_tushare_board_snapshot(self, idx_type):
+        """获取最近可用的东财板块快照。"""
+        if idx_type in self._dc_index_cache:
+            return self._dc_index_cache[idx_type]
+
+        df = self._fetch_tushare_trade_data(
+            'dc_index',
+            idx_type=idx_type,
+        )
+        self._dc_index_cache[idx_type] = df
+        return df
+
+    @staticmethod
+    def _clean_value(value, default=0):
+        if pd.isna(value):
+            return default
+        return value
+
+    def _convert_tushare_board_snapshot(self, df):
+        boards = {}
+        if df is None or df.empty:
+            return boards
+
+        for _, row in df.iterrows():
+            board_name = row.get('name', '')
+            if not board_name:
+                continue
+
+            boards[board_name] = {
+                "name": board_name,
+                "change_pct": self._clean_value(row.get('pct_change')),
+                "turnover": self._clean_value(row.get('turnover_rate')),
+                "total_market_cap": self._clean_value(row.get('total_mv')),
+                "top_stock": self._clean_value(row.get('leading'), ''),
+                "top_stock_change": self._clean_value(row.get('leading_pct')),
+                "up_count": self._clean_value(row.get('up_num')),
+                "down_count": self._clean_value(row.get('down_num')),
+                "ts_code": self._clean_value(row.get('ts_code'), ''),
+            }
+
+        return boards
     
     def _get_sector_performance(self):
         """获取行业板块表现"""
@@ -162,6 +257,10 @@ class SectorStrategyDataFetcher:
             
         except Exception as e:
             print(f"    获取行业板块数据失败: {e}")
+            tushare_df = self._get_tushare_board_snapshot("行业板块")
+            if tushare_df is not None and not tushare_df.empty:
+                print(f"    [Tushare] 行业板块数据获取成功，共 {len(tushare_df)} 条")
+                return self._convert_tushare_board_snapshot(tushare_df)
             return {}
     
     def _get_concept_performance(self):
@@ -193,6 +292,10 @@ class SectorStrategyDataFetcher:
             
         except Exception as e:
             print(f"    获取概念板块数据失败: {e}")
+            tushare_df = self._get_tushare_board_snapshot("概念板块")
+            if tushare_df is not None and not tushare_df.empty:
+                print(f"    [Tushare] 概念板块数据获取成功，共 {len(tushare_df)} 条")
+                return self._convert_tushare_board_snapshot(tushare_df)
             return {}
     
     def _get_sector_fund_flow(self):
@@ -226,7 +329,45 @@ class SectorStrategyDataFetcher:
             
         except Exception as e:
             print(f"    获取行业资金流向失败: {e}")
-            return {}
+            tushare_df = self._fetch_tushare_trade_data(
+                'moneyflow_ind_dc',
+                content_type="行业",
+            )
+            if tushare_df is None or tushare_df.empty:
+                return {}
+
+            sector_snapshot = self._get_tushare_board_snapshot("行业板块")
+            pct_map = {}
+            if sector_snapshot is not None and not sector_snapshot.empty:
+                pct_map = {
+                    self._clean_value(row.get('name'), ''): self._clean_value(row.get('pct_change'))
+                    for _, row in sector_snapshot.iterrows()
+                }
+
+            fund_flow = {
+                "today": [],
+                "update_time": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            }
+
+            for _, row in tushare_df.head(50).iterrows():
+                sector_name = self._clean_value(row.get('name'), '')
+                fund_flow["today"].append({
+                    "sector": sector_name,
+                    "main_net_inflow": self._clean_value(row.get('net_amount')),
+                    "main_net_inflow_pct": self._clean_value(row.get('net_amount_rate')),
+                    "super_large_net_inflow": self._clean_value(row.get('buy_elg_amount')),
+                    "super_large_net_inflow_pct": self._clean_value(row.get('buy_elg_amount_rate')),
+                    "large_net_inflow": self._clean_value(row.get('buy_lg_amount')),
+                    "large_net_inflow_pct": self._clean_value(row.get('buy_lg_amount_rate')),
+                    "medium_net_inflow": self._clean_value(row.get('buy_md_amount')),
+                    "medium_net_inflow_pct": self._clean_value(row.get('buy_md_amount_rate')),
+                    "small_net_inflow": self._clean_value(row.get('buy_sm_amount')),
+                    "small_net_inflow_pct": self._clean_value(row.get('buy_sm_amount_rate')),
+                    "change_pct": pct_map.get(sector_name, self._clean_value(row.get('pct_change'))),
+                })
+
+            print(f"    [Tushare] 行业资金流向获取成功，共 {len(fund_flow['today'])} 条")
+            return fund_flow
     
     def _get_market_overview(self):
         """获取市场总体情况"""
@@ -428,7 +569,52 @@ class SectorStrategyDataFetcher:
             
         except Exception as e:
             print(f"    获取财经新闻失败: {e}")
-            return []
+            pro = self._ensure_tushare_api()
+            if not pro:
+                return []
+
+            start_date = (datetime.now() - timedelta(days=2)).strftime('%Y-%m-%d %H:%M:%S')
+            end_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            sources = ["新浪财经", "财联社", "同花顺", "第一财经"]
+            merged = []
+            seen = set()
+
+            for src in sources:
+                try:
+                    df = pro.major_news(
+                        src=src,
+                        start_date=start_date,
+                        end_date=end_date,
+                        fields='title,content,pub_time,src',
+                    )
+                except Exception as src_error:
+                    self.logger.warning(f"[Tushare] major_news({src}) 获取失败: {src_error}")
+                    continue
+
+                if df is None or df.empty:
+                    continue
+
+                for _, row in df.iterrows():
+                    title = self._clean_value(row.get('title'), '')
+                    pub_time = self._clean_value(row.get('pub_time'), '')
+                    key = (title, pub_time)
+                    if not title or key in seen:
+                        continue
+                    seen.add(key)
+                    merged.append({
+                        "title": title,
+                        "content": self._clean_value(row.get('content'), ''),
+                        "publish_time": str(pub_time),
+                        "source": self._clean_value(row.get('src'), src),
+                        "url": "",
+                    })
+                    if len(merged) >= 150:
+                        print(f"    [Tushare] 财经新闻获取成功，共 {len(merged)} 条")
+                        return merged
+
+            if merged:
+                print(f"    [Tushare] 财经新闻获取成功，共 {len(merged)} 条")
+            return merged
     
     def format_data_for_ai(self, data):
         """

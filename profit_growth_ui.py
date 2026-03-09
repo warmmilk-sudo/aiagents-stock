@@ -110,6 +110,20 @@ def build_profit_growth_filter_summary(
 
 
 def display_profit_growth():
+    _restore_profit_growth_result_from_latest_task()
+    _render_profit_growth_task_fragment()
+
+    finished_task = consume_finished_ui_analysis_task(PROFIT_GROWTH_TASK_TYPE, PROFIT_GROWTH_TASK_DONE_KEY)
+    if finished_task:
+        if finished_task.get("status") == "success":
+            payload = finished_task.get("result") or {}
+            st.session_state.profit_growth_stocks = payload.get("stocks_df")
+            st.session_state.profit_growth_time = payload.get("selected_time")
+            st.session_state.profit_growth_filter_summary = payload.get("filter_summary")
+            st.success(payload.get("message") or "净利增长选股完成。")
+        else:
+            st.error(f"净利增长选股失败：{finished_task.get('error', '未知错误')}")
+
     """显示净利增长策略界面"""
     
     # 检查是否显示监控面板
@@ -210,20 +224,6 @@ def display_profit_growth():
         exclude_cyb=exclude_cyb,
     )
     st.caption(f"当前筛选：{filter_summary}")
-    _restore_profit_growth_result_from_latest_task()
-    _render_profit_growth_task_fragment()
-
-    finished_task = consume_finished_ui_analysis_task(PROFIT_GROWTH_TASK_TYPE, PROFIT_GROWTH_TASK_DONE_KEY)
-    if finished_task:
-        if finished_task.get("status") == "success":
-            payload = finished_task.get("result") or {}
-            st.session_state.profit_growth_stocks = payload.get("stocks_df")
-            st.session_state.profit_growth_time = payload.get("selected_time")
-            st.session_state.profit_growth_filter_summary = payload.get("filter_summary")
-            st.success(payload.get("message") or "净利增长选股完成。")
-        else:
-            st.error(f"净利增长选股失败：{finished_task.get('error', '未知错误')}")
-
     action_label, action_disabled, action_help = get_ui_analysis_button_state(
         PROFIT_GROWTH_TASK_TYPE,
         "开始选股",

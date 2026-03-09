@@ -22,6 +22,28 @@ from ui_analysis_task_utils import (
 )
 
 def display_stock_results(stocks_df: pd.DataFrame, selector):
+    _restore_low_price_bull_result_from_latest_task()
+    _render_low_price_bull_task_fragment()
+
+    finished_task = consume_finished_ui_analysis_task(LOW_PRICE_BULL_TASK_TYPE, LOW_PRICE_BULL_TASK_DONE_KEY)
+    if finished_task:
+        if finished_task.get("status") == "success":
+            payload = finished_task.get("result") or {}
+            stocks_df = payload.get("stocks_df")
+            if stocks_df is not None:
+                st.session_state["low_price_bull_stocks"] = stocks_df
+                st.session_state["low_price_bull_selector"] = None
+                st.session_state["low_price_bull_filter_summary"] = payload.get("filter_summary")
+                st.session_state["low_price_bull_selected_time"] = payload.get("selected_time")
+                st.success(payload.get("message") or "低价擒牛选股完成。")
+                send_dingtalk_notification(
+                    stocks_df,
+                    int(st.session_state.get("low_price_bull_top_n", top_n)),
+                    payload.get("filter_summary"),
+                )
+        else:
+            st.error(f"低价擒牛选股失败：{finished_task.get('error', '未知错误')}")
+
     """显示选股结果"""
     
     st.markdown("---")
@@ -753,28 +775,6 @@ def display_low_price_bull():
         only_hs_a=only_hs_a,
     )
     st.caption(f"当前筛选：{filter_summary}")
-    _restore_low_price_bull_result_from_latest_task()
-    _render_low_price_bull_task_fragment()
-
-    finished_task = consume_finished_ui_analysis_task(LOW_PRICE_BULL_TASK_TYPE, LOW_PRICE_BULL_TASK_DONE_KEY)
-    if finished_task:
-        if finished_task.get("status") == "success":
-            payload = finished_task.get("result") or {}
-            stocks_df = payload.get("stocks_df")
-            if stocks_df is not None:
-                st.session_state["low_price_bull_stocks"] = stocks_df
-                st.session_state["low_price_bull_selector"] = None
-                st.session_state["low_price_bull_filter_summary"] = payload.get("filter_summary")
-                st.session_state["low_price_bull_selected_time"] = payload.get("selected_time")
-                st.success(payload.get("message") or "低价擒牛选股完成。")
-                send_dingtalk_notification(
-                    stocks_df,
-                    int(st.session_state.get("low_price_bull_top_n", top_n)),
-                    payload.get("filter_summary"),
-                )
-        else:
-            st.error(f"低价擒牛选股失败：{finished_task.get('error', '未知错误')}")
-
     action_label, action_disabled, action_help = get_ui_analysis_button_state(
         LOW_PRICE_BULL_TASK_TYPE,
         "开始低价擒牛选股",

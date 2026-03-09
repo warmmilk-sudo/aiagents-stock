@@ -117,6 +117,23 @@ def _restore_main_force_result_from_latest_task() -> None:
     st.session_state.pop("main_force_analyzer", None)
 
 def display_main_force_selector(lightweight_model=None, reasoning_model=None):
+    _restore_main_force_result_from_latest_task()
+    _render_main_force_task_fragment()
+    finished_task = consume_finished_ui_analysis_task(MAIN_FORCE_TASK_TYPE, MAIN_FORCE_TASK_DONE_KEY)
+    if finished_task:
+        if finished_task.get("status") == "success":
+            payload = finished_task.get("result") or {}
+            result = payload.get("result") or {}
+            st.session_state.main_force_result = result
+            st.session_state.main_force_result_context = payload.get("context_snapshot")
+            st.session_state.pop("main_force_analyzer", None)
+            st.success(payload.get("message") or "主力选股分析完成。")
+        else:
+            error_message = finished_task.get("error") or "未知错误"
+            st.session_state.main_force_result = {"success": False, "error": error_message}
+            st.session_state.pop("main_force_result_context", None)
+            st.error(f"主力选股分析失败: {error_message}")
+
     """显示主力选股界面"""
 
     # 检查是否触发批量分析（不立即删除标志）
@@ -216,23 +233,6 @@ def display_main_force_selector(lightweight_model=None, reasoning_model=None):
                 value=5000.0,
                 step=100.0
             )
-
-    _restore_main_force_result_from_latest_task()
-    _render_main_force_task_fragment()
-    finished_task = consume_finished_ui_analysis_task(MAIN_FORCE_TASK_TYPE, MAIN_FORCE_TASK_DONE_KEY)
-    if finished_task:
-        if finished_task.get("status") == "success":
-            payload = finished_task.get("result") or {}
-            result = payload.get("result") or {}
-            st.session_state.main_force_result = result
-            st.session_state.main_force_result_context = payload.get("context_snapshot")
-            st.session_state.pop("main_force_analyzer", None)
-            st.success(payload.get("message") or "主力选股分析完成。")
-        else:
-            error_message = finished_task.get("error") or "未知错误"
-            st.session_state.main_force_result = {"success": False, "error": error_message}
-            st.session_state.pop("main_force_result_context", None)
-            st.error(f"主力选股分析失败: {error_message}")
 
     action_label, action_disabled, action_help = get_ui_analysis_button_state(
         MAIN_FORCE_TASK_TYPE,

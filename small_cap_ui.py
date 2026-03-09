@@ -116,6 +116,20 @@ def build_small_cap_filter_summary(
 
 
 def display_small_cap():
+    _restore_small_cap_result_from_latest_task()
+    _render_small_cap_task_fragment()
+
+    finished_task = consume_finished_ui_analysis_task(SMALL_CAP_TASK_TYPE, SMALL_CAP_TASK_DONE_KEY)
+    if finished_task:
+        if finished_task.get("status") == "success":
+            payload = finished_task.get("result") or {}
+            st.session_state.small_cap_stocks = payload.get("stocks_df")
+            st.session_state.small_cap_time = payload.get("selected_time")
+            st.session_state.small_cap_filter_summary = payload.get("filter_summary")
+            st.success(payload.get("message") or "小市值选股完成。")
+        else:
+            st.error(f"小市值选股失败：{finished_task.get('error', '未知错误')}")
+
     """显示小市值策略界面"""
     
     # 检查是否显示监控面板
@@ -218,20 +232,6 @@ def display_small_cap():
         only_hs_a=only_hs_a,
     )
     st.caption(f"当前筛选：{filter_summary}")
-    _restore_small_cap_result_from_latest_task()
-    _render_small_cap_task_fragment()
-
-    finished_task = consume_finished_ui_analysis_task(SMALL_CAP_TASK_TYPE, SMALL_CAP_TASK_DONE_KEY)
-    if finished_task:
-        if finished_task.get("status") == "success":
-            payload = finished_task.get("result") or {}
-            st.session_state.small_cap_stocks = payload.get("stocks_df")
-            st.session_state.small_cap_time = payload.get("selected_time")
-            st.session_state.small_cap_filter_summary = payload.get("filter_summary")
-            st.success(payload.get("message") or "小市值选股完成。")
-        else:
-            st.error(f"小市值选股失败：{finished_task.get('error', '未知错误')}")
-
     action_label, action_disabled, action_help = get_ui_analysis_button_state(
         SMALL_CAP_TASK_TYPE,
         "开始选股",
