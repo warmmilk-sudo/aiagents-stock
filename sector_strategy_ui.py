@@ -365,6 +365,7 @@ def display_history_tab():
                 display_analysis_results(
                     detail['analysis_content_parsed'],
                     show_export=False,
+                    include_visualizations=False,
                     key_prefix=f"sector_history_{report_id}",
                 )
     
@@ -491,7 +492,12 @@ def display_saved_report_summary(saved_report: dict):
     _render_sector_summary(_extract_sector_strategy_summary(saved_report))
 
 
-def display_analysis_results(result, show_export=True, key_prefix="sector_main"):
+def display_analysis_results(
+    result,
+    show_export=True,
+    key_prefix="sector_main",
+    include_visualizations: bool = True,
+):
     """显示分析结果"""
     
     st.success("智策分析完成。")
@@ -513,29 +519,27 @@ def display_analysis_results(result, show_export=True, key_prefix="sector_main")
     st.markdown("---")
     
     # 创建标签页
-    tab1, tab2, tab3, tab4 = st.tabs([
-        "核心预测", 
-        "智能体分析", 
+    tab_labels = [
+        "核心预测",
+        "智能体分析",
         "综合研判",
-        "数据可视化"
-    ])
-    
-    # Tab 1: 核心预测
-    with tab1:
-        display_predictions(result.get("final_predictions", {}))
-    
-    # Tab 2: 智能体分析
-    with tab2:
-        display_agents_reports(result.get("agents_analysis", {}))
-    
-    # Tab 3: 综合研判
-    with tab3:
-        display_comprehensive_report(result.get("comprehensive_report", ""))
-    
-    # Tab 4: 数据可视化
-    with tab4:
-        display_visualizations(result.get("final_predictions", {}), key_prefix=key_prefix)
+    ]
+    if include_visualizations:
+        tab_labels.append("数据可视化")
+    tabs = st.tabs(tab_labels)
 
+    with tabs[0]:
+        display_predictions(result.get("final_predictions", {}))
+
+    with tabs[1]:
+        display_agents_reports(result.get("agents_analysis", {}))
+
+    with tabs[2]:
+        display_comprehensive_report(result.get("comprehensive_report", ""))
+
+    if include_visualizations:
+        with tabs[3]:
+            display_visualizations(result.get("final_predictions", {}), key_prefix=key_prefix)
 
 def display_predictions(predictions):
     """显示核心预测"""

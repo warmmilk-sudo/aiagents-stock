@@ -1667,15 +1667,20 @@ class PortfolioManager:
     def sync_latest_analysis_to_realtime_monitor(self, codes: Optional[List[str]] = None) -> Dict[str, int]:
         """将最新持仓分析结果同步到实时监测。"""
         added = 0
+        failed = 0
         stocks = self.db.get_all_stocks(auto_monitor_only=True)
         if codes:
             code_set = {self._normalize_stock_code(code) for code in codes if code}
             stocks = [stock for stock in stocks if stock["code"] in code_set]
         for stock in stocks:
-            result = self.lifecycle_service.sync_position(stock_id=stock["id"])
-            if result.get("price_alerts_upserted"):
-                added += int(result.get("price_alerts_upserted", 0))
-        return {"added": added, "updated": 0, "failed": 0, "total": added}
+            try:
+                result = self.lifecycle_service.sync_position(stock_id=stock["id"])
+                if result.get("price_alerts_upserted"):
+                    added += int(result.get("price_alerts_upserted", 0))
+            except Exception as e:
+                failed += 1
+                print(f"[ERROR] 同步实时监测失败 ({stock['code']}): {e}")
+        return {"added": added, "updated": 0, "failed": failed, "total": added + failed}
 
     def remove_managed_integrations_for_code(self, code: str) -> Dict[str, int]:
         """移除指定股票的持仓托管下游记录。"""
@@ -1731,10 +1736,30 @@ class PortfolioManager:
                 "cleanup": {"smart_monitor_deleted": 0, "realtime_monitor_deleted": 0},
             }
 
-        smart_sync_result = self.sync_portfolio_to_smart_monitor()
-        monitor_sync_result = self.sync_latest_analysis_to_realtime_monitor()
-        cleanup_result = self.cleanup_managed_integrations()
-        self._integrations_reconcile_pending = False
+        smart_sync_result = {"synced": 0, "failed": 0, "total": 0}
+        monitor_sync_result = {"added": 0, "updated": 0, "failed": 0, "total": 0}
+        cleanup_result = {"smart_monitor_deleted": 0, "realtime_monitor_deleted": 0}
+
+        try:
+            smart_sync_result = self.sync_portfolio_to_smart_monitor()
+        except Exception as e:
+            smart_sync_result = {"synced": 0, "failed": 1, "total": 1, "error": str(e)}
+            print(f"[ERROR] 持仓联动同步 AI盯盘失败: {e}")
+
+        try:
+            monitor_sync_result = self.sync_latest_analysis_to_realtime_monitor()
+        except Exception as e:
+            monitor_sync_result = {"added": 0, "updated": 0, "failed": 1, "total": 1, "error": str(e)}
+            print(f"[ERROR] 持仓联动同步实时监测失败: {e}")
+
+        try:
+            cleanup_result = self.cleanup_managed_integrations()
+        except Exception as e:
+            cleanup_result = {"smart_monitor_deleted": 0, "realtime_monitor_deleted": 0, "error": str(e)}
+            print(f"[ERROR] 持仓联动清理失败: {e}")
+        finally:
+            # Avoid repeated page-load error loops; later data mutations will reopen reconciliation.
+            self._integrations_reconcile_pending = False
 
         return {
             "smart_monitor_sync": smart_sync_result,

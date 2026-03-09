@@ -10,8 +10,6 @@
 /.cursor
 /openspec
 TradEnv/
-
-*.db
 *.log
 __pycache__/
 .codex_test_tmp/

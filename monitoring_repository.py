@@ -16,6 +16,11 @@ def resolve_monitoring_db_path(seed_db_path: str) -> str:
 class MonitoringRepository:
     """Canonical monitoring storage for AI tasks and price alerts."""
 
+    CONNECTION_TIMEOUT_SECONDS = 30
+    BUSY_TIMEOUT_MILLISECONDS = 30000
+    INDEX_MIGRATION_KEY = "monitoring_index_migration_v1"
+    MANAGED_BINDING_REPAIR_KEY = "monitoring_managed_binding_repair_v1"
+
     def __init__(self, db_path: str = "investment.db"):
         self.seed_db_path = db_path
         self.db_path = resolve_investment_db_path(db_path)
@@ -25,112 +30,181 @@ class MonitoringRepository:
         self._init_database()
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(
+            self.db_path,
+            timeout=self.CONNECTION_TIMEOUT_SECONDS,
+        )
         conn.row_factory = sqlite3.Row
+        conn.execute(f"PRAGMA busy_timeout = {self.BUSY_TIMEOUT_MILLISECONDS}")
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("PRAGMA synchronous = NORMAL")
+        try:
+            conn.execute("PRAGMA journal_mode = WAL")
+        except sqlite3.OperationalError:
+            # Some readonly/legacy contexts may not allow changing journal mode.
+            pass
         return conn
 
     def _init_database(self) -> None:
         conn = self._connect()
+        try:
+            cursor = conn.cursor()
+
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS monitoring_items (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    symbol TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    monitor_type TEXT NOT NULL,
+                    source TEXT DEFAULT 'manual',
+                    enabled INTEGER DEFAULT 1,
+                    interval_minutes INTEGER DEFAULT 30,
+                    trading_hours_only INTEGER DEFAULT 1,
+                    notification_enabled INTEGER DEFAULT 1,
+                    managed_by_portfolio INTEGER DEFAULT 0,
+                    account_name TEXT,
+                    asset_id INTEGER,
+                    portfolio_stock_id INTEGER,
+                    origin_analysis_id INTEGER,
+                    current_price REAL,
+                    last_checked TEXT,
+                    last_status TEXT,
+                    last_message TEXT,
+                    config_json TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS migration_conflicts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    source_db TEXT NOT NULL,
+                    source_table TEXT NOT NULL,
+                    source_key TEXT NOT NULL,
+                    symbol TEXT,
+                    conflict_type TEXT NOT NULL,
+                    payload_json TEXT,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS monitoring_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    monitoring_item_id INTEGER,
+                    symbol TEXT NOT NULL,
+                    name TEXT,
+                    monitor_type TEXT,
+                    event_type TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    details_json TEXT,
+                    notification_pending INTEGER DEFAULT 0,
+                    sent INTEGER DEFAULT 0,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (monitoring_item_id) REFERENCES monitoring_items (id)
+                )
+                """
+            )
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS monitoring_price_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    monitoring_item_id INTEGER NOT NULL,
+                    price REAL NOT NULL,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (monitoring_item_id) REFERENCES monitoring_items (id)
+                )
+                """
+            )
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS monitoring_metadata (
+                    meta_key TEXT PRIMARY KEY,
+                    meta_value TEXT,
+                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            self._ensure_column(cursor, "monitoring_items", "account_name", "TEXT")
+            self._ensure_column(cursor, "monitoring_items", "asset_id", "INTEGER")
+            self._ensure_column(cursor, "monitoring_items", "portfolio_stock_id", "INTEGER")
+            self._ensure_column(cursor, "monitoring_items", "origin_analysis_id", "INTEGER")
+            self._migrate_indexes_if_needed(cursor)
+            self._ensure_indexes(cursor)
+            self._repair_managed_bindings_if_needed(cursor)
+            conn.commit()
+        finally:
+            conn.close()
+
+    @staticmethod
+    def _ensure_column(cursor, table: str, column: str, definition: str) -> None:
+        cursor.execute(f"PRAGMA table_info({table})")
+        existing_columns = {row[1] for row in cursor.fetchall()}
+        if column not in existing_columns:
+            cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+    @staticmethod
+    def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
         cursor = conn.cursor()
+        cursor.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name = ?",
+            (table,),
+        )
+        return cursor.fetchone() is not None
+
+    @staticmethod
+    def _get_metadata_from_cursor(cursor: sqlite3.Cursor, key: str) -> Optional[str]:
+        cursor.execute("SELECT meta_value FROM monitoring_metadata WHERE meta_key = ?", (key,))
+        row = cursor.fetchone()
+        return row[0] if row else None
+
+    @staticmethod
+    def _set_metadata_on_cursor(cursor: sqlite3.Cursor, key: str, value: str) -> None:
+        cursor.execute(
+            """
+            INSERT INTO monitoring_metadata (meta_key, meta_value, updated_at)
+            VALUES (?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(meta_key) DO UPDATE SET
+                meta_value = excluded.meta_value,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (key, value),
+        )
+
+    def _migrate_indexes_if_needed(self, cursor: sqlite3.Cursor) -> None:
+        if self._get_metadata_from_cursor(cursor, self.INDEX_MIGRATION_KEY):
+            return
 
         cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS monitoring_items (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                symbol TEXT NOT NULL,
-                name TEXT NOT NULL,
-                monitor_type TEXT NOT NULL,
-                source TEXT DEFAULT 'manual',
-                enabled INTEGER DEFAULT 1,
-                interval_minutes INTEGER DEFAULT 30,
-                trading_hours_only INTEGER DEFAULT 1,
-                notification_enabled INTEGER DEFAULT 1,
-                managed_by_portfolio INTEGER DEFAULT 0,
-                account_name TEXT,
-                asset_id INTEGER,
-                portfolio_stock_id INTEGER,
-                origin_analysis_id INTEGER,
-                current_price REAL,
-                last_checked TEXT,
-                last_status TEXT,
-                last_message TEXT,
-                config_json TEXT NOT NULL DEFAULT '{}',
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-            )
-            """
+            "SELECT name, COALESCE(sql, '') AS sql FROM sqlite_master WHERE type='index' AND tbl_name='monitoring_items'"
         )
-        cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS migration_conflicts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                source_db TEXT NOT NULL,
-                source_table TEXT NOT NULL,
-                source_key TEXT NOT NULL,
-                symbol TEXT,
-                conflict_type TEXT NOT NULL,
-                payload_json TEXT,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP
-            )
-            """
+        index_sql_map = {row[0]: row[1] for row in cursor.fetchall()}
+
+        legacy_indexes = {
+            "idx_monitoring_ai_task_symbol",
+            "idx_monitoring_managed_alert_symbol",
+        }
+        for index_name in legacy_indexes:
+            if index_name in index_sql_map:
+                cursor.execute(f"DROP INDEX IF EXISTS {index_name}")
+
+        asset_index_sql = (index_sql_map.get("idx_monitoring_asset_type") or "").upper()
+        if asset_index_sql and (
+            "UNIQUE" not in asset_index_sql or "ASSET_ID IS NOT NULL" not in asset_index_sql
+        ):
+            cursor.execute("DROP INDEX IF EXISTS idx_monitoring_asset_type")
+
+        self._set_metadata_on_cursor(
+            cursor,
+            self.INDEX_MIGRATION_KEY,
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         )
-        cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS monitoring_events (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                monitoring_item_id INTEGER,
-                symbol TEXT NOT NULL,
-                name TEXT,
-                monitor_type TEXT,
-                event_type TEXT NOT NULL,
-                message TEXT NOT NULL,
-                details_json TEXT,
-                notification_pending INTEGER DEFAULT 0,
-                sent INTEGER DEFAULT 0,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (monitoring_item_id) REFERENCES monitoring_items (id)
-            )
-            """
-        )
-        cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS monitoring_price_history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                monitoring_item_id INTEGER NOT NULL,
-                price REAL NOT NULL,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (monitoring_item_id) REFERENCES monitoring_items (id)
-            )
-            """
-        )
-        cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS monitoring_metadata (
-                meta_key TEXT PRIMARY KEY,
-                meta_value TEXT,
-                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-            )
-            """
-        )
-        self._ensure_column(cursor, "monitoring_items", "account_name", "TEXT")
-        self._ensure_column(cursor, "monitoring_items", "asset_id", "INTEGER")
-        self._ensure_column(cursor, "monitoring_items", "portfolio_stock_id", "INTEGER")
-        self._ensure_column(cursor, "monitoring_items", "origin_analysis_id", "INTEGER")
-        cursor.execute(
-            """
-            DROP INDEX IF EXISTS idx_monitoring_asset_type
-            """
-        )
-        cursor.execute(
-            """
-            DROP INDEX IF EXISTS idx_monitoring_ai_task_symbol
-            """
-        )
-        cursor.execute(
-            """
-            DROP INDEX IF EXISTS idx_monitoring_managed_alert_symbol
-            """
-        )
+
+    def _ensure_indexes(self, cursor: sqlite3.Cursor) -> None:
         cursor.execute(
             """
             CREATE UNIQUE INDEX IF NOT EXISTS idx_monitoring_asset_type
@@ -154,24 +228,182 @@ class MonitoringRepository:
               AND portfolio_stock_id IS NOT NULL
             """
         )
-        conn.commit()
-        conn.close()
 
-    @staticmethod
-    def _ensure_column(cursor, table: str, column: str, definition: str) -> None:
-        cursor.execute(f"PRAGMA table_info({table})")
-        existing_columns = {row[1] for row in cursor.fetchall()}
-        if column not in existing_columns:
-            cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+    def _repair_managed_bindings_if_needed(self, cursor: sqlite3.Cursor) -> None:
+        repaired = self._repair_managed_bindings(cursor)
+        if repaired:
+            self._set_metadata_on_cursor(
+                cursor,
+                self.MANAGED_BINDING_REPAIR_KEY,
+                json.dumps(
+                    {
+                        "repaired": repaired,
+                        "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    },
+                    ensure_ascii=False,
+                ),
+            )
 
-    @staticmethod
-    def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
-        cursor = conn.cursor()
+    def _repair_managed_bindings(self, cursor: sqlite3.Cursor) -> int:
+        connection = cursor.connection
+        if not self._table_exists(connection, "monitoring_items"):
+            return 0
+
         cursor.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name = ?",
-            (table,),
+            """
+            SELECT id, symbol, account_name, asset_id, portfolio_stock_id
+            FROM monitoring_items
+            WHERE managed_by_portfolio = 1
+              AND monitor_type IN ('ai_task', 'price_alert')
+              AND (
+                    asset_id IS NULL
+                 OR account_name IS NULL
+                 OR TRIM(account_name) = ''
+              )
+            ORDER BY id ASC
+            """
         )
-        return cursor.fetchone() is not None
+        rows = [dict(row) for row in cursor.fetchall()]
+        repaired = 0
+
+        for row in rows:
+            resolved = self._resolve_asset_binding_for_managed_item(cursor, row)
+            if not resolved:
+                continue
+
+            updates: List[str] = []
+            params: List[object] = []
+            current_account = str(row.get("account_name") or "").strip()
+            resolved_account = str(resolved.get("account_name") or "").strip()
+            resolved_asset_id = resolved.get("asset_id")
+
+            if row.get("asset_id") is None and resolved_asset_id is not None:
+                updates.append("asset_id = ?")
+                params.append(resolved_asset_id)
+
+            if not current_account and resolved_account:
+                updates.append("account_name = ?")
+                params.append(resolved_account)
+
+            if not updates:
+                continue
+
+            params.append(row["id"])
+            try:
+                cursor.execute(
+                    f"UPDATE monitoring_items SET {', '.join(updates)}, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    tuple(params),
+                )
+            except sqlite3.IntegrityError:
+                continue
+            if cursor.rowcount > 0:
+                repaired += 1
+
+        return repaired
+
+    def _resolve_asset_binding_for_managed_item(self, cursor: sqlite3.Cursor, item: Dict) -> Optional[Dict]:
+        symbol = item.get("symbol")
+        account_name = str(item.get("account_name") or "").strip() or None
+        asset_id = item.get("asset_id")
+        portfolio_stock_id = item.get("portfolio_stock_id")
+
+        if asset_id is not None:
+            bound = self._query_asset_by_id(cursor, int(asset_id))
+            if bound:
+                return bound
+
+        if portfolio_stock_id is not None:
+            bound = self._query_asset_by_id(cursor, int(portfolio_stock_id))
+            if bound:
+                return bound
+
+        if symbol and account_name:
+            bound = self._query_asset_by_symbol(cursor, symbol, account_name)
+            if bound:
+                return bound
+
+        if symbol and not account_name:
+            bound = self._query_unique_asset_by_symbol(cursor, symbol)
+            if bound:
+                return bound
+
+        return None
+
+    def _query_asset_by_id(self, cursor: sqlite3.Cursor, asset_id: int) -> Optional[Dict]:
+        if not self._table_exists(cursor.connection, "assets"):
+            return None
+        cursor.execute(
+            """
+            SELECT id, account_name
+            FROM assets
+            WHERE id = ? AND deleted_at IS NULL
+            LIMIT 1
+            """,
+            (asset_id,),
+        )
+        row = cursor.fetchone()
+        if not row:
+            return None
+        return {
+            "asset_id": int(row[0]),
+            "account_name": row[1] or DEFAULT_ACCOUNT_NAME,
+        }
+
+    def _query_asset_by_symbol(
+        self,
+        cursor: sqlite3.Cursor,
+        symbol: str,
+        account_name: str,
+    ) -> Optional[Dict]:
+        if not self._table_exists(cursor.connection, "assets"):
+            return None
+        cursor.execute(
+            """
+            SELECT id, account_name
+            FROM assets
+            WHERE symbol = ?
+              AND account_name = ?
+              AND deleted_at IS NULL
+            ORDER BY
+                CASE status
+                    WHEN 'portfolio' THEN 1
+                    WHEN 'watchlist' THEN 2
+                    ELSE 3
+                END,
+                id DESC
+            LIMIT 1
+            """,
+            (symbol, account_name),
+        )
+        row = cursor.fetchone()
+        if not row:
+            return None
+        return {
+            "asset_id": int(row[0]),
+            "account_name": row[1] or account_name,
+        }
+
+    def _query_unique_asset_by_symbol(self, cursor: sqlite3.Cursor, symbol: str) -> Optional[Dict]:
+        if not self._table_exists(cursor.connection, "assets"):
+            return None
+        cursor.execute(
+            """
+            SELECT id, account_name
+            FROM assets
+            WHERE symbol = ?
+              AND deleted_at IS NULL
+            ORDER BY id ASC
+            """,
+            (symbol,),
+        )
+        rows = cursor.fetchall()
+        if len(rows) != 1:
+            return None
+        row = rows[0]
+        return {
+            "asset_id": int(row[0]),
+            "account_name": row[1] or DEFAULT_ACCOUNT_NAME,
+        }
 
     @staticmethod
     def _normalize_interval_minutes(value: Optional[int]) -> int:
@@ -203,32 +435,40 @@ class MonitoringRepository:
 
     def _set_metadata(self, key: str, value: str) -> None:
         conn = self._connect()
-        cursor = conn.cursor()
-        cursor.execute(
-            """
-            INSERT INTO monitoring_metadata (meta_key, meta_value, updated_at)
-            VALUES (?, ?, CURRENT_TIMESTAMP)
-            ON CONFLICT(meta_key) DO UPDATE SET
-                meta_value = excluded.meta_value,
-                updated_at = CURRENT_TIMESTAMP
-            """,
-            (key, value),
-        )
-        conn.commit()
-        conn.close()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO monitoring_metadata (meta_key, meta_value, updated_at)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(meta_key) DO UPDATE SET
+                    meta_value = excluded.meta_value,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (key, value),
+            )
+            conn.commit()
+        finally:
+            conn.close()
 
     def _get_metadata(self, key: str) -> Optional[str]:
         conn = self._connect()
-        cursor = conn.cursor()
-        cursor.execute("SELECT meta_value FROM monitoring_metadata WHERE meta_key = ?", (key,))
-        row = cursor.fetchone()
-        conn.close()
-        return row["meta_value"] if row else None
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT meta_value FROM monitoring_metadata WHERE meta_key = ?", (key,))
+            row = cursor.fetchone()
+            return row["meta_value"] if row else None
+        finally:
+            conn.close()
 
     def _ensure_asset_binding(self, item_data: Dict) -> Dict:
         if item_data.get("asset_id") or not item_data.get("symbol"):
             return item_data
-        if item_data.get("monitor_type") not in {"ai_task", "price_alert"}:
+        monitor_type = item_data.get("monitor_type")
+        managed_by_portfolio = bool(item_data.get("managed_by_portfolio", False))
+        if monitor_type not in {"ai_task", "price_alert"}:
+            return item_data
+        if monitor_type == "price_alert" and not managed_by_portfolio:
             return item_data
 
         from asset_repository import AssetRepository, STATUS_PORTFOLIO, STATUS_RESEARCH
@@ -263,49 +503,170 @@ class MonitoringRepository:
             item_data["portfolio_stock_id"] = asset.get("id") if asset.get("status") == STATUS_PORTFOLIO else None
         return item_data
 
+    def _find_existing_item_for_upsert(self, item_data: Dict) -> Optional[Dict]:
+        monitor_type = item_data["monitor_type"]
+        symbol = item_data["symbol"]
+        managed = bool(item_data.get("managed_by_portfolio", False))
+        account_name = item_data.get("account_name")
+        asset_id = item_data.get("asset_id")
+        portfolio_stock_id = item_data.get("portfolio_stock_id")
+
+        if asset_id is not None:
+            by_asset = self.get_item_by_symbol(
+                symbol,
+                monitor_type=monitor_type,
+                managed_only=managed if monitor_type == "price_alert" else None,
+                account_name=account_name if account_name is not None else None,
+                asset_id=asset_id,
+                portfolio_stock_id=portfolio_stock_id if monitor_type == "price_alert" and managed else None,
+            )
+            if by_asset:
+                return by_asset
+
+        if monitor_type == "ai_task":
+            target_account = account_name or DEFAULT_ACCOUNT_NAME
+            by_account_symbol = self.get_item_by_symbol(
+                symbol,
+                monitor_type="ai_task",
+                account_name=target_account,
+            )
+            if by_account_symbol:
+                return by_account_symbol
+            if portfolio_stock_id is not None:
+                by_position = self.get_item_by_symbol(
+                    symbol,
+                    monitor_type="ai_task",
+                    portfolio_stock_id=portfolio_stock_id,
+                )
+                if by_position:
+                    return by_position
+
+        if monitor_type == "price_alert" and managed:
+            if portfolio_stock_id is not None:
+                by_position = self.get_item_by_symbol(
+                    symbol,
+                    monitor_type="price_alert",
+                    managed_only=True,
+                    account_name=account_name if account_name is not None else None,
+                    portfolio_stock_id=portfolio_stock_id,
+                )
+                if by_position:
+                    return by_position
+                by_position_loose = self.get_item_by_symbol(
+                    symbol,
+                    monitor_type="price_alert",
+                    managed_only=True,
+                    portfolio_stock_id=portfolio_stock_id,
+                )
+                if by_position_loose:
+                    return by_position_loose
+            if account_name:
+                by_account = self.get_item_by_symbol(
+                    symbol,
+                    monitor_type="price_alert",
+                    managed_only=True,
+                    account_name=account_name,
+                )
+                if by_account:
+                    return by_account
+
+        return None
+
+    def _recover_from_integrity_conflict(self, item_data: Dict) -> Optional[int]:
+        existing = self._find_existing_item_for_upsert(item_data)
+        if not existing:
+            return None
+        monitor_type = item_data.get("monitor_type")
+        merged_config = dict(existing.get("config") or {})
+        merged_config.update(item_data.get("config") or {})
+        self.update_item(
+            existing["id"],
+            {
+                "name": item_data.get("name", existing.get("name")),
+                "source": item_data.get("source", existing.get("source", "manual")),
+                "enabled": item_data.get("enabled", existing.get("enabled", True)),
+                "interval_minutes": item_data.get("interval_minutes", existing.get("interval_minutes", 30)),
+                "trading_hours_only": item_data.get("trading_hours_only", existing.get("trading_hours_only", True)),
+                "notification_enabled": item_data.get("notification_enabled", existing.get("notification_enabled", True)),
+                "managed_by_portfolio": item_data.get("managed_by_portfolio", existing.get("managed_by_portfolio", False)),
+                "account_name": (
+                    item_data.get("account_name") or existing.get("account_name") or DEFAULT_ACCOUNT_NAME
+                    if monitor_type == "ai_task"
+                    else item_data.get("account_name", existing.get("account_name"))
+                ),
+                "asset_id": item_data.get("asset_id", existing.get("asset_id")),
+                "portfolio_stock_id": item_data.get("portfolio_stock_id", existing.get("portfolio_stock_id")),
+                "origin_analysis_id": item_data.get("origin_analysis_id", existing.get("origin_analysis_id")),
+                "current_price": item_data.get("current_price", existing.get("current_price")),
+                "last_checked": item_data.get("last_checked", existing.get("last_checked")),
+                "last_status": item_data.get("last_status", existing.get("last_status")),
+                "last_message": item_data.get("last_message", existing.get("last_message")),
+                "config": merged_config,
+            },
+        )
+        return int(existing["id"])
+
     def create_item(self, item_data: Dict) -> int:
         item_data = self._ensure_asset_binding(dict(item_data))
         config = dict(item_data.get("config") or {})
         account_name = item_data.get("account_name")
         if item_data.get("monitor_type") == "ai_task":
             account_name = account_name or DEFAULT_ACCOUNT_NAME
+            item_data["account_name"] = account_name
+        integrity_error = None
+        item_id = None
         conn = self._connect()
-        cursor = conn.cursor()
-        cursor.execute(
-            """
-            INSERT INTO monitoring_items (
-                symbol, name, monitor_type, source, enabled, interval_minutes,
-                trading_hours_only, notification_enabled, managed_by_portfolio,
-                account_name, asset_id, portfolio_stock_id, origin_analysis_id,
-                current_price, last_checked, last_status, last_message, config_json
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO monitoring_items (
+                    symbol, name, monitor_type, source, enabled, interval_minutes,
+                    trading_hours_only, notification_enabled, managed_by_portfolio,
+                    account_name, asset_id, portfolio_stock_id, origin_analysis_id,
+                    current_price, last_checked, last_status, last_message, config_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    item_data["symbol"],
+                    item_data.get("name") or item_data["symbol"],
+                    item_data["monitor_type"],
+                    item_data.get("source", "manual"),
+                    1 if item_data.get("enabled", True) else 0,
+                    self._normalize_interval_minutes(item_data.get("interval_minutes", 30)),
+                    1 if item_data.get("trading_hours_only", True) else 0,
+                    1 if item_data.get("notification_enabled", True) else 0,
+                    1 if item_data.get("managed_by_portfolio", False) else 0,
+                    account_name,
+                    item_data.get("asset_id"),
+                    item_data.get("portfolio_stock_id"),
+                    item_data.get("origin_analysis_id"),
+                    item_data.get("current_price"),
+                    item_data.get("last_checked"),
+                    item_data.get("last_status"),
+                    item_data.get("last_message"),
+                    json.dumps(config, ensure_ascii=False),
+                ),
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                item_data["symbol"],
-                item_data.get("name") or item_data["symbol"],
-                item_data["monitor_type"],
-                item_data.get("source", "manual"),
-                1 if item_data.get("enabled", True) else 0,
-                self._normalize_interval_minutes(item_data.get("interval_minutes", 30)),
-                1 if item_data.get("trading_hours_only", True) else 0,
-                1 if item_data.get("notification_enabled", True) else 0,
-                1 if item_data.get("managed_by_portfolio", False) else 0,
-                account_name,
-                item_data.get("asset_id"),
-                item_data.get("portfolio_stock_id"),
-                item_data.get("origin_analysis_id"),
-                item_data.get("current_price"),
-                item_data.get("last_checked"),
-                item_data.get("last_status"),
-                item_data.get("last_message"),
-                json.dumps(config, ensure_ascii=False),
-            ),
-        )
-        item_id = int(cursor.lastrowid)
-        conn.commit()
-        conn.close()
-        return item_id
+            item_id = int(cursor.lastrowid)
+            conn.commit()
+        except sqlite3.IntegrityError as exc:
+            conn.rollback()
+            integrity_error = exc
+        finally:
+            conn.close()
+
+        if integrity_error is None:
+            return int(item_id)
+
+        if "UNIQUE constraint failed" not in str(integrity_error):
+            raise integrity_error
+
+        recovered_id = self._recover_from_integrity_conflict(item_data)
+        if recovered_id is not None:
+            return recovered_id
+        raise integrity_error
 
     def update_item(self, item_id: int, updates: Dict) -> bool:
         if not updates:
@@ -354,15 +715,17 @@ class MonitoringRepository:
         fields.append("updated_at = CURRENT_TIMESTAMP")
         values.append(item_id)
         conn = self._connect()
-        cursor = conn.cursor()
-        cursor.execute(
-            f"UPDATE monitoring_items SET {', '.join(fields)} WHERE id = ?",
-            tuple(values),
-        )
-        changed = cursor.rowcount > 0
-        conn.commit()
-        conn.close()
-        return changed
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                f"UPDATE monitoring_items SET {', '.join(fields)} WHERE id = ?",
+                tuple(values),
+            )
+            changed = cursor.rowcount > 0
+            conn.commit()
+            return changed
+        finally:
+            conn.close()
 
     def get_item(self, item_id: int) -> Optional[Dict]:
         conn = self._connect()
@@ -444,36 +807,9 @@ class MonitoringRepository:
     def upsert_item(self, item_data: Dict) -> int:
         item_data = self._ensure_asset_binding(dict(item_data))
         monitor_type = item_data["monitor_type"]
-        symbol = item_data["symbol"]
         managed = bool(item_data.get("managed_by_portfolio", False))
         account_name = item_data.get("account_name")
-        asset_id = item_data.get("asset_id")
-
-        existing = None
-        if asset_id is not None:
-            items = self.list_items(
-                monitor_type=monitor_type,
-                asset_id=asset_id,
-            )
-            existing = items[0] if items else None
-        if monitor_type == "ai_task":
-            existing = existing or self.get_item_by_symbol(
-                symbol,
-                monitor_type="ai_task",
-                account_name=account_name or DEFAULT_ACCOUNT_NAME,
-                asset_id=asset_id,
-            )
-        elif monitor_type == "price_alert" and managed:
-            portfolio_stock_id = item_data.get("portfolio_stock_id")
-            if portfolio_stock_id is not None:
-                existing = existing or self.get_item_by_symbol(
-                    symbol,
-                    monitor_type="price_alert",
-                    managed_only=True,
-                    account_name=account_name,
-                    asset_id=asset_id,
-                    portfolio_stock_id=portfolio_stock_id,
-                )
+        existing = self._find_existing_item_for_upsert(item_data)
 
         if not existing:
             return self.create_item(item_data)
@@ -488,7 +824,11 @@ class MonitoringRepository:
             "trading_hours_only": item_data.get("trading_hours_only", existing["trading_hours_only"]),
             "notification_enabled": item_data.get("notification_enabled", existing["notification_enabled"]),
             "managed_by_portfolio": managed,
-            "account_name": account_name if monitor_type == "ai_task" else item_data.get("account_name", existing.get("account_name")),
+            "account_name": (
+                (account_name or DEFAULT_ACCOUNT_NAME)
+                if monitor_type == "ai_task"
+                else item_data.get("account_name", existing.get("account_name"))
+            ),
             "asset_id": item_data.get("asset_id", existing.get("asset_id")),
             "portfolio_stock_id": item_data.get("portfolio_stock_id", existing.get("portfolio_stock_id")),
             "origin_analysis_id": item_data.get("origin_analysis_id", existing.get("origin_analysis_id")),
@@ -503,14 +843,16 @@ class MonitoringRepository:
 
     def delete_item(self, item_id: int) -> bool:
         conn = self._connect()
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM monitoring_price_history WHERE monitoring_item_id = ?", (item_id,))
-        cursor.execute("DELETE FROM monitoring_events WHERE monitoring_item_id = ?", (item_id,))
-        cursor.execute("DELETE FROM monitoring_items WHERE id = ?", (item_id,))
-        deleted = cursor.rowcount > 0
-        conn.commit()
-        conn.close()
-        return deleted
+        try:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM monitoring_price_history WHERE monitoring_item_id = ?", (item_id,))
+            cursor.execute("DELETE FROM monitoring_events WHERE monitoring_item_id = ?", (item_id,))
+            cursor.execute("DELETE FROM monitoring_items WHERE id = ?", (item_id,))
+            deleted = cursor.rowcount > 0
+            conn.commit()
+            return deleted
+        finally:
+            conn.close()
 
     def delete_by_symbol(
         self,
@@ -562,16 +904,18 @@ class MonitoringRepository:
         )
         if updated and current_price is not None:
             conn = self._connect()
-            cursor = conn.cursor()
-            cursor.execute(
-                """
-                INSERT INTO monitoring_price_history (monitoring_item_id, price)
-                VALUES (?, ?)
-                """,
-                (item_id, current_price),
-            )
-            conn.commit()
-            conn.close()
+            try:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    INSERT INTO monitoring_price_history (monitoring_item_id, price)
+                    VALUES (?, ?)
+                    """,
+                    (item_id, current_price),
+                )
+                conn.commit()
+            finally:
+                conn.close()
         return updated
 
     def get_due_items(self, now: Optional[datetime] = None, service_running: bool = True) -> List[Dict]:
@@ -608,32 +952,34 @@ class MonitoringRepository:
     ) -> int:
         item = self.get_item(item_id) if item_id else None
         conn = self._connect()
-        cursor = conn.cursor()
-        cursor.execute(
-            """
-            INSERT INTO monitoring_events (
-                monitoring_item_id, symbol, name, monitor_type, event_type,
-                message, details_json, notification_pending, sent, created_at
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO monitoring_events (
+                    monitoring_item_id, symbol, name, monitor_type, event_type,
+                    message, details_json, notification_pending, sent, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    item_id,
+                    item.get("symbol") if item else "",
+                    item.get("name") if item else None,
+                    item.get("monitor_type") if item else None,
+                    event_type,
+                    message,
+                    json.dumps(details or {}, ensure_ascii=False),
+                    1 if notification_pending else 0,
+                    1 if sent else 0,
+                    created_at or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                ),
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                item_id,
-                item.get("symbol") if item else "",
-                item.get("name") if item else None,
-                item.get("monitor_type") if item else None,
-                event_type,
-                message,
-                json.dumps(details or {}, ensure_ascii=False),
-                1 if notification_pending else 0,
-                1 if sent else 0,
-                created_at or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            ),
-        )
-        event_id = int(cursor.lastrowid)
-        conn.commit()
-        conn.close()
-        return event_id
+            event_id = int(cursor.lastrowid)
+            conn.commit()
+            return event_id
+        finally:
+            conn.close()
 
     def get_pending_notifications(self) -> List[Dict]:
         conn = self._connect()
@@ -708,28 +1054,34 @@ class MonitoringRepository:
 
     def mark_notification_sent(self, event_id: int) -> None:
         conn = self._connect()
-        cursor = conn.cursor()
-        cursor.execute("UPDATE monitoring_events SET sent = 1 WHERE id = ?", (event_id,))
-        conn.commit()
-        conn.close()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("UPDATE monitoring_events SET sent = 1 WHERE id = ?", (event_id,))
+            conn.commit()
+        finally:
+            conn.close()
 
     def mark_all_notifications_sent(self) -> int:
         conn = self._connect()
-        cursor = conn.cursor()
-        cursor.execute("UPDATE monitoring_events SET sent = 1 WHERE notification_pending = 1 AND sent = 0")
-        changed = cursor.rowcount
-        conn.commit()
-        conn.close()
-        return changed
+        try:
+            cursor = conn.cursor()
+            cursor.execute("UPDATE monitoring_events SET sent = 1 WHERE notification_pending = 1 AND sent = 0")
+            changed = cursor.rowcount
+            conn.commit()
+            return changed
+        finally:
+            conn.close()
 
     def clear_all_notifications(self) -> int:
         conn = self._connect()
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM monitoring_events WHERE notification_pending = 1")
-        changed = cursor.rowcount
-        conn.commit()
-        conn.close()
-        return changed
+        try:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM monitoring_events WHERE notification_pending = 1")
+            changed = cursor.rowcount
+            conn.commit()
+            return changed
+        finally:
+            conn.close()
 
     def has_recent_notification(self, item_id: int, event_type: str, minutes: int = 60) -> bool:
         conn = self._connect()
@@ -767,27 +1119,29 @@ class MonitoringRepository:
         payload: Optional[Dict] = None,
     ) -> int:
         conn = self._connect()
-        cursor = conn.cursor()
-        cursor.execute(
-            """
-            INSERT INTO migration_conflicts (
-                source_db, source_table, source_key, symbol, conflict_type, payload_json
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO migration_conflicts (
+                    source_db, source_table, source_key, symbol, conflict_type, payload_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    source_db,
+                    source_table,
+                    source_key,
+                    symbol,
+                    conflict_type,
+                    json.dumps(payload or {}, ensure_ascii=False),
+                ),
             )
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (
-                source_db,
-                source_table,
-                source_key,
-                symbol,
-                conflict_type,
-                json.dumps(payload or {}, ensure_ascii=False),
-            ),
-        )
-        conflict_id = int(cursor.lastrowid)
-        conn.commit()
-        conn.close()
-        return conflict_id
+            conflict_id = int(cursor.lastrowid)
+            conn.commit()
+            return conflict_id
+        finally:
+            conn.close()
 
     def _resolve_portfolio_binding(self, symbol: str) -> Optional[Dict]:
         conn = self._connect()

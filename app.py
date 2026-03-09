@@ -1217,7 +1217,7 @@ def main():
 
         # 投资管理
         with st.expander("投资管理", expanded=True):
-            st.markdown("**深度分析 -> 盯盘观察 -> 持仓跟踪 -> 风控执行**")
+            st.markdown("**根据AI深度分析决策交易**")
 
             if st.button("深度分析", width='stretch', key="nav_deep_analysis", help="进入临时深度分析工作区"):
                 activate_view("show_deep_analysis")
