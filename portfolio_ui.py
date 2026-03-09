@@ -582,7 +582,7 @@ def display_portfolio_manager(lightweight_model=None, reasoning_model=None):
     
     # 创建标签页
     tab1, tab2, tab3, tab4 = st.tabs([
-        "持仓管理",
+        "持仓情况",
         "风险评估",
         "分析任务",
         "分析历史"

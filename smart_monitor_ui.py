@@ -40,7 +40,7 @@ load_dotenv()
 
 
 def _legacy_smart_monitor_ui(lightweight_model=None, reasoning_model=None):
-    """AI盯盘主界面"""
+    """智能盯盘主界面"""
 
     # 使用说明
     with st.expander("快速使用指南", expanded=False):
@@ -211,10 +211,13 @@ def _legacy_smart_monitor_ui(lightweight_model=None, reasoning_model=None):
         render_settings()
 
 
-def render_realtime_analysis():
+def render_realtime_analysis(show_header: bool = True, title: str = "实时分析"):
     """实时分析界面"""
-    
-    st.header("实时分析")
+
+    if show_header:
+        st.header(title)
+    else:
+        st.markdown(f"#### {title}")
     
     col1, col2 = st.columns([2.4, 1.2])
     
@@ -703,10 +706,13 @@ def render_position_management():
                 st.warning("请在'实时分析'中使用AI决策后卖出")
 
 
-def render_history():
+def render_history(show_header: bool = True, title: str = "历史记录"):
     """历史记录界面"""
-    
-    st.header("历史记录")
+
+    if show_header:
+        st.header(title)
+    else:
+        st.markdown(f"#### {title}")
     
     db = st.session_state[SMART_MONITOR_DB_KEY]
     
@@ -815,10 +821,13 @@ def render_history():
                         st.json(details)
 
 
-def render_settings():
+def render_settings(show_header: bool = True, title: str = "系统设置"):
     """系统设置界面（跳转到主程序的环境配置）"""
-    
-    st.header("系统设置")
+
+    if show_header:
+        st.header(title)
+    else:
+        st.markdown(f"#### {title}")
     
     st.info("""
     ### 配置说明
@@ -1061,10 +1070,13 @@ def _render_pending_action_trade_form(
             st.rerun()
 
 
-def render_ai_monitor_tasks_panel():
+def render_ai_monitor_tasks_panel(show_header: bool = True, title: str = "AI监控任务"):
     from monitor_service import monitor_service
 
-    st.header("AI监控任务")
+    if show_header:
+        st.header(title)
+    else:
+        st.markdown(f"#### {title}")
 
     db = st.session_state[SMART_MONITOR_DB_KEY]
     service_status = "运行中" if monitor_service.running else "已停止"
@@ -1084,7 +1096,7 @@ def render_ai_monitor_tasks_panel():
         st.session_state["ai_task_form_notify_email"] = prefill.get("notify_email") or ""
         st.session_state["ai_task_form_strategy_context"] = prefill.get("strategy_context") or {}
         st.session_state["ai_task_form_origin_analysis_id"] = prefill.get("origin_analysis_id")
-        st.session_state["ai_task_form_notice"] = f"{prefill.get('symbol')} 的战略基线已带入 AI 盯盘表单。"
+        st.session_state["ai_task_form_notice"] = f"{prefill.get('symbol')} 的战略基线已带入智能盯盘表单。"
 
     strategy_context = st.session_state.get("ai_task_form_strategy_context") or {}
     preview_account_name = st.session_state.get("ai_task_form_account_name") or DEFAULT_ACCOUNT_NAME
@@ -1286,7 +1298,7 @@ def render_ai_monitor_tasks_panel():
                         if db.resolve_pending_action(
                             pending_action["id"],
                             status="rejected",
-                            resolution_note="用户在 AI 盯盘页忽略信号",
+                            resolution_note="用户在智能盯盘页忽略信号",
                         ):
                             resolved_count += 1
                     st.success(f"已忽略 {resolved_count} 条待处理信号。")
@@ -1324,43 +1336,43 @@ def render_ai_monitor_tasks_panel():
 
 
 def smart_monitor_ui(lightweight_model=None, reasoning_model=None):
-    """AI盯盘主界面（重构版）。"""
+    """智能盯盘主界面（重构版）。"""
     from monitor_manager import display_price_alert_workspace
 
     _ensure_smart_monitor_runtime(lightweight_model, reasoning_model)
 
-    desired_tab = st.session_state.get(SMART_MONITOR_ACTIVE_TAB_KEY, "realtime")
+    desired_tab = st.session_state.get(SMART_MONITOR_ACTIVE_TAB_KEY, "watchlist")
     tab_labels = [
-        "实时分析",
-        "AI监控任务",
+        "盯盘列表",
         "价格预警",
-        "历史记录",
-        "系统设置",
+        "决策事件",
     ]
     tab_key_to_label = {
-        "realtime": "实时分析",
-        "ai_task": "AI监控任务",
+        "watchlist": "盯盘列表",
+        "realtime": "盯盘列表",
+        "ai_task": "盯盘列表",
         "price_alert": "价格预警",
-        "history": "历史记录",
-        "settings": "系统设置",
+        "decision_events": "决策事件",
+        "history": "决策事件",
+        "settings": "决策事件",
     }
 
-    if desired_tab in tab_key_to_label and desired_tab != "realtime":
-        st.caption(f"已打开 AI 盯盘，请切换到“{tab_key_to_label[desired_tab]}”标签查看目标内容。")
+    if desired_tab in tab_key_to_label and desired_tab != "watchlist":
+        st.caption(f"已打开 智能盯盘，请切换到“{tab_key_to_label[desired_tab]}”标签查看目标内容。")
         st.session_state.pop(SMART_MONITOR_ACTIVE_TAB_KEY, None)
 
     tabs = st.tabs(tab_labels)
 
     with tabs[0]:
-        render_realtime_analysis()
+        render_ai_monitor_tasks_panel(title="盯盘列表")
+        with st.expander("实时分析（按需展开）", expanded=False):
+            render_realtime_analysis(show_header=False)
     with tabs[1]:
-        render_ai_monitor_tasks_panel()
-    with tabs[2]:
         display_price_alert_workspace()
-    with tabs[3]:
-        render_history()
-    with tabs[4]:
-        render_settings()
+    with tabs[2]:
+        render_history(show_header=False, title="决策事件")
+        with st.expander("系统设置（按需展开）", expanded=False):
+            render_settings(show_header=False)
 
 
 if __name__ == '__main__':

@@ -21,7 +21,7 @@ from ui_state_keys import INVESTMENT_WORKSPACE_ACTIVE_TAB_KEY
 
 
 WORKSPACE_TABS = {
-    "ai_monitor": "AI盯盘",
+    "ai_monitor": "智能盯盘",
     "price_alert": "价格预警",
     "portfolio": "持仓",
     "activity": "成交与事件",
@@ -35,7 +35,7 @@ def set_investment_workspace_tab(tab_key: str) -> None:
 
 def _render_ai_monitor_panel() -> None:
     subtab = st.radio(
-        "AI盯盘视图",
+        "智能盯盘视图",
         ["任务管理", "实时分析", "设置"],
         horizontal=True,
         key="investment_workspace_ai_subtab",

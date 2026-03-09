@@ -20,8 +20,8 @@ from pdf_generator import display_pdf_export_section
 from database import db
 from investment_action_utils import build_analysis_action_payload
 from investment_db_utils import DEFAULT_ACCOUNT_NAME
-from investment_workspace_ui import display_investment_workspace, set_investment_workspace_tab
-from monitor_manager import display_monitor_manager, get_monitor_summary
+from investment_workspace_ui import set_investment_workspace_tab
+from monitor_manager import display_monitor_manager
 from monitor_service import monitor_service
 from notification_service import notification_service
 from price_alert_service import create_price_alert_from_analysis, jump_to_price_alert_workspace
@@ -30,6 +30,7 @@ from main_force_ui import display_main_force_selector
 from sector_strategy_ui import display_sector_strategy
 from longhubang_ui import display_longhubang
 from smart_monitor_ui import smart_monitor_ui
+from portfolio_ui import display_portfolio_manager
 from news_flow_ui import display_news_flow_monitor
 from ui_analysis_task_utils import (
     consume_finished_ui_analysis_task,
@@ -52,6 +53,7 @@ from ui_state_keys import (
     INVESTMENT_WORKSPACE_ACTIVE_TAB_KEY,
     PORTFOLIO_ADD_ACCOUNT_NAME_KEY,
     PORTFOLIO_ADD_ORIGIN_ANALYSIS_ID_KEY,
+    SMART_MONITOR_ACTIVE_TAB_KEY,
 )
 
 # 页面配置（支持导航点击后单次强制收起侧边栏）
@@ -976,9 +978,9 @@ NAV_VIEW_KEYS = [
 ]
 
 VIEW_TITLES = {
-    "show_deep_analysis": "深度分析",
-    "show_monitor_service": "投资工作台",
-    "show_monitor": "投资工作台",
+    "show_deep_analysis": "投资管理-深度分析",
+    "show_monitor_service": "投资管理-监测服务",
+    "show_monitor": "投资管理-监测服务",
     "show_main_force": "选股板块-主力选股",
     "show_low_price_bull": "选股板块-低价擒牛",
     "show_small_cap": "选股板块-小市值策略",
@@ -986,8 +988,8 @@ VIEW_TITLES = {
     "show_value_stock": "选股板块-低估值策略",
     "show_sector_strategy": "策略分析-智策板块",
     "show_longhubang": "策略分析-智瞰龙虎",
-    "show_smart_monitor": "投资工作台",
-    "show_portfolio": "投资工作台",
+    "show_smart_monitor": "投资管理-智能盯盘",
+    "show_portfolio": "投资管理-持仓分析",
     "show_news_flow": "策略分析-新闻流量",
     "show_macro_cycle": "策略分析-宏观周期",
     "show_config": "系统配置",
@@ -1001,8 +1003,8 @@ def get_current_view_title() -> str:
     """返回当前主区域应显示的功能标题。"""
     for key in NAV_VIEW_KEYS:
         if st.session_state.get(key):
-            return VIEW_TITLES.get(key, "深度分析")
-    return "深度分析"
+            return VIEW_TITLES.get(key, "投资管理-深度分析")
+    return "投资管理-深度分析"
 
 
 def activate_view(view_key: Optional[str] = None) -> None:
@@ -1018,6 +1020,11 @@ def activate_view(view_key: Optional[str] = None) -> None:
 
 def open_investment_workspace(tab_key: str, view_key: str) -> None:
     set_investment_workspace_tab(tab_key)
+    if view_key == "show_smart_monitor":
+        if tab_key == "price_alert":
+            st.session_state[SMART_MONITOR_ACTIVE_TAB_KEY] = "price_alert"
+        elif tab_key == "ai_monitor":
+            st.session_state[SMART_MONITOR_ACTIVE_TAB_KEY] = "watchlist"
     activate_view(view_key)
 
 
@@ -1215,7 +1222,7 @@ def main():
             if st.button("深度分析", width='stretch', key="nav_deep_analysis", help="进入临时深度分析工作区"):
                 activate_view("show_deep_analysis")
 
-            if st.button("AI盯盘", width='stretch', key="nav_smart_monitor", help="DeepSeek AI自动盯盘决策交易（支持A股T+1）"):
+            if st.button("智能盯盘", width='stretch', key="nav_smart_monitor", help="DeepSeek AI自动盯盘决策交易（支持A股T+1）"):
                 open_investment_workspace("ai_monitor", "show_smart_monitor")
 
             if st.button("持仓分析", width='stretch', key="nav_portfolio", help="投资组合分析与定时跟踪"):
@@ -1337,15 +1344,25 @@ def main():
         display_home_workspace(api_key_status, period)
         return
 
-    # 检查是否显示监测面板
-    if any(
-        st.session_state.get(key)
-        for key in ("show_monitor_service", "show_monitor", "show_smart_monitor", "show_portfolio")
-    ):
-        display_investment_workspace(
+    # 智能盯盘页面
+    if st.session_state.get("show_smart_monitor"):
+        smart_monitor_ui(
             lightweight_model=selected_lightweight_model,
             reasoning_model=selected_reasoning_model,
         )
+        return
+
+    # 持仓分析页面
+    if st.session_state.get("show_portfolio"):
+        display_portfolio_manager(
+            lightweight_model=selected_lightweight_model,
+            reasoning_model=selected_reasoning_model,
+        )
+        return
+
+    # 监测服务页面
+    if st.session_state.get("show_monitor_service") or st.session_state.get("show_monitor"):
+        display_monitor_manager()
         return
 
     # 检查是否显示主力选股
