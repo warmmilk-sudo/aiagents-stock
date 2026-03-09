@@ -91,11 +91,21 @@ Docker镜像已内置Node.js 18.x环境，支持pywencai等需要Node.js的Pytho
 
 ### 数据持久化
 以下数据会自动保存到宿主机：
-- `stock_analysis.db` - 分析历史数据库
-- `stock_monitor.db` - 监测数据库
+- `investment.db` - 统一投资域数据库
 - `data/` - 临时数据目录
 
 即使删除容器，数据也不会丢失。
+
+### 自动迁移说明
+
+当前版本启动后会自动把旧库迁移到 `investment.db`，但前提是运行环境里能看到这些旧文件：
+
+- `stock_analysis.db`
+- `portfolio_stocks.db`
+- `smart_monitor.db`
+- `monitoring.db`
+
+如果你是 Docker 升级部署，首次启动容器时要把这些旧库也挂进去；迁移确认完成后，再移除旧库挂载即可。
 
 ### 健康检查
 容器会自动监控应用健康状态，异常时自动重启。
@@ -165,9 +175,8 @@ docker-compose up -d
 
 ### 备份数据
 ```bash
-# 备份数据库文件
-cp stock_analysis.db stock_analysis.db.backup
-cp stock_monitor.db stock_monitor.db.backup
+# 备份统一数据库
+cp investment.db investment.db.backup
 ```
 
 ## 📊 性能监控

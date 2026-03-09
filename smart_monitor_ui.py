@@ -8,7 +8,7 @@ import pandas as pd
 from datetime import datetime
 import logging
 import os
-from typing import Dict
+from typing import Dict, List, Optional
 from dotenv import load_dotenv
 import config
 
@@ -18,7 +18,10 @@ from smart_monitor_db import SmartMonitorDB
 from config_manager import config_manager  # 使用主程序的配置管理器
 from portfolio_manager import portfolio_manager
 from ui_state_keys import (
+    INVESTMENT_WORKSPACE_ACTIVE_TAB_KEY,
     INVESTMENT_AI_TASK_PREFILL_KEY,
+    PORTFOLIO_ADD_ACCOUNT_NAME_KEY,
+    PORTFOLIO_ADD_ORIGIN_ANALYSIS_ID_KEY,
     SMART_MONITOR_ACTIVE_TAB_KEY,
     SMART_MONITOR_DB_KEY,
     SMART_MONITOR_ENGINE_KEY,
@@ -213,7 +216,7 @@ def render_realtime_analysis():
     
     st.header("实时分析")
     
-    col1, col2 = st.columns([2, 1])
+    col1, col2 = st.columns([2.4, 1.2])
     
     with col1:
         stock_code = st.text_input(
@@ -223,8 +226,8 @@ def render_realtime_analysis():
         )
     
     with col2:
-        auto_trade = st.checkbox("自动交易", value=False, 
-                                help="开启后AI会自动执行交易决策")
+        st.caption("执行模式")
+        st.info("手工执行")
     
     if st.button("开始分析", type="primary"):
         if not stock_code:
@@ -240,7 +243,7 @@ def render_realtime_analysis():
             engine = st.session_state[SMART_MONITOR_ENGINE_KEY]
             result = engine.analyze_stock(
                 stock_code=stock_code,
-                auto_trade=auto_trade,
+                auto_trade=False,
                 notify=True
             )
         
@@ -707,7 +710,7 @@ def render_history():
     
     db = st.session_state[SMART_MONITOR_DB_KEY]
     
-    tab1, tab2, tab3 = st.tabs(["AI决策历史", "交易记录", "通知记录"])
+    tab1, tab2, tab3, tab4 = st.tabs(["AI决策历史", "待人工动作", "交易记录", "信号事件"])
     
     # AI决策历史
     with tab1:
@@ -729,13 +732,44 @@ def render_history():
                         st.write(f"**时段:** {dec['trading_session']}")
                         st.write(f"**风险:** {dec['risk_level']}")
                         st.write(f"**仓位:** {dec['position_size_pct']}%")
+                        st.write(f"**执行模式:** {dec.get('execution_mode', 'manual_only')}")
+                        st.write(f"**状态:** {dec.get('action_status', 'suggested')}")
                     
                     with col2:
                         st.write("**决策理由:**")
                         st.text(dec['reasoning'])
+
+    with tab2:
+        st.subheader("待人工动作")
+
+        actions = db.get_pending_actions(status=None, limit=100)
+        if not actions:
+            st.info("暂无待人工动作。")
+        else:
+            pending_count = sum(1 for item in actions if item.get("status") == "pending")
+            st.caption(f"共 {len(actions)} 条动作，其中待处理 {pending_count} 条。")
+            for action in actions:
+                payload = action.get("payload") or {}
+                with st.expander(
+                    f"{action.get('created_at')} - {action.get('symbol')} {action.get('name') or action.get('symbol')} "
+                    f"- {str(action.get('action_type', '')).upper()} [{action.get('status')}]"
+                ):
+                    info_col1, info_col2 = st.columns(2)
+                    with info_col1:
+                        st.write(f"**账户:** {action.get('account_name') or DEFAULT_ACCOUNT_NAME}")
+                        st.write(f"**资产状态:** {_format_asset_status(action)}")
+                        st.write(f"**当前持仓:** {_format_position_summary(action)}")
+                    with info_col2:
+                        st.write(f"**决策ID:** {action.get('origin_decision_id') or '-'}")
+                        st.write(f"**建议价格:** {payload.get('current_price') or payload.get('market_data', {}).get('current_price') or '-'}")
+                        st.write(f"**备注:** {action.get('resolution_note') or '待处理'}")
+                    decision_block = payload.get("decision") or {}
+                    if decision_block:
+                        st.write("**AI 建议摘要:**")
+                        st.text(str(decision_block.get("reasoning") or "")[:300])
     
     # 交易记录
-    with tab2:
+    with tab3:
         st.subheader("交易记录")
         
         trades = db.get_trade_records(limit=50)
@@ -764,10 +798,21 @@ def render_history():
                 height=get_dataframe_height(len(df), max_rows=50),
             )
     
-    # 通知记录
-    with tab3:
-        st.subheader("通知记录")
-        st.info("通知记录功能开发中...")
+    with tab4:
+        st.subheader("信号事件")
+        events = db.monitoring_repository.get_recent_events(limit=50)
+        if not events:
+            st.info("暂无事件记录。")
+        else:
+            for event in events:
+                details = db.monitoring_repository._safe_json_loads(event.get("details_json"), {})
+                with st.expander(
+                    f"{event.get('created_at')} - {event.get('symbol')} "
+                    f"- {event.get('event_type')} {'[已发送]' if event.get('sent') else '[未发送]'}"
+                ):
+                    st.write(event.get("message"))
+                    if details:
+                        st.json(details)
 
 
 def render_settings():
@@ -874,6 +919,148 @@ def _ensure_smart_monitor_runtime(lightweight_model=None, reasoning_model=None):
     return st.session_state[SMART_MONITOR_ENGINE_KEY], st.session_state[SMART_MONITOR_DB_KEY]
 
 
+def _get_task_asset(db: SmartMonitorDB, task: Dict) -> Optional[Dict]:
+    asset_id = task.get("asset_id")
+    if asset_id:
+        asset = db.asset_repository.get_asset(asset_id)
+        if asset:
+            return asset
+    stock_code = task.get("stock_code")
+    if not stock_code:
+        return None
+    return db.asset_repository.get_asset_by_symbol(
+        stock_code,
+        task.get("account_name") or DEFAULT_ACCOUNT_NAME,
+    )
+
+
+def _format_asset_status(asset: Optional[Dict]) -> str:
+    if not asset:
+        return "未建资产"
+    raw_status = str(asset.get("status") or asset.get("asset_status") or "").lower()
+    return {
+        "research": "研究池",
+        "watchlist": "盯盘池",
+        "portfolio": "持仓中",
+    }.get(raw_status, raw_status or "未知")
+
+
+def _format_position_summary(asset: Optional[Dict]) -> str:
+    if not asset:
+        return "尚未创建资产记录"
+    quantity = int(asset.get("quantity") or 0)
+    cost_price = float(asset.get("cost_price") or 0)
+    raw_status = str(asset.get("status") or asset.get("asset_status") or "").lower()
+    if raw_status == "portfolio" and quantity > 0 and cost_price > 0:
+        return f"{quantity} 股 @ {cost_price:.3f}"
+    return "当前无持仓"
+
+
+def _get_pending_actions_for_task(db: SmartMonitorDB, task: Dict) -> List[Dict]:
+    asset_id = task.get("asset_id")
+    if not asset_id:
+        return []
+    return db.get_pending_actions(
+        status="pending",
+        account_name=task.get("account_name") or DEFAULT_ACCOUNT_NAME,
+        asset_id=asset_id,
+        limit=20,
+    )
+
+
+def _render_pending_action_trade_form(
+    db: SmartMonitorDB,
+    task: Dict,
+    asset: Optional[Dict],
+    pending_actions: List[Dict],
+) -> None:
+    task_id = task["id"]
+    form_open_key = f"ai_task_trade_open_{task_id}"
+    trade_mode_key = f"ai_task_trade_mode_{task_id}"
+    if not st.session_state.get(form_open_key):
+        return
+
+    trade_mode = st.session_state.get(trade_mode_key, "buy")
+    matched_pending = next((item for item in pending_actions if item.get("action_type") == trade_mode), None)
+    payload = (matched_pending or {}).get("payload") or {}
+    default_price = float(payload.get("current_price") or payload.get("market_data", {}).get("current_price") or asset.get("cost_price") or 0.0) if asset else float(payload.get("current_price") or payload.get("market_data", {}).get("current_price") or 0.0)
+    default_quantity = int(asset.get("quantity") or 0) if trade_mode == "sell" and asset else 100
+    default_quantity = default_quantity if default_quantity > 0 else 100
+
+    with st.form(key=f"ai_task_trade_form_{task_id}"):
+        st.markdown(f"#### 手工{'买入' if trade_mode == 'buy' else '卖出'}登记")
+        st.caption(
+            f"{task.get('stock_code')} {task.get('stock_name') or task.get('stock_code')} | "
+            f"资产状态：{_format_asset_status(asset)}"
+        )
+        if matched_pending:
+            st.warning(
+                f"正在处理待办动作 #{matched_pending['id']} ({matched_pending['action_type'].upper()})"
+            )
+
+        trade_col1, trade_col2 = st.columns(2)
+        with trade_col1:
+            trade_date = st.date_input(
+                "成交日期",
+                value=datetime.now().date(),
+                key=f"ai_task_trade_date_{task_id}",
+            )
+        with trade_col2:
+            trade_quantity = st.number_input(
+                "成交数量",
+                min_value=1,
+                value=default_quantity,
+                step=1,
+                key=f"ai_task_trade_quantity_{task_id}",
+            )
+
+        trade_price = st.number_input(
+            "成交价格",
+            min_value=0.0,
+            value=default_price,
+            step=0.001,
+            format="%.3f",
+            key=f"ai_task_trade_price_{task_id}",
+        )
+        trade_note = st.text_area(
+            "备注",
+            value="",
+            height=80,
+            placeholder="可选，例如：手工确认 AI 卖出信号",
+            key=f"ai_task_trade_note_{task_id}",
+        )
+
+        submit_col, cancel_col = st.columns(2)
+        with submit_col:
+            submitted = st.form_submit_button("保存交易", type="primary", width="stretch")
+        with cancel_col:
+            cancelled = st.form_submit_button("取消", width="stretch")
+
+        if submitted:
+            trade_id = db.save_trade_record(
+                {
+                    "asset_id": (asset or {}).get("id") or task.get("asset_id"),
+                    "trade_type": trade_mode,
+                    "quantity": int(trade_quantity),
+                    "price": float(trade_price),
+                    "trade_date": trade_date.strftime("%Y-%m-%d"),
+                    "note": (trade_note or "").strip(),
+                    "trade_source": "manual",
+                    "pending_action_id": (matched_pending or {}).get("id"),
+                }
+            )
+            if trade_id:
+                st.session_state.pop(form_open_key, None)
+                st.session_state.pop(trade_mode_key, None)
+                st.success("手工交易已登记，资产状态已同步更新。")
+                st.rerun()
+            st.error("保存交易失败，请检查数量、价格和当前持仓。")
+        if cancelled:
+            st.session_state.pop(form_open_key, None)
+            st.session_state.pop(trade_mode_key, None)
+            st.rerun()
+
+
 def render_ai_monitor_tasks_panel():
     from monitor_service import monitor_service
 
@@ -890,10 +1077,6 @@ def render_ai_monitor_tasks_panel():
         st.session_state["ai_task_form_stock_code"] = prefill.get("symbol") or ""
         st.session_state["ai_task_form_stock_name"] = prefill.get("stock_name") or ""
         st.session_state["ai_task_form_interval_minutes"] = int(prefill.get("interval_minutes") or 5)
-        st.session_state["ai_task_form_has_position"] = bool(prefill.get("has_position", False))
-        st.session_state["ai_task_form_position_cost"] = float(prefill.get("position_cost") or 0.0)
-        st.session_state["ai_task_form_position_quantity"] = int(prefill.get("position_quantity") or 0)
-        st.session_state["ai_task_form_auto_trade"] = bool(prefill.get("auto_trade", False))
         st.session_state["ai_task_form_trading_hours_only"] = bool(prefill.get("trading_hours_only", True))
         st.session_state["ai_task_form_position_size_pct"] = int(prefill.get("position_size_pct") or 20)
         st.session_state["ai_task_form_stop_loss_pct"] = int(prefill.get("stop_loss_pct") or 5)
@@ -904,6 +1087,9 @@ def render_ai_monitor_tasks_panel():
         st.session_state["ai_task_form_notice"] = f"{prefill.get('symbol')} 的战略基线已带入 AI 盯盘表单。"
 
     strategy_context = st.session_state.get("ai_task_form_strategy_context") or {}
+    preview_account_name = st.session_state.get("ai_task_form_account_name") or DEFAULT_ACCOUNT_NAME
+    preview_symbol = str(st.session_state.get("ai_task_form_stock_code") or "").strip().upper()
+    preview_asset = db.asset_repository.get_asset_by_symbol(preview_symbol, preview_account_name) if preview_symbol else None
 
     with st.expander("新增 AI 监控任务", expanded=bool(st.session_state.get("ai_task_form_stock_code"))):
         if st.session_state.get("ai_task_form_notice"):
@@ -914,6 +1100,9 @@ def render_ai_monitor_tasks_panel():
                 f"进场 {strategy_context.get('entry_min') or '-'} - {strategy_context.get('entry_max') or '-'} | "
                 f"止盈 {strategy_context.get('take_profit') or '-'} | 止损 {strategy_context.get('stop_loss') or '-'}"
             )
+        st.caption(
+            f"当前资产状态：{_format_asset_status(preview_asset)} | 持仓摘要：{_format_position_summary(preview_asset)} | 执行模式：手工确认"
+        )
         with st.form("ai_monitor_task_form", clear_on_submit=False):
             col1, col2 = st.columns(2)
 
@@ -923,12 +1112,9 @@ def render_ai_monitor_tasks_panel():
                 stock_code = st.text_input("股票代码", placeholder="例如: 600519", key="ai_task_form_stock_code")
                 stock_name = st.text_input("股票名称", placeholder="可选", key="ai_task_form_stock_name")
                 interval_minutes = st.slider("检查间隔(分钟)", 1, 240, 5, key="ai_task_form_interval_minutes")
-                has_position = st.checkbox("已有持仓", value=False, key="ai_task_form_has_position")
-                position_cost = st.number_input("持仓成本", min_value=0.0, value=0.0, step=0.01, key="ai_task_form_position_cost")
-                position_quantity = st.number_input("持仓数量", min_value=0, value=0, step=100, key="ai_task_form_position_quantity")
+                st.caption("资产状态与持仓信息由 `assets` 主表实时投影，不在此页编辑。")
 
             with col2:
-                auto_trade = st.checkbox("自动交易", value=False, key="ai_task_form_auto_trade")
                 trading_hours_only = st.checkbox("仅交易时段执行", value=True, key="ai_task_form_trading_hours_only")
                 position_size_pct = st.slider("仓位百分比", 5, 50, 20, key="ai_task_form_position_size_pct")
                 stop_loss_pct = st.slider("止损百分比", 1, 20, 5, key="ai_task_form_stop_loss_pct")
@@ -949,15 +1135,12 @@ def render_ai_monitor_tasks_panel():
                     'stock_name': stock_name.strip() or normalized_code,
                     'enabled': 1,
                     'check_interval': interval_minutes * 60,
-                    'auto_trade': 1 if auto_trade else 0,
+                    'auto_trade': 0,
                     'trading_hours_only': 1 if trading_hours_only else 0,
                     'position_size_pct': position_size_pct,
                     'stop_loss_pct': stop_loss_pct,
                     'take_profit_pct': take_profit_pct,
                     'notify_email': notify_email.strip() or None,
-                    'has_position': 1 if has_position else 0,
-                    'position_cost': position_cost,
-                    'position_quantity': position_quantity,
                     'account_name': normalized_account,
                     'origin_analysis_id': st.session_state.get("ai_task_form_origin_analysis_id"),
                     'strategy_context': st.session_state.get("ai_task_form_strategy_context") or {},
@@ -967,10 +1150,6 @@ def render_ai_monitor_tasks_panel():
                 st.session_state["ai_task_form_stock_code"] = ""
                 st.session_state["ai_task_form_stock_name"] = ""
                 st.session_state["ai_task_form_interval_minutes"] = 5
-                st.session_state["ai_task_form_has_position"] = False
-                st.session_state["ai_task_form_position_cost"] = 0.0
-                st.session_state["ai_task_form_position_quantity"] = 0
-                st.session_state["ai_task_form_auto_trade"] = False
                 st.session_state["ai_task_form_trading_hours_only"] = True
                 st.session_state["ai_task_form_position_size_pct"] = 20
                 st.session_state["ai_task_form_stop_loss_pct"] = 5
@@ -1019,6 +1198,10 @@ def render_ai_monitor_tasks_panel():
         interval_minutes = max(1, int(task.get('check_interval', 60) / 60))
         source_text = "持仓托管" if task.get('managed_by_portfolio') else "手工"
         status_text = "启用" if task.get('enabled') else "停用"
+        asset = _get_task_asset(db, task)
+        pending_actions = _get_pending_actions_for_task(db, task)
+        buy_pending = next((item for item in pending_actions if item.get("action_type") == "buy"), None)
+        sell_pending = next((item for item in pending_actions if item.get("action_type") == "sell"), None)
 
         with st.container():
             head_col, status_col = st.columns([4, 1.2])
@@ -1026,7 +1209,7 @@ def render_ai_monitor_tasks_panel():
                 st.markdown(f"**{task['stock_code']}** {task.get('stock_name') or task['stock_code']}")
                 st.caption(
                     f"{task.get('task_name') or task['stock_code']} | {interval_minutes} 分钟 | "
-                    f"{'自动交易' if task.get('auto_trade') else '仅分析'} | {source_text} | "
+                    f"手工执行 | {source_text} | "
                     f"账户 {task.get('account_name') or DEFAULT_ACCOUNT_NAME}"
                 )
             with status_col:
@@ -1035,7 +1218,25 @@ def render_ai_monitor_tasks_panel():
             if task.get('managed_by_portfolio'):
                 st.caption("该任务由持仓分析托管，同步来源中的核心策略参数不可在此修改。")
 
-            action_col1, action_col2, action_col3 = st.columns(3)
+            strategy_context = task.get("strategy_context") or {}
+            summary_col1, summary_col2, summary_col3 = st.columns(3)
+            with summary_col1:
+                st.caption(f"资产状态: {_format_asset_status(asset)}")
+            with summary_col2:
+                st.caption(f"持仓摘要: {_format_position_summary(asset)}")
+            with summary_col3:
+                if strategy_context:
+                    st.caption(
+                        f"战略线: 止盈 {strategy_context.get('take_profit') or '-'} / 止损 {strategy_context.get('stop_loss') or '-'}"
+                    )
+                else:
+                    st.caption("战略线: 尚未形成")
+
+            if pending_actions:
+                pending_labels = [f"#{item['id']} {str(item.get('action_type', '')).upper()}" for item in pending_actions]
+                st.error(f"待人工处理动作: {' | '.join(pending_labels)}")
+
+            action_col1, action_col2, action_col3, action_col4, action_col5, action_col6 = st.columns(6)
             with action_col1:
                 if st.button("立即分析", key=f"run_ai_task_{task['id']}", width='stretch'):
                     from monitor_service import monitor_service
@@ -1059,6 +1260,38 @@ def render_ai_monitor_tasks_panel():
                     st.success(f"任务已{toggle_label}。")
                     st.rerun()
             with action_col3:
+                if st.button("登记买入", key=f"buy_ai_task_{task['id']}", width='stretch'):
+                    st.session_state[f"ai_task_trade_open_{task['id']}"] = True
+                    st.session_state[f"ai_task_trade_mode_{task['id']}"] = "buy"
+                    st.rerun()
+            with action_col4:
+                if st.button(
+                    "登记卖出",
+                    key=f"sell_ai_task_{task['id']}",
+                    width='stretch',
+                    disabled=asset is None or asset.get("status") != "portfolio" or int(asset.get("quantity") or 0) <= 0,
+                ):
+                    st.session_state[f"ai_task_trade_open_{task['id']}"] = True
+                    st.session_state[f"ai_task_trade_mode_{task['id']}"] = "sell"
+                    st.rerun()
+            with action_col5:
+                if st.button(
+                    "忽略信号",
+                    key=f"reject_ai_task_{task['id']}",
+                    width='stretch',
+                    disabled=not pending_actions,
+                ):
+                    resolved_count = 0
+                    for pending_action in pending_actions:
+                        if db.resolve_pending_action(
+                            pending_action["id"],
+                            status="rejected",
+                            resolution_note="用户在 AI 盯盘页忽略信号",
+                        ):
+                            resolved_count += 1
+                    st.success(f"已忽略 {resolved_count} 条待处理信号。")
+                    st.rerun()
+            with action_col6:
                 delete_disabled = bool(task.get('managed_by_portfolio'))
                 if st.button(
                     "删除" if not delete_disabled else "源头删除",
@@ -1069,6 +1302,20 @@ def render_ai_monitor_tasks_panel():
                     db.delete_monitor_task(task['id'])
                     st.success("任务已删除。")
                     st.rerun()
+
+            signal_col1, signal_col2 = st.columns(2)
+            with signal_col1:
+                if buy_pending:
+                    st.caption(
+                        f"买入待办 #{buy_pending['id']} | 建议价 {((buy_pending.get('payload') or {}).get('current_price') or '-')}"
+                    )
+            with signal_col2:
+                if sell_pending:
+                    st.caption(
+                        f"卖出待办 #{sell_pending['id']} | 当前仓位 {int((asset or {}).get('quantity') or 0)} 股"
+                    )
+
+            _render_pending_action_trade_form(db, task, asset, pending_actions)
 
             st.markdown(
                 "<div style='margin:0.45rem 0 0.7rem 0; border-bottom:1px solid rgba(148,163,184,0.18);'></div>",

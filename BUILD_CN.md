@@ -25,12 +25,38 @@ docker build -f "Dockerfile国内源版" -t agentsstock1:latest .
 docker run -d \
   -p 8503:8501 \
   -v $(pwd)/.env:/app/.env \
+  -v $(pwd)/investment.db:/app/investment.db \
   --name agentsstock1 \
   agentsstock1:latest
 
 # 访问应用
 # 浏览器打开: http://localhost:8503
 ```
+
+## 🗄️ 统一数据库与自动迁移
+
+当前版本统一写入 `investment.db`。
+
+- 新部署建议只挂载 `investment.db`
+- 如果你要从旧版本迁移历史数据，首次启动容器时还需要额外挂载旧库文件
+- 可自动迁移的旧库包括：`stock_analysis.db`、`portfolio_stocks.db`、`smart_monitor.db`、`monitoring.db`
+
+示例：
+
+```bash
+docker run -d \
+  -p 8503:8501 \
+  -v $(pwd)/.env:/app/.env \
+  -v $(pwd)/investment.db:/app/investment.db \
+  -v $(pwd)/stock_analysis.db:/app/stock_analysis.db \
+  -v $(pwd)/portfolio_stocks.db:/app/portfolio_stocks.db \
+  -v $(pwd)/smart_monitor.db:/app/smart_monitor.db \
+  -v $(pwd)/monitoring.db:/app/monitoring.db \
+  --name agentsstock1 \
+  agentsstock1:latest
+```
+
+首次迁移确认完成后，可移除旧库挂载，仅保留 `investment.db`。
 
 ## 🌐 使用的国内镜像源
 

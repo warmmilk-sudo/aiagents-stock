@@ -47,6 +47,7 @@ class MonitoringRepository:
                 notification_enabled INTEGER DEFAULT 1,
                 managed_by_portfolio INTEGER DEFAULT 0,
                 account_name TEXT,
+                asset_id INTEGER,
                 portfolio_stock_id INTEGER,
                 origin_analysis_id INTEGER,
                 current_price REAL,
@@ -71,32 +72,6 @@ class MonitoringRepository:
                 payload_json TEXT,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
-            """
-        )
-        cursor.execute(
-            """
-            DROP INDEX IF EXISTS idx_monitoring_ai_task_symbol
-            """
-        )
-        cursor.execute(
-            """
-            DROP INDEX IF EXISTS idx_monitoring_managed_alert_symbol
-            """
-        )
-        cursor.execute(
-            """
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_monitoring_ai_task_account_symbol
-            ON monitoring_items(account_name, symbol)
-            WHERE monitor_type = 'ai_task'
-            """
-        )
-        cursor.execute(
-            """
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_monitoring_managed_alert_position
-            ON monitoring_items(portfolio_stock_id, monitor_type)
-            WHERE monitor_type = 'price_alert'
-              AND managed_by_portfolio = 1
-              AND portfolio_stock_id IS NOT NULL
             """
         )
         cursor.execute(
@@ -138,8 +113,47 @@ class MonitoringRepository:
             """
         )
         self._ensure_column(cursor, "monitoring_items", "account_name", "TEXT")
+        self._ensure_column(cursor, "monitoring_items", "asset_id", "INTEGER")
         self._ensure_column(cursor, "monitoring_items", "portfolio_stock_id", "INTEGER")
         self._ensure_column(cursor, "monitoring_items", "origin_analysis_id", "INTEGER")
+        cursor.execute(
+            """
+            DROP INDEX IF EXISTS idx_monitoring_asset_type
+            """
+        )
+        cursor.execute(
+            """
+            DROP INDEX IF EXISTS idx_monitoring_ai_task_symbol
+            """
+        )
+        cursor.execute(
+            """
+            DROP INDEX IF EXISTS idx_monitoring_managed_alert_symbol
+            """
+        )
+        cursor.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_monitoring_asset_type
+            ON monitoring_items(asset_id, monitor_type)
+            WHERE asset_id IS NOT NULL
+            """
+        )
+        cursor.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_monitoring_ai_task_account_symbol
+            ON monitoring_items(account_name, symbol)
+            WHERE monitor_type = 'ai_task'
+            """
+        )
+        cursor.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_monitoring_managed_alert_position
+            ON monitoring_items(portfolio_stock_id, monitor_type)
+            WHERE monitor_type = 'price_alert'
+              AND managed_by_portfolio = 1
+              AND portfolio_stock_id IS NOT NULL
+            """
+        )
         conn.commit()
         conn.close()
 
@@ -149,6 +163,15 @@ class MonitoringRepository:
         existing_columns = {row[1] for row in cursor.fetchall()}
         if column not in existing_columns:
             cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+    @staticmethod
+    def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name = ?",
+            (table,),
+        )
+        return cursor.fetchone() is not None
 
     @staticmethod
     def _normalize_interval_minutes(value: Optional[int]) -> int:
@@ -202,7 +225,46 @@ class MonitoringRepository:
         conn.close()
         return row["meta_value"] if row else None
 
+    def _ensure_asset_binding(self, item_data: Dict) -> Dict:
+        if item_data.get("asset_id") or not item_data.get("symbol"):
+            return item_data
+        if item_data.get("monitor_type") not in {"ai_task", "price_alert"}:
+            return item_data
+
+        from asset_repository import AssetRepository, STATUS_PORTFOLIO, STATUS_RESEARCH
+
+        account_name = item_data.get("account_name") or DEFAULT_ACCOUNT_NAME
+        asset_repo = AssetRepository(self.db_path)
+        asset = asset_repo.get_asset_by_symbol(item_data["symbol"], account_name)
+        if asset is None:
+            asset_id = asset_repo.promote_to_watchlist(
+                symbol=item_data["symbol"],
+                name=item_data.get("name") or item_data["symbol"],
+                account_name=account_name,
+                note="由监控注册表创建",
+                origin_analysis_id=item_data.get("origin_analysis_id"),
+                monitor_enabled=bool(item_data.get("enabled", True)),
+            )
+            asset = asset_repo.get_asset(asset_id)
+        elif asset.get("status") == STATUS_RESEARCH:
+            asset_id = asset_repo.promote_to_watchlist(
+                symbol=item_data["symbol"],
+                name=item_data.get("name") or asset.get("name") or item_data["symbol"],
+                account_name=account_name,
+                note=asset.get("note") or "由监控注册表升级为盯盘",
+                origin_analysis_id=item_data.get("origin_analysis_id") or asset.get("origin_analysis_id"),
+                monitor_enabled=bool(item_data.get("enabled", True)),
+            )
+            asset = asset_repo.get_asset(asset_id)
+
+        if asset:
+            item_data["account_name"] = asset.get("account_name") or account_name
+            item_data["asset_id"] = asset.get("id")
+            item_data["portfolio_stock_id"] = asset.get("id") if asset.get("status") == STATUS_PORTFOLIO else None
+        return item_data
+
     def create_item(self, item_data: Dict) -> int:
+        item_data = self._ensure_asset_binding(dict(item_data))
         config = dict(item_data.get("config") or {})
         account_name = item_data.get("account_name")
         if item_data.get("monitor_type") == "ai_task":
@@ -214,10 +276,10 @@ class MonitoringRepository:
             INSERT INTO monitoring_items (
                 symbol, name, monitor_type, source, enabled, interval_minutes,
                 trading_hours_only, notification_enabled, managed_by_portfolio,
-                account_name, portfolio_stock_id, origin_analysis_id,
+                account_name, asset_id, portfolio_stock_id, origin_analysis_id,
                 current_price, last_checked, last_status, last_message, config_json
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 item_data["symbol"],
@@ -230,6 +292,7 @@ class MonitoringRepository:
                 1 if item_data.get("notification_enabled", True) else 0,
                 1 if item_data.get("managed_by_portfolio", False) else 0,
                 account_name,
+                item_data.get("asset_id"),
                 item_data.get("portfolio_stock_id"),
                 item_data.get("origin_analysis_id"),
                 item_data.get("current_price"),
@@ -261,6 +324,7 @@ class MonitoringRepository:
             "notification_enabled",
             "managed_by_portfolio",
             "account_name",
+            "asset_id",
             "portfolio_stock_id",
             "origin_analysis_id",
             "current_price",
@@ -314,6 +378,7 @@ class MonitoringRepository:
         monitor_type: Optional[str] = None,
         managed_only: Optional[bool] = None,
         account_name: Optional[str] = None,
+        asset_id: Optional[int] = None,
         portfolio_stock_id: Optional[int] = None,
     ) -> Optional[Dict]:
         items = self.list_items(
@@ -321,6 +386,7 @@ class MonitoringRepository:
             symbol=symbol,
             managed_by_portfolio=managed_only,
             account_name=account_name,
+            asset_id=asset_id,
             portfolio_stock_id=portfolio_stock_id,
         )
         return items[0] if items else None
@@ -333,6 +399,7 @@ class MonitoringRepository:
         enabled_only: bool = False,
         symbol: Optional[str] = None,
         account_name: Optional[str] = None,
+        asset_id: Optional[int] = None,
         portfolio_stock_id: Optional[int] = None,
     ) -> List[Dict]:
         conn = self._connect()
@@ -357,6 +424,9 @@ class MonitoringRepository:
         if account_name is not None:
             clauses.append("account_name = ?")
             params.append(account_name)
+        if asset_id is not None:
+            clauses.append("asset_id = ?")
+            params.append(asset_id)
         if portfolio_stock_id is not None:
             clauses.append("portfolio_stock_id = ?")
             params.append(portfolio_stock_id)
@@ -372,26 +442,36 @@ class MonitoringRepository:
         return [self._row_to_item(row) for row in rows]
 
     def upsert_item(self, item_data: Dict) -> int:
+        item_data = self._ensure_asset_binding(dict(item_data))
         monitor_type = item_data["monitor_type"]
         symbol = item_data["symbol"]
         managed = bool(item_data.get("managed_by_portfolio", False))
         account_name = item_data.get("account_name")
+        asset_id = item_data.get("asset_id")
 
         existing = None
+        if asset_id is not None:
+            items = self.list_items(
+                monitor_type=monitor_type,
+                asset_id=asset_id,
+            )
+            existing = items[0] if items else None
         if monitor_type == "ai_task":
-            existing = self.get_item_by_symbol(
+            existing = existing or self.get_item_by_symbol(
                 symbol,
                 monitor_type="ai_task",
                 account_name=account_name or DEFAULT_ACCOUNT_NAME,
+                asset_id=asset_id,
             )
         elif monitor_type == "price_alert" and managed:
             portfolio_stock_id = item_data.get("portfolio_stock_id")
             if portfolio_stock_id is not None:
-                existing = self.get_item_by_symbol(
+                existing = existing or self.get_item_by_symbol(
                     symbol,
                     monitor_type="price_alert",
                     managed_only=True,
                     account_name=account_name,
+                    asset_id=asset_id,
                     portfolio_stock_id=portfolio_stock_id,
                 )
 
@@ -409,6 +489,7 @@ class MonitoringRepository:
             "notification_enabled": item_data.get("notification_enabled", existing["notification_enabled"]),
             "managed_by_portfolio": managed,
             "account_name": account_name if monitor_type == "ai_task" else item_data.get("account_name", existing.get("account_name")),
+            "asset_id": item_data.get("asset_id", existing.get("asset_id")),
             "portfolio_stock_id": item_data.get("portfolio_stock_id", existing.get("portfolio_stock_id")),
             "origin_analysis_id": item_data.get("origin_analysis_id", existing.get("origin_analysis_id")),
             "current_price": item_data.get("current_price", existing.get("current_price")),
@@ -437,6 +518,7 @@ class MonitoringRepository:
         monitor_type: Optional[str] = None,
         managed_only: bool = False,
         account_name: Optional[str] = None,
+        asset_id: Optional[int] = None,
         portfolio_stock_id: Optional[int] = None,
     ) -> bool:
         items = self.list_items(
@@ -444,6 +526,7 @@ class MonitoringRepository:
             symbol=symbol,
             managed_by_portfolio=True if managed_only else None,
             account_name=account_name,
+            asset_id=asset_id,
             portfolio_stock_id=portfolio_stock_id,
         )
         deleted = False
@@ -710,23 +793,38 @@ class MonitoringRepository:
         conn = self._connect()
         cursor = conn.cursor()
         try:
-            cursor.execute(
-                """
-                SELECT id, account_name, code, position_status
-                FROM portfolio_stocks
-                WHERE code = ?
-                  AND COALESCE(position_status, 'active') = 'active'
-                ORDER BY id ASC
-                """,
-                (symbol,),
-            )
-            rows = cursor.fetchall()
+            if self._table_exists(cursor.connection, "assets"):
+                cursor.execute(
+                    """
+                    SELECT id, account_name, symbol
+                    FROM assets
+                    WHERE symbol = ?
+                      AND status = 'portfolio'
+                      AND deleted_at IS NULL
+                    ORDER BY id ASC
+                    """,
+                    (symbol,),
+                )
+                rows = cursor.fetchall()
+            else:
+                cursor.execute(
+                    """
+                    SELECT id, account_name, code, position_status
+                    FROM portfolio_stocks
+                    WHERE code = ?
+                      AND COALESCE(position_status, 'active') = 'active'
+                    ORDER BY id ASC
+                    """,
+                    (symbol,),
+                )
+                rows = cursor.fetchall()
         except sqlite3.OperationalError:
             rows = []
         finally:
             conn.close()
         if len(rows) == 1:
             return {
+                "asset_id": rows[0]["id"],
                 "portfolio_stock_id": rows[0]["id"],
                 "account_name": rows[0]["account_name"] or DEFAULT_ACCOUNT_NAME,
             }
@@ -759,6 +857,7 @@ class MonitoringRepository:
             task = dict(row)
             binding = self._resolve_portfolio_binding(task["stock_code"])
             account_name = DEFAULT_ACCOUNT_NAME
+            asset_id = None
             portfolio_stock_id = None
             enabled = bool(task.get("enabled", 1))
             source = "portfolio" if task.get("managed_by_portfolio") else "manual"
@@ -766,6 +865,7 @@ class MonitoringRepository:
             if task.get("managed_by_portfolio") or task.get("has_position"):
                 if binding:
                     account_name = binding["account_name"]
+                    asset_id = binding["asset_id"]
                     portfolio_stock_id = binding["portfolio_stock_id"]
                 else:
                     enabled = False
@@ -805,6 +905,7 @@ class MonitoringRepository:
                     "notification_enabled": True,
                     "managed_by_portfolio": bool(task.get("managed_by_portfolio", 0)),
                     "account_name": account_name,
+                    "asset_id": asset_id,
                     "portfolio_stock_id": portfolio_stock_id,
                     "config": config,
                     "last_checked": task.get("updated_at"),
@@ -843,6 +944,7 @@ class MonitoringRepository:
             stock = dict(row)
             binding = self._resolve_portfolio_binding(stock["symbol"]) if stock.get("managed_by_portfolio") else None
             account_name = binding["account_name"] if binding else None
+            asset_id = binding["asset_id"] if binding else None
             portfolio_stock_id = binding["portfolio_stock_id"] if binding else None
             enabled = True
             source = "portfolio" if stock.get("managed_by_portfolio") else "manual"
@@ -876,6 +978,7 @@ class MonitoringRepository:
                 "notification_enabled": bool(stock.get("notification_enabled", 1)),
                 "managed_by_portfolio": bool(stock.get("managed_by_portfolio", 0)),
                 "account_name": account_name,
+                "asset_id": asset_id,
                 "portfolio_stock_id": portfolio_stock_id,
                 "current_price": stock.get("current_price"),
                 "last_checked": stock.get("last_checked"),

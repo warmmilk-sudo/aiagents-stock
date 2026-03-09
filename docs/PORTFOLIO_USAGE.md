@@ -174,11 +174,13 @@ pip install openai  # DeepSeek API使用
 
 ### 数据存储
 
-- **持仓数据库**：`portfolio_stocks.db`
-  - 持仓股票信息
-  - 分析历史记录
-- **监测数据库**：`stock_monitor.db`
-  - 自动同步的监测股票
+- **统一数据库**：`investment.db`
+  - `portfolio_stocks`：当前持仓真源
+  - `analysis_records`：统一分析历史
+  - `monitoring_items`：AI盯盘/价格预警注册表
+
+> 如果项目目录中还保留旧版数据库 `portfolio_stocks.db`、`stock_analysis.db`、`smart_monitor.db`、`monitoring.db`，
+> 当前版本启动后会自动迁移到 `investment.db`。迁移确认完成后，旧库可以备份后删除。
 
 ### 数据备份
 
@@ -186,10 +188,10 @@ pip install openai  # DeepSeek API使用
 
 ```bash
 # Windows
-copy portfolio_stocks.db portfolio_stocks_backup_%date%.db
+copy investment.db investment_backup_%date%.db
 
 # Linux/Mac
-cp portfolio_stocks.db portfolio_stocks_backup_$(date +%Y%m%d).db
+cp investment.db investment_backup_$(date +%Y%m%d).db
 ```
 
 ---
@@ -274,9 +276,12 @@ cp portfolio_stocks.db portfolio_stocks_backup_$(date +%Y%m%d).db
 
 **A:** 方法：
 1. 通过邮件/Webhook接收结果
-2. 直接查询`portfolio_stocks.db`数据库：
+2. 直接查询 `investment.db` 数据库：
    ```sql
-   SELECT * FROM portfolio_analysis_history ORDER BY analysis_time DESC;
+   SELECT *
+   FROM analysis_records
+   WHERE analysis_scope = 'portfolio'
+   ORDER BY datetime(analysis_date) DESC, id DESC;
    ```
 3. 未来版本将支持CSV/Excel导出功能
 

@@ -50,9 +50,9 @@ class StockMonitorDatabase:
             "quant_config": config.get("quant_config") or {},
             "managed_by_portfolio": bool(item.get("managed_by_portfolio", False)),
             "account_name": item.get("account_name"),
+            "asset_id": item.get("asset_id"),
             "portfolio_stock_id": item.get("portfolio_stock_id"),
             "origin_analysis_id": item.get("origin_analysis_id"),
-            "strategy_context": config.get("strategy_context") or {},
             "created_at": item.get("created_at"),
             "updated_at": item.get("updated_at"),
         }
@@ -72,6 +72,7 @@ class StockMonitorDatabase:
         quant_config: Dict = None,
         managed_by_portfolio: bool = False,
         account_name: Optional[str] = None,
+        asset_id: Optional[int] = None,
         portfolio_stock_id: Optional[int] = None,
         origin_analysis_id: Optional[int] = None,
     ) -> int:
@@ -86,6 +87,7 @@ class StockMonitorDatabase:
             "notification_enabled": notification_enabled,
             "managed_by_portfolio": managed_by_portfolio,
             "account_name": account_name,
+            "asset_id": asset_id,
             "portfolio_stock_id": portfolio_stock_id,
             "origin_analysis_id": origin_analysis_id,
             "config": self._build_config(
@@ -197,6 +199,7 @@ class StockMonitorDatabase:
         symbol: str,
         managed_only: Optional[bool] = None,
         account_name: Optional[str] = None,
+        asset_id: Optional[int] = None,
         portfolio_stock_id: Optional[int] = None,
     ) -> Optional[Dict]:
         item = self.repository.get_item_by_symbol(
@@ -204,6 +207,7 @@ class StockMonitorDatabase:
             monitor_type="price_alert",
             managed_only=managed_only,
             account_name=account_name,
+            asset_id=asset_id,
             portfolio_stock_id=portfolio_stock_id,
         )
         return self._item_to_stock(item) if item else None
@@ -213,6 +217,7 @@ class StockMonitorDatabase:
         symbol: str,
         managed_only: bool = False,
         account_name: Optional[str] = None,
+        asset_id: Optional[int] = None,
         portfolio_stock_id: Optional[int] = None,
     ) -> bool:
         return self.repository.delete_by_symbol(
@@ -220,6 +225,7 @@ class StockMonitorDatabase:
             monitor_type="price_alert",
             managed_only=managed_only,
             account_name=account_name,
+            asset_id=asset_id,
             portfolio_stock_id=portfolio_stock_id,
         )
 
@@ -242,6 +248,7 @@ class StockMonitorDatabase:
                 trading_hours_only = data.get("trading_hours_only", True)
                 managed_by_portfolio = data.get("managed_by_portfolio", False)
                 account_name = data.get("account_name")
+                asset_id = data.get("asset_id")
                 portfolio_stock_id = data.get("portfolio_stock_id")
                 origin_analysis_id = data.get("origin_analysis_id")
 
@@ -253,6 +260,7 @@ class StockMonitorDatabase:
                     symbol,
                     managed_only=True if managed_by_portfolio else None,
                     account_name=account_name,
+                    asset_id=asset_id,
                     portfolio_stock_id=portfolio_stock_id,
                 )
                 if existing and (managed_by_portfolio or not existing.get("managed_by_portfolio")):
@@ -280,6 +288,7 @@ class StockMonitorDatabase:
                         notification_enabled=notification_enabled,
                         trading_hours_only=trading_hours_only,
                         managed_by_portfolio=managed_by_portfolio,
+                        asset_id=asset_id,
                         account_name=account_name,
                         portfolio_stock_id=portfolio_stock_id,
                         origin_analysis_id=origin_analysis_id,

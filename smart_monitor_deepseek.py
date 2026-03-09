@@ -203,6 +203,7 @@ class SmartMonitorDeepSeek:
                                  account_info: Dict, has_position: bool = False,
                                  position_cost: float = 0, position_quantity: int = 0,
                                  account_name: str = "默认账户",
+                                 asset_id: Optional[int] = None,
                                  portfolio_stock_id: Optional[int] = None,
                                  strategy_context: Optional[Dict] = None) -> Dict:
         """
@@ -227,6 +228,7 @@ class SmartMonitorDeepSeek:
             stock_code, market_data, account_info, 
             has_position, session_info, position_cost, position_quantity,
             account_name=account_name,
+            asset_id=asset_id,
             portfolio_stock_id=portfolio_stock_id,
             strategy_context=strategy_context,
         )
@@ -391,6 +393,7 @@ MACD金叉且柱状图持续放大，RSI 62处于健康区间。今日成交量�
                              session_info: Dict, position_cost: float = 0,
                              position_quantity: int = 0,
                              account_name: str = "默认账户",
+                             asset_id: Optional[int] = None,
                              portfolio_stock_id: Optional[int] = None,
                              strategy_context: Optional[Dict] = None) -> str:
         """构建A股分析提示词"""
@@ -457,6 +460,7 @@ KDJ:
 总资产: ¥{account_info.get('total_value', 0):,.2f}
 持仓数量: {account_info.get('positions_count', 0)}
 账户名称: {account_name}
+资产ID: {asset_id or 'N/A'}
 持仓ID: {portfolio_stock_id or 'N/A'}
 """
         if strategy_context:

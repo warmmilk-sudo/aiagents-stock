@@ -350,46 +350,22 @@ class PortfolioManager:
         if trade_price <= 0:
             return False, "成交价格必须大于 0", None
 
-        current_quantity = self._safe_int(stock.get("quantity"))
-        current_cost_price = stock.get("cost_price")
-        current_cost_value = self._safe_float(current_cost_price)
-
-        if normalized_trade_type == "buy":
-            if current_quantity > 0 and current_cost_value <= 0:
-                return False, "当前持仓缺少成本价，请先编辑持仓后再执行加仓", None
-            new_quantity = current_quantity + trade_quantity
-            total_cost_value = (current_cost_value * current_quantity) + (trade_price * trade_quantity)
-            new_cost_price = total_cost_value / new_quantity if new_quantity > 0 else None
-        else:
-            if current_quantity <= 0:
-                return False, "当前没有可减仓的持仓数量", None
-            if trade_quantity > current_quantity:
-                return False, "减仓数量不能超过当前持仓数量", None
-            new_quantity = current_quantity - trade_quantity
-            new_cost_price = current_cost_price if new_quantity > 0 else None
-
         formatted_trade_date = self._format_date_value(trade_date) or datetime.now().strftime("%Y-%m-%d")
 
         try:
-            self.db.add_trade_history(
-                stock_id=stock_id,
+            success, message, updated_stock = self.lifecycle_service.asset_service.record_manual_trade(
+                asset_id=stock_id,
                 trade_type=normalized_trade_type,
-                trade_date=formatted_trade_date,
-                price=trade_price,
                 quantity=trade_quantity,
+                price=trade_price,
+                trade_date=formatted_trade_date,
                 note=(note or "").strip(),
                 trade_source="manual",
             )
-            update_payload = {
-                "cost_price": new_cost_price,
-                "quantity": new_quantity if new_quantity > 0 else None,
-                "position_status": "active" if new_quantity > 0 else "closed",
-                "last_trade_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            }
-            self.db.update_stock(stock_id, **update_payload)
+            if not success:
+                return False, message, None
             self._mark_integrations_reconcile_pending()
 
-            updated_stock = self.db.get_stock(stock_id)
             warning = ""
             try:
                 account_name = (updated_stock or stock).get("account_name", "默认账户")
@@ -402,6 +378,32 @@ class PortfolioManager:
             return True, f"{action_label}记录已保存{warning}", updated_stock
         except Exception as e:
             return False, f"保存交易记录失败: {e}", None
+
+    def clear_position_to_watchlist(
+        self,
+        stock_id: int,
+        *,
+        price: float,
+        trade_date: Optional[Any] = None,
+        note: str = "",
+    ) -> Tuple[bool, str, Optional[Dict]]:
+        """按当前持仓数量登记清仓卖出，并把资产降级回盯盘。"""
+        stock = self.db.get_stock(stock_id)
+        if not stock:
+            return False, f"未找到股票ID: {stock_id}", None
+
+        quantity = self._safe_int(stock.get("quantity"))
+        if quantity <= 0:
+            return False, "当前没有可清仓的持仓数量", None
+
+        return self.record_trade(
+            stock_id=stock_id,
+            trade_type="sell",
+            quantity=quantity,
+            price=price,
+            trade_date=trade_date,
+            note=(note or "").strip() or "清仓并降级为盯盘",
+        )
 
     def get_trade_history(self, stock_id: int, limit: int = 20) -> List[Dict]:
         """获取指定持仓的交易流水。"""

@@ -15,6 +15,7 @@ from smart_monitor_qmt import SmartMonitorQMT, SmartMonitorQMTSimulator
 from smart_monitor_db import SmartMonitorDB
 from notification_service import notification_service  # 复用主程序的通知服务
 from config_manager import config_manager  # 复用主程序的配置管理器
+from asset_repository import STATUS_PORTFOLIO
 from investment_db_utils import DEFAULT_ACCOUNT_NAME
 from investment_lifecycle_service import InvestmentLifecycleService, investment_lifecycle_service
 from internal_events import event_bus, Events
@@ -116,6 +117,7 @@ class SmartMonitorEngine:
                      position_cost: float = 0, position_quantity: int = 0,
                      trading_hours_only: bool = True,
                      account_name: str = DEFAULT_ACCOUNT_NAME,
+                     asset_id: Optional[int] = None,
                      portfolio_stock_id: Optional[int] = None,
                      strategy_context: Optional[Dict] = None) -> Dict:
         """
@@ -160,34 +162,42 @@ class SmartMonitorEngine:
             
             # 3. 获取账户信息
             account_info = self.qmt.get_account_info()
-            
-            # 4. 检查是否已持有该股票
-            # 优先使用传入的持仓信息，否则从QMT获取
-            if has_position and position_cost > 0 and position_quantity > 0:
-                # 使用用户设置的持仓信息
-                self.logger.info(f"[{stock_code}] 使用监控任务设置的持仓: {position_quantity}股 @ {position_cost:.2f}元")
-            else:
-                # 从QMT获取持仓
-                position = self.qmt.get_position(stock_code)
-                has_position = position is not None
-                
-                if has_position:
-                    position_cost = position.get('cost_price', 0)
-                    position_quantity = position.get('quantity', 0)
-                    account_info['current_position'] = position
-                    self.logger.info(f"[{stock_code}] 从QMT获取持仓: {position_quantity}股, "
-                                   f"成本价: {position_cost:.2f}, "
-                                   f"浮动盈亏: {position.get('profit_loss_pct', 0):+.2f}%")
-            
+
             task_context = self.db.get_monitor_task_by_code(
                 stock_code,
                 account_name=account_name,
+                asset_id=asset_id,
                 portfolio_stock_id=portfolio_stock_id,
             ) or {}
+            asset_id = asset_id or task_context.get("asset_id")
+            account_name = task_context.get("account_name") or account_name
+            asset = None
+            if asset_id:
+                asset = self.db.asset_repository.get_asset(asset_id)
+            if not asset and stock_code:
+                asset = self.db.asset_repository.get_asset_by_symbol(stock_code, account_name)
+                if asset:
+                    asset_id = asset.get("id")
+            if asset:
+                has_position = asset.get("status") == STATUS_PORTFOLIO and int(asset.get("quantity") or 0) > 0
+                position_cost = float(asset.get("cost_price") or 0)
+                position_quantity = int(asset.get("quantity") or 0)
+                account_info["current_position"] = {
+                    "quantity": position_quantity,
+                    "cost_price": position_cost,
+                    "status": asset.get("status"),
+                }
             if strategy_context is None:
                 strategy_context = task_context.get("strategy_context") or {}
-            portfolio_stock_id = portfolio_stock_id or task_context.get("portfolio_stock_id")
-            account_name = task_context.get("account_name") or account_name
+            if strategy_context is None or not strategy_context:
+                strategy_context = self.db.analysis_repository.get_latest_strategy_context(
+                    asset_id=asset_id,
+                    symbol=stock_code,
+                    account_name=account_name,
+                ) or {}
+            portfolio_stock_id = portfolio_stock_id or task_context.get("portfolio_stock_id") or (
+                asset_id if asset and asset.get("status") == STATUS_PORTFOLIO else None
+            )
 
             # 5. 调用DeepSeek AI决策
             ai_result = self.deepseek.analyze_stock_and_decide(
@@ -198,6 +208,7 @@ class SmartMonitorEngine:
                 position_cost=position_cost,
                 position_quantity=position_quantity,
                 account_name=account_name,
+                asset_id=asset_id,
                 portfolio_stock_id=portfolio_stock_id,
                 strategy_context=strategy_context,
             )
@@ -220,6 +231,7 @@ class SmartMonitorEngine:
                 'stock_code': stock_code,
                 'stock_name': market_data.get('name'),
                 'account_name': account_name,
+                'asset_id': asset_id,
                 'portfolio_stock_id': portfolio_stock_id,
                 'origin_analysis_id': strategy_context.get('origin_analysis_id') if strategy_context else None,
                 'trading_session': session_info['session'],
@@ -232,30 +244,26 @@ class SmartMonitorEngine:
                 'risk_level': decision.get('risk_level'),
                 'key_price_levels': decision.get('key_price_levels', {}),
                 'market_data': market_data,
-                'account_info': account_info
+                'account_info': account_info,
+                'execution_mode': 'manual_only',
+                'action_status': 'pending' if str(decision.get('action', '')).upper() in {'BUY', 'SELL'} else 'suggested',
             })
-            
-            # 7. 执行交易（如果开启自动交易）
+
+            # 7. 手工执行模式下只生成待处理动作
             execution_result = None
-            if auto_trade and session_info['can_trade']:
-                execution_result = self._execute_decision(
+            pending_action = None
+            if str(decision.get('action', '')).upper() in {'BUY', 'SELL'}:
+                pending_action = self._create_pending_action(
                     stock_code=stock_code,
+                    stock_name=market_data.get('name') or stock_code,
+                    asset_id=asset_id,
+                    decision_id=decision_id,
                     decision=decision,
                     market_data=market_data,
-                    has_position=has_position,
                     account_name=account_name,
-                    portfolio_stock_id=portfolio_stock_id,
-                    origin_analysis_id=strategy_context.get("origin_analysis_id") if strategy_context else None,
-                    ai_decision_id=decision_id,
                 )
-                
-                # 更新决策执行状态
-                self.db.update_decision_execution(
-                    decision_id=decision_id,
-                    executed=execution_result.get('success', False),
-                    result=str(execution_result)
-                )
-            
+                execution_result = pending_action
+
             # 8. 发送通知
             if notify:
                 self._send_notification(
@@ -269,6 +277,7 @@ class SmartMonitorEngine:
                     position_quantity=position_quantity,
                     session_info=session_info,
                     account_name=account_name,
+                    asset_id=asset_id,
                     portfolio_stock_id=portfolio_stock_id,
                 )
             
@@ -281,7 +290,9 @@ class SmartMonitorEngine:
                 'decision': decision,
                 'decision_id': decision_id,
                 'execution_result': execution_result,
+                'pending_action': pending_action,
                 'account_name': account_name,
+                'asset_id': asset_id,
                 'portfolio_stock_id': portfolio_stock_id,
                 'strategy_context': strategy_context or {},
             }
@@ -294,6 +305,55 @@ class SmartMonitorEngine:
                 'success': False,
                 'error': str(e)
             }
+
+    def _create_pending_action(
+        self,
+        *,
+        stock_code: str,
+        stock_name: str,
+        asset_id: Optional[int],
+        decision_id: int,
+        decision: Dict,
+        market_data: Dict,
+        account_name: str,
+    ) -> Dict:
+        resolved_asset_id = asset_id
+        if resolved_asset_id is None:
+            _, _, resolved_asset_id = self.db.asset_service.promote_to_watchlist(
+                symbol=stock_code,
+                stock_name=stock_name or stock_code,
+                account_name=account_name,
+                note="来自 AI 盯盘信号",
+            )
+        if resolved_asset_id is None:
+            return {
+                "success": False,
+                "error": "asset_resolve_failed",
+            }
+        payload = {
+            "stock_code": stock_code,
+            "stock_name": stock_name,
+            "account_name": account_name,
+            "current_price": market_data.get("current_price"),
+            "decision": decision,
+            "market_data": {
+                "current_price": market_data.get("current_price"),
+                "change_pct": market_data.get("change_pct"),
+                "change_amount": market_data.get("change_amount"),
+            },
+        }
+        pending_action_id = self.db.create_pending_action(
+            asset_id=resolved_asset_id,
+            action_type=str(decision.get("action", "")).lower(),
+            origin_decision_id=decision_id,
+            payload=payload,
+        )
+        return {
+            "success": True,
+            "mode": "manual_only",
+            "pending_action_id": pending_action_id,
+            "message": f"已创建待人工处理动作: {decision.get('action')}",
+        }
     
     def _execute_decision(self, stock_code: str, decision: Dict,
                          market_data: Dict, has_position: bool,
@@ -503,6 +563,7 @@ class SmartMonitorEngine:
         position_quantity: Optional[int] = None,
         session_info: Optional[Dict] = None,
         account_name: str = DEFAULT_ACCOUNT_NAME,
+        asset_id: Optional[int] = None,
         portfolio_stock_id: Optional[int] = None,
     ):
         try:
@@ -514,6 +575,7 @@ class SmartMonitorEngine:
             task = self.db.get_monitor_task_by_code(
                 stock_code,
                 account_name=account_name,
+                asset_id=asset_id,
                 portfolio_stock_id=portfolio_stock_id,
             )
             task_config = task or {}
@@ -551,11 +613,10 @@ class SmartMonitorEngine:
                 f"核心理由: {reasoning_summary}\n"
                 f"触发时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
             )
-            if execution_result:
-                if execution_result.get('success'):
-                    content += "\n自动交易已执行"
-                else:
-                    content += f"\n自动交易失败: {execution_result.get('error', '未知错误')}"
+            if execution_result and execution_result.get('pending_action_id'):
+                content += f"\n已生成待人工处理动作 #{execution_result.get('pending_action_id')}"
+            elif execution_result and not execution_result.get('success'):
+                content += f"\n动作创建失败: {execution_result.get('error', '未知错误')}"
 
             notification_data = {
                 'symbol': stock_code,
@@ -594,6 +655,7 @@ class SmartMonitorEngine:
                 stock_code,
                 monitor_type='ai_task',
                 account_name=account_name,
+                asset_id=asset_id,
                 portfolio_stock_id=portfolio_stock_id,
             )
             if task_item:
@@ -619,6 +681,7 @@ class SmartMonitorEngine:
         position_quantity: int = 0,
         trading_hours_only: bool = True,
         account_name: str = DEFAULT_ACCOUNT_NAME,
+        asset_id: Optional[int] = None,
         portfolio_stock_id: Optional[int] = None,
         strategy_context: Optional[Dict] = None,
     ):
@@ -634,6 +697,7 @@ class SmartMonitorEngine:
             'position_quantity': position_quantity,
             'trading_hours_only': trading_hours_only,
             'account_name': account_name,
+            'asset_id': asset_id,
             'portfolio_stock_id': portfolio_stock_id,
             'strategy_context': strategy_context or {},
         }
@@ -661,11 +725,9 @@ class SmartMonitorEngine:
         if task:
             context.setdefault('auto_trade', bool(task.get('auto_trade', 0)))
             context.setdefault('notify', True)
-            context.setdefault('has_position', bool(task.get('has_position', 0)))
-            context.setdefault('position_cost', float(task.get('position_cost', 0) or 0))
-            context.setdefault('position_quantity', int(task.get('position_quantity', 0) or 0))
             context.setdefault('trading_hours_only', bool(task.get('trading_hours_only', 1)))
             context.setdefault('account_name', task.get('account_name') or DEFAULT_ACCOUNT_NAME)
+            context.setdefault('asset_id', task.get('asset_id'))
             context.setdefault('portfolio_stock_id', task.get('portfolio_stock_id'))
             context.setdefault('strategy_context', task.get('strategy_context') or {})
 
@@ -678,6 +740,7 @@ class SmartMonitorEngine:
             position_quantity=int(context.get('position_quantity', 0) or 0),
             trading_hours_only=bool(context.get('trading_hours_only', True)),
             account_name=context.get('account_name') or DEFAULT_ACCOUNT_NAME,
+            asset_id=context.get('asset_id'),
             portfolio_stock_id=context.get('portfolio_stock_id'),
             strategy_context=context.get('strategy_context') or {},
         )

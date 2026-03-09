@@ -1207,8 +1207,8 @@ def display_stock_card(
         if meta_bits:
             st.caption(" | ".join(meta_bits))
 
-        action_col1, action_col2, action_col3, action_col4, action_col5 = st.columns(
-            [1.15, 1, 1, 1, 1],
+        action_col1, action_col2, action_col3, action_col4, action_col5, action_col6 = st.columns(
+            [1.05, 0.95, 0.9, 0.9, 1.35, 0.8],
             gap="small",
         )
         with action_col1:
@@ -1256,6 +1256,16 @@ def display_stock_card(
                 st.session_state.pop(edit_state_key, None)
                 st.rerun()
         with action_col5:
+            if st.button("清仓并降级", key=f"clear_{stock_id}", help="预填一笔整仓卖出，保存后降级回盯盘"):
+                st.session_state[trade_state_key] = True
+                st.session_state[trade_type_key] = "sell"
+                st.session_state[trade_date_key] = date.today()
+                st.session_state[trade_price_key] = default_trade_price
+                st.session_state[trade_quantity_key] = max(1, int(quantity or 0))
+                st.session_state[trade_note_key] = "清仓并降级为盯盘"
+                st.session_state.pop(edit_state_key, None)
+                st.rerun()
+        with action_col6:
             if st.button("删除", key=f"del_{stock_id}", help="删除"):
                 success, msg = portfolio_manager.delete_stock(stock_id)
                 if success:
@@ -1326,7 +1336,8 @@ def display_stock_card(
             st.session_state.setdefault(trade_note_key, "")
 
             with st.form(key=f"trade_form_{stock_id}"):
-                st.markdown(f"#### 加仓 / 减仓 - {display_name}")
+                st.markdown(f"#### 手工买入 / 卖出 - {display_name}")
+                st.caption("整仓卖出并保存后，资产会自动从“持仓”降级回“盯盘”。")
 
                 trade_col1, trade_col2 = st.columns(2)
                 with trade_col1:

@@ -94,6 +94,7 @@ class AnalysisRepository:
                 symbol TEXT NOT NULL,
                 stock_name TEXT,
                 account_name TEXT,
+                asset_id INTEGER,
                 portfolio_stock_id INTEGER,
                 analysis_scope TEXT NOT NULL DEFAULT 'research'
                     CHECK(analysis_scope IN ('research', 'portfolio')),
@@ -114,14 +115,23 @@ class AnalysisRepository:
                 discussion_result TEXT,
                 final_decision_json TEXT,
                 has_full_report INTEGER DEFAULT 0,
+                asset_status_snapshot TEXT,
                 created_at TEXT NOT NULL
             )
             """
         )
+        self._ensure_column(cursor, "analysis_records", "asset_id", "INTEGER")
+        self._ensure_column(cursor, "analysis_records", "asset_status_snapshot", "TEXT")
         cursor.execute(
             """
             CREATE INDEX IF NOT EXISTS idx_analysis_symbol_time
             ON analysis_records(symbol, datetime(analysis_date) DESC, id DESC)
+            """
+        )
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_analysis_asset_time
+            ON analysis_records(asset_id, datetime(analysis_date) DESC, id DESC)
             """
         )
         cursor.execute(
@@ -139,6 +149,13 @@ class AnalysisRepository:
         conn.commit()
         conn.close()
 
+    @staticmethod
+    def _ensure_column(cursor, table: str, column: str, definition: str) -> None:
+        cursor.execute(f"PRAGMA table_info({table})")
+        existing_columns = {row[1] for row in cursor.fetchall()}
+        if column not in existing_columns:
+            cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
     def save_record(
         self,
         *,
@@ -150,6 +167,7 @@ class AnalysisRepository:
         discussion_result: Optional[Any] = None,
         final_decision: Optional[Dict] = None,
         account_name: Optional[str] = None,
+        asset_id: Optional[int] = None,
         portfolio_stock_id: Optional[int] = None,
         analysis_scope: str = "research",
         analysis_source: str = "manual",
@@ -164,12 +182,14 @@ class AnalysisRepository:
         stop_loss: Optional[float] = None,
         summary: str = "",
         has_full_report: Optional[bool] = None,
+        asset_status_snapshot: Optional[str] = None,
     ) -> int:
         normalized_scope = analysis_scope if analysis_scope in {"research", "portfolio"} else "research"
         final_decision = final_decision or {}
         stock_info = stock_info or {}
         analysis_date = analysis_date or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         created_at = datetime.now().isoformat()
+        effective_account_name = account_name or DEFAULT_ACCOUNT_NAME
 
         rating = rating or final_decision.get("rating")
         confidence = confidence if confidence is not None else self._extract_first_number(
@@ -211,23 +231,50 @@ class AnalysisRepository:
                 for value in (stock_info, agents_results, discussion_result, final_decision)
             )
 
+        if asset_id is None and symbol:
+            from asset_repository import asset_repository
+
+            if normalized_scope == "portfolio":
+                existing_asset = asset_repository.get_asset_by_symbol(symbol, effective_account_name)
+                if existing_asset:
+                    asset_id = existing_asset["id"]
+                    asset_status_snapshot = asset_status_snapshot or existing_asset.get("status")
+            else:
+                asset_id = asset_repository.create_or_update_research_asset(
+                    symbol=symbol,
+                    name=stock_name or symbol,
+                    account_name=effective_account_name,
+                    note=summary,
+                    origin_analysis_id=None,
+                )
+                asset = asset_repository.get_asset(asset_id)
+                asset_status_snapshot = asset_status_snapshot or (asset.get("status") if asset else "research")
+        elif asset_id is not None and asset_status_snapshot is None:
+            from asset_repository import asset_repository
+
+            asset = asset_repository.get_asset(asset_id)
+            asset_status_snapshot = asset.get("status") if asset else asset_status_snapshot
+        if asset_id is not None and portfolio_stock_id is None and normalized_scope == "portfolio":
+            portfolio_stock_id = asset_id
+
         conn = self._connect()
         cursor = conn.cursor()
         cursor.execute(
             """
             INSERT INTO analysis_records (
-                symbol, stock_name, account_name, portfolio_stock_id, analysis_scope,
+                symbol, stock_name, account_name, asset_id, portfolio_stock_id, analysis_scope,
                 analysis_source, analysis_date, period, rating, confidence,
                 current_price, target_price, entry_min, entry_max, take_profit, stop_loss,
                 summary, stock_info_json, agents_results_json, discussion_result,
-                final_decision_json, has_full_report, created_at
+                final_decision_json, has_full_report, asset_status_snapshot, created_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 symbol,
                 stock_name,
-                account_name,
+                effective_account_name,
+                asset_id,
                 portfolio_stock_id,
                 normalized_scope,
                 analysis_source,
@@ -247,12 +294,19 @@ class AnalysisRepository:
                 self._serialize_json(discussion_result),
                 self._serialize_json(final_decision),
                 1 if has_full_report else 0,
+                asset_status_snapshot,
                 created_at,
             ),
         )
         record_id = int(cursor.lastrowid)
         conn.commit()
         conn.close()
+        if asset_id is not None:
+            from asset_repository import asset_repository
+
+            asset = asset_repository.get_asset(asset_id)
+            if asset and not asset.get("origin_analysis_id"):
+                asset_repository.update_asset(asset_id, origin_analysis_id=record_id)
         return record_id
 
     def list_records(
@@ -260,6 +314,7 @@ class AnalysisRepository:
         *,
         analysis_scope: Optional[str] = None,
         symbol: Optional[str] = None,
+        asset_id: Optional[int] = None,
         portfolio_stock_id: Optional[int] = None,
         limit: Optional[int] = None,
         full_report_only: bool = False,
@@ -274,6 +329,9 @@ class AnalysisRepository:
         if symbol:
             clauses.append("symbol = ?")
             params.append(symbol)
+        if asset_id is not None:
+            clauses.append("asset_id = ?")
+            params.append(asset_id)
         if portfolio_stock_id is not None:
             clauses.append("portfolio_stock_id = ?")
             params.append(portfolio_stock_id)
@@ -308,6 +366,7 @@ class AnalysisRepository:
     def get_latest_strategy_context(
         self,
         *,
+        asset_id: Optional[int] = None,
         portfolio_stock_id: Optional[int] = None,
         symbol: Optional[str] = None,
         account_name: Optional[str] = None,
@@ -316,7 +375,10 @@ class AnalysisRepository:
         cursor = conn.cursor()
         clauses = ["COALESCE(has_full_report, 0) = 1"]
         params: List[Any] = []
-        if portfolio_stock_id is not None:
+        if asset_id is not None:
+            clauses.append("asset_id = ?")
+            params.append(asset_id)
+        elif portfolio_stock_id is not None:
             clauses.append("portfolio_stock_id = ?")
             params.append(portfolio_stock_id)
         elif symbol:
@@ -342,10 +404,12 @@ class AnalysisRepository:
         record = self._deserialize_row(row)
         return {
             "origin_analysis_id": record["id"],
+            "asset_id": record.get("asset_id"),
             "symbol": record["symbol"],
             "stock_name": record.get("stock_name"),
             "account_name": record.get("account_name"),
             "portfolio_stock_id": record.get("portfolio_stock_id"),
+            "asset_status_snapshot": record.get("asset_status_snapshot"),
             "analysis_scope": record.get("analysis_scope"),
             "analysis_source": record.get("analysis_source"),
             "analysis_date": record.get("analysis_date"),
@@ -363,6 +427,7 @@ class AnalysisRepository:
     def get_latest_portfolio_record(self, portfolio_stock_id: int) -> Optional[Dict]:
         records = self.list_records(
             analysis_scope="portfolio",
+            asset_id=portfolio_stock_id,
             portfolio_stock_id=portfolio_stock_id,
             limit=1,
             full_report_only=True,
@@ -420,6 +485,7 @@ class AnalysisRepository:
                 analysis_source="legacy_home_analysis",
                 analysis_date=record.get("analysis_date") or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 has_full_report=True,
+                asset_status_snapshot="research",
             )
             migrated += 1
         legacy_conn.close()
@@ -477,6 +543,7 @@ class AnalysisRepository:
                 symbol=record.get("code") or "",
                 stock_name=record.get("name") or record.get("code") or "",
                 account_name=record.get("account_name") or DEFAULT_ACCOUNT_NAME,
+                asset_id=record.get("portfolio_stock_id"),
                 portfolio_stock_id=record.get("portfolio_stock_id"),
                 analysis_scope="portfolio",
                 analysis_source=record.get("analysis_source") or "legacy_portfolio_analysis",
@@ -496,6 +563,7 @@ class AnalysisRepository:
                 discussion_result=self._safe_json_loads(record.get("discussion_result"), ""),
                 final_decision=self._safe_json_loads(record.get("final_decision_json"), {}),
                 has_full_report=bool(record.get("has_full_report", 0)),
+                asset_status_snapshot="portfolio",
             )
             migrated += 1
         legacy_conn.close()

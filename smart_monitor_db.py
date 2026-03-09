@@ -6,6 +6,8 @@ from datetime import datetime
 from typing import Dict, List, Optional
 
 from analysis_repository import AnalysisRepository
+from asset_repository import STATUS_PORTFOLIO, STATUS_WATCHLIST, AssetRepository
+from asset_service import AssetService, asset_service
 from investment_db_utils import DEFAULT_ACCOUNT_NAME, get_metadata, resolve_investment_db_path, set_metadata
 from monitoring_repository import MonitoringRepository
 from portfolio_db import PortfolioDB
@@ -22,6 +24,12 @@ class SmartMonitorDB:
         self.monitoring_repository = MonitoringRepository(self.db_file)
         self.portfolio_db = PortfolioDB(self.db_file)
         self.analysis_repository = AnalysisRepository(self.db_file, legacy_analysis_db_path="")
+        self.asset_repository = AssetRepository(self.db_file)
+        self.asset_service = AssetService(
+            asset_store=self.asset_repository,
+            analysis_store=self.analysis_repository,
+            monitoring_store=self.monitoring_repository,
+        )
         from investment_lifecycle_service import InvestmentLifecycleService
         from monitor_db import StockMonitorDatabase
 
@@ -30,6 +38,7 @@ class SmartMonitorDB:
             realtime_monitor_store=StockMonitorDatabase(self.db_file),
             analysis_store=self.analysis_repository,
             monitoring_store=self.monitoring_repository,
+            asset_service=self.asset_service,
         )
         self._init_database()
         self.monitoring_repository.migrate_legacy_smart_db(self.legacy_db_file)
@@ -50,6 +59,7 @@ class SmartMonitorDB:
                 stock_code TEXT NOT NULL,
                 stock_name TEXT,
                 account_name TEXT,
+                asset_id INTEGER,
                 portfolio_stock_id INTEGER,
                 origin_analysis_id INTEGER,
                 decision_time TEXT NOT NULL,
@@ -64,6 +74,8 @@ class SmartMonitorDB:
                 key_price_levels TEXT,
                 market_data TEXT,
                 account_info TEXT,
+                execution_mode TEXT DEFAULT 'manual_only',
+                action_status TEXT DEFAULT 'suggested',
                 executed INTEGER DEFAULT 0,
                 execution_result TEXT,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
@@ -86,8 +98,18 @@ class SmartMonitorDB:
             )
             """
         )
+        self._ensure_column(cursor, "ai_decisions", "asset_id", "INTEGER")
+        self._ensure_column(cursor, "ai_decisions", "execution_mode", "TEXT DEFAULT 'manual_only'")
+        self._ensure_column(cursor, "ai_decisions", "action_status", "TEXT DEFAULT 'suggested'")
         conn.commit()
         conn.close()
+
+    @staticmethod
+    def _ensure_column(cursor, table: str, column: str, definition: str) -> None:
+        cursor.execute(f"PRAGMA table_info({table})")
+        existing_columns = {row[1] for row in cursor.fetchall()}
+        if column not in existing_columns:
+            cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
     def _migrate_legacy_history_db(self, legacy_db_path: str) -> int:
         if not legacy_db_path or not os.path.exists(legacy_db_path):
@@ -192,23 +214,21 @@ class SmartMonitorDB:
     def _task_config_from_data(self, task_data: Dict) -> Dict:
         return {
             "task_name": task_data.get("task_name"),
-            "auto_trade": bool(task_data.get("auto_trade", 0)),
+            "auto_trade": False,
             "position_size_pct": task_data.get("position_size_pct", 20),
             "stop_loss_pct": task_data.get("stop_loss_pct", 5),
             "take_profit_pct": task_data.get("take_profit_pct", 10),
             "qmt_account_id": task_data.get("qmt_account_id"),
             "notify_email": task_data.get("notify_email"),
             "notify_webhook": task_data.get("notify_webhook"),
-            "has_position": bool(task_data.get("has_position", 0)),
-            "position_cost": task_data.get("position_cost", 0),
-            "position_quantity": task_data.get("position_quantity", 0),
             "position_date": task_data.get("position_date"),
-            "strategy_context": task_data.get("strategy_context") or {},
         }
 
     def _item_to_task(self, item: Dict) -> Dict:
         config = item.get("config") or {}
         interval_minutes = int(item.get("interval_minutes") or 1)
+        asset = self.asset_repository.get_asset(item.get("asset_id")) if item.get("asset_id") else None
+        has_position = bool(asset and asset.get("status") == STATUS_PORTFOLIO and (asset.get("quantity") or 0) > 0)
         return {
             "id": item["id"],
             "task_name": config.get("task_name") or f"{item['symbol']} AI监控任务",
@@ -224,15 +244,21 @@ class SmartMonitorDB:
             "qmt_account_id": config.get("qmt_account_id"),
             "notify_email": config.get("notify_email"),
             "notify_webhook": config.get("notify_webhook"),
-            "has_position": 1 if config.get("has_position", False) else 0,
-            "position_cost": config.get("position_cost", 0),
-            "position_quantity": config.get("position_quantity", 0),
+            "has_position": 1 if has_position else 0,
+            "position_cost": asset.get("cost_price") if asset else 0,
+            "position_quantity": asset.get("quantity") if asset else 0,
             "position_date": config.get("position_date"),
             "managed_by_portfolio": 1 if item.get("managed_by_portfolio", False) else 0,
             "account_name": item.get("account_name") or DEFAULT_ACCOUNT_NAME,
+            "asset_id": item.get("asset_id"),
+            "asset_status": asset.get("status") if asset else None,
             "portfolio_stock_id": item.get("portfolio_stock_id"),
             "origin_analysis_id": item.get("origin_analysis_id"),
-            "strategy_context": config.get("strategy_context") or {},
+            "strategy_context": self.analysis_repository.get_latest_strategy_context(
+                asset_id=item.get("asset_id"),
+                symbol=item.get("symbol"),
+                account_name=item.get("account_name") or DEFAULT_ACCOUNT_NAME,
+            ) or {},
             "created_at": item.get("created_at"),
             "updated_at": item.get("updated_at"),
         }
@@ -242,6 +268,15 @@ class SmartMonitorDB:
         if not stock_code:
             raise ValueError("stock_code 不能为空")
         account_name = task_data.get("account_name") or DEFAULT_ACCOUNT_NAME
+        asset_id = task_data.get("asset_id")
+        if asset_id is None:
+            _, _, asset_id = self.asset_service.promote_to_watchlist(
+                symbol=stock_code,
+                stock_name=task_data.get("stock_name") or stock_code,
+                account_name=account_name,
+                note="",
+                origin_analysis_id=task_data.get("origin_analysis_id"),
+            )
         return self.monitoring_repository.create_item(
             {
                 "symbol": stock_code,
@@ -254,6 +289,7 @@ class SmartMonitorDB:
                 "notification_enabled": True,
                 "managed_by_portfolio": bool(task_data.get("managed_by_portfolio", 0)),
                 "account_name": account_name,
+                "asset_id": asset_id,
                 "portfolio_stock_id": task_data.get("portfolio_stock_id"),
                 "origin_analysis_id": task_data.get("origin_analysis_id"),
                 "config": self._task_config_from_data(task_data),
@@ -266,11 +302,13 @@ class SmartMonitorDB:
 
     def update_monitor_task(self, stock_code: str, task_data: Dict):
         account_name = task_data.get("account_name")
+        asset_id = task_data.get("asset_id")
         portfolio_stock_id = task_data.get("portfolio_stock_id")
         item = self.monitoring_repository.get_item_by_symbol(
             stock_code,
             monitor_type="ai_task",
             account_name=account_name or DEFAULT_ACCOUNT_NAME,
+            asset_id=asset_id,
             portfolio_stock_id=portfolio_stock_id,
         )
         if not item:
@@ -296,6 +334,8 @@ class SmartMonitorDB:
             updates["source"] = "portfolio" if managed else "ai_monitor"
         if "account_name" in task_data:
             updates["account_name"] = task_data.get("account_name") or DEFAULT_ACCOUNT_NAME
+        if "asset_id" in task_data:
+            updates["asset_id"] = task_data.get("asset_id")
         if "portfolio_stock_id" in task_data:
             updates["portfolio_stock_id"] = task_data.get("portfolio_stock_id")
         if "origin_analysis_id" in task_data:
@@ -303,18 +343,13 @@ class SmartMonitorDB:
 
         tracked_keys = {
             "task_name",
-            "auto_trade",
             "position_size_pct",
             "stop_loss_pct",
             "take_profit_pct",
             "qmt_account_id",
             "notify_email",
             "notify_webhook",
-            "has_position",
-            "position_cost",
-            "position_quantity",
             "position_date",
-            "strategy_context",
         }
         if any(key in task_data for key in tracked_keys):
             for key in tracked_keys:
@@ -341,6 +376,7 @@ class SmartMonitorDB:
         stock_code: str,
         managed_only: Optional[bool] = None,
         account_name: Optional[str] = None,
+        asset_id: Optional[int] = None,
         portfolio_stock_id: Optional[int] = None,
     ) -> Optional[Dict]:
         item = self.monitoring_repository.get_item_by_symbol(
@@ -348,9 +384,10 @@ class SmartMonitorDB:
             monitor_type="ai_task",
             managed_only=managed_only,
             account_name=account_name if account_name is not None else None,
+            asset_id=asset_id,
             portfolio_stock_id=portfolio_stock_id,
         )
-        if not item and account_name is None and portfolio_stock_id is None:
+        if not item and account_name is None and asset_id is None and portfolio_stock_id is None:
             item = self.monitoring_repository.get_item_by_symbol(
                 stock_code,
                 monitor_type="ai_task",
@@ -365,10 +402,20 @@ class SmartMonitorDB:
             raise ValueError("stock_code 不能为空")
         managed_sync = bool(task_data.get("managed_by_portfolio"))
         account_name = task_data.get("account_name") or DEFAULT_ACCOUNT_NAME
+        asset_id = task_data.get("asset_id")
+        if asset_id is None:
+            _, _, asset_id = self.asset_service.promote_to_watchlist(
+                symbol=stock_code,
+                stock_name=task_data.get("stock_name") or stock_code,
+                account_name=account_name,
+                note="",
+                origin_analysis_id=task_data.get("origin_analysis_id"),
+            )
         existing = self.monitoring_repository.get_item_by_symbol(
             stock_code,
             monitor_type="ai_task",
             account_name=account_name,
+            asset_id=asset_id,
         )
         if managed_sync and existing and not existing.get("managed_by_portfolio"):
             self.logger.info(f"跳过持仓同步任务 {stock_code}，同账户下手工任务已存在")
@@ -386,6 +433,7 @@ class SmartMonitorDB:
                 "notification_enabled": True,
                 "managed_by_portfolio": managed_sync,
                 "account_name": account_name,
+                "asset_id": asset_id,
                 "portfolio_stock_id": task_data.get("portfolio_stock_id"),
                 "origin_analysis_id": task_data.get("origin_analysis_id"),
                 "config": self._task_config_from_data(task_data),
@@ -416,17 +464,18 @@ class SmartMonitorDB:
         cursor.execute(
             """
             INSERT INTO ai_decisions (
-                stock_code, stock_name, account_name, portfolio_stock_id, origin_analysis_id,
+                stock_code, stock_name, account_name, asset_id, portfolio_stock_id, origin_analysis_id,
                 decision_time, trading_session, action, confidence, reasoning, position_size_pct,
                 stop_loss_pct, take_profit_pct, risk_level, key_price_levels, market_data,
-                account_info
+                account_info, execution_mode, action_status
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 decision_data.get("stock_code"),
                 decision_data.get("stock_name"),
                 decision_data.get("account_name"),
+                decision_data.get("asset_id"),
                 decision_data.get("portfolio_stock_id"),
                 decision_data.get("origin_analysis_id"),
                 decision_data.get("decision_time", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
@@ -441,6 +490,8 @@ class SmartMonitorDB:
                 json.dumps(decision_data.get("key_price_levels", {}), ensure_ascii=False),
                 json.dumps(decision_data.get("market_data", {}), ensure_ascii=False),
                 json.dumps(decision_data.get("account_info", {}), ensure_ascii=False),
+                decision_data.get("execution_mode", "manual_only"),
+                decision_data.get("action_status", "suggested"),
             ),
         )
         record_id = int(cursor.lastrowid)
@@ -487,31 +538,26 @@ class SmartMonitorDB:
         cursor.execute(
             """
             UPDATE ai_decisions
-            SET executed = ?, execution_result = ?
+            SET executed = ?, execution_result = ?, action_status = ?
             WHERE id = ?
             """,
-            (1 if executed else 0, result, decision_id),
+            (1 if executed else 0, result, "accepted" if executed else "suggested", decision_id),
         )
         conn.commit()
         conn.close()
 
     def save_trade_record(self, trade_data: Dict) -> int:
-        result = self.lifecycle_service.apply_monitor_execution(
-            stock_code=trade_data.get("stock_code"),
-            stock_name=trade_data.get("stock_name") or trade_data.get("stock_code"),
+        result = self.asset_service.record_manual_trade(
+            asset_id=int(trade_data.get("asset_id") or trade_data.get("portfolio_stock_id") or 0),
             trade_type=str(trade_data.get("trade_type", "")).lower(),
             quantity=int(trade_data.get("quantity") or 0),
             price=float(trade_data.get("price") or 0),
-            account_name=trade_data.get("account_name") or DEFAULT_ACCOUNT_NAME,
-            portfolio_stock_id=trade_data.get("portfolio_stock_id"),
-            origin_analysis_id=trade_data.get("origin_analysis_id"),
-            ai_decision_id=trade_data.get("ai_decision_id"),
-            order_id=trade_data.get("order_id"),
-            order_status=trade_data.get("order_status"),
+            trade_date=trade_data.get("trade_date"),
             note=trade_data.get("note") or "",
-            trade_source=trade_data.get("trade_source", "ai_monitor"),
+            trade_source=trade_data.get("trade_source", "manual"),
+            pending_action_id=trade_data.get("pending_action_id"),
         )
-        return int(result.get("portfolio_stock_id") or 0)
+        return int((result[2] or {}).get("id") or 0) if result[0] else 0
 
     def get_trade_records(self, stock_code: str = None, limit: int = 100) -> List[Dict]:
         conn = self._connect()
@@ -520,7 +566,7 @@ class SmartMonitorDB:
             """
             SELECT
                 t.id,
-                s.code AS stock_code,
+                s.symbol AS stock_code,
                 s.name AS stock_name,
                 UPPER(t.trade_type) AS trade_type,
                 t.quantity,
@@ -534,15 +580,15 @@ class SmartMonitorDB:
                 0 AS tax,
                 0 AS profit_loss,
                 t.trade_source
-            FROM portfolio_trade_history t
-            INNER JOIN portfolio_stocks s
-                ON s.id = t.portfolio_stock_id
+            FROM asset_trade_history t
+            INNER JOIN assets s
+                ON s.id = t.asset_id
             WHERE 1 = 1
             """
         ]
         params: List[object] = []
         if stock_code:
-            sql.append("AND s.code = ?")
+            sql.append("AND s.symbol = ?")
             params.append(stock_code)
         sql.append("ORDER BY t.trade_date DESC, t.id DESC LIMIT ?")
         params.append(limit)
@@ -571,21 +617,21 @@ class SmartMonitorDB:
         return []
 
     def save_position(self, position_data: Dict):
-        success, _, stock_id = self.lifecycle_service.create_position_from_analysis(
+        success, _, stock_id = self.asset_service.promote_to_portfolio(
             symbol=position_data.get("stock_code"),
             stock_name=position_data.get("stock_name") or position_data.get("stock_code"),
             account_name=position_data.get("account_name") or DEFAULT_ACCOUNT_NAME,
             cost_price=position_data.get("cost_price"),
             quantity=position_data.get("quantity"),
             note=position_data.get("note") or "",
-            auto_monitor=True,
+            monitor_enabled=True,
             origin_analysis_id=position_data.get("origin_analysis_id"),
         )
         return stock_id if success else 0
 
     def get_positions(self) -> List[Dict]:
         positions = []
-        for stock in self.portfolio_db.get_all_stocks(auto_monitor_only=False):
+        for stock in self.asset_repository.list_assets(status=STATUS_PORTFOLIO):
             positions.append(
                 {
                     "stock_code": stock["code"],
@@ -615,14 +661,12 @@ class SmartMonitorDB:
         return []
 
     def close_position(self, stock_code: str, account_name: str = DEFAULT_ACCOUNT_NAME):
-        stock = self.portfolio_db.get_stock_by_code(stock_code, account_name)
+        stock = self.asset_repository.get_asset_by_symbol(stock_code, account_name)
         if not stock:
             return False
-        return self.portfolio_db.update_stock(
+        return self.asset_service.clear_position_to_watchlist(
             stock["id"],
-            quantity=None,
-            cost_price=None,
-            position_status="closed",
+            note="手动清仓",
             last_trade_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         )
 
@@ -662,3 +706,33 @@ class SmartMonitorDB:
         )
         conn.commit()
         conn.close()
+
+    def create_pending_action(self, *, asset_id: int, action_type: str, origin_decision_id: Optional[int] = None, payload: Optional[Dict] = None) -> int:
+        return self.asset_repository.create_pending_action(
+            asset_id=asset_id,
+            action_type=action_type,
+            origin_decision_id=origin_decision_id,
+            payload=payload or {},
+        )
+
+    def get_pending_actions(
+        self,
+        *,
+        status: Optional[str] = "pending",
+        account_name: Optional[str] = None,
+        asset_id: Optional[int] = None,
+        limit: int = 100,
+    ) -> List[Dict]:
+        return self.asset_repository.list_pending_actions(
+            status=status,
+            account_name=account_name,
+            asset_id=asset_id,
+            limit=limit,
+        )
+
+    def resolve_pending_action(self, action_id: int, *, status: str, resolution_note: str = "") -> bool:
+        return self.asset_repository.update_pending_action(
+            action_id,
+            status=status,
+            resolution_note=resolution_note,
+        )

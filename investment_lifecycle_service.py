@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
 from analysis_repository import AnalysisRepository, analysis_repository
+from asset_service import AssetService, asset_service
 from investment_db_utils import DEFAULT_ACCOUNT_NAME
 from monitor_db import StockMonitorDatabase, monitor_db
 from monitoring_repository import MonitoringRepository
@@ -22,11 +23,17 @@ class InvestmentLifecycleService:
         realtime_monitor_store: Optional[StockMonitorDatabase] = None,
         analysis_store: Optional[AnalysisRepository] = None,
         monitoring_store: Optional[MonitoringRepository] = None,
+        asset_service: Optional[AssetService] = None,
     ):
         self.portfolio_db = portfolio_store or portfolio_db
         self.realtime_monitor_db = realtime_monitor_store or monitor_db
         self.analysis_repository = analysis_store or analysis_repository
         self.monitoring_repository = monitoring_store or self.realtime_monitor_db.repository
+        self.asset_service = asset_service or AssetService(
+            asset_store=getattr(self.portfolio_db, "asset_repository", None),
+            analysis_store=self.analysis_repository,
+            monitoring_store=self.monitoring_repository,
+        )
 
     def _build_strategy_context(self, stock: Dict) -> Optional[Dict]:
         return self.analysis_repository.get_latest_strategy_context(
@@ -138,12 +145,14 @@ class InvestmentLifecycleService:
         deleted_ai = 0
         deleted_alert = 0
         account_name = stock.get("account_name") or DEFAULT_ACCOUNT_NAME
-        portfolio_stock_id = stock.get("id")
+        asset_id = stock.get("id")
+        portfolio_stock_id = stock.get("id") if stock.get("status") == "portfolio" else None
         if self.monitoring_repository.delete_by_symbol(
             stock["code"],
             monitor_type="ai_task",
             managed_only=True,
             account_name=account_name,
+            asset_id=asset_id,
             portfolio_stock_id=portfolio_stock_id,
         ):
             deleted_ai = 1
@@ -152,6 +161,7 @@ class InvestmentLifecycleService:
             monitor_type="price_alert",
             managed_only=True,
             account_name=account_name,
+            asset_id=asset_id,
             portfolio_stock_id=portfolio_stock_id,
         ):
             deleted_alert = 1
@@ -164,54 +174,13 @@ class InvestmentLifecycleService:
         account_name: Optional[str] = None,
         symbol: Optional[str] = None,
     ) -> Dict[str, int]:
-        summary = {
-            "positions": 0,
-            "ai_tasks_upserted": 0,
-            "price_alerts_upserted": 0,
-            "price_alerts_removed": 0,
-            "ai_tasks_removed": 0,
-        }
+        summary = {"positions": 0, "ai_tasks_upserted": 0, "price_alerts_upserted": 0, "price_alerts_removed": 0, "ai_tasks_removed": 0}
         for stock in self._iter_target_stocks(stock_id=stock_id, account_name=account_name, symbol=symbol):
             summary["positions"] += 1
-            if not stock.get("auto_monitor", True) or stock.get("position_status", "active") != "active":
-                deleted = self._delete_managed_items_for_position(stock)
-                summary["ai_tasks_removed"] += deleted["ai_task_deleted"]
-                summary["price_alerts_removed"] += deleted["price_alert_deleted"]
-                continue
-
-            strategy_context = self._build_strategy_context(stock)
-            existing_task = self.monitoring_repository.get_item_by_symbol(
-                stock["code"],
-                monitor_type="ai_task",
-                managed_only=True,
-                account_name=stock.get("account_name") or DEFAULT_ACCOUNT_NAME,
-                portfolio_stock_id=stock["id"],
-            )
-            self.monitoring_repository.upsert_item(
-                self._build_ai_task_projection(stock, strategy_context, existing_task)
-            )
-            summary["ai_tasks_upserted"] += 1
-
-            existing_alert = self.monitoring_repository.get_item_by_symbol(
-                stock["code"],
-                monitor_type="price_alert",
-                managed_only=True,
-                account_name=stock.get("account_name") or DEFAULT_ACCOUNT_NAME,
-                portfolio_stock_id=stock["id"],
-            )
-            alert_payload = self._build_price_alert_projection(stock, strategy_context, existing_alert)
-            if alert_payload:
-                self.monitoring_repository.upsert_item(alert_payload)
-                summary["price_alerts_upserted"] += 1
-            else:
-                if self.monitoring_repository.delete_by_symbol(
-                    stock["code"],
-                    monitor_type="price_alert",
-                    managed_only=True,
-                    account_name=stock.get("account_name") or DEFAULT_ACCOUNT_NAME,
-                    portfolio_stock_id=stock["id"],
-                ):
-                    summary["price_alerts_removed"] += 1
+            sync_result = self.asset_service.sync_managed_monitors(stock["id"])
+            summary["ai_tasks_upserted"] += int(sync_result.get("ai_tasks_upserted", 0))
+            summary["price_alerts_upserted"] += int(sync_result.get("price_alerts_upserted", 0))
+            summary["price_alerts_removed"] += int(sync_result.get("removed", 0))
         return summary
 
     def create_position_from_analysis(
@@ -226,34 +195,17 @@ class InvestmentLifecycleService:
         auto_monitor: bool = True,
         origin_analysis_id: Optional[int] = None,
     ) -> Tuple[bool, str, Optional[int]]:
-        existing = self.portfolio_db.get_stock_by_code(symbol, account_name)
-        if existing:
-            update_fields = {
-                "name": stock_name or existing.get("name") or symbol,
-                "cost_price": cost_price if cost_price is not None else existing.get("cost_price"),
-                "quantity": quantity if quantity is not None else existing.get("quantity"),
-                "note": note or existing.get("note") or "",
-                "auto_monitor": auto_monitor,
-                "position_status": "active",
-                "origin_analysis_id": origin_analysis_id or existing.get("origin_analysis_id"),
-            }
-            self.portfolio_db.update_stock(existing["id"], **update_fields)
-            self.sync_position(stock_id=existing["id"])
-            return True, f"已更新持仓: {symbol}", existing["id"]
-
-        stock_id = self.portfolio_db.add_stock(
-            symbol,
-            stock_name or symbol,
-            cost_price,
-            quantity,
-            note,
-            auto_monitor,
-            account_name,
+        success, message, asset_id = self.asset_service.promote_to_portfolio(
+            symbol=symbol,
+            stock_name=stock_name or symbol,
+            account_name=account_name,
+            cost_price=float(cost_price or 0),
+            quantity=int(quantity or 0),
+            note=note,
+            origin_analysis_id=origin_analysis_id,
+            monitor_enabled=auto_monitor,
         )
-        if origin_analysis_id:
-            self.portfolio_db.update_stock(stock_id, origin_analysis_id=origin_analysis_id)
-        self.sync_position(stock_id=stock_id)
-        return True, f"已创建持仓: {symbol}", stock_id
+        return success, message, asset_id
 
     def apply_monitor_execution(
         self,
@@ -273,103 +225,38 @@ class InvestmentLifecycleService:
         trade_date: Optional[str] = None,
         trade_source: str = "ai_monitor",
     ) -> Dict:
-        normalized_type = str(trade_type or "").strip().lower()
-        if normalized_type not in {"buy", "sell"}:
-            return {"success": False, "error": "unsupported_trade_type"}
-        trade_quantity = int(quantity or 0)
-        trade_price = float(price or 0)
-        if trade_quantity <= 0 or trade_price <= 0:
-            return {"success": False, "error": "invalid_trade_payload"}
-
-        stock = self.portfolio_db.get_stock(portfolio_stock_id) if portfolio_stock_id else None
-        if not stock:
-            stock = self.portfolio_db.get_stock_by_code(stock_code, account_name)
-
-        if normalized_type == "buy":
-            if not stock:
-                created, message, new_stock_id = self.create_position_from_analysis(
-                    symbol=stock_code,
-                    stock_name=stock_name,
-                    account_name=account_name,
-                    cost_price=trade_price,
-                    quantity=trade_quantity,
-                    note=note,
-                    auto_monitor=True,
-                    origin_analysis_id=origin_analysis_id,
-                )
-                if not created or new_stock_id is None:
-                    return {"success": False, "error": message}
-                stock = self.portfolio_db.get_stock(new_stock_id)
-            else:
-                current_quantity = int(stock.get("quantity") or 0)
-                current_cost = float(stock.get("cost_price") or 0)
-                total_cost = (current_cost * current_quantity) + (trade_price * trade_quantity)
-                new_quantity = current_quantity + trade_quantity
-                new_cost = total_cost / new_quantity if new_quantity > 0 else trade_price
-                self.portfolio_db.update_stock(
-                    stock["id"],
-                    name=stock_name or stock.get("name") or stock_code,
-                    quantity=new_quantity,
-                    cost_price=new_cost,
-                    auto_monitor=True,
-                    position_status="active",
-                    origin_analysis_id=origin_analysis_id or stock.get("origin_analysis_id"),
-                    last_trade_at=trade_date or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                )
-                stock = self.portfolio_db.get_stock(stock["id"])
-            self.portfolio_db.add_trade_history(
-                stock_id=stock["id"],
-                trade_type="buy",
-                trade_date=trade_date or datetime.now().strftime("%Y-%m-%d"),
-                price=trade_price,
-                quantity=trade_quantity,
-                note=note or f"AI决策#{ai_decision_id or '-'} order={order_id or '-'} status={order_status or '-'}",
-                trade_source=trade_source,
+        stock = self.portfolio_db.get_stock(portfolio_stock_id) if portfolio_stock_id else self.portfolio_db.get_stock_by_code(stock_code, account_name)
+        if not stock and str(trade_type or "").strip().lower() == "buy":
+            created, _, asset_id = self.asset_service.promote_to_watchlist(
+                symbol=stock_code,
+                stock_name=stock_name,
+                account_name=account_name,
+                note=note,
+                origin_analysis_id=origin_analysis_id,
             )
-            self.sync_position(stock_id=stock["id"])
-            return {"success": True, "portfolio_stock_id": stock["id"], "trade_type": "buy"}
-
+            if not created or asset_id is None:
+                return {"success": False, "error": "position_not_found"}
+            stock = self.portfolio_db.get_stock(asset_id)
         if not stock:
             return {"success": False, "error": "position_not_found"}
-        current_quantity = int(stock.get("quantity") or 0)
-        if current_quantity <= 0:
-            return {"success": False, "error": "position_not_found"}
-        sell_quantity = min(trade_quantity, current_quantity)
-        self.portfolio_db.add_trade_history(
-            stock_id=stock["id"],
-            trade_type="sell",
+        success, message, updated_asset = self.asset_service.record_manual_trade(
+            asset_id=stock["id"],
+            trade_type=str(trade_type or "").strip().lower(),
+            quantity=int(quantity or 0),
+            price=float(price or 0),
             trade_date=trade_date or datetime.now().strftime("%Y-%m-%d"),
-            price=trade_price,
-            quantity=sell_quantity,
             note=note or f"AI决策#{ai_decision_id or '-'} order={order_id or '-'} status={order_status or '-'}",
             trade_source=trade_source,
         )
-        remaining = current_quantity - sell_quantity
-        if remaining > 0:
-            self.portfolio_db.update_stock(
-                stock["id"],
-                quantity=remaining,
-                cost_price=stock.get("cost_price"),
-                position_status="active",
-                last_trade_at=trade_date or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            )
-            self.sync_position(stock_id=stock["id"])
-            return {"success": True, "portfolio_stock_id": stock["id"], "trade_type": "sell", "remaining_quantity": remaining}
-
-        self.portfolio_db.update_stock(
-            stock["id"],
-            quantity=None,
-            cost_price=None,
-            position_status="closed",
-            last_trade_at=trade_date or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        )
-        deleted = self._delete_managed_items_for_position(stock)
+        if not success:
+            return {"success": False, "error": message}
         return {
             "success": True,
-            "portfolio_stock_id": stock["id"],
-            "trade_type": "sell",
-            "remaining_quantity": 0,
-            **deleted,
+            "portfolio_stock_id": (updated_asset or stock).get("id"),
+            "asset_id": (updated_asset or stock).get("id"),
+            "trade_type": str(trade_type or "").strip().lower(),
+            "remaining_quantity": int((updated_asset or stock).get("quantity") or 0),
+            "asset_status": (updated_asset or stock).get("status"),
         }
 
 

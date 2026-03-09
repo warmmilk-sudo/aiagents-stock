@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import os
 
 from analysis_repository import AnalysisRepository
+from asset_repository import STATUS_PORTFOLIO, STATUS_WATCHLIST, AssetRepository
 from investment_db_utils import connect_sqlite, get_metadata, resolve_investment_db_path, set_metadata
 
 # 数据库文件路径
@@ -30,6 +31,7 @@ class PortfolioDB:
         self.seed_db_path = db_path
         self.db_path = resolve_investment_db_path(db_path)
         self.analysis_repository = AnalysisRepository(self.db_path, legacy_analysis_db_path="")
+        self.asset_repository = AssetRepository(self.db_path)
         self._init_database()
         self._migrate_legacy_db(db_path)
         if os.path.abspath(self.db_path) == os.path.abspath(resolve_investment_db_path(db_path)):
@@ -265,6 +267,9 @@ class PortfolioDB:
             legacy_conn.close()
 
         self.analysis_repository.migrate_legacy_portfolio_db(legacy_db_path)
+        self.asset_repository._migrate_portfolio_stocks_to_assets()
+        self.asset_repository._migrate_analysis_records_to_assets()
+        self.asset_repository._migrate_trade_history_to_assets()
         return migrated_rows
 
     def _init_database(self):
@@ -489,34 +494,40 @@ class PortfolioDB:
         Raises:
             sqlite3.IntegrityError: 如果股票代码已存在
         """
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        
-        try:
-            cursor.execute('''
-                INSERT INTO portfolio_stocks 
-                (
-                    account_name, code, name, cost_price, quantity, note, auto_monitor,
-                    position_status, created_at, updated_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (account_name, code, name, cost_price, quantity, note, auto_monitor,
-                  'active', datetime.now(), datetime.now()))
-            
-            conn.commit()
-            stock_id = cursor.lastrowid
-            print(f"[OK] 添加持仓股票成功: {code} {name} (ID: {stock_id})")
-            return stock_id
-            
-        except sqlite3.IntegrityError as e:
-            print(f"[ERROR] 股票代码在账户 {account_name} 中已存在: {code}")
-            raise ValueError(f"股票代码 {code} 在账户 {account_name} 中已存在") from e
-        except Exception as e:
-            print(f"[ERROR] 添加持仓股票失败: {e}")
-            conn.rollback()
-            raise
-        finally:
-            conn.close()
+        existing = self.asset_repository.get_asset_by_symbol(code, account_name)
+        if existing and existing.get("status") == STATUS_PORTFOLIO:
+            raise ValueError(f"股票代码 {code} 在账户 {account_name} 中已存在")
+        if existing:
+            self.asset_repository.update_asset(
+                existing["id"],
+                name=name,
+                status=STATUS_PORTFOLIO,
+                cost_price=cost_price,
+                quantity=quantity,
+                note=note,
+                monitor_enabled=auto_monitor,
+                last_trade_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            )
+            print(f"[OK] 设为持仓成功: {code} {name} (ID: {existing['id']})")
+            return int(existing["id"])
+
+        asset_id = self.asset_repository.create_or_update_research_asset(
+            symbol=code,
+            name=name,
+            account_name=account_name,
+            note=note,
+            monitor_enabled=auto_monitor,
+        )
+        self.asset_repository.transition_asset_status(
+            asset_id,
+            STATUS_PORTFOLIO,
+            cost_price=cost_price,
+            quantity=quantity,
+            note=note,
+            last_trade_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        )
+        print(f"[OK] 添加持仓股票成功: {code} {name} (ID: {asset_id})")
+        return asset_id
     
     def update_stock(self, stock_id: int, **kwargs) -> bool:
         """
@@ -529,9 +540,6 @@ class PortfolioDB:
         Returns:
             是否更新成功
         """
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        
         # 允许更新的字段
         allowed_fields = [
             'account_name', 'code', 'name', 'cost_price', 'quantity', 'note', 'auto_monitor',
@@ -542,36 +550,52 @@ class PortfolioDB:
         if not update_fields:
             print("[WARN] 没有需要更新的字段")
             return False
-        
-        # 添加更新时间
-        update_fields['updated_at'] = datetime.now()
-        
-        # 构建SQL语句
-        set_clause = ', '.join([f"{field} = ?" for field in update_fields.keys()])
-        values = list(update_fields.values()) + [stock_id]
-        
+
+        asset = self.asset_repository.get_asset(stock_id)
+        if not asset:
+            print(f"[WARN] 未找到股票: ID {stock_id}")
+            return False
+
+        translated_updates = {}
+        if "account_name" in update_fields:
+            translated_updates["account_name"] = update_fields["account_name"]
+        if "code" in update_fields:
+            translated_updates["symbol"] = update_fields["code"]
+        if "name" in update_fields:
+            translated_updates["name"] = update_fields["name"]
+        if "cost_price" in update_fields:
+            translated_updates["cost_price"] = update_fields["cost_price"]
+        if "quantity" in update_fields:
+            translated_updates["quantity"] = update_fields["quantity"]
+        if "note" in update_fields:
+            translated_updates["note"] = update_fields["note"]
+        if "auto_monitor" in update_fields:
+            translated_updates["monitor_enabled"] = update_fields["auto_monitor"]
+        if "origin_analysis_id" in update_fields:
+            translated_updates["origin_analysis_id"] = update_fields["origin_analysis_id"]
+        if "last_trade_at" in update_fields:
+            translated_updates["last_trade_at"] = update_fields["last_trade_at"]
+        if "position_status" in update_fields:
+            translated_updates["status"] = STATUS_PORTFOLIO if update_fields["position_status"] == "active" else STATUS_WATCHLIST
+
+        if "status" not in translated_updates:
+            if ("quantity" in translated_updates or "cost_price" in translated_updates) and (
+                translated_updates.get("quantity") not in (None, 0) and translated_updates.get("cost_price") not in (None, 0)
+            ):
+                translated_updates["status"] = STATUS_PORTFOLIO
+            elif "quantity" in translated_updates and not translated_updates.get("quantity"):
+                translated_updates["status"] = STATUS_WATCHLIST
+
         try:
-            cursor.execute(f'''
-                UPDATE portfolio_stocks 
-                SET {set_clause}
-                WHERE id = ?
-            ''', values)
-            
-            conn.commit()
-            
-            if cursor.rowcount > 0:
+            changed = self.asset_repository.update_asset(stock_id, **translated_updates)
+            if changed:
                 print(f"[OK] 更新持仓股票成功: ID {stock_id}")
-                return True
             else:
                 print(f"[WARN] 未找到股票: ID {stock_id}")
-                return False
-                
+            return changed
         except Exception as e:
             print(f"[ERROR] 更新持仓股票失败: {e}")
-            conn.rollback()
             raise
-        finally:
-            conn.close()
     
     def delete_stock(self, stock_id: int) -> bool:
         """
@@ -583,27 +607,12 @@ class PortfolioDB:
         Returns:
             是否删除成功
         """
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        
-        try:
-            # 由于设置了ON DELETE CASCADE，删除股票会自动删除其分析历史
-            cursor.execute('DELETE FROM portfolio_stocks WHERE id = ?', (stock_id,))
-            conn.commit()
-            
-            if cursor.rowcount > 0:
-                print(f"[OK] 删除持仓股票成功: ID {stock_id}")
-                return True
-            else:
-                print(f"[WARN] 未找到股票: ID {stock_id}")
-                return False
-                
-        except Exception as e:
-            print(f"[ERROR] 删除持仓股票失败: {e}")
-            conn.rollback()
-            raise
-        finally:
-            conn.close()
+        deleted = self.asset_repository.soft_delete_asset(stock_id)
+        if deleted:
+            print(f"[OK] 删除持仓股票成功: ID {stock_id}")
+        else:
+            print(f"[WARN] 未找到股票: ID {stock_id}")
+        return deleted
     
     def get_stock(self, stock_id: int) -> Optional[Dict]:
         """
@@ -615,19 +624,7 @@ class PortfolioDB:
         Returns:
             股票信息字典，不存在则返回None
         """
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        
-        try:
-            cursor.execute('SELECT * FROM portfolio_stocks WHERE id = ?', (stock_id,))
-            row = cursor.fetchone()
-            
-            if row:
-                return dict(row)
-            return None
-            
-        finally:
-            conn.close()
+        return self.asset_repository.get_asset(stock_id)
     
     def get_stock_by_code(self, code: str, account_name: str = "默认账户") -> Optional[Dict]:
         """
@@ -639,18 +636,7 @@ class PortfolioDB:
         Returns:
             股票信息字典，不存在则返回None
         """
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        
-        try:
-            cursor.execute('SELECT * FROM portfolio_stocks WHERE code = ? AND account_name = ?', (code, account_name))
-            row = cursor.fetchone()
-            
-            if row:
-                return dict(row)
-            return None
-        finally:
-            conn.close()
+        return self.asset_repository.get_asset_by_symbol(code, account_name)
     
     def get_stocks_by_code(self, code: str) -> List[Dict]:
         """
@@ -662,22 +648,7 @@ class PortfolioDB:
         Returns:
             匹配的股票信息字典列表
         """
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        
-        try:
-            cursor.execute(
-                '''
-                SELECT * FROM portfolio_stocks
-                WHERE code = ?
-                  AND COALESCE(position_status, 'active') = 'active'
-                ''',
-                (code,),
-            )
-            rows = cursor.fetchall()
-            return [dict(row) for row in rows]
-        finally:
-            conn.close()
+        return self.asset_repository.list_assets(status=STATUS_PORTFOLIO, symbol=code)
 
     def get_all_stocks(self, auto_monitor_only: bool = False) -> List[Dict]:
         """
@@ -689,31 +660,10 @@ class PortfolioDB:
         Returns:
             股票信息字典列表
         """
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        
-        try:
-            if auto_monitor_only:
-                cursor.execute('''
-                    SELECT * FROM portfolio_stocks 
-                    WHERE auto_monitor = 1
-                    AND COALESCE(position_status, 'active') = 'active'
-                    ORDER BY created_at DESC
-                ''')
-            else:
-                cursor.execute(
-                    '''
-                    SELECT * FROM portfolio_stocks
-                    WHERE COALESCE(position_status, 'active') = 'active'
-                    ORDER BY created_at DESC
-                    '''
-                )
-            
-            rows = cursor.fetchall()
-            return [dict(row) for row in rows]
-            
-        finally:
-            conn.close()
+        return self.asset_repository.list_assets(
+            status=STATUS_PORTFOLIO,
+            monitor_enabled=True if auto_monitor_only else None,
+        )
     
     def search_stocks(self, keyword: str) -> List[Dict]:
         """
@@ -725,23 +675,12 @@ class PortfolioDB:
         Returns:
             匹配的股票信息字典列表
         """
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        
-        try:
-            keyword_pattern = f"%{keyword}%"
-            cursor.execute('''
-                SELECT * FROM portfolio_stocks 
-                WHERE (code LIKE ? OR name LIKE ?)
-                  AND COALESCE(position_status, 'active') = 'active'
-                ORDER BY created_at DESC
-            ''', (keyword_pattern, keyword_pattern))
-            
-            rows = cursor.fetchall()
-            return [dict(row) for row in rows]
-            
-        finally:
-            conn.close()
+        keyword_lower = str(keyword or "").strip().lower()
+        return [
+            stock
+            for stock in self.asset_repository.list_assets(status=STATUS_PORTFOLIO)
+            if keyword_lower in str(stock.get("symbol", "")).lower() or keyword_lower in str(stock.get("name", "")).lower()
+        ]
     
     def get_stock_count(self) -> int:
         """
@@ -750,22 +689,7 @@ class PortfolioDB:
         Returns:
             股票数量
         """
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        
-        try:
-            cursor.execute(
-                '''
-                SELECT COUNT(*) as count
-                FROM portfolio_stocks
-                WHERE COALESCE(position_status, 'active') = 'active'
-                '''
-            )
-            result = cursor.fetchone()
-            return result['count']
-            
-        finally:
-            conn.close()
+        return len(self.asset_repository.list_assets(status=STATUS_PORTFOLIO))
     
     # ==================== 分析历史记录操作 ====================
     
@@ -780,92 +704,23 @@ class PortfolioDB:
         trade_source: str = "manual",
     ) -> int:
         """保存持仓交易流水。"""
-        conn = self._get_connection()
-        cursor = conn.cursor()
-
-        try:
-            cursor.execute(
-                '''
-                INSERT INTO portfolio_trade_history (
-                    portfolio_stock_id, trade_date, trade_type, price, quantity,
-                    note, trade_source, created_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ''',
-                (
-                    stock_id,
-                    trade_date,
-                    trade_type,
-                    price,
-                    quantity,
-                    note,
-                    trade_source,
-                    datetime.now(),
-                ),
-            )
-            conn.commit()
-            return cursor.lastrowid
-        except Exception:
-            conn.rollback()
-            raise
-        finally:
-            conn.close()
+        return self.asset_repository.add_trade_history(
+            stock_id,
+            trade_type=trade_type,
+            trade_date=trade_date,
+            price=price,
+            quantity=quantity,
+            note=note,
+            trade_source=trade_source,
+        )
 
     def get_trade_history(self, stock_id: int, limit: int = 20) -> List[Dict]:
         """获取指定持仓的交易流水。"""
-        conn = self._get_connection()
-        cursor = conn.cursor()
-
-        try:
-            cursor.execute(
-                '''
-                SELECT *
-                FROM portfolio_trade_history
-                WHERE portfolio_stock_id = ?
-                ORDER BY trade_date DESC, id DESC
-                LIMIT ?
-                ''',
-                (stock_id, limit),
-            )
-            rows = cursor.fetchall()
-            return [self._deserialize_trade_row(row) for row in rows]
-        finally:
-            conn.close()
+        return self.asset_repository.get_trade_history(stock_id, limit)
 
     def get_trade_summary_map(self, stock_ids: Optional[List[int]] = None) -> Dict[int, Dict]:
         """批量获取持仓交易摘要。"""
-        conn = self._get_connection()
-        cursor = conn.cursor()
-
-        try:
-            query = [
-                '''
-                SELECT
-                    portfolio_stock_id,
-                    COUNT(*) AS trade_count,
-                    MIN(CASE WHEN trade_type = 'buy' THEN trade_date END) AS first_buy_date,
-                    MAX(trade_date) AS last_trade_date
-                FROM portfolio_trade_history
-                '''
-            ]
-            params: List[Any] = []
-            if stock_ids:
-                placeholders = ','.join('?' for _ in stock_ids)
-                query.append(f'WHERE portfolio_stock_id IN ({placeholders})')
-                params.extend(stock_ids)
-            query.append('GROUP BY portfolio_stock_id')
-            cursor.execute(' '.join(query), params)
-            rows = cursor.fetchall()
-            return {
-                int(row["portfolio_stock_id"]): {
-                    "trade_count": int(row["trade_count"] or 0),
-                    "first_buy_date": row["first_buy_date"],
-                    "last_trade_date": row["last_trade_date"],
-                }
-                for row in rows
-            }
-        finally:
-            conn.close()
+        return self.asset_repository.get_trade_summary_map(stock_ids)
 
     def save_analysis(self, stock_id: int, rating: str, confidence: float,
                      current_price: float, target_price: Optional[float] = None,
@@ -913,6 +768,7 @@ class PortfolioDB:
             symbol=stock["code"],
             stock_name=stock.get("name") or stock["code"],
             account_name=stock.get("account_name", "默认账户"),
+            asset_id=stock_id,
             portfolio_stock_id=stock_id,
             analysis_scope="portfolio",
             analysis_source=analysis_source,
@@ -932,6 +788,7 @@ class PortfolioDB:
             discussion_result=discussion_result,
             final_decision=final_decision,
             has_full_report=full_report_flag,
+            asset_status_snapshot=STATUS_PORTFOLIO,
         )
         try:
             from investment_lifecycle_service import InvestmentLifecycleService
@@ -952,6 +809,7 @@ class PortfolioDB:
         """检查指定时间点的分析记录是否已存在。"""
         records = self.analysis_repository.list_records(
             analysis_scope="portfolio",
+            asset_id=stock_id,
             portfolio_stock_id=stock_id,
             full_report_only=False,
         )
@@ -970,6 +828,7 @@ class PortfolioDB:
         """
         return self.analysis_repository.list_records(
             analysis_scope="portfolio",
+            asset_id=stock_id,
             portfolio_stock_id=stock_id,
             limit=limit,
             full_report_only=True,
@@ -1019,6 +878,7 @@ class PortfolioDB:
         """
         records = self.analysis_repository.list_records(
             analysis_scope="portfolio",
+            asset_id=stock_id,
             portfolio_stock_id=stock_id,
             full_report_only=False,
         )

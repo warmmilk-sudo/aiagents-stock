@@ -108,8 +108,7 @@ docker run -d \
   -p 8501:8501 \
   -v $(pwd)/data:/app/data \
   -v $(pwd)/.env:/app/.env \
-  -v $(pwd)/stock_analysis.db:/app/stock_analysis.db \
-  -v $(pwd)/stock_monitor.db:/app/stock_monitor.db \
+  -v $(pwd)/investment.db:/app/investment.db \
   -e TZ=Asia/Shanghai \
   --restart unless-stopped \
   agentsstock1:latest
@@ -122,12 +121,19 @@ docker run -d `
   -p 8503:8501 `
   -v ${PWD}/data:/app/data `
   -v ${PWD}/.env:/app/.env `
-  -v ${PWD}/stock_analysis.db:/app/stock_analysis.db `
-  -v ${PWD}/stock_monitor.db:/app/stock_monitor.db `
+  -v ${PWD}/investment.db:/app/investment.db `
   -e TZ=Asia/Shanghai `
   --restart unless-stopped `
   agentsstock1:latest
 ```
+
+> [!IMPORTANT]
+> 当前版本统一使用 `investment.db`。
+>
+> 如果你要从旧版本迁移数据，首次启动容器时还需要额外挂载旧库文件：
+> `stock_analysis.db`、`portfolio_stocks.db`、`smart_monitor.db`、`monitoring.db`。
+>
+> 容器首次启动并确认迁移完成后，可移除旧库挂载，只保留 `investment.db`。
 
 4. **查看日志**
 ```bash
@@ -145,8 +151,7 @@ docker rm agentsstock1
 Docker 部署会自动挂载以下目录/文件到宿主机：
 
 - `./data` - 临时数据目录
-- `./stock_analysis.db` - 分析历史数据库
-- `./stock_monitor.db` - 监测数据库
+- `./investment.db` - 统一投资域数据库
 - `./.env` - 环境变量配置
 
 **重要**：即使删除容器，这些数据也会保留在宿主机上。

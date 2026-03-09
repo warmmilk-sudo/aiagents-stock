@@ -42,6 +42,8 @@ class InvestmentDomainRefactorTests(unittest.TestCase):
         self.assertEqual(self._count_rows(canonical_db, "analysis_records"), 2)
         self.assertEqual(self._count_rows(canonical_db, "portfolio_stocks"), 1)
         self.assertEqual(self._count_rows(canonical_db, "monitoring_items"), 2)
+        self.assertEqual(self._count_rows(canonical_db, "assets"), 3)
+        self.assertEqual(self._count_rows(canonical_db, "asset_trade_history"), 0)
 
         AnalysisRepository(str(analysis_db))
         PortfolioDB(str(portfolio_db_path))
@@ -51,6 +53,7 @@ class InvestmentDomainRefactorTests(unittest.TestCase):
         self.assertEqual(self._count_rows(canonical_db, "analysis_records"), 2)
         self.assertEqual(self._count_rows(canonical_db, "portfolio_stocks"), 1)
         self.assertEqual(self._count_rows(canonical_db, "monitoring_items"), 2)
+        self.assertEqual(self._count_rows(canonical_db, "assets"), 3)
 
     def test_multi_account_ai_tasks_are_isolated(self):
         db = SmartMonitorDB(str(self.base / "smart_monitor.db"))
@@ -152,7 +155,7 @@ class InvestmentDomainRefactorTests(unittest.TestCase):
         self.assertEqual(alert["take_profit"], 168.0)
         self.assertEqual(alert["stop_loss"], 142.0)
 
-    def test_apply_monitor_execution_closes_position_and_cleans_managed_items(self):
+    def test_apply_monitor_execution_full_sell_downgrades_to_watchlist(self):
         portfolio_db = PortfolioDB(str(self.base / "portfolio.db"))
         realtime_monitor_db = StockMonitorDatabase(str(self.base / "monitor.db"))
         lifecycle = InvestmentLifecycleService(
@@ -210,18 +213,72 @@ class InvestmentDomainRefactorTests(unittest.TestCase):
         )
         self.assertTrue(sell_result["success"])
 
-        closed_stock = portfolio_db.get_stock(stock["id"])
-        self.assertEqual(closed_stock["position_status"], "closed")
-        self.assertIsNone(closed_stock["quantity"])
-        self.assertIsNone(
+        updated_stock = portfolio_db.get_stock(stock["id"])
+        self.assertEqual(updated_stock["position_status"], "watchlist")
+        self.assertIsNone(updated_stock["quantity"])
+        self.assertIsNotNone(
+            portfolio_db.get_stock_by_code("002594", "策略账户")
+        )
+        self.assertIsNotNone(
             realtime_monitor_db.get_monitor_by_code(
                 "002594",
-                managed_only=True,
                 account_name="策略账户",
             )
         )
         trade_history = portfolio_db.get_trade_history(stock["id"], limit=10)
         self.assertEqual(len(trade_history), 2)
+
+    def test_pending_action_requires_manual_trade_to_change_asset(self):
+        smart_monitor_db = SmartMonitorDB(str(self.base / "smart_monitor.db"))
+
+        asset_id = smart_monitor_db.save_position(
+            {
+                "stock_code": "601318",
+                "stock_name": "中国平安",
+                "account_name": "默认账户",
+                "cost_price": 48.0,
+                "quantity": 100,
+                "note": "初始化持仓",
+            }
+        )
+        self.assertTrue(asset_id)
+
+        before_asset = smart_monitor_db.asset_repository.get_asset(asset_id)
+        self.assertEqual(before_asset["status"], "portfolio")
+        self.assertEqual(before_asset["quantity"], 100)
+
+        pending_action_id = smart_monitor_db.create_pending_action(
+            asset_id=asset_id,
+            action_type="sell",
+            payload={"current_price": 50.5, "reason": "跌破止损线"},
+        )
+        self.assertTrue(pending_action_id)
+
+        still_holding = smart_monitor_db.asset_repository.get_asset(asset_id)
+        self.assertEqual(still_holding["status"], "portfolio")
+        self.assertEqual(still_holding["quantity"], 100)
+
+        trade_record_id = smart_monitor_db.save_trade_record(
+            {
+                "asset_id": asset_id,
+                "trade_type": "sell",
+                "quantity": 100,
+                "price": 50.5,
+                "trade_date": "2026-03-09",
+                "note": "手工确认 AI 卖出建议",
+                "trade_source": "manual",
+                "pending_action_id": pending_action_id,
+            }
+        )
+        self.assertTrue(trade_record_id)
+
+        after_asset = smart_monitor_db.asset_repository.get_asset(asset_id)
+        self.assertEqual(after_asset["status"], "watchlist")
+        self.assertIsNone(after_asset["quantity"])
+
+        pending_action = smart_monitor_db.asset_repository.get_pending_action(pending_action_id)
+        self.assertEqual(pending_action["status"], "accepted")
+        self.assertIn("手工登记卖出", pending_action["resolution_note"])
 
     def test_conflict_migration_disables_ambiguous_ai_task(self):
         canonical_portfolio = PortfolioDB(str(self.base / "portfolio.db"))

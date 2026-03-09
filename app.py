@@ -1060,12 +1060,8 @@ def _apply_ai_task_prefill(action_payload: Dict[str, Any]) -> None:
         "account_name": action_payload.get("account_name") or DEFAULT_ACCOUNT_NAME,
         "symbol": action_payload.get("symbol"),
         "stock_name": action_payload.get("stock_name"),
-        "task_name": f"{action_payload.get('stock_name') or action_payload.get('symbol')} AI盯盘",
+        "task_name": f"{action_payload.get('stock_name') or action_payload.get('symbol')}盯盘",
         "interval_minutes": 5,
-        "has_position": False,
-        "position_cost": float(action_payload.get("default_cost_price") or 0.0),
-        "position_quantity": 0,
-        "auto_trade": False,
         "trading_hours_only": True,
         "position_size_pct": 20,
         "stop_loss_pct": 5,
@@ -1093,20 +1089,15 @@ def _render_investment_action_buttons(action_payload: Optional[Dict[str, Any]], 
         return
 
     st.markdown("### 投资链路")
-    col1, col2, col3 = st.columns(3)
+    col1, col2 = st.columns(2)
 
     with col1:
-        if st.button("创建AI盯盘任务", key=f"{key_prefix}_create_ai_task", width="stretch"):
+        if st.button("加入盯盘", key=f"{key_prefix}_create_ai_task", width="stretch"):
             _apply_ai_task_prefill(action_payload)
             open_investment_workspace("ai_monitor", "show_smart_monitor")
 
     with col2:
-        if st.button("加入价格预警", key=f"{key_prefix}_create_price_alert", width="stretch"):
-            _apply_price_alert_prefill(action_payload)
-            open_investment_workspace("price_alert", "show_smart_monitor")
-
-    with col3:
-        if st.button("加入持仓", key=f"{key_prefix}_create_position", width="stretch"):
+        if st.button("设为持仓", key=f"{key_prefix}_create_position", width="stretch"):
             _apply_portfolio_prefill(action_payload)
             open_investment_workspace("portfolio", "show_portfolio")
 
@@ -2768,7 +2759,7 @@ def display_history_records():
                     st.session_state.viewing_record_id = record['id']
 
             with col4:
-                if st.button("AI盯盘", key=f"history_ai_task_{record['id']}"):
+                if st.button("加入盯盘", key=f"history_ai_task_{record['id']}"):
                     detail_record = db.get_record_by_id(record['id'])
                     action_payload = _build_analysis_record_action_payload(
                         detail_record,
@@ -2778,6 +2769,17 @@ def display_history_records():
                     open_investment_workspace("ai_monitor", "show_smart_monitor")
 
             with col5:
+                if st.button("设为持仓", key=f"history_add_position_{record['id']}"):
+                    detail_record = db.get_record_by_id(record['id'])
+                    action_payload = _build_analysis_record_action_payload(
+                        detail_record,
+                        analysis_source="history_record",
+                    )
+                    _apply_portfolio_prefill(action_payload or {})
+                    open_investment_workspace("portfolio", "show_portfolio")
+
+            col6, col7 = st.columns([1, 3])
+            with col6:
                 if st.button("价格预警", key=f"history_price_alert_{record['id']}"):
                     detail_record = db.get_record_by_id(record['id'])
                     action_payload = _build_analysis_record_action_payload(
@@ -2786,17 +2788,6 @@ def display_history_records():
                     )
                     _apply_price_alert_prefill(action_payload or {})
                     open_investment_workspace("price_alert", "show_smart_monitor")
-
-            col6, col7 = st.columns([1, 3])
-            with col6:
-                if st.button("加入持仓", key=f"history_add_position_{record['id']}"):
-                    detail_record = db.get_record_by_id(record['id'])
-                    action_payload = _build_analysis_record_action_payload(
-                        detail_record,
-                        analysis_source="history_record",
-                    )
-                    _apply_portfolio_prefill(action_payload or {})
-                    open_investment_workspace("portfolio", "show_portfolio")
 
             with col7:
                 if st.button("删除", key=f"delete_{record['id']}"):

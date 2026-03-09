@@ -156,12 +156,12 @@ class MonitoringOrchestrator:
         config = item.get("config") or {}
         result = self.engine.analyze_stock(
             stock_code=item["symbol"],
-            auto_trade=bool(config.get("auto_trade", False)),
+            auto_trade=False,
             notify=bool(item.get("notification_enabled", True)),
-            has_position=bool(config.get("has_position", False)),
-            position_cost=float(config.get("position_cost", 0) or 0),
-            position_quantity=int(config.get("position_quantity", 0) or 0),
             trading_hours_only=bool(item.get("trading_hours_only", True)),
+            account_name=item.get("account_name"),
+            asset_id=item.get("asset_id"),
+            portfolio_stock_id=item.get("portfolio_stock_id"),
         )
 
         if result.get("success"):
