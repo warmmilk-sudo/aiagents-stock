@@ -933,6 +933,33 @@ def render_ai_monitor_tasks_panel():
         return
 
     st.markdown("### 任务列表")
+    enabled_count = sum(1 for task in tasks if task.get('enabled'))
+    disabled_count = len(tasks) - enabled_count
+
+    summary_col, enable_all_col, disable_all_col = st.columns([2.6, 1, 1])
+    with summary_col:
+        st.caption(f"共 {len(tasks)} 个任务，已启用 {enabled_count} 个，已停用 {disabled_count} 个。")
+    with enable_all_col:
+        if st.button(
+            "一键启用全部",
+            key="enable_all_ai_tasks",
+            width='stretch',
+            disabled=disabled_count == 0,
+        ):
+            changed_count = db.set_all_monitor_tasks_enabled(True)
+            st.success(f"已启用 {changed_count} 个任务。")
+            st.rerun()
+    with disable_all_col:
+        if st.button(
+            "一键停用全部",
+            key="disable_all_ai_tasks",
+            width='stretch',
+            disabled=enabled_count == 0,
+        ):
+            changed_count = db.set_all_monitor_tasks_enabled(False)
+            st.success(f"已停用 {changed_count} 个任务。")
+            st.rerun()
+
     for task in tasks:
         interval_minutes = max(1, int(task.get('check_interval', 60) / 60))
         source_text = "持仓托管" if task.get('managed_by_portfolio') else "手工"

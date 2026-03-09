@@ -417,7 +417,7 @@ class SectorStrategyEngine:
             messages,
             temperature=0.3,
             max_tokens=6000,
-            tier=ModelTier.LIGHTWEIGHT,
+            tier=ModelTier.REASONING,
         )
         
         # 尝试解析JSON

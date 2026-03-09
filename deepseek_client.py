@@ -465,7 +465,7 @@ class DeepSeekClient:
             messages,
             temperature=0.3,
             max_tokens=4000,
-            tier=ModelTier.LIGHTWEIGHT,
+            tier=ModelTier.REASONING,
         )
         
         try:

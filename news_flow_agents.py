@@ -332,7 +332,7 @@ class NewsFlowAgents:
                 messages,
                 temperature=0.4,
                 max_tokens=1500,
-                tier=ModelTier.LIGHTWEIGHT,
+                tier=ModelTier.REASONING,
             )
             result = self._parse_json_response(response)
             
@@ -446,7 +446,7 @@ class NewsFlowAgents:
                 messages,
                 temperature=0.5,
                 max_tokens=2000,
-                tier=ModelTier.LIGHTWEIGHT,
+                tier=ModelTier.REASONING,
             )
             result = self._parse_json_response(response)
             

@@ -7,7 +7,7 @@ from datetime import datetime
 import time
 import base64
 import os
-from typing import Optional
+from typing import Any, Dict, Optional
 import config
 import streamlit.components.v1 as components
 from model_config import get_lightweight_model_options, get_reasoning_model_options
@@ -28,6 +28,13 @@ from sector_strategy_ui import display_sector_strategy
 from longhubang_ui import display_longhubang
 from smart_monitor_ui import smart_monitor_ui
 from news_flow_ui import display_news_flow_monitor
+from ui_analysis_task_utils import (
+    consume_finished_ui_analysis_task,
+    get_latest_ui_analysis_task,
+    get_ui_analysis_button_state,
+    render_ui_analysis_task_live_card,
+    start_ui_analysis_task,
+)
 from ui_shared import (
     get_dataframe_height,
     get_recommendation_color,
@@ -941,7 +948,6 @@ def get_selected_models():
     )
 
 NAV_VIEW_KEYS = [
-    "show_history",
     "show_monitor_service",
     "show_monitor",
     "show_main_force",
@@ -959,7 +965,6 @@ NAV_VIEW_KEYS = [
 ]
 
 VIEW_TITLES = {
-    "show_history": "历史记录",
     "show_monitor_service": "投资管理-监测服务",
     "show_monitor": "投资管理-监测服务",
     "show_main_force": "选股板块-主力选股",
@@ -976,13 +981,16 @@ VIEW_TITLES = {
     "show_config": "系统配置",
 }
 
+HOME_ANALYSIS_TASK_TYPE = "home_stock_analysis"
+HOME_ANALYSIS_TASK_DONE_KEY = "home_stock_analysis_last_handled_task"
+
 
 def get_current_view_title() -> str:
     """返回当前主区域应显示的功能标题。"""
     for key in NAV_VIEW_KEYS:
         if st.session_state.get(key):
             return VIEW_TITLES.get(key, "股票分析")
-    return "股票分析"
+    return "股票分析与历史"
 
 
 def activate_view(view_key: Optional[str] = None) -> None:
@@ -994,6 +1002,97 @@ def activate_view(view_key: Optional[str] = None) -> None:
             st.session_state.pop(key, None)
     st.session_state["force_sidebar_collapse"] = True
     st.rerun()
+
+
+def _clear_single_analysis_state() -> None:
+    for key in (
+        "analysis_completed",
+        "stock_info",
+        "agents_results",
+        "discussion_result",
+        "final_decision",
+        "just_completed",
+    ):
+        st.session_state.pop(key, None)
+
+
+def _clear_batch_analysis_state() -> None:
+    for key in ("batch_analysis_results", "batch_analysis_mode"):
+        st.session_state.pop(key, None)
+
+
+def _apply_home_analysis_result(payload: Dict[str, Any]) -> None:
+    mode = payload.get("mode")
+    if mode == "batch":
+        _clear_single_analysis_state()
+        st.session_state.batch_analysis_results = payload.get("results") or []
+        st.session_state.batch_analysis_mode = payload.get("batch_mode") or "顺序分析"
+        st.session_state.main_analysis_mode = "批量分析"
+        return
+
+    _clear_batch_analysis_state()
+    st.session_state.analysis_completed = True
+    st.session_state.stock_info = payload.get("stock_info") or {}
+    st.session_state.agents_results = payload.get("agents_results") or {}
+    st.session_state.discussion_result = payload.get("discussion_result") or {}
+    st.session_state.final_decision = payload.get("final_decision") or {}
+    st.session_state.just_completed = False
+    st.session_state.main_analysis_mode = "单个分析"
+
+
+def _restore_home_analysis_result_from_latest_task() -> None:
+    if "batch_analysis_results" in st.session_state or st.session_state.get("analysis_completed"):
+        return
+
+    latest_task = get_latest_ui_analysis_task(HOME_ANALYSIS_TASK_TYPE)
+    if not latest_task or latest_task.get("status") != "success":
+        return
+
+    payload = latest_task.get("result") or {}
+    if payload.get("mode") in {"single", "batch"}:
+        _apply_home_analysis_result(payload)
+
+
+def _consume_finished_home_analysis_task() -> None:
+    finished_task = consume_finished_ui_analysis_task(
+        HOME_ANALYSIS_TASK_TYPE,
+        HOME_ANALYSIS_TASK_DONE_KEY,
+    )
+    if not finished_task:
+        return
+
+    if finished_task.get("status") != "success":
+        st.error(f"股票分析失败：{finished_task.get('error', '未知错误')}")
+        return
+
+    payload = finished_task.get("result") or {}
+    _apply_home_analysis_result(payload)
+
+    if payload.get("mode") == "batch":
+        success_count = int(payload.get("success_count") or 0)
+        failed_count = int(payload.get("failed_count") or 0)
+        saved_count = int(payload.get("saved_count") or 0)
+        if success_count > 0:
+            st.success(f"批量分析完成：成功 {success_count} 只，失败 {failed_count} 只，已保存 {saved_count} 只。")
+        else:
+            st.error("批量分析完成，但没有成功分析的股票。")
+        return
+
+    if payload.get("saved_to_db"):
+        st.success("股票分析完成，结果已保存到分析历史。")
+    elif payload.get("db_error"):
+        st.warning(f"股票分析完成，但保存历史记录失败：{payload.get('db_error')}")
+    else:
+        st.success("股票分析完成。")
+
+
+@st.fragment(run_every=1.0)
+def _render_home_analysis_task_fragment():
+    render_ui_analysis_task_live_card(
+        task_type=HOME_ANALYSIS_TASK_TYPE,
+        title="股票分析任务状态",
+        state_prefix="home_stock_analysis_live",
+    )
 
 
 def main():
@@ -1010,11 +1109,8 @@ def main():
         st.markdown("### 功能导航")
 
         # 单股分析（首页）
-        if st.button("股票分析", width='stretch', key="nav_home", help="返回首页，进行单只股票的深度分析"):
+        if st.button("股票分析", width='stretch', key="nav_home", help="进入股票分析工作区"):
             activate_view()
-
-        if st.button("历史记录", width='stretch', key="nav_history", help="查看历史分析记录"):
-            activate_view("show_history")
 
         st.markdown("---")
 
@@ -1139,11 +1235,6 @@ def main():
     # 从配置获取数据获取周期
     period = getattr(config, "DATA_PERIOD", "1y")
     selected_lightweight_model, selected_reasoning_model = get_selected_models()
-    
-    # 检查是否显示历史记录
-    if 'show_history' in st.session_state and st.session_state.show_history:
-        display_history_records()
-        return
 
     # 检查是否显示监测面板
     if (
@@ -1240,225 +1331,7 @@ def main():
         display_config_manager()
         return
 
-    # 主界面
-    # 添加单个/批量分析切换
-    col_mode1, col_mode2 = st.columns([1, 3])
-    with col_mode1:
-        analysis_mode = st.radio(
-            "分析模式",
-            ["单个分析", "批量分析"],
-            horizontal=True,
-            help="单个分析：分析单只股票；批量分析：同时分析多只股票"
-        )
-
-    with col_mode2:
-        if analysis_mode == "批量分析":
-            batch_mode = st.radio(
-                "批量模式",
-                ["顺序分析", "多线程并行"],
-                horizontal=True,
-                help="顺序分析：按次序分析，稳定但较慢；多线程并行：同时分析多只，快速但消耗资源"
-            )
-            st.session_state.batch_mode = batch_mode
-
-    st.markdown("---")
-
-    if analysis_mode == "单个分析":
-        # 单个股票分析界面
-        col1, col2, col3 = st.columns([2, 1, 1])
-
-        with col1:
-            stock_input = st.text_input(
-                "请输入股票代码或名称",
-                placeholder="例如: AAPL, 000001, 00700",
-                help="支持A股(如000001)、港股(如00700)和美股(如AAPL)"
-            )
-
-        with col2:
-            analyze_button = st.button("开始分析", type="primary", width='stretch')
-
-        with col3:
-            if st.button("清除缓存", width='stretch'):
-                cache_counts = clear_analysis_caches()
-                st.success(f"缓存已清除，本地个股缓存 {cache_counts.get('total', 0)} 条")
-
-    else:
-        # 批量股票分析界面
-        stock_input = st.text_area(
-            "请输入多个股票代码（每行一个或用逗号分隔）",
-            placeholder="例如:\n000001\n600036\n00700\n\n或者: 000001, 600036, 00700, AAPL",
-            height=120,
-            help="支持多种格式：每行一个代码或用逗号分隔。支持A股、港股、美股"
-        )
-
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            analyze_button = st.button("开始批量分析", type="primary", width='stretch')
-        with col2:
-            if st.button("清除缓存", width='stretch'):
-                cache_counts = clear_analysis_caches()
-                st.success(f"缓存已清除，本地个股缓存 {cache_counts.get('total', 0)} 条")
-        with col3:
-            if st.button("清除结果", width='stretch'):
-                if 'batch_analysis_results' in st.session_state:
-                    del st.session_state.batch_analysis_results
-                st.success("已清除批量分析结果")
-
-    # 分析师团队选择
-    st.markdown("---")
-    st.subheader("选择分析师团队")
-
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
-        enable_technical = st.checkbox("技术分析师", value=True,
-                                       help="负责技术指标分析、图表形态识别、趋势判断")
-        enable_fundamental = st.checkbox("基本面分析师", value=True,
-                                        help="负责公司财务分析、行业研究、估值分析")
-
-    with col2:
-        enable_fund_flow = st.checkbox("资金面分析师", value=True,
-                                      help="负责资金流向分析、主力行为研究")
-        enable_risk = st.checkbox("风险管理师", value=True,
-                                 help="负责风险识别、风险评估、风险控制策略制定")
-
-    with col3:
-        enable_sentiment = st.checkbox("市场情绪分析师", value=True,
-                                      help="负责市场情绪研究、ARBR指标分析（仅A股）")
-        enable_news = st.checkbox("新闻分析师", value=True,
-                                 help="负责新闻事件分析、舆情研究（仅A股，qstock数据源）")
-
-    # 显示已选择的分析师
-    selected_analysts = []
-    if enable_technical:
-        selected_analysts.append("技术分析师")
-    if enable_fundamental:
-        selected_analysts.append("基本面分析师")
-    if enable_fund_flow:
-        selected_analysts.append("资金面分析师")
-    if enable_risk:
-        selected_analysts.append("风险管理师")
-    if enable_sentiment:
-        selected_analysts.append("市场情绪分析师")
-    if enable_news:
-        selected_analysts.append("新闻分析师")
-
-    if selected_analysts:
-        st.info(f"已选择 {len(selected_analysts)} 位分析师: {', '.join(selected_analysts)}")
-    else:
-        st.warning("请至少选择一位分析师")
-
-    # 保存选择到session_state
-    st.session_state.enable_technical = enable_technical
-    st.session_state.enable_fundamental = enable_fundamental
-    st.session_state.enable_fund_flow = enable_fund_flow
-    st.session_state.enable_risk = enable_risk
-    st.session_state.enable_sentiment = enable_sentiment
-    st.session_state.enable_news = enable_news
-
-    st.markdown("---")
-
-    if analyze_button and stock_input:
-        if not api_key_status:
-            st.error("请先配置 DeepSeek API Key")
-            return
-
-        # 检查是否至少选择了一位分析师
-        if not selected_analysts:
-            st.error("请至少选择一位分析师参与分析")
-            return
-
-        if analysis_mode == "单个分析":
-            # 单个股票分析
-            # 清除之前的分析结果
-            if 'analysis_completed' in st.session_state:
-                del st.session_state.analysis_completed
-            if 'stock_info' in st.session_state:
-                del st.session_state.stock_info
-            if 'agents_results' in st.session_state:
-                del st.session_state.agents_results
-            if 'discussion_result' in st.session_state:
-                del st.session_state.discussion_result
-            if 'final_decision' in st.session_state:
-                del st.session_state.final_decision
-            if 'just_completed' in st.session_state:
-                del st.session_state.just_completed
-
-            run_stock_analysis(stock_input, period)
-
-        else:
-            # 批量股票分析
-            # 解析股票代码列表
-            stock_list = parse_stock_list(stock_input)
-
-            if not stock_list:
-                st.error("请输入有效的股票代码")
-                return
-
-            if len(stock_list) > 20:
-                st.warning(f"检测到 {len(stock_list)} 只股票，建议一次分析不超过20只")
-
-            st.info(f"准备分析 {len(stock_list)} 只股票: {', '.join(stock_list)}")
-
-            # 清除之前的分析结果（包括单个和批量）
-            if 'batch_analysis_results' in st.session_state:
-                del st.session_state.batch_analysis_results
-            if 'analysis_completed' in st.session_state:
-                del st.session_state.analysis_completed
-            if 'stock_info' in st.session_state:
-                del st.session_state.stock_info
-            if 'agents_results' in st.session_state:
-                del st.session_state.agents_results
-            if 'discussion_result' in st.session_state:
-                del st.session_state.discussion_result
-            if 'final_decision' in st.session_state:
-                del st.session_state.final_decision
-            if 'just_completed' in st.session_state:
-                del st.session_state.just_completed
-
-            # 获取批量模式
-            batch_mode = st.session_state.get('batch_mode', '顺序分析')
-
-            # 运行批量分析
-            run_batch_analysis(stock_list, period, batch_mode)
-
-    # 检查是否有已完成的批量分析结果（优先显示批量结果）
-    if 'batch_analysis_results' in st.session_state and st.session_state.batch_analysis_results:
-        display_batch_analysis_results(st.session_state.batch_analysis_results, period)
-
-    # 检查是否有已完成的单个分析结果（但不是刚刚完成的，避免重复显示）
-    elif 'analysis_completed' in st.session_state and st.session_state.analysis_completed:
-        # 如果是刚刚完成的分析，清除标志，避免重复显示
-        if st.session_state.get('just_completed', False):
-            st.session_state.just_completed = False
-        else:
-            # 重新显示之前的分析结果（页面刷新后）
-            stock_info = st.session_state.stock_info
-            agents_results = st.session_state.agents_results
-            discussion_result = st.session_state.discussion_result
-            final_decision = st.session_state.final_decision
-
-            # 重新获取股票数据用于显示图表
-            stock_info_current, stock_data, indicators = get_stock_data(stock_info['symbol'], period)
-            render_stale_cache_notice("个股信息", stock_info_current)
-            render_stale_cache_notice("历史行情", stock_data)
-            stock_data = strip_cache_meta(stock_data)
-
-            # 显示最终决策
-            display_final_decision(final_decision, stock_info, agents_results, discussion_result)
-
-            # 再展示关键股票信息与图表
-            display_stock_info(stock_info, indicators)
-
-            if stock_data is not None:
-                display_stock_chart(stock_data, stock_info)
-
-            # 推理过程放在最后，默认折叠
-            display_reasoning_process(agents_results, discussion_result, expanded=False)
-
-    # 示例和说明
-    elif not stock_input:
-        show_example_interface()
+    display_home_workspace(api_key_status, period)
 
 def check_api_key():
     """检查API密钥是否配置"""
@@ -1539,6 +1412,406 @@ def parse_stock_list(stock_input):
             unique_list.append(code)
 
     return unique_list
+
+
+def _build_enabled_analysts_config() -> Dict[str, bool]:
+    return {
+        "technical": st.session_state.get("enable_technical", True),
+        "fundamental": st.session_state.get("enable_fundamental", True),
+        "fund_flow": st.session_state.get("enable_fund_flow", True),
+        "risk": st.session_state.get("enable_risk", True),
+        "sentiment": st.session_state.get("enable_sentiment", False),
+        "news": st.session_state.get("enable_news", False),
+    }
+
+
+def _run_home_single_analysis_task(
+    *,
+    symbol: str,
+    period: str,
+    enabled_analysts_config: Dict[str, bool],
+    selected_lightweight_model: str,
+    selected_reasoning_model: str,
+    report_progress,
+) -> Dict[str, Any]:
+    report_progress(current=0, total=3, message=f"正在准备 {symbol} 的分析任务...")
+    report_progress(current=1, total=3, message=f"AI 分析师团队正在分析 {symbol}...")
+    result = analyze_single_stock_for_batch_service(
+        symbol=symbol,
+        period=period,
+        enabled_analysts_config=enabled_analysts_config,
+        selected_lightweight_model=selected_lightweight_model,
+        selected_reasoning_model=selected_reasoning_model,
+        save_to_global_history=True,
+    )
+    if not result.get("success"):
+        raise RuntimeError(result.get("error") or f"{symbol} 分析失败")
+
+    report_progress(current=3, total=3, message=f"{symbol} 分析完成，正在同步结果...")
+    return {
+        "mode": "single",
+        "symbol": symbol,
+        "period": period,
+        "stock_info": result.get("stock_info"),
+        "indicators": result.get("indicators"),
+        "agents_results": result.get("agents_results"),
+        "discussion_result": result.get("discussion_result"),
+        "final_decision": result.get("final_decision"),
+        "saved_to_db": bool(result.get("saved_to_db")),
+        "db_error": result.get("db_error"),
+    }
+
+
+def _run_home_batch_analysis_task(
+    *,
+    stock_list,
+    period: str,
+    batch_mode: str,
+    enabled_analysts_config: Dict[str, bool],
+    selected_lightweight_model: str,
+    selected_reasoning_model: str,
+    report_progress,
+) -> Dict[str, Any]:
+    import concurrent.futures
+
+    total = len(stock_list)
+    results_by_symbol: Dict[str, Dict[str, Any]] = {}
+    report_progress(current=0, total=total, message=f"准备分析 {total} 只股票...")
+
+    def _analyze(symbol: str) -> Dict[str, Any]:
+        return analyze_single_stock_for_batch_service(
+            symbol=symbol,
+            period=period,
+            enabled_analysts_config=enabled_analysts_config,
+            selected_lightweight_model=selected_lightweight_model,
+            selected_reasoning_model=selected_reasoning_model,
+            save_to_global_history=True,
+        )
+
+    if batch_mode == "多线程并行":
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+            future_to_symbol = {
+                executor.submit(_analyze, symbol): symbol
+                for symbol in stock_list
+            }
+            for completed_count, future in enumerate(concurrent.futures.as_completed(future_to_symbol), start=1):
+                symbol = future_to_symbol[future]
+                try:
+                    results_by_symbol[symbol] = future.result(timeout=300)
+                except concurrent.futures.TimeoutError:
+                    results_by_symbol[symbol] = {
+                        "symbol": symbol,
+                        "error": "分析超时（5分钟）",
+                        "success": False,
+                    }
+                except Exception as exc:
+                    results_by_symbol[symbol] = {
+                        "symbol": symbol,
+                        "error": str(exc),
+                        "success": False,
+                    }
+
+                current_result = results_by_symbol[symbol]
+                if current_result.get("success"):
+                    message = f"[{completed_count}/{total}] {symbol} 分析完成"
+                else:
+                    message = f"[{completed_count}/{total}] {symbol} 分析失败"
+                report_progress(current=completed_count, total=total, message=message)
+    else:
+        for index, symbol in enumerate(stock_list, start=1):
+            results_by_symbol[symbol] = _analyze(symbol)
+            current_result = results_by_symbol[symbol]
+            if current_result.get("success"):
+                message = f"[{index}/{total}] {symbol} 分析完成"
+            else:
+                message = f"[{index}/{total}] {symbol} 分析失败"
+            report_progress(current=index, total=total, message=message)
+
+    ordered_results = [results_by_symbol[symbol] for symbol in stock_list if symbol in results_by_symbol]
+    success_count = sum(1 for item in ordered_results if item.get("success"))
+    failed_count = total - success_count
+    saved_count = sum(1 for item in ordered_results if item.get("saved_to_db"))
+
+    return {
+        "mode": "batch",
+        "results": ordered_results,
+        "batch_mode": batch_mode,
+        "success_count": success_count,
+        "failed_count": failed_count,
+        "saved_count": saved_count,
+    }
+
+
+def display_current_single_analysis_result(period: str) -> None:
+    stock_info = st.session_state.get("stock_info") or {}
+    agents_results = st.session_state.get("agents_results") or {}
+    discussion_result = st.session_state.get("discussion_result") or {}
+    final_decision = st.session_state.get("final_decision") or {}
+
+    if not stock_info or not final_decision:
+        return
+
+    stock_info_current, stock_data, indicators = get_stock_data(stock_info["symbol"], period)
+    render_stale_cache_notice("个股信息", stock_info_current)
+    render_stale_cache_notice("历史行情", stock_data)
+    if isinstance(stock_data, dict) and stock_data.get("error"):
+        stock_data = None
+    stock_data = strip_cache_meta(stock_data)
+
+    display_final_decision(final_decision, stock_info, agents_results, discussion_result)
+    display_stock_info(stock_info, indicators)
+
+    if stock_data is not None:
+        display_stock_chart(stock_data, stock_info)
+
+    display_reasoning_process(agents_results, discussion_result, expanded=False)
+
+
+def _render_home_analysis_workbench(api_key_status: bool, period: str) -> None:
+    col_mode1, col_mode2 = st.columns([1, 3])
+    with col_mode1:
+        analysis_mode = st.radio(
+            "分析模式",
+            ["单个分析", "批量分析"],
+            horizontal=True,
+            help="单个分析：分析单只股票；批量分析：同时分析多只股票",
+            key="main_analysis_mode",
+        )
+
+    with col_mode2:
+        if analysis_mode == "批量分析":
+            st.radio(
+                "批量模式",
+                ["顺序分析", "多线程并行"],
+                horizontal=True,
+                help="顺序分析：按次序分析，稳定但较慢；多线程并行：同时分析多只，快速但消耗资源",
+                key="batch_mode",
+            )
+
+    st.markdown("---")
+
+    st.subheader("选择分析师团队")
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        enable_technical = st.checkbox(
+            "技术分析师",
+            value=st.session_state.get("enable_technical", True),
+            help="负责技术指标分析、图表形态识别、趋势判断",
+        )
+        enable_fundamental = st.checkbox(
+            "基本面分析师",
+            value=st.session_state.get("enable_fundamental", True),
+            help="负责公司财务分析、行业研究、估值分析",
+        )
+
+    with col2:
+        enable_fund_flow = st.checkbox(
+            "资金面分析师",
+            value=st.session_state.get("enable_fund_flow", True),
+            help="负责资金流向分析、主力行为研究",
+        )
+        enable_risk = st.checkbox(
+            "风险管理师",
+            value=st.session_state.get("enable_risk", True),
+            help="负责风险识别、风险评估、风险控制策略制定",
+        )
+
+    with col3:
+        enable_sentiment = st.checkbox(
+            "市场情绪分析师",
+            value=st.session_state.get("enable_sentiment", True),
+            help="负责市场情绪研究、ARBR指标分析（仅A股）",
+        )
+        enable_news = st.checkbox(
+            "新闻分析师",
+            value=st.session_state.get("enable_news", True),
+            help="负责新闻事件分析、舆情研究（仅A股，qstock数据源）",
+        )
+
+    selected_analysts = []
+    if enable_technical:
+        selected_analysts.append("技术分析师")
+    if enable_fundamental:
+        selected_analysts.append("基本面分析师")
+    if enable_fund_flow:
+        selected_analysts.append("资金面分析师")
+    if enable_risk:
+        selected_analysts.append("风险管理师")
+    if enable_sentiment:
+        selected_analysts.append("市场情绪分析师")
+    if enable_news:
+        selected_analysts.append("新闻分析师")
+
+    if selected_analysts:
+        st.info(f"已选择 {len(selected_analysts)} 位分析师: {', '.join(selected_analysts)}")
+    else:
+        st.warning("请至少选择一位分析师")
+
+    st.session_state.enable_technical = enable_technical
+    st.session_state.enable_fundamental = enable_fundamental
+    st.session_state.enable_fund_flow = enable_fund_flow
+    st.session_state.enable_risk = enable_risk
+    st.session_state.enable_sentiment = enable_sentiment
+    st.session_state.enable_news = enable_news
+
+    st.markdown("---")
+
+    stock_input = ""
+    if analysis_mode == "单个分析":
+        col1, col2, col3 = st.columns([2, 1, 1])
+        with col1:
+            stock_input = st.text_input(
+                "请输入股票代码或名称",
+                placeholder="例如: AAPL, 000001, 00700",
+                help="支持A股(如000001)、港股(如00700)和美股(如AAPL)",
+                key="main_single_stock_input",
+            )
+
+        action_label, action_disabled, action_help = get_ui_analysis_button_state(
+            HOME_ANALYSIS_TASK_TYPE,
+            "开始分析",
+        )
+        with col2:
+            analyze_button = st.button(
+                action_label,
+                type="primary",
+                width='stretch',
+                disabled=action_disabled,
+                help=action_help,
+                key="main_single_analyze_button",
+            )
+
+        with col3:
+            if st.button("清除缓存", width='stretch', key="main_single_clear_cache"):
+                cache_counts = clear_analysis_caches()
+                st.success(f"缓存已清除，本地个股缓存 {cache_counts.get('total', 0)} 条")
+
+        if analyze_button:
+            symbol = stock_input.strip()
+            if not api_key_status:
+                st.error("请先配置 DeepSeek API Key")
+            elif not symbol:
+                st.error("请输入有效的股票代码")
+            elif not any(_build_enabled_analysts_config().values()):
+                st.error("请至少选择一位分析师参与分析")
+            else:
+                _clear_single_analysis_state()
+                _clear_batch_analysis_state()
+                selected_lightweight_model, selected_reasoning_model = get_selected_models()
+                enabled_analysts_config = _build_enabled_analysts_config()
+                try:
+                    start_ui_analysis_task(
+                        task_type=HOME_ANALYSIS_TASK_TYPE,
+                        label=f"股票分析 {symbol}",
+                        runner=lambda _task_id, report_progress: _run_home_single_analysis_task(
+                            symbol=symbol,
+                            period=period,
+                            enabled_analysts_config=enabled_analysts_config,
+                            selected_lightweight_model=selected_lightweight_model,
+                            selected_reasoning_model=selected_reasoning_model,
+                            report_progress=report_progress,
+                        ),
+                        metadata={"mode": "single", "symbol": symbol, "period": period},
+                    )
+                    st.info("已提交后台分析任务，可切换到“分析历史”查看旧记录，结果完成后会自动同步。")
+                    st.rerun()
+                except RuntimeError as exc:
+                    st.warning(str(exc))
+    else:
+        stock_input = st.text_area(
+            "请输入多个股票代码（每行一个或用逗号分隔）",
+            placeholder="例如:\n000001\n600036\n00700\n\n或者: 000001, 600036, 00700, AAPL",
+            height=120,
+            help="支持多种格式：每行一个代码或用逗号分隔。支持A股、港股、美股",
+            key="main_batch_stock_input",
+        )
+
+        action_label, action_disabled, action_help = get_ui_analysis_button_state(
+            HOME_ANALYSIS_TASK_TYPE,
+            "开始批量分析",
+        )
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            analyze_button = st.button(
+                action_label,
+                type="primary",
+                width='stretch',
+                disabled=action_disabled,
+                help=action_help,
+                key="main_batch_analyze_button",
+            )
+        with col2:
+            if st.button("清除缓存", width='stretch', key="main_batch_clear_cache"):
+                cache_counts = clear_analysis_caches()
+                st.success(f"缓存已清除，本地个股缓存 {cache_counts.get('total', 0)} 条")
+        with col3:
+            if st.button("清除结果", width='stretch', key="main_batch_clear_result"):
+                _clear_batch_analysis_state()
+                st.success("已清除批量分析结果")
+
+        if analyze_button:
+            if not api_key_status:
+                st.error("请先配置 DeepSeek API Key")
+            elif not any(_build_enabled_analysts_config().values()):
+                st.error("请至少选择一位分析师参与分析")
+            else:
+                stock_list = parse_stock_list(stock_input)
+                if not stock_list:
+                    st.error("请输入有效的股票代码")
+                else:
+                    if len(stock_list) > 20:
+                        st.warning(f"检测到 {len(stock_list)} 只股票，建议一次分析不超过20只")
+
+                    _clear_batch_analysis_state()
+                    _clear_single_analysis_state()
+                    enabled_analysts_config = _build_enabled_analysts_config()
+                    selected_lightweight_model, selected_reasoning_model = get_selected_models()
+                    batch_mode = st.session_state.get("batch_mode", "顺序分析")
+                    try:
+                        start_ui_analysis_task(
+                            task_type=HOME_ANALYSIS_TASK_TYPE,
+                            label=f"批量分析 {len(stock_list)} 只股票",
+                            runner=lambda _task_id, report_progress: _run_home_batch_analysis_task(
+                                stock_list=stock_list,
+                                period=period,
+                                batch_mode=batch_mode,
+                                enabled_analysts_config=enabled_analysts_config,
+                                selected_lightweight_model=selected_lightweight_model,
+                                selected_reasoning_model=selected_reasoning_model,
+                                report_progress=report_progress,
+                            ),
+                            metadata={
+                                "mode": "batch",
+                                "total": len(stock_list),
+                                "batch_mode": batch_mode,
+                            },
+                        )
+                        st.info("已提交后台批量分析任务，可切换页面，返回后会自动同步进度和结果。")
+                        st.rerun()
+                    except RuntimeError as exc:
+                        st.warning(str(exc))
+
+    if st.session_state.get("batch_analysis_results"):
+        display_batch_analysis_results(st.session_state.batch_analysis_results, period)
+    elif st.session_state.get("analysis_completed"):
+        display_current_single_analysis_result(period)
+    elif not stock_input:
+        show_example_interface()
+
+
+def display_home_workspace(api_key_status: bool, period: str) -> None:
+    _render_home_analysis_task_fragment()
+    _restore_home_analysis_result_from_latest_task()
+    _consume_finished_home_analysis_task()
+
+    tabs = st.tabs(["分析工作台", "分析历史"])
+
+    with tabs[0]:
+        _render_home_analysis_workbench(api_key_status, period)
+
+    with tabs[1]:
+        display_history_records()
 
 def _legacy_analyze_single_stock_for_batch(symbol, period, enabled_analysts_config=None,
                                            selected_model=None,
@@ -3203,7 +3476,7 @@ def display_batch_analysis_results(results, period):
 
     # 提示信息
     if saved_count > 0:
-        st.info(f"已有 {saved_count} 只股票的分析结果保存到历史记录，可在侧边栏点击“历史记录”查看。")
+        st.info(f"已有 {saved_count} 只股票的分析结果保存到历史记录，可在当前页切换到“分析历史”查看。")
 
     st.markdown("---")
 

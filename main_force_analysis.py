@@ -499,7 +499,7 @@ class MainForceAnalyzer:
             response = self.deepseek_client.call_api(
                 messages,
                 max_tokens=4000,
-                tier=ModelTier.LIGHTWEIGHT,
+                tier=ModelTier.REASONING,
             )
             
             # 解析JSON响应

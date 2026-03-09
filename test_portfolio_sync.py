@@ -198,6 +198,38 @@ class PortfolioIntegrationTests(unittest.TestCase):
         self.assertEqual(len(self.portfolio_db.get_analysis_history(first_stock_id, limit=10)), 1)
         self.assertEqual(len(self.portfolio_db.get_analysis_history(second_stock_id, limit=10)), 1)
 
+    def test_bulk_toggle_ai_monitor_tasks(self):
+        self.smart_monitor_db.upsert_monitor_task(
+            {
+                "task_name": "茅台任务",
+                "stock_code": "600519",
+                "stock_name": "贵州茅台",
+                "enabled": 1,
+            }
+        )
+        self.smart_monitor_db.upsert_monitor_task(
+            {
+                "task_name": "平安银行任务",
+                "stock_code": "000001",
+                "stock_name": "平安银行",
+                "enabled": 0,
+            }
+        )
+
+        changed = self.smart_monitor_db.set_all_monitor_tasks_enabled(True)
+        self.assertEqual(changed, 1)
+
+        enabled_tasks = self.smart_monitor_db.get_monitor_tasks(enabled_only=False)
+        self.assertEqual(len(enabled_tasks), 2)
+        self.assertTrue(all(task["enabled"] == 1 for task in enabled_tasks))
+
+        changed = self.smart_monitor_db.set_all_monitor_tasks_enabled(False)
+        self.assertEqual(changed, 2)
+
+        disabled_tasks = self.smart_monitor_db.get_monitor_tasks(enabled_only=False)
+        self.assertEqual(len(disabled_tasks), 2)
+        self.assertTrue(all(task["enabled"] == 0 for task in disabled_tasks))
+
     def test_delete_stock_cascades_managed_integrations(self):
         stock_id = self._add_stock("002594", cost_price=220.0, quantity=300)
         self.portfolio_db.save_analysis(

@@ -556,6 +556,23 @@ class SmartMonitorDB:
             self.logger.info(f"更新监控任务: {stock_code}")
         return changed
 
+    def set_all_monitor_tasks_enabled(self, enabled: bool) -> int:
+        """批量启用或停用全部 AI 监控任务。"""
+        changed_count = 0
+        target_enabled = bool(enabled)
+        items = self.monitoring_repository.list_items(monitor_type='ai_task')
+
+        for item in items:
+            if bool(item.get('enabled', True)) == target_enabled:
+                continue
+            if self.monitoring_repository.update_item(item['id'], {'enabled': target_enabled}):
+                changed_count += 1
+
+        if changed_count:
+            action = '启用' if target_enabled else '停用'
+            self.logger.info(f"批量{action}AI监控任务: {changed_count}个")
+        return changed_count
+
     def get_monitor_task_by_code(self, stock_code: str, managed_only: Optional[bool] = None) -> Optional[Dict]:
         item = self.monitoring_repository.get_item_by_symbol(
             stock_code,
