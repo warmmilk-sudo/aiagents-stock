@@ -143,12 +143,30 @@ STRUCTURED_FINAL_DECISION_KEYS = (
     "target_price",
     "operation_advice",
     "entry_range",
+    "entry_min",
+    "entry_max",
     "take_profit",
     "stop_loss",
     "holding_period",
     "position_size",
     "risk_warning",
 )
+
+FINAL_DECISION_FIELD_LABELS = {
+    "rating": "投资评级",
+    "confidence_level": "信心度",
+    "target_price": "目标价格",
+    "operation_advice": "操作建议",
+    "entry_range": "进场区间",
+    "entry_min": "进场下沿",
+    "entry_max": "进场上沿",
+    "take_profit": "止盈位",
+    "stop_loss": "止损位",
+    "holding_period": "持有周期",
+    "position_size": "建议仓位",
+    "risk_warning": "风险提示",
+    "decision_text": "决策文本",
+}
 
 
 def _extract_embedded_json_mapping(text: str) -> tuple[Dict[str, Any], str]:
@@ -257,6 +275,122 @@ def _format_multiline_text_as_html(value: Any) -> str:
     for paragraph in paragraphs:
         rendered.append(f"<p>{_safe_text(paragraph).replace(chr(10), '<br>')}</p>")
     return "".join(rendered)
+
+
+def _is_empty_display_value(value: Any) -> bool:
+    parsed = _coerce_json_value(value)
+    if parsed is None:
+        return True
+    if isinstance(parsed, str):
+        return parsed.strip() in {"", "N/A", "NA", "None", "null"}
+    if isinstance(parsed, (list, tuple, set, dict)):
+        return len(parsed) == 0
+    return False
+
+
+def _is_nested_render_value(value: Any) -> bool:
+    parsed = _coerce_json_value(value)
+    return isinstance(parsed, (dict, list, tuple, set))
+
+
+def _humanize_field_label(key: str) -> str:
+    text = str(key or "").strip()
+    if not text:
+        return ""
+    return FINAL_DECISION_FIELD_LABELS.get(text, text.replace("_", " ").strip().title())
+
+
+def _format_display_value(key: str, value: Any) -> Any:
+    parsed = _coerce_json_value(value)
+    if _is_empty_display_value(parsed):
+        return "N/A"
+
+    if key == "confidence_level":
+        number = to_float(parsed)
+        return f"{number:.1f}/10" if number is not None else str(parsed)
+
+    if key in {"target_price", "take_profit", "stop_loss", "entry_min", "entry_max"}:
+        number = to_float(parsed)
+        return format_price(number) if number is not None else str(parsed)
+
+    if key == "entry_range":
+        if isinstance(parsed, dict):
+            return format_entry_range(parsed.get("min"), parsed.get("max"))
+        if isinstance(parsed, (list, tuple)) and len(parsed) >= 2:
+            return format_entry_range(parsed[0], parsed[1])
+        return str(parsed)
+
+    if isinstance(parsed, bool):
+        return "是" if parsed else "否"
+
+    return parsed
+
+
+def _has_structured_decision_fields(value: Any) -> bool:
+    mapping, _ = _normalize_mapping_input(value)
+    if not mapping:
+        return False
+    return any(
+        key != "decision_text" and key in mapping and not _is_empty_display_value(mapping.get(key))
+        for key in STRUCTURED_FINAL_DECISION_KEYS
+    )
+
+
+def _render_structured_value(value: Any, *, field_key: str = "", title: str = "", depth: int = 0) -> None:
+    parsed = _format_display_value(field_key, value)
+    if _is_empty_display_value(parsed):
+        return
+
+    if isinstance(parsed, dict):
+        if title:
+            st.markdown(f"**{title}**")
+        scalar_items = []
+        nested_items = []
+        for key, item in parsed.items():
+            label = _humanize_field_label(str(key))
+            if _is_empty_display_value(item):
+                continue
+            if _is_nested_render_value(item):
+                nested_items.append((str(key), label, item))
+            else:
+                scalar_items.append((str(key), label, _format_display_value(str(key), item)))
+
+        if scalar_items:
+            columns = st.columns(2 if len(scalar_items) > 1 else 1)
+            for index, (_, label, item_value) in enumerate(scalar_items):
+                with columns[index % len(columns)]:
+                    st.caption(label)
+                    st.write(item_value)
+
+        for key, label, item in nested_items:
+            if scalar_items or depth > 0:
+                st.markdown("---")
+            _render_structured_value(item, field_key=key, title=label, depth=depth + 1)
+        return
+
+    if isinstance(parsed, (list, tuple, set)):
+        if title:
+            st.markdown(f"**{title}**")
+        items = [item for item in parsed if not _is_empty_display_value(item)]
+        if not items:
+            return
+        if all(not _is_nested_render_value(item) for item in items):
+            for item in items:
+                st.markdown(f"- {str(_format_display_value(field_key, item))}")
+            return
+        for index, item in enumerate(items, start=1):
+            container_title = f"{title or '条目'} {index}"
+            with st.container(border=True):
+                _render_structured_value(item, field_key=field_key, title=container_title, depth=depth + 1)
+        return
+
+    text = str(parsed).strip()
+    if "\n" in text and len(text) >= 80:
+        _render_reasoning_block(title or _humanize_field_label(field_key) or "内容", text)
+        return
+    if title:
+        st.markdown(f"**{title}**")
+    st.write(text)
 
 
 def _render_reasoning_block(title: str, content: Any, *, description: str = ""):
@@ -462,12 +596,19 @@ def render_agents_analysis_tabs(
                 """,
                 unsafe_allow_html=True,
             )
+            analysis_payload = _coerce_json_value(agent_result.get("analysis", ""))
             if split_reasoning:
-                report_body, reasoning_text = _split_analysis_report_sections(
-                    agent_result.get("analysis", "")
-                )
+                if isinstance(analysis_payload, (dict, list)):
+                    report_body = ""
+                    reasoning_text = ""
+                else:
+                    report_body, reasoning_text = _split_analysis_report_sections(
+                        analysis_payload
+                    )
                 st.markdown("**分析报告正文：**")
-                if report_body:
+                if isinstance(analysis_payload, (dict, list)):
+                    _render_structured_value(analysis_payload, title="结构化分析报告")
+                elif report_body:
                     st.markdown(report_body)
                 elif reasoning_text:
                     st.info("未提取到结构化报告正文，已保留原始推理过程。")
@@ -479,7 +620,20 @@ def render_agents_analysis_tabs(
                         _render_reasoning_block("分析师推理过程", reasoning_text)
             else:
                 st.markdown("**分析报告：**")
-                st.write(agent_result.get("analysis", "暂无分析"))
+                if _is_empty_display_value(analysis_payload):
+                    st.info("暂无分析")
+                else:
+                    _render_structured_value(analysis_payload, title="分析报告")
+
+            extra_fields = {
+                key: value
+                for key, value in agent_result.items()
+                if key not in {"agent_name", "agent_role", "focus_areas", "analysis", "analysis_time", "timestamp"}
+                and not _is_empty_display_value(value)
+            }
+            if extra_fields:
+                st.markdown("**补充结构化字段：**")
+                _render_structured_value(extra_fields)
 
 
 def render_team_discussion(discussion_result: Any, *, show_header: bool = True):
@@ -556,11 +710,64 @@ def render_reasoning_process(
             render_agents_analysis_tabs(normalized_agents_results, show_header=False)
 
 
+def render_analysis_report_content(
+    content: Any,
+    *,
+    title: str = "",
+    empty_message: str = "暂无内容",
+    split_reasoning: bool = False,
+    reasoning_title: str = "推理过程",
+    reasoning_description: str = "",
+):
+    parsed_content = _coerce_json_value(content)
+    if _is_empty_display_value(parsed_content):
+        st.info(empty_message)
+        return
+
+    if _is_nested_render_value(parsed_content):
+        _render_structured_value(parsed_content, title=title or "结构化内容")
+        return
+
+    text = str(parsed_content).strip()
+    if not text:
+        st.info(empty_message)
+        return
+
+    if split_reasoning:
+        report_body, reasoning_text = _split_analysis_report_sections(text)
+        rendered_body = False
+
+        if report_body:
+            parsed_body = _coerce_json_value(report_body)
+            if _is_nested_render_value(parsed_body):
+                _render_structured_value(parsed_body, title=title or "结构化内容")
+            else:
+                if title:
+                    st.markdown(f"**{title}**")
+                st.markdown(report_body)
+            rendered_body = True
+
+        if reasoning_text:
+            with st.expander(reasoning_title, expanded=False):
+                _render_reasoning_block(
+                    reasoning_title,
+                    reasoning_text,
+                    description=reasoning_description,
+                )
+
+        if rendered_body or reasoning_text:
+            return
+
+    if title:
+        st.markdown(f"**{title}**")
+    st.markdown(text)
+
+
 def render_final_decision(final_decision: Any, *, show_header: bool = True):
     if show_header:
         st.subheader("最终投资决策")
 
-    normalized_final_decision, invalid, _ = _resolve_final_decision_content(final_decision)
+    normalized_final_decision, invalid, extracted_reasoning = _resolve_final_decision_content(final_decision)
     if not normalized_final_decision:
         st.info("暂无最终投资决策")
         return
@@ -568,14 +775,15 @@ def render_final_decision(final_decision: Any, *, show_header: bool = True):
     if invalid:
         st.caption("最终决策原始数据格式异常，已降级为文本展示。")
 
-    if isinstance(normalized_final_decision, dict) and "decision_text" not in normalized_final_decision:
-        entry_range_display = normalized_final_decision.get("entry_range")
-        if not entry_range_display:
+    if isinstance(normalized_final_decision, dict) and _has_structured_decision_fields(normalized_final_decision):
+        raw_entry_range = normalized_final_decision.get("entry_range")
+        entry_range_display = _format_display_value("entry_range", raw_entry_range)
+        if _is_empty_display_value(raw_entry_range):
             entry_range_display = format_entry_range(
                 normalized_final_decision.get("entry_min"),
                 normalized_final_decision.get("entry_max"),
             )
-        col1, col2 = st.columns([1, 2])
+        col1, col2, col3, col4 = st.columns(4)
 
         with col1:
             rating = normalized_final_decision.get("rating", "未知")
@@ -589,37 +797,85 @@ def render_final_decision(final_decision: Any, *, show_header: bool = True):
                 """,
                 unsafe_allow_html=True,
             )
-            st.metric("信心度", f"{normalized_final_decision.get('confidence_level', 'N/A')}/10")
-            st.metric("目标价格", f"{normalized_final_decision.get('target_price', 'N/A')}")
-            st.metric("建议仓位", f"{normalized_final_decision.get('position_size', 'N/A')}")
-
         with col2:
-            st.markdown("**操作建议：**")
-            st.write(normalized_final_decision.get("operation_advice", "暂无建议"))
-            st.markdown("**关键位置：**")
-            left, right = st.columns(2)
-            with left:
-                st.write(f"**进场区间：** {entry_range_display}")
-                st.write(f"**止盈位：** {normalized_final_decision.get('take_profit', 'N/A')}")
-            with right:
-                st.write(f"**止损位：** {normalized_final_decision.get('stop_loss', 'N/A')}")
-                st.write(f"**持有周期：** {normalized_final_decision.get('holding_period', 'N/A')}")
+            st.metric("信心度", _format_display_value("confidence_level", normalized_final_decision.get("confidence_level")))
+        with col3:
+            st.metric("目标价格", _format_display_value("target_price", normalized_final_decision.get("target_price")))
+        with col4:
+            st.metric("建议仓位", _format_display_value("position_size", normalized_final_decision.get("position_size")))
+
+        summary_col, level_col = st.columns([1.35, 1.0])
+        with summary_col:
+            advice = normalized_final_decision.get("operation_advice")
+            if not _is_empty_display_value(advice):
+                _render_structured_value(advice, field_key="operation_advice", title="操作建议")
+
+            decision_text = normalized_final_decision.get("decision_text")
+            if not _is_empty_display_value(decision_text):
+                st.markdown("---")
+                _render_structured_value(decision_text, field_key="decision_text", title="补充说明")
+
+        with level_col:
+            st.markdown("**关键位置**")
+            level_left, level_right = st.columns(2)
+            with level_left:
+                st.caption("进场区间")
+                st.write(entry_range_display or "N/A")
+                st.caption("止盈位")
+                st.write(_format_display_value("take_profit", normalized_final_decision.get("take_profit")))
+            with level_right:
+                st.caption("止损位")
+                st.write(_format_display_value("stop_loss", normalized_final_decision.get("stop_loss")))
+                st.caption("持有周期")
+                st.write(_format_display_value("holding_period", normalized_final_decision.get("holding_period")))
 
         risk_warning = normalized_final_decision.get("risk_warning", "")
-        if risk_warning:
+        if not _is_empty_display_value(risk_warning):
             st.markdown(
                 f"""
                 <div class="warning-card">
                     <h4>风险提示</h4>
-                    <p>{_safe_text(risk_warning)}</p>
+                    <p>{_safe_text(_format_display_value('risk_warning', risk_warning))}</p>
                 </div>
                 """,
                 unsafe_allow_html=True,
             )
+
+        extra_fields = {
+            key: value
+            for key, value in normalized_final_decision.items()
+            if key not in {
+                "rating",
+                "confidence_level",
+                "target_price",
+                "operation_advice",
+                "entry_range",
+                "entry_min",
+                "entry_max",
+                "take_profit",
+                "stop_loss",
+                "holding_period",
+                "position_size",
+                "risk_warning",
+                "decision_text",
+            }
+            and not _is_empty_display_value(value)
+        }
+        if extra_fields:
+            st.markdown("#### 补充结构化信息")
+            _render_structured_value(extra_fields)
+
+        if not _is_empty_display_value(extracted_reasoning):
+            with st.expander("决策生成推理", expanded=False):
+                _render_reasoning_block("决策生成推理", extracted_reasoning)
         return
 
     if isinstance(normalized_final_decision, dict):
-        st.write(normalized_final_decision.get("decision_text", str(normalized_final_decision)))
+        decision_text = normalized_final_decision.get("decision_text", str(normalized_final_decision))
+        _render_structured_value(decision_text, field_key="decision_text", title="决策文本")
+        if not _is_empty_display_value(extracted_reasoning):
+            with st.expander("决策生成推理", expanded=False):
+                _render_reasoning_block("决策生成推理", extracted_reasoning)
         return
 
-    st.write(normalized_final_decision)
+    _render_structured_value(normalized_final_decision, title="决策文本")

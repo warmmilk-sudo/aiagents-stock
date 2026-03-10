@@ -26,6 +26,10 @@ from ui_shared import (
 from ui_state_keys import (
     PORTFOLIO_ADD_ACCOUNT_NAME_KEY,
     PORTFOLIO_ADD_ORIGIN_ANALYSIS_ID_KEY,
+    PORTFOLIO_ACTIVE_VIEW_KEY,
+    PORTFOLIO_RISK_CACHE_KEY,
+    PORTFOLIO_RISK_CACHE_SIGNATURE_KEY,
+    PORTFOLIO_STOCKS_ACTIVE_VIEW_KEY,
 )
 
 
@@ -67,7 +71,7 @@ def _render_distribution_pie_chart(
     chart_key: str,
     max_slices: int = 8,
 ) -> None:
-    """Render a compact pie chart for portfolio concentration views."""
+    """Render a compact donut chart for portfolio concentration views."""
     if not records:
         st.info(empty_message)
         return
@@ -109,6 +113,7 @@ def _render_distribution_pie_chart(
         names="label",
         values="market_value",
         color="label",
+        hole=0.58,
         color_discrete_sequence=[
             "#0F766E",
             "#14B8A6",
@@ -122,16 +127,20 @@ def _render_distribution_pie_chart(
     )
     fig.update_traces(
         sort=False,
-        textinfo="label+percent" if len(chart_df) <= 6 else "percent",
+        textinfo="percent",
         textposition="inside",
+        insidetextorientation="horizontal",
         hovertemplate="%{label}<br>市值: ¥%{value:,.2f}<br>占比: %{percent}<extra></extra>",
-        marker=dict(line=dict(color="white", width=2)),
+        marker=dict(line=dict(color="white", width=1.5)),
+        domain=dict(x=[0.16, 0.84], y=[0.08, 0.94]),
+        textfont=dict(size=12, color="white"),
     )
     fig.update_layout(
-        height=420,
-        margin=dict(t=10, b=10, l=10, r=10),
-        showlegend=True,
-        legend=dict(orientation="h", yanchor="bottom", y=-0.18, xanchor="center", x=0.5),
+        height=280,
+        margin=dict(t=4, b=4, l=4, r=4),
+        showlegend=False,
+        uniformtext_minsize=10,
+        uniformtext_mode="hide",
     )
     st.plotly_chart(
         fig,
@@ -444,7 +453,7 @@ def _render_portfolio_analysis_live_status_card():
         st.caption(f"开始时间：{started_at or '待开始'}")
 
 
-@st.fragment(run_every=1.0)
+@st.fragment(run_every=3.0)
 def _render_portfolio_analysis_live_status_fragment():
     _render_portfolio_analysis_live_status_card()
 
@@ -728,28 +737,40 @@ def _render_batch_analysis_feedback():
 
 def display_portfolio_manager(lightweight_model=None, reasoning_model=None):
     """显示持仓管理主界面"""
-    try:
-        portfolio_manager.reconcile_portfolio_integrations()
-    except Exception as e:
-        st.warning(f"持仓同步检查执行失败: {e}")
-
     _render_portfolio_analysis_live_status_fragment()
-    
-    # 创建标签页
-    tab1, tab2, tab3 = st.tabs([
-        "持仓情况",
-        "风险评估",
-        "分析任务",
-    ])
-    
-    with tab1:
+
+    view_col, sync_col = st.columns([4.2, 1.1])
+    with view_col:
+        selected_view = st.radio(
+            "持仓分析视图",
+            ["持仓情况", "风险评估", "分析任务"],
+            horizontal=True,
+            key=PORTFOLIO_ACTIVE_VIEW_KEY,
+            label_visibility="collapsed",
+        )
+    with sync_col:
+        pending_reconcile = bool(getattr(portfolio_manager, "_integrations_reconcile_pending", False))
+        button_label = "同步联动" if pending_reconcile else "重新对账"
+        if st.button(button_label, key="portfolio_manual_reconcile", width="stretch"):
+            try:
+                result = portfolio_manager.reconcile_portfolio_integrations()
+                st.session_state["portfolio_last_reconcile_result"] = result
+                st.success("持仓联动对账已完成。")
+            except Exception as exc:
+                st.error(f"持仓联动对账失败: {exc}")
+
+    if pending_reconcile:
+        st.caption("检测到待同步的持仓联动变更。点击“同步联动”后再查看下游盯盘和价格预警状态。")
+
+    if selected_view == "持仓情况":
         display_portfolio_stocks(lightweight_model, reasoning_model)
-        
-    with tab2:
+        return
+
+    if selected_view == "风险评估":
         display_portfolio_risk()
-    
-    with tab3:
-        display_analysis_task_center(lightweight_model, reasoning_model)
+        return
+
+    display_analysis_task_center(lightweight_model, reasoning_model)
 
 
 
@@ -876,9 +897,23 @@ def display_portfolio_risk():
         key="risk_account_selector",
     )
     account_filter = _resolve_portfolio_account_filter(selected_account)
+    cache_signature = account_filter or "__all_accounts__"
+    refresh_col, note_col = st.columns([1.1, 4])
+    with refresh_col:
+        refresh_requested = st.button("刷新风险评估", key=f"refresh_portfolio_risk_{cache_signature}", width="stretch")
+    with note_col:
+        st.caption("风险评估只在首次进入、切换账户或手动刷新时重算，避免页面控件重跑时重复计算。")
 
-    portfolio_manager.ensure_daily_snapshot(account_filter, source="page_load")
-    result = portfolio_manager.calculate_portfolio_risk(account_name=account_filter)
+    cached_result = st.session_state.get(PORTFOLIO_RISK_CACHE_KEY)
+    cached_signature = st.session_state.get(PORTFOLIO_RISK_CACHE_SIGNATURE_KEY)
+    if refresh_requested or cached_signature != cache_signature or cached_result is None:
+        with st.spinner("正在更新组合风险评估..."):
+            portfolio_manager.ensure_daily_snapshot(account_filter, source="manual_refresh")
+            cached_result = portfolio_manager.calculate_portfolio_risk(account_name=account_filter)
+        st.session_state[PORTFOLIO_RISK_CACHE_KEY] = cached_result
+        st.session_state[PORTFOLIO_RISK_CACHE_SIGNATURE_KEY] = cache_signature
+
+    result = cached_result
 
     if result.get("status") == "error":
         st.warning(result.get("message", "评估失败"))
@@ -988,14 +1023,19 @@ def display_portfolio_stocks(lightweight_model=None, reasoning_model=None):
     for stock in stocks:
         stock.update(trade_summary_map.get(stock.get("id"), {}))
 
-    portfolio_manager.ensure_daily_snapshot(account_filter, source="page_load")
-    subtab_list, subtab_review = st.tabs(["持仓列表", "复盘报告"])
+    selected_subview = st.radio(
+        "持仓情况视图",
+        ["持仓列表", "复盘报告"],
+        horizontal=True,
+        key=PORTFOLIO_STOCKS_ACTIVE_VIEW_KEY,
+        label_visibility="collapsed",
+    )
 
-    with subtab_list:
+    if selected_subview == "持仓列表":
         _render_portfolio_stock_list(stocks, lightweight_model=lightweight_model, reasoning_model=reasoning_model)
+        return
 
-    with subtab_review:
-        display_portfolio_review_reports(account_filter)
+    display_portfolio_review_reports(account_filter)
 
 
 def _render_portfolio_stock_list(
@@ -1367,8 +1407,8 @@ def display_stock_card(
         if meta_bits:
             st.caption(" | ".join(meta_bits))
 
-        action_col1, action_col2, action_col3, action_col4, action_col5, action_col6 = st.columns(
-            [1.05, 0.95, 0.9, 0.9, 1.35, 0.8],
+        action_col1, action_col2, action_col3, action_col4, action_col5 = st.columns(
+            [1.05, 0.95, 0.9, 1.1, 0.8],
             gap="small",
         )
         with action_col1:
@@ -1406,7 +1446,7 @@ def display_stock_card(
                 st.session_state.pop(trade_state_key, None)
                 st.rerun()
         with action_col4:
-            if st.button("交易", key=f"trade_{stock_id}", help="记录加仓或减仓"):
+            if st.button("交易", key=f"trade_{stock_id}", help="记录买入、卖出或清仓"):
                 st.session_state[trade_state_key] = True
                 st.session_state[trade_type_key] = "buy"
                 st.session_state[trade_date_key] = date.today()
@@ -1416,16 +1456,6 @@ def display_stock_card(
                 st.session_state.pop(edit_state_key, None)
                 st.rerun()
         with action_col5:
-            if st.button("清仓并降级", key=f"clear_{stock_id}", help="预填一笔整仓卖出，保存后降级回盯盘"):
-                st.session_state[trade_state_key] = True
-                st.session_state[trade_type_key] = "sell"
-                st.session_state[trade_date_key] = date.today()
-                st.session_state[trade_price_key] = default_trade_price
-                st.session_state[trade_quantity_key] = max(1, int(quantity or 0))
-                st.session_state[trade_note_key] = "清仓并降级为盯盘"
-                st.session_state.pop(edit_state_key, None)
-                st.rerun()
-        with action_col6:
             if st.button("删除", key=f"del_{stock_id}", help="删除"):
                 success, msg = portfolio_manager.delete_stock(stock_id)
                 if success:
@@ -1494,17 +1524,27 @@ def display_stock_card(
             st.session_state.setdefault(trade_price_key, default_trade_price)
             st.session_state.setdefault(trade_quantity_key, 100)
             st.session_state.setdefault(trade_note_key, "")
+            current_trade_type = st.session_state.get(trade_type_key, "buy")
+            is_clear_trade = current_trade_type == "clear"
+            if is_clear_trade:
+                st.session_state[trade_quantity_key] = max(1, int(quantity or 0))
+                if not st.session_state.get(trade_note_key):
+                    st.session_state[trade_note_key] = "清仓"
 
             with st.form(key=f"trade_form_{stock_id}"):
-                st.markdown(f"#### 手工买入 / 卖出 - {display_name}")
-                st.caption("整仓卖出并保存后，资产会自动从“持仓”降级回“盯盘”。")
+                st.markdown(f"#### 手工交易 - {display_name}")
+                st.caption("买入会按加权均价重算成本；卖出/清仓会按同花顺口径重算剩余成本。清仓后默认自动降级为盯盘。")
 
                 trade_col1, trade_col2 = st.columns(2)
                 with trade_col1:
                     trade_type = st.radio(
                         "交易类型",
-                        options=["buy", "sell"],
-                        format_func=lambda value: "加仓" if value == "buy" else "减仓",
+                        options=["buy", "sell", "clear"],
+                        format_func=lambda value: {
+                            "buy": "买入 / 加仓",
+                            "sell": "卖出 / 减仓",
+                            "clear": "清仓",
+                        }.get(value, value),
                         key=trade_type_key,
                         horizontal=True,
                     )
@@ -1522,14 +1562,17 @@ def display_stock_card(
                         "成交数量",
                         min_value=1,
                         step=1,
+                        disabled=trade_type == "clear",
                         key=trade_quantity_key,
                     )
+                    if trade_type == "clear":
+                        st.caption(f"清仓将按当前持仓数量 {int(quantity or 0)} 股提交。")
 
                 trade_note = st.text_area(
                     "交易备注",
                     key=trade_note_key,
                     height=80,
-                    placeholder="可选，例如：补仓、止盈减仓、调仓",
+                    placeholder="可选，例如：补仓、止盈减仓、清仓原因",
                 )
 
                 trade_submit_col, trade_cancel_col = st.columns(2)

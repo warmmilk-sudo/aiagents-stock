@@ -77,6 +77,8 @@ class AnalysisRepository:
         try:
             return json.loads(raw_value)
         except (TypeError, json.JSONDecodeError):
+            if isinstance(default, str) and isinstance(raw_value, str):
+                return raw_value
             return default
 
     @staticmethod
@@ -748,6 +750,46 @@ class AnalysisRepository:
             if record:
                 result[stock_id] = record
         return result
+
+    def get_latest_linked_record(
+        self,
+        *,
+        asset_id: Optional[int] = None,
+        portfolio_stock_id: Optional[int] = None,
+        symbol: Optional[str] = None,
+        account_name: Optional[str] = None,
+    ) -> Optional[Dict]:
+        def _fetch_one(clauses: List[str], params: List[Any]) -> Optional[Dict]:
+            sql = (
+                "SELECT * FROM analysis_records "
+                f"WHERE {' AND '.join(clauses)} "
+                "ORDER BY datetime(analysis_date) DESC, "
+                "CASE WHEN analysis_scope = 'portfolio' THEN 0 ELSE 1 END, "
+                "id DESC LIMIT 1"
+            )
+            cursor.execute(sql, tuple(params))
+            row = cursor.fetchone()
+            return self._deserialize_row(row) if row else None
+
+        conn = self._connect()
+        cursor = conn.cursor()
+        record = None
+        if asset_id is not None:
+            record = _fetch_one(["COALESCE(has_full_report, 0) = 1", "asset_id = ?"], [asset_id])
+        if record is None and portfolio_stock_id is not None:
+            record = _fetch_one(
+                ["COALESCE(has_full_report, 0) = 1", "portfolio_stock_id = ?"],
+                [portfolio_stock_id],
+            )
+        if record is None and symbol:
+            clauses = ["COALESCE(has_full_report, 0) = 1", "symbol = ?"]
+            params: List[Any] = [symbol]
+            if account_name:
+                clauses.append("(account_name = ? OR account_name = ? OR account_name IS NULL)")
+                params.extend([account_name, DEFAULT_ACCOUNT_NAME])
+            record = _fetch_one(clauses, params)
+        conn.close()
+        return record
 
     def migrate_legacy_analysis_db(self, legacy_db_path: Optional[str]) -> int:
         if not legacy_db_path or not os.path.exists(legacy_db_path):

@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Dict, List, Optional
 
 from analysis_repository import AnalysisRepository, analysis_repository
+from asset_repository import AssetRepository, STATUS_PORTFOLIO, STATUS_PRIORITY, STATUS_RESEARCH, STATUS_WATCHLIST
 from investment_db_utils import DEFAULT_ACCOUNT_NAME
 
 
@@ -20,6 +21,12 @@ SOURCE_LABELS = {
     "portfolio_scheduler": "定时持仓分析",
     "legacy_home_analysis": "历史深度分析",
     "legacy_portfolio_analysis": "历史持仓分析",
+}
+
+ASSET_STATUS_LABELS = {
+    STATUS_RESEARCH: "研究池",
+    STATUS_WATCHLIST: "盯盘中",
+    STATUS_PORTFOLIO: "在持仓",
 }
 
 
@@ -39,8 +46,13 @@ def _format_analysis_date(value: object) -> str:
 class AnalysisHistoryService:
     """Unified read-model for research and portfolio analysis history."""
 
-    def __init__(self, repository: Optional[AnalysisRepository] = None):
+    def __init__(
+        self,
+        repository: Optional[AnalysisRepository] = None,
+        asset_store: Optional[AssetRepository] = None,
+    ):
         self.repository = repository or analysis_repository
+        self.asset_store = asset_store or AssetRepository(self.repository.db_path)
 
     def _build_dedupe_key(self, record: Dict) -> tuple:
         return (
@@ -54,7 +66,87 @@ class AnalysisHistoryService:
             self.repository._sort_json_text(record.get("final_decision") or {}),
         )
 
-    def _build_view_model(self, record: Dict) -> Dict:
+    def _normalize_asset_lookup_key(self, symbol: object, account_name: object) -> tuple[str, str]:
+        return (
+            str(symbol or "").strip().upper(),
+            str(account_name or DEFAULT_ACCOUNT_NAME).strip() or DEFAULT_ACCOUNT_NAME,
+        )
+
+    def _build_asset_indexes(self) -> tuple[Dict[int, Dict], Dict[tuple[str, str], Dict]]:
+        assets_by_id: Dict[int, Dict] = {}
+        assets_by_symbol_account: Dict[tuple[str, str], Dict] = {}
+        for asset in self.asset_store.list_assets(include_deleted=False):
+            asset_id = asset.get("id")
+            if asset_id not in (None, ""):
+                try:
+                    assets_by_id[int(asset_id)] = asset
+                except (TypeError, ValueError):
+                    pass
+            key = self._normalize_asset_lookup_key(asset.get("symbol"), asset.get("account_name"))
+            existing = assets_by_symbol_account.get(key)
+            asset_sort_key = (
+                STATUS_PRIORITY.get(str(asset.get("status") or STATUS_RESEARCH), -1),
+                str(asset.get("updated_at") or ""),
+                int(asset.get("id") or 0),
+            )
+            existing_sort_key = (
+                STATUS_PRIORITY.get(str((existing or {}).get("status") or STATUS_RESEARCH), -1),
+                str((existing or {}).get("updated_at") or ""),
+                int((existing or {}).get("id") or 0),
+            )
+            if existing is None or asset_sort_key > existing_sort_key:
+                assets_by_symbol_account[key] = asset
+        return assets_by_id, assets_by_symbol_account
+
+    def _resolve_linked_asset(
+        self,
+        record: Dict,
+        *,
+        assets_by_id: Dict[int, Dict],
+        assets_by_symbol_account: Dict[tuple[str, str], Dict],
+    ) -> Optional[Dict]:
+        linked_asset_id = record.get("asset_id")
+        if linked_asset_id in (None, ""):
+            linked_asset_id = record.get("portfolio_stock_id")
+        if linked_asset_id not in (None, ""):
+            try:
+                asset = assets_by_id.get(int(linked_asset_id))
+                if asset:
+                    return asset
+            except (TypeError, ValueError):
+                pass
+        lookup_key = self._normalize_asset_lookup_key(
+            record.get("symbol"),
+            record.get("account_name") or DEFAULT_ACCOUNT_NAME,
+        )
+        return assets_by_symbol_account.get(lookup_key)
+
+    def _apply_position_state(self, record: Dict, linked_asset: Optional[Dict]) -> Dict:
+        normalized = dict(record)
+        current_status = str((linked_asset or {}).get("status") or normalized.get("asset_status_snapshot") or "").strip().lower()
+        is_in_portfolio = current_status == STATUS_PORTFOLIO
+        normalized["linked_asset_id"] = (
+            (linked_asset or {}).get("id")
+            or normalized.get("asset_id")
+            or normalized.get("portfolio_stock_id")
+        )
+        normalized["linked_asset_status"] = current_status
+        normalized["linked_asset_status_label"] = ASSET_STATUS_LABELS.get(
+            current_status,
+            "未关联",
+        )
+        normalized["is_in_portfolio"] = is_in_portfolio
+        normalized["portfolio_state_label"] = "在持仓" if is_in_portfolio else "未持仓"
+        normalized["portfolio_action_label"] = "跳转持仓" if is_in_portfolio else "设为持仓"
+        return normalized
+
+    def _build_view_model(
+        self,
+        record: Dict,
+        *,
+        assets_by_id: Dict[int, Dict],
+        assets_by_symbol_account: Dict[tuple[str, str], Dict],
+    ) -> Dict:
         normalized = dict(record)
         scope = str(normalized.get("analysis_scope") or "research").strip().lower()
         scope = scope if scope in SCOPE_LABELS else "research"
@@ -72,7 +164,12 @@ class AnalysisHistoryService:
             or ""
         )
         normalized["account_name"] = normalized.get("account_name") or DEFAULT_ACCOUNT_NAME
-        return normalized
+        linked_asset = self._resolve_linked_asset(
+            normalized,
+            assets_by_id=assets_by_id,
+            assets_by_symbol_account=assets_by_symbol_account,
+        )
+        return self._apply_position_state(normalized, linked_asset)
 
     def _matches_search(self, record: Dict, search_term: str) -> bool:
         if not search_term:
@@ -88,8 +185,11 @@ class AnalysisHistoryService:
     def list_scope_options(self) -> List[str]:
         return ["全部", "深度分析", "持仓分析"]
 
+    def list_portfolio_state_options(self) -> List[str]:
+        return ["全部", "在持仓", "未持仓"]
+
     def list_account_options(self) -> List[str]:
-        records = self.list_records(scope="all")
+        records = self.list_records(scope="all", portfolio_state="全部")
         accounts = sorted({record.get("account_name") or DEFAULT_ACCOUNT_NAME for record in records})
         return ["全部账户"] + accounts
 
@@ -97,6 +197,7 @@ class AnalysisHistoryService:
         self,
         *,
         scope: str = "all",
+        portfolio_state: str = "全部",
         account_name: Optional[str] = None,
         search_term: str = "",
         limit: Optional[int] = None,
@@ -108,15 +209,34 @@ class AnalysisHistoryService:
             "持仓分析": "portfolio",
         }.get(scope, scope)
         normalized_scope = normalized_scope if normalized_scope in {"all", "research", "portfolio"} else "all"
+        normalized_portfolio_state = {
+            "全部": "all",
+            "在持仓": "portfolio",
+            "未持仓": "non_portfolio",
+        }.get(portfolio_state, portfolio_state)
+        normalized_portfolio_state = (
+            normalized_portfolio_state
+            if normalized_portfolio_state in {"all", "portfolio", "non_portfolio"}
+            else "all"
+        )
         normalized_account = None if account_name in (None, "", "全部账户") else account_name
         normalized_search = str(search_term or "").strip()
 
         records = self.repository.list_records(full_report_only=full_report_only, limit=limit)
+        assets_by_id, assets_by_symbol_account = self._build_asset_indexes()
         result: List[Dict] = []
         seen_keys = set()
         for record in records:
-            item = self._build_view_model(record)
+            item = self._build_view_model(
+                record,
+                assets_by_id=assets_by_id,
+                assets_by_symbol_account=assets_by_symbol_account,
+            )
             if normalized_scope != "all" and item["analysis_scope"] != normalized_scope:
+                continue
+            if normalized_portfolio_state == "portfolio" and not item.get("is_in_portfolio"):
+                continue
+            if normalized_portfolio_state == "non_portfolio" and item.get("is_in_portfolio"):
                 continue
             if normalized_account and item["account_name"] != normalized_account:
                 continue
@@ -134,7 +254,14 @@ class AnalysisHistoryService:
 
     def get_record(self, record_id: int) -> Optional[Dict]:
         record = self.repository.get_record(record_id)
-        return self._build_view_model(record) if record else None
+        if not record:
+            return None
+        assets_by_id, assets_by_symbol_account = self._build_asset_indexes()
+        return self._build_view_model(
+            record,
+            assets_by_id=assets_by_id,
+            assets_by_symbol_account=assets_by_symbol_account,
+        )
 
     def delete_record(self, record_id: int) -> bool:
         return self.repository.delete_record(record_id)

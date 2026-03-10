@@ -18,7 +18,11 @@ from sector_strategy_engine import SectorStrategyEngine
 from sector_strategy_pdf import SectorStrategyPDFGenerator
 from sector_strategy_db import SectorStrategyDatabase
 from sector_strategy_scheduler import sector_strategy_scheduler
-from ui_shared import NON_MARKET_PALETTE
+from ui_shared import (
+    NON_MARKET_PALETTE,
+    render_agents_analysis_tabs,
+    render_analysis_report_content,
+)
 from ui_analysis_task_utils import (
     consume_finished_ui_analysis_task,
     get_ui_analysis_button_state,
@@ -340,11 +344,12 @@ def display_history_tab():
         st.success(f"共找到 {len(reports)} 份历史报告。")
         
         # 报告列表（精简摘要展示）
-        for i, report in reports.iterrows():
+        for _, report in reports.iterrows():
             report_id = report['id'] if 'id' in report else None
             created_at = report['created_at'] if 'created_at' in report else ''
             data_date_range = report['data_date_range'] if 'data_date_range' in report else ''
-            with st.expander(f"报告 #{report_id} | {created_at}", expanded=False):
+            expander_label = created_at or data_date_range or "未知时间"
+            with st.expander(expander_label, expanded=False):
                 st.caption(f"生成时间: {created_at} | 数据区间: {data_date_range}")
 
                 detail = engine.get_report_detail(report_id)
@@ -543,13 +548,36 @@ def display_analysis_results(
 
 def display_predictions(predictions):
     """显示核心预测"""
-    
+
+    predictions = _parse_json_field(predictions, predictions)
     st.subheader("智策核心预测")
-    
-    if not predictions or predictions.get("prediction_text"):
-        # 文本格式
-        st.markdown("### 预测报告")
-        st.write(predictions.get("prediction_text", "暂无预测"))
+
+    if not predictions:
+        st.info("暂无预测")
+        return
+
+    if not isinstance(predictions, dict):
+        render_analysis_report_content(
+            predictions,
+            title="预测报告",
+            empty_message="暂无预测",
+        )
+        return
+
+    if predictions.get("prediction_text"):
+        render_analysis_report_content(
+            predictions.get("prediction_text"),
+            title="预测报告",
+            empty_message="暂无预测",
+        )
+        return
+
+    if not any(predictions.get(key) for key in ("long_short", "rotation", "heat", "summary")):
+        render_analysis_report_content(
+            predictions,
+            title="预测报告",
+            empty_message="暂无预测",
+        )
         return
     
     # JSON格式预测
@@ -659,7 +687,7 @@ def display_predictions(predictions):
             st.metric(
                 f"{idx}. {item.get('sector', 'N/A')}",
                 f"{item.get('score', 0)}分",
-                "↗️ 升温"
+                "升温"
             )
     
     with col3:
@@ -669,7 +697,7 @@ def display_predictions(predictions):
             st.metric(
                 f"{idx}. {item.get('sector', 'N/A')}",
                 f"{item.get('score', 0)}分",
-                "↘️ 降温"
+                "降温"
             )
     
     st.markdown("---")
@@ -714,61 +742,38 @@ def display_predictions(predictions):
 
 def display_agents_reports(agents_analysis):
     """显示智能体分析报告"""
-    
-    st.subheader("AI智能体分析报告")
-    
-    if not agents_analysis:
-        st.info("暂无智能体分析数据")
-        return
-    
-    # 创建子标签页
-    agent_names = []
-    agent_data = []
-    
-    for key, value in agents_analysis.items():
-        agent_names.append(value.get("agent_name", "未知分析师"))
-        agent_data.append(value)
-    
-    tabs = st.tabs(agent_names)
-    
-    for idx, tab in enumerate(tabs):
-        with tab:
-            agent = agent_data[idx]
-            
-            st.markdown(f"""
-            <div class="agent-card">
-                <h3>{agent.get('agent_name', '未知')}</h3>
-                <p><strong>职责:</strong> {agent.get('agent_role', '未知')}</p>
-                <p><strong>关注领域:</strong> {', '.join(agent.get('focus_areas', []))}</p>
-                <p><strong>分析时间:</strong> {agent.get('timestamp', '未知')}</p>
-            </div>
-            """, unsafe_allow_html=True)
-            
-            st.markdown("---")
-            
-            st.markdown("### 分析报告")
-            st.write(agent.get("analysis", "暂无分析"))
+
+    render_agents_analysis_tabs(
+        agents_analysis,
+        preferred_order=["macro", "sector", "fund", "sentiment"],
+        split_reasoning=True,
+    )
 
 
 def display_comprehensive_report(report):
     """显示综合研判报告"""
-    
+
     st.subheader("综合研判报告")
-    
+
     if not report:
         st.info("暂无综合研判数据")
         return
-    
+
     st.markdown("""
     <div class="decision-card">
         <h4>智策综合研判</h4>
         <p>基于四位专业分析师的深度分析，形成的全面市场和板块研判</p>
     </div>
     """, unsafe_allow_html=True)
-    
-    st.markdown("---")
-    
-    st.write(report)
+
+    render_analysis_report_content(
+        report,
+        title="综合研判正文",
+        split_reasoning=True,
+        reasoning_title="综合研判推理",
+        reasoning_description="这里保留模型整合四位分析师观点时的原始推理内容，默认折叠。",
+        empty_message="暂无综合研判数据",
+    )
 
 
 def display_visualizations(predictions, key_prefix="sector_main"):

@@ -18091,7 +18091,7 @@ index d9d2b16..1b28438 100644
              st.metric(
                  f"{idx}. {item.get('sector', 'N/A')}",
                  f"{item.get('score', 0)}分",
--                "↗️ 升温"
+-                "升温"
 +                "↗ 升温"
              )
      

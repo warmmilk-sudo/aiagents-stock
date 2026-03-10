@@ -293,6 +293,8 @@ class PortfolioManager:
             return "buy"
         if normalized in {"sell", "减仓", "卖出"}:
             return "sell"
+        if normalized in {"clear", "liquidate", "清仓", "清仓并降级"}:
+            return "clear"
         return ""
 
     def seed_initial_trade(
@@ -335,19 +337,21 @@ class PortfolioManager:
         trade_date: Optional[Any] = None,
         note: str = "",
     ) -> Tuple[bool, str, Optional[Dict]]:
-        """记录加仓/减仓交易，并同步更新当前持仓。"""
+        """记录加仓/减仓/清仓交易，并同步更新当前持仓。"""
         normalized_trade_type = self._normalize_trade_type(trade_type)
-        if normalized_trade_type not in {"buy", "sell"}:
-            return False, "交易类型仅支持加仓/减仓", None
+        if normalized_trade_type not in {"buy", "sell", "clear"}:
+            return False, "交易类型仅支持加仓/减仓/清仓", None
 
         stock = self.db.get_stock(stock_id)
         if not stock:
             return False, f"未找到股票ID: {stock_id}", None
 
-        trade_quantity = self._safe_int(quantity)
+        is_clear_trade = normalized_trade_type == "clear"
+        current_quantity = self._safe_int(stock.get("quantity"))
+        trade_quantity = current_quantity if is_clear_trade else self._safe_int(quantity)
         trade_price = self._safe_float(price)
         if trade_quantity <= 0:
-            return False, "交易数量必须大于 0", None
+            return False, ("当前没有可清仓的持仓数量" if is_clear_trade else "交易数量必须大于 0"), None
         if trade_price <= 0:
             return False, "成交价格必须大于 0", None
 
@@ -360,7 +364,7 @@ class PortfolioManager:
                 quantity=trade_quantity,
                 price=trade_price,
                 trade_date=formatted_trade_date,
-                note=(note or "").strip(),
+                note=((note or "").strip() or "清仓") if is_clear_trade else (note or "").strip(),
                 trade_source="manual",
             )
             if not success:
@@ -375,7 +379,12 @@ class PortfolioManager:
             except Exception as e:
                 warning = f"（联动同步失败: {e}）"
 
-            action_label = "加仓" if normalized_trade_type == "buy" else "减仓"
+            if normalized_trade_type == "buy":
+                action_label = "加仓"
+            elif normalized_trade_type == "clear":
+                action_label = "清仓"
+            else:
+                action_label = "减仓"
             return True, f"{action_label}记录已保存{warning}", updated_stock
         except Exception as e:
             return False, f"保存交易记录失败: {e}", None
@@ -399,11 +408,11 @@ class PortfolioManager:
 
         return self.record_trade(
             stock_id=stock_id,
-            trade_type="sell",
+            trade_type="clear",
             quantity=quantity,
             price=price,
             trade_date=trade_date,
-            note=(note or "").strip() or "清仓并降级为盯盘",
+            note=(note or "").strip() or "清仓",
         )
 
     def get_trade_history(self, stock_id: int, limit: int = 20) -> List[Dict]:
@@ -1528,7 +1537,7 @@ class PortfolioManager:
         for fmt in ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
             try:
                 parsed = datetime.strptime(text, fmt)
-                return parsed.strftime("%Y-%m-%d %H:%M:%S")
+                return parsed.strftime("%Y-%m-%d %H:%M")
             except ValueError:
                 continue
         return text

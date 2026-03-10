@@ -16,6 +16,8 @@ from smart_monitor_db import SmartMonitorDB
 sys.modules.setdefault("streamlit", types.SimpleNamespace())
 
 from ui_shared import (
+    _format_display_value,
+    _has_structured_decision_fields,
     _normalize_agents_results,
     _normalize_discussion_result,
     _normalize_mapping_input,
@@ -62,12 +64,12 @@ class PortfolioHistoryPersistenceTests(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
-    def _add_stock(self, code: str):
+    def _add_stock(self, code: str, cost_price: float = 10.0, quantity: int = 100):
         success, msg, stock_id = self.manager.add_stock(
             code=code,
             name=None,
-            cost_price=10.0,
-            quantity=100,
+            cost_price=cost_price,
+            quantity=quantity,
             note="test",
             auto_monitor=True,
         )
@@ -165,6 +167,74 @@ class PortfolioHistoryPersistenceTests(unittest.TestCase):
         self.assertEqual(latest["final_decision"]["rating"], "买入")
         self.assertEqual(latest["discussion_result"], "团队讨论认为回撤可控。")
 
+    def test_latest_analysis_uses_newer_research_report_for_same_portfolio_asset(self):
+        stock_id = self._add_stock("600519")
+        self.portfolio_db.save_analysis(
+            stock_id=stock_id,
+            rating="持有",
+            confidence=6.8,
+            current_price=101.0,
+            target_price=110.0,
+            entry_min=99.0,
+            entry_max=102.0,
+            take_profit=112.0,
+            stop_loss=96.0,
+            summary="较早的持仓分析",
+            analysis_time="2026-03-09 09:00:00",
+            analysis_source="portfolio_batch_analysis",
+            has_full_report=True,
+            stock_info={"symbol": "600519", "name": "Stock600519", "current_price": 101.0},
+            agents_results={"technical": {"analysis": "持仓维持观察"}},
+            discussion_result="旧持仓分析。",
+            final_decision={
+                "rating": "持有",
+                "confidence_level": 6.8,
+                "entry_min": 99.0,
+                "entry_max": 102.0,
+                "take_profit": 112.0,
+                "stop_loss": 96.0,
+                "operation_advice": "继续观察。",
+            },
+        )
+
+        latest_research_id = self.portfolio_db.analysis_repository.save_record(
+            symbol="600519",
+            stock_name="Stock600519",
+            period="1y",
+            stock_info={"symbol": "600519", "name": "Stock600519", "current_price": 103.5},
+            agents_results={"technical": {"analysis": "深度分析后趋势更强"}},
+            discussion_result="更新后的深度分析。",
+            final_decision={
+                "rating": "买入",
+                "confidence_level": 8.9,
+                "entry_min": 102.0,
+                "entry_max": 104.0,
+                "take_profit": 118.0,
+                "stop_loss": 98.0,
+                "operation_advice": "最新深度分析建议加仓。",
+            },
+            account_name="默认账户",
+            asset_id=stock_id,
+            analysis_scope="research",
+            analysis_source="home_single_analysis",
+            analysis_date="2026-03-10 09:30:00",
+            summary="最新深度分析建议加仓。",
+            has_full_report=True,
+            asset_status_snapshot="portfolio",
+        )
+
+        latest = self.portfolio_db.get_latest_analysis(stock_id)
+        self.assertIsNotNone(latest)
+        self.assertEqual(latest["id"], latest_research_id)
+        self.assertEqual(latest["analysis_scope"], "research")
+        self.assertEqual(latest["summary"], "最新深度分析建议加仓。")
+        self.assertEqual(latest["final_decision"]["rating"], "买入")
+
+        latest_rows = self.portfolio_db.get_all_latest_analysis()
+        row = next(item for item in latest_rows if item["id"] == stock_id)
+        self.assertEqual(row["summary"], "最新深度分析建议加仓。")
+        self.assertEqual(row["analysis_scope"], "research")
+
     def test_build_analysis_payload_uses_clean_default_rating(self):
         payload = self.manager._build_analysis_payload(
             stock_info={"current_price": 10.5},
@@ -173,6 +243,60 @@ class PortfolioHistoryPersistenceTests(unittest.TestCase):
 
         self.assertEqual(payload["rating"], "持有")
         self.assertEqual(payload["summary"], "评级: 持有")
+
+    def test_manual_buy_trade_recalculates_weighted_cost(self):
+        stock_id = self._add_stock("300750", cost_price=10.0, quantity=100)
+
+        success, msg, updated_stock = self.manager.record_trade(
+            stock_id=stock_id,
+            trade_type="buy",
+            quantity=50,
+            price=13.0,
+            trade_date="2026-03-10",
+            note="手工加仓",
+        )
+
+        self.assertTrue(success, msg)
+        self.assertIsNotNone(updated_stock)
+        self.assertEqual(int(updated_stock["quantity"]), 150)
+        self.assertAlmostEqual(float(updated_stock["cost_price"]), 11.0, places=6)
+
+    def test_manual_sell_trade_recalculates_cost_by_tonghuashun_rule(self):
+        stock_id = self._add_stock("300760", cost_price=10.0, quantity=100)
+
+        success, msg, updated_stock = self.manager.record_trade(
+            stock_id=stock_id,
+            trade_type="sell",
+            quantity=40,
+            price=12.0,
+            trade_date="2026-03-10",
+            note="手工减仓",
+        )
+
+        self.assertTrue(success, msg)
+        self.assertIsNotNone(updated_stock)
+        self.assertEqual(int(updated_stock["quantity"]), 60)
+        self.assertAlmostEqual(float(updated_stock["cost_price"]), (1000.0 - 480.0) / 60.0, places=6)
+
+    def test_manual_clear_trade_auto_downgrades_to_watchlist(self):
+        stock_id = self._add_stock("300136", cost_price=10.0, quantity=100)
+
+        success, msg, updated_stock = self.manager.record_trade(
+            stock_id=stock_id,
+            trade_type="clear",
+            quantity=1,
+            price=12.0,
+            trade_date="2026-03-10",
+            note="全部卖出",
+        )
+
+        self.assertTrue(success, msg)
+        self.assertIn("清仓", msg)
+        self.assertIsNotNone(updated_stock)
+        self.assertEqual(updated_stock["status"], "watchlist")
+        self.assertEqual(updated_stock["position_status"], "watchlist")
+        self.assertIsNone(updated_stock["quantity"])
+        self.assertIsNone(updated_stock["cost_price"])
 
     def test_delete_analysis_record_removes_single_history_entry(self):
         stock_id = self._add_stock("000001")
@@ -350,6 +474,23 @@ class UiSharedNormalizationTests(unittest.TestCase):
         self.assertEqual(final_decision["rating"], "持有")
         self.assertEqual(final_decision["operation_advice"], "等待信号后分批建仓")
         self.assertIn("先核对会议结论", reasoning)
+
+    def test_structured_final_decision_detection_allows_decision_text_sidecar(self):
+        self.assertTrue(
+            _has_structured_decision_fields(
+                {
+                    "rating": "买入",
+                    "confidence_level": 8,
+                    "decision_text": "这是补充说明，不应覆盖结构化布局。",
+                }
+            )
+        )
+
+    def test_format_display_value_supports_structured_entry_range(self):
+        self.assertEqual(
+            _format_display_value("entry_range", {"min": 10.5, "max": 12.0}),
+            "¥10.50 - ¥12.00",
+        )
 
 
 class PortfolioAnalysisTaskManagerTests(unittest.TestCase):

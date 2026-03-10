@@ -12,7 +12,7 @@ import os
 
 from analysis_repository import AnalysisRepository
 from asset_repository import STATUS_PORTFOLIO, STATUS_WATCHLIST, AssetRepository
-from investment_db_utils import connect_sqlite, get_metadata, resolve_investment_db_path, set_metadata
+from investment_db_utils import DEFAULT_ACCOUNT_NAME, connect_sqlite, get_metadata, resolve_investment_db_path, set_metadata
 
 # 数据库文件路径
 DB_PATH = "investment.db"
@@ -863,7 +863,18 @@ class PortfolioDB:
         Returns:
             最新分析记录字典，不存在则返回None
         """
-        return self.analysis_repository.get_latest_portfolio_record(stock_id)
+        stock = self.get_stock(stock_id)
+        latest = self.analysis_repository.get_latest_linked_record(
+            asset_id=stock_id,
+            portfolio_stock_id=stock_id,
+            symbol=(stock or {}).get("code"),
+            account_name=(stock or {}).get("account_name", DEFAULT_ACCOUNT_NAME),
+        )
+        if latest:
+            return latest
+        if stock:
+            return self._resolve_latest_analysis_fallback(stock)
+        return None
 
     def _resolve_latest_analysis_fallback(self, stock: Dict) -> Optional[Dict]:
         origin_analysis_id = stock.get("origin_analysis_id")
@@ -942,18 +953,24 @@ class PortfolioDB:
             包含股票信息和最新分析的字典列表
         """
         stocks = self.get_all_stocks(auto_monitor_only=False)
-        latest_map = self.analysis_repository.get_latest_portfolio_records([stock["id"] for stock in stocks])
         result: List[Dict] = []
         for stock in stocks:
             merged = dict(stock)
-            latest = latest_map.get(stock["id"])
+            latest = self.analysis_repository.get_latest_linked_record(
+                asset_id=stock.get("id"),
+                portfolio_stock_id=stock.get("id"),
+                symbol=stock.get("code"),
+                account_name=stock.get("account_name", DEFAULT_ACCOUNT_NAME),
+            )
             if not latest:
                 latest = self._resolve_latest_analysis_fallback(stock)
             if latest:
                 latest_record = dict(latest)
                 if latest_record.get("analysis_date") and not latest_record.get("analysis_time"):
                     latest_record["analysis_time"] = latest_record.get("analysis_date")
+                merged["analysis_record_id"] = latest_record.get("id")
                 merged.update(latest_record)
+                merged["id"] = stock.get("id")
             result.append(merged)
         return result
 

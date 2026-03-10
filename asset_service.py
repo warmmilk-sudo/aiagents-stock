@@ -262,13 +262,11 @@ class AssetService:
             return False, f"未找到资产ID: {asset_id}", None
 
         normalized_trade_type = str(trade_type or "").strip().lower()
-        if normalized_trade_type not in {"buy", "sell"}:
-            return False, "交易类型仅支持 buy/sell", None
+        if normalized_trade_type not in {"buy", "sell", "clear"}:
+            return False, "交易类型仅支持 buy/sell/clear", None
 
         trade_quantity = int(quantity or 0)
         trade_price = float(price or 0)
-        if trade_quantity <= 0:
-            return False, "交易数量必须大于 0", None
         if trade_price <= 0:
             return False, "成交价格必须大于 0", None
 
@@ -276,6 +274,16 @@ class AssetService:
         current_cost = float(asset.get("cost_price") or 0)
         effective_trade_date = trade_date or datetime.now().strftime("%Y-%m-%d")
         effective_trade_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        clear_requested = normalized_trade_type == "clear"
+
+        if clear_requested:
+            if current_quantity <= 0:
+                return False, "当前没有可清仓的持仓数量", None
+            trade_quantity = current_quantity
+            normalized_trade_type = "sell"
+
+        if trade_quantity <= 0:
+            return False, "交易数量必须大于 0", None
 
         if normalized_trade_type == "buy":
             if asset.get("status") == STATUS_PORTFOLIO and current_quantity > 0 and current_cost > 0:
@@ -326,10 +334,13 @@ class AssetService:
             trade_source=trade_source,
         )
         if remaining_quantity > 0:
+            new_cost = ((current_cost * current_quantity) - (trade_price * trade_quantity)) / remaining_quantity
+            if abs(new_cost) < 1e-12:
+                new_cost = 0.0
             self.asset_repository.update_asset(
                 asset_id,
                 status=STATUS_PORTFOLIO,
-                cost_price=current_cost,
+                cost_price=new_cost,
                 quantity=remaining_quantity,
                 last_trade_at=effective_trade_time,
             )
@@ -344,11 +355,15 @@ class AssetService:
             self.asset_repository.update_pending_action(
                 pending_action_id,
                 status="accepted",
-                resolution_note=f"手工登记卖出 {trade_quantity} 股 @ {trade_price:.3f}",
+                resolution_note=(
+                    f"手工登记清仓 {trade_quantity} 股 @ {trade_price:.3f}"
+                    if clear_requested
+                    else f"手工登记卖出 {trade_quantity} 股 @ {trade_price:.3f}"
+                ),
             )
         self.sync_managed_monitors(asset_id)
         updated_asset = self.asset_repository.get_asset(asset_id)
-        return True, "卖出记录已保存", updated_asset
+        return True, ("清仓记录已保存" if clear_requested else "卖出记录已保存"), updated_asset
 
 
 asset_service = AssetService()

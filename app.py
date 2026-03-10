@@ -3,6 +3,8 @@ import plotly.graph_objects as go
 import plotly.express as px
 import pandas as pd
 import json
+import hashlib
+import hmac
 from datetime import datetime
 import time
 import base64
@@ -304,6 +306,9 @@ st.markdown("""
         text-align: center;
         margin: 0 0 var(--space-5) 0;
     }
+    .login-page-spacer {
+        height: clamp(3.5rem, 16vh, 9rem);
+    }
     div[data-testid="stMetricLabel"] p,
     div[data-testid="stMetricLabel"] label {
         font-size: var(--font-size-metric-label) !important;
@@ -362,6 +367,78 @@ st.markdown("""
         border-bottom: 2px solid var(--primary-color) !important;
         background: transparent !important;
         box-shadow: none !important;
+    }
+
+    /* 横向 radio 统一改成下划线式切换 */
+    div[data-testid="stRadio"] > div[role="radiogroup"] {
+        display: flex;
+        flex-wrap: nowrap;
+        align-items: stretch;
+        justify-content: stretch;
+        gap: 0;
+        width: 100%;
+        padding: 0;
+        margin: 0 0 1rem 0;
+        border-bottom: 1px solid rgba(148,163,184,0.28);
+    }
+    div[data-testid="stRadio"] > div[role="radiogroup"] > label[data-baseweb="radio"] {
+        flex: 1 1 0 !important;
+        width: 100% !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        min-height: auto !important;
+        position: relative !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        border: none !important;
+        border-radius: 0 !important;
+        background: transparent !important;
+        box-shadow: none !important;
+        overflow: visible !important;
+        cursor: pointer !important;
+    }
+    div[data-testid="stRadio"] > div[role="radiogroup"] > label[data-baseweb="radio"] > div:first-child {
+        display: none !important;
+    }
+    div[data-testid="stRadio"] > div[role="radiogroup"] > label[data-baseweb="radio"] > input[type="radio"] {
+        position: absolute !important;
+        inset: 0 !important;
+        width: 100% !important;
+        height: 100% !important;
+        margin: 0 !important;
+        opacity: 0 !important;
+        cursor: pointer !important;
+    }
+    div[data-testid="stRadio"] > div[role="radiogroup"] > label[data-baseweb="radio"] > input[type="radio"] + div {
+        width: 100% !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        padding: 0.2rem 0 0.95rem 0 !important;
+        border-bottom: 4px solid transparent !important;
+        transition: border-color 0.18s ease;
+    }
+    div[data-testid="stRadio"] > div[role="radiogroup"] > label[data-baseweb="radio"] p {
+        margin: 0 !important;
+        color: rgba(226,232,240,0.68) !important;
+        font-size: 0.98rem !important;
+        font-weight: 500 !important;
+        line-height: 1.2 !important;
+        transition: color 0.18s ease;
+        text-align: center !important;
+    }
+    div[data-testid="stRadio"] > div[role="radiogroup"] > label[data-baseweb="radio"] > input[type="radio"]:checked + div,
+    div[data-testid="stRadio"] > div[role="radiogroup"] > label[data-baseweb="radio"] > input[type="radio"][checked] + div {
+        border-bottom-color: var(--primary-color) !important;
+    }
+    div[data-testid="stRadio"] > div[role="radiogroup"] > label[data-baseweb="radio"] > input[type="radio"]:checked + div p,
+    div[data-testid="stRadio"] > div[role="radiogroup"] > label[data-baseweb="radio"] > input[type="radio"][checked] + div p {
+        color: var(--text-color) !important;
+        font-weight: 600 !important;
+    }
+    div[data-testid="stRadio"] > div[role="radiogroup"] > label[data-baseweb="radio"]:hover p {
+        color: var(--text-color) !important;
     }
     
     /* 专业卡片样式 */
@@ -1000,6 +1077,8 @@ VIEW_TITLES = {
 
 HOME_ANALYSIS_TASK_TYPE = "home_stock_analysis"
 HOME_ANALYSIS_TASK_DONE_KEY = "home_stock_analysis_last_handled_task"
+ADMIN_AUTH_QUERY_PARAM = "_admin_auth"
+ADMIN_AUTH_STORAGE_KEY = "aiagents_admin_auth_token"
 
 
 def get_current_view_title() -> str:
@@ -1118,7 +1197,7 @@ def _clear_history_record_detail() -> None:
 
 def _render_analysis_history_actions(record: Dict[str, Any], *, key_prefix: str) -> None:
     record_id = record.get("id")
-    scope = str(record.get("analysis_scope") or "research").strip().lower()
+    is_in_portfolio = bool(record.get("is_in_portfolio"))
     action_payload = _build_analysis_record_action_payload(
         record,
         analysis_source="history_record_detail" if key_prefix.endswith("_detail") else "history_record",
@@ -1134,9 +1213,9 @@ def _render_analysis_history_actions(record: Dict[str, Any], *, key_prefix: str)
             _apply_ai_task_prefill(action_payload or {})
             open_investment_workspace("ai_monitor", "show_smart_monitor")
     with col3:
-        action_label = "设为持仓" if scope == "research" else "跳转持仓"
-        if st.button(action_label, key=f"{key_prefix}_portfolio", width="stretch", disabled=scope == "research" and not action_payload):
-            if scope == "research":
+        action_label = record.get("portfolio_action_label") or ("跳转持仓" if is_in_portfolio else "设为持仓")
+        if st.button(action_label, key=f"{key_prefix}_portfolio", width="stretch", disabled=not is_in_portfolio and not action_payload):
+            if not is_in_portfolio:
                 _apply_portfolio_prefill(action_payload or {})
             open_investment_workspace("portfolio", "show_portfolio")
     with col4:
@@ -1158,28 +1237,30 @@ def _render_analysis_history_record(record: Dict[str, Any], *, key_prefix: str) 
     symbol = record.get("symbol") or ""
     rating = record.get("rating") or "未评级"
     analysis_time = record.get("analysis_time_text") or record.get("analysis_date") or ""
-    scope_label = record.get("analysis_scope_label") or "深度分析"
+    portfolio_state_label = record.get("portfolio_state_label") or "未持仓"
     source_label = record.get("analysis_source_label") or "历史分析"
     summary = str(record.get("summary") or "").strip()
     account_name = record.get("account_name") or DEFAULT_ACCOUNT_NAME
 
     with st.expander(
-        f"{stock_name} ({symbol}) | {rating} | {analysis_time}",
+        f"{stock_name} ({symbol}) | {rating} | {portfolio_state_label} | {analysis_time}",
         expanded=False,
     ):
-        st.caption(f"`{scope_label}`  `{source_label}`  账户: `{account_name}`")
+        st.caption(f"`{portfolio_state_label}`  `{source_label}`  账户: `{account_name}`")
         if summary:
             st.write(summary)
         else:
             st.caption("暂无摘要")
 
-        detail_col1, detail_col2, detail_col3 = st.columns(3)
+        detail_col1, detail_col2, detail_col3, detail_col4 = st.columns(4)
         with detail_col1:
             st.metric("数据周期", record.get("period") or "N/A")
         with detail_col2:
             st.metric("目标价格", record.get("target_price") or "N/A")
         with detail_col3:
             st.metric("信心度", record.get("confidence") or "N/A")
+        with detail_col4:
+            st.metric("当前状态", record.get("linked_asset_status_label") or portfolio_state_label)
 
         _render_analysis_history_actions(record, key_prefix=key_prefix)
 
@@ -1268,7 +1349,7 @@ def _consume_finished_home_analysis_task() -> None:
         st.success("深度分析完成。")
 
 
-@st.fragment(run_every=1.0)
+@st.fragment(run_every=3.0)
 def _render_home_analysis_task_fragment():
     render_ui_analysis_task_live_card(
         task_type=HOME_ANALYSIS_TASK_TYPE,
@@ -1278,6 +1359,11 @@ def _render_home_analysis_task_fragment():
 
 
 def main():
+    if st.session_state.get("authenticated", False):
+        _render_admin_auth_bridge(
+            token=st.session_state.get("admin_auth_token") or _get_query_param(ADMIN_AUTH_QUERY_PARAM)
+        )
+
     # 顶部标题栏
     st.markdown("""
     <div class="page-title-wrap">
@@ -1300,14 +1386,14 @@ def main():
             if st.button("持仓分析", width='stretch', key="nav_portfolio", help="投资组合分析与定时跟踪"):
                 open_investment_workspace("portfolio", "show_portfolio")
 
-            if st.button("分析历史", width='stretch', key="nav_analysis_history", help="统一查看深度分析与持仓分析历史"):
-                activate_view("show_analysis_history")
-
             if st.button("智能盯盘", width='stretch', key="nav_smart_monitor", help="DeepSeek AI自动盯盘决策交易（支持A股T+1）"):
                 open_investment_workspace("ai_monitor", "show_smart_monitor")
 
             if st.button("监测服务", width='stretch', key="nav_monitor", help="统一监测服务状态、调度与事件"):
                 open_investment_workspace("activity", "show_monitor_service")
+
+            if st.button("分析历史", width='stretch', key="nav_analysis_history", help="统一查看深度分析与持仓分析历史"):
+                activate_view("show_analysis_history")
 
         # 选股板块
         with st.expander("选股板块", expanded=True):
@@ -1407,9 +1493,7 @@ def main():
         st.markdown("---")
         if config.ADMIN_PASSWORD or getattr(config, "ADMIN_PASSWORD_HASH", ""):
             if st.button("退出登录", width='stretch', key="nav_logout"):
-                st.session_state.authenticated = False
-                st.session_state.pop("authenticated_at", None)
-                st.session_state.pop("login_password_input", None)
+                _logout_admin_session(clear_browser_storage=True)
                 st.rerun()
 
         render_site_filing()
@@ -1568,8 +1652,15 @@ def parse_stock_list(stock_input):
     if not stock_input or not stock_input.strip():
         return []
 
+    normalized_input = (
+        stock_input.replace("，", ",")
+        .replace("；", ",")
+        .replace(";", ",")
+        .replace("、", ",")
+    )
+
     # 先按换行符分割
-    lines = stock_input.strip().split('\n')
+    lines = normalized_input.strip().split('\n')
 
     # 处理每一行
     stock_list = []
@@ -1767,26 +1858,6 @@ def display_current_single_analysis_result(period: str) -> None:
 
 
 def _render_home_analysis_workbench(api_key_status: bool, period: str) -> None:
-    col_mode1, col_mode2 = st.columns([1, 3])
-    with col_mode1:
-        analysis_mode = st.radio(
-            "分析模式",
-            ["单个分析", "批量分析"],
-            horizontal=True,
-            help="单个分析：分析单只股票；批量分析：同时分析多只股票",
-            key="main_analysis_mode",
-        )
-
-    with col_mode2:
-        if analysis_mode == "批量分析":
-            st.radio(
-                "批量模式",
-                ["顺序分析", "多线程并行"],
-                horizontal=True,
-                help="顺序分析：按次序分析，稳定但较慢；多线程并行：同时分析多只，快速但消耗资源",
-                key="batch_mode",
-            )
-
     st.markdown("---")
 
     st.subheader("选择分析师团队")
@@ -1856,50 +1927,100 @@ def _render_home_analysis_workbench(api_key_status: bool, period: str) -> None:
 
     st.markdown("---")
 
-    stock_input = ""
-    if analysis_mode == "单个分析":
-        col1, col2, col3 = st.columns([2, 1, 1])
-        with col1:
-            stock_input = st.text_input(
-                "请输入股票代码或名称",
-                placeholder="例如: AAPL, 000001, 00700",
-                help="支持A股(如000001)、港股(如00700)和美股(如AAPL)",
-                key="main_single_stock_input",
-            )
+    stock_input = st.text_area(
+        "请输入股票代码或名称",
+        placeholder="例如:\n000001\n600036\n00700\n\n或者: 000001, 600036, 00700, AAPL",
+        height=120,
+        help="支持单只或多只。每行一个代码，或使用逗号、空格分隔；支持 A 股、港股、美股。",
+        key="main_stock_input",
+    )
+    parsed_stock_list = parse_stock_list(stock_input)
+    stock_count = len(parsed_stock_list)
+    is_batch_analysis = stock_count > 1
 
-        action_label, action_disabled, action_help = get_ui_analysis_button_state(
-            HOME_ANALYSIS_TASK_TYPE,
-            "开始深度分析",
+    if stock_count == 1:
+        st.info(f"已识别 1 只股票，将执行单股深度分析：{parsed_stock_list[0]}")
+        st.session_state.main_analysis_mode = "单个分析"
+    elif stock_count > 1:
+        st.info(f"已识别 {stock_count} 只股票，将自动执行批量深度分析。")
+        st.session_state.main_analysis_mode = "批量分析"
+    else:
+        st.session_state.main_analysis_mode = "单个分析"
+
+    if is_batch_analysis:
+        st.radio(
+            "批量模式",
+            ["顺序分析", "多线程并行"],
+            horizontal=True,
+            help="顺序分析：按次序分析，稳定但较慢；多线程并行：同时分析多只，快速但消耗资源",
+            key="batch_mode",
         )
-        with col2:
-            analyze_button = st.button(
-                action_label,
-                type="primary",
-                width='stretch',
-                disabled=action_disabled,
-                help=action_help,
-                key="main_single_analyze_button",
-            )
 
-        with col3:
-            if st.button("清除缓存", width='stretch', key="main_single_clear_cache"):
-                cache_counts = clear_analysis_caches()
-                st.success(f"缓存已清除，本地个股缓存 {cache_counts.get('total', 0)} 条")
+    action_label, action_disabled, action_help = get_ui_analysis_button_state(
+        HOME_ANALYSIS_TASK_TYPE,
+        "开始批量深度分析" if is_batch_analysis else "开始深度分析",
+    )
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        analyze_button = st.button(
+            action_label,
+            type="primary",
+            width='stretch',
+            disabled=action_disabled,
+            help=action_help,
+            key="main_unified_analyze_button",
+        )
+    with col2:
+        if st.button("清除缓存", width='stretch', key="main_unified_clear_cache"):
+            cache_counts = clear_analysis_caches()
+            st.success(f"缓存已清除，本地个股缓存 {cache_counts.get('total', 0)} 条")
+    with col3:
+        if st.button("清除结果", width='stretch', key="main_unified_clear_result"):
+            _clear_single_analysis_state()
+            _clear_batch_analysis_state()
+            st.success("已清除分析结果")
 
-        if analyze_button:
-            symbol = stock_input.strip()
-            if not api_key_status:
-                st.error("请先配置 DeepSeek API Key")
-            elif not symbol:
-                st.error("请输入有效的股票代码")
-            elif not any(_build_enabled_analysts_config().values()):
-                st.error("请至少选择一位分析师参与分析")
-            else:
-                _clear_single_analysis_state()
-                _clear_batch_analysis_state()
-                selected_lightweight_model, selected_reasoning_model = get_selected_models()
-                enabled_analysts_config = _build_enabled_analysts_config()
-                try:
+    if analyze_button:
+        if not api_key_status:
+            st.error("请先配置 DeepSeek API Key")
+        elif not any(_build_enabled_analysts_config().values()):
+            st.error("请至少选择一位分析师参与分析")
+        elif not parsed_stock_list:
+            st.error("请输入有效的股票代码")
+        else:
+            enabled_analysts_config = _build_enabled_analysts_config()
+            selected_lightweight_model, selected_reasoning_model = get_selected_models()
+            try:
+                if is_batch_analysis:
+                    if stock_count > 20:
+                        st.warning(f"检测到 {stock_count} 只股票，建议一次分析不超过20只")
+
+                    _clear_batch_analysis_state()
+                    _clear_single_analysis_state()
+                    batch_mode = st.session_state.get("batch_mode", "顺序分析")
+                    start_ui_analysis_task(
+                        task_type=HOME_ANALYSIS_TASK_TYPE,
+                        label=f"批量深度分析 {stock_count} 只股票",
+                        runner=lambda _task_id, report_progress: _run_home_batch_analysis_task(
+                            stock_list=parsed_stock_list,
+                            period=period,
+                            batch_mode=batch_mode,
+                            enabled_analysts_config=enabled_analysts_config,
+                            selected_lightweight_model=selected_lightweight_model,
+                            selected_reasoning_model=selected_reasoning_model,
+                            report_progress=report_progress,
+                        ),
+                        metadata={
+                            "mode": "batch",
+                            "total": stock_count,
+                            "batch_mode": batch_mode,
+                        },
+                    )
+                    st.info("已提交后台批量深度分析任务，可切换页面，返回后会自动同步进度和结果。")
+                else:
+                    symbol = parsed_stock_list[0]
+                    _clear_single_analysis_state()
+                    _clear_batch_analysis_state()
                     start_ui_analysis_task(
                         task_type=HOME_ANALYSIS_TASK_TYPE,
                         label=f"深度分析 {symbol}",
@@ -1914,82 +2035,9 @@ def _render_home_analysis_workbench(api_key_status: bool, period: str) -> None:
                         metadata={"mode": "single", "symbol": symbol, "period": period},
                     )
                     st.info("已提交后台深度分析任务，可切换到“分析历史”查看旧记录，结果完成后会自动同步。")
-                    st.rerun()
-                except RuntimeError as exc:
-                    st.warning(str(exc))
-    else:
-        stock_input = st.text_area(
-            "请输入多个股票代码（每行一个或用逗号分隔）",
-            placeholder="例如:\n000001\n600036\n00700\n\n或者: 000001, 600036, 00700, AAPL",
-            height=120,
-            help="支持多种格式：每行一个代码或用逗号分隔。支持A股、港股、美股",
-            key="main_batch_stock_input",
-        )
-
-        action_label, action_disabled, action_help = get_ui_analysis_button_state(
-            HOME_ANALYSIS_TASK_TYPE,
-            "开始批量深度分析",
-        )
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            analyze_button = st.button(
-                action_label,
-                type="primary",
-                width='stretch',
-                disabled=action_disabled,
-                help=action_help,
-                key="main_batch_analyze_button",
-            )
-        with col2:
-            if st.button("清除缓存", width='stretch', key="main_batch_clear_cache"):
-                cache_counts = clear_analysis_caches()
-                st.success(f"缓存已清除，本地个股缓存 {cache_counts.get('total', 0)} 条")
-        with col3:
-            if st.button("清除结果", width='stretch', key="main_batch_clear_result"):
-                _clear_batch_analysis_state()
-                st.success("已清除批量分析结果")
-
-        if analyze_button:
-            if not api_key_status:
-                st.error("请先配置 DeepSeek API Key")
-            elif not any(_build_enabled_analysts_config().values()):
-                st.error("请至少选择一位分析师参与分析")
-            else:
-                stock_list = parse_stock_list(stock_input)
-                if not stock_list:
-                    st.error("请输入有效的股票代码")
-                else:
-                    if len(stock_list) > 20:
-                        st.warning(f"检测到 {len(stock_list)} 只股票，建议一次分析不超过20只")
-
-                    _clear_batch_analysis_state()
-                    _clear_single_analysis_state()
-                    enabled_analysts_config = _build_enabled_analysts_config()
-                    selected_lightweight_model, selected_reasoning_model = get_selected_models()
-                    batch_mode = st.session_state.get("batch_mode", "顺序分析")
-                    try:
-                        start_ui_analysis_task(
-                            task_type=HOME_ANALYSIS_TASK_TYPE,
-                            label=f"批量深度分析 {len(stock_list)} 只股票",
-                            runner=lambda _task_id, report_progress: _run_home_batch_analysis_task(
-                                stock_list=stock_list,
-                                period=period,
-                                batch_mode=batch_mode,
-                                enabled_analysts_config=enabled_analysts_config,
-                                selected_lightweight_model=selected_lightweight_model,
-                                selected_reasoning_model=selected_reasoning_model,
-                                report_progress=report_progress,
-                            ),
-                            metadata={
-                                "mode": "batch",
-                                "total": len(stock_list),
-                                "batch_mode": batch_mode,
-                            },
-                        )
-                        st.info("已提交后台批量深度分析任务，可切换页面，返回后会自动同步进度和结果。")
-                        st.rerun()
-                    except RuntimeError as exc:
-                        st.warning(str(exc))
+                st.rerun()
+            except RuntimeError as exc:
+                st.warning(str(exc))
 
     if st.session_state.get("batch_analysis_results"):
         display_batch_analysis_results(st.session_state.batch_analysis_results, period)
@@ -2802,12 +2850,12 @@ def display_analysis_history_workspace() -> None:
         display_record_detail(int(st.session_state.viewing_record_id))
         st.markdown("---")
 
-    scope_col, account_col, search_col, action_col = st.columns([1.1, 1.2, 2.2, 0.8])
-    with scope_col:
-        selected_scope = st.selectbox(
-            "范围",
-            analysis_history_service.list_scope_options(),
-            key="analysis_history_scope_filter",
+    state_col, account_col, search_col, action_col = st.columns([1.1, 1.2, 2.2, 0.8])
+    with state_col:
+        selected_portfolio_state = st.selectbox(
+            "持仓状态",
+            analysis_history_service.list_portfolio_state_options(),
+            key="analysis_history_portfolio_state_filter",
         )
     with account_col:
         selected_account = st.selectbox(
@@ -2828,7 +2876,7 @@ def display_analysis_history_workspace() -> None:
             st.rerun()
 
     records = analysis_history_service.list_records(
-        scope=selected_scope,
+        portfolio_state=selected_portfolio_state,
         account_name=selected_account,
         search_term=search_term,
     )
@@ -2856,7 +2904,7 @@ def display_record_detail(record_id):
         _clear_history_record_detail()
         return
 
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4, col5 = st.columns(5)
     with col1:
         st.metric("股票代码", record.get("symbol") or "")
     with col2:
@@ -2865,9 +2913,11 @@ def display_record_detail(record_id):
         st.metric("分析时间", record.get("analysis_time_text") or record.get("analysis_date") or "")
     with col4:
         st.metric("账户", record.get("account_name") or DEFAULT_ACCOUNT_NAME)
+    with col5:
+        st.metric("当前状态", record.get("portfolio_state_label") or "未持仓")
 
     st.caption(
-        f"`{record.get('analysis_scope_label') or '深度分析'}`  "
+        f"`{record.get('portfolio_state_label') or '未持仓'}`  "
         f"`{record.get('analysis_source_label') or '历史分析'}`  "
         f"周期: `{record.get('period') or 'N/A'}`"
     )
@@ -3597,10 +3647,231 @@ def display_detailed_cards(results, period):
     except Exception as e:
         st.error(f"显示详细信息时出错: {str(e)}")
 
+
+def _get_query_param(name: str) -> str:
+    """Read one query parameter with compatibility across Streamlit versions."""
+    try:
+        value = st.query_params.get(name)
+    except Exception:
+        try:
+            value = st.experimental_get_query_params().get(name, "")
+        except Exception:
+            return ""
+    if isinstance(value, list):
+        return str(value[0]) if value else ""
+    return str(value or "")
+
+
+def _set_query_param(name: str, value: str) -> None:
+    """Set one query parameter without disturbing other params."""
+    clean_value = str(value or "").strip()
+    try:
+        if clean_value:
+            st.query_params[name] = clean_value
+        else:
+            st.query_params.pop(name, None)
+        return
+    except Exception:
+        pass
+
+    try:
+        params = st.experimental_get_query_params()
+        if clean_value:
+            params[name] = clean_value
+        else:
+            params.pop(name, None)
+        st.experimental_set_query_params(**params)
+    except Exception:
+        pass
+
+
+def _clear_query_param(name: str) -> None:
+    _set_query_param(name, "")
+
+
+def _urlsafe_b64encode(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).decode("ascii").rstrip("=")
+
+
+def _urlsafe_b64decode(value: str) -> bytes:
+    padding = "=" * (-len(value) % 4)
+    return base64.urlsafe_b64decode(f"{value}{padding}")
+
+
+def _get_admin_auth_material() -> str:
+    return (getattr(config, "ADMIN_PASSWORD_HASH", "") or config.ADMIN_PASSWORD or "").strip()
+
+
+def _get_admin_auth_fingerprint() -> str:
+    material = _get_admin_auth_material()
+    if not material:
+        return ""
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()[:16]
+
+
+def _get_admin_auth_secret() -> bytes:
+    material = _get_admin_auth_material()
+    return hashlib.sha256(f"aiagents-admin-auth|{material}".encode("utf-8")).digest()
+
+
+def _encode_admin_auth_token(issued_at: int) -> str:
+    ttl = max(getattr(config, "ADMIN_SESSION_TTL_SECONDS", 28800), 60)
+    payload = {
+        "iat": int(issued_at),
+        "exp": int(issued_at) + ttl,
+        "fp": _get_admin_auth_fingerprint(),
+    }
+    payload_text = json.dumps(payload, separators=(",", ":"), ensure_ascii=True)
+    payload_part = _urlsafe_b64encode(payload_text.encode("utf-8"))
+    signature = hmac.new(
+        _get_admin_auth_secret(),
+        payload_part.encode("ascii"),
+        hashlib.sha256,
+    ).digest()
+    return f"{payload_part}.{_urlsafe_b64encode(signature)}"
+
+
+def _decode_admin_auth_token(token: str) -> Optional[Dict[str, Any]]:
+    if not token or "." not in token:
+        return None
+
+    try:
+        payload_part, signature_part = token.split(".", 1)
+        expected_signature = hmac.new(
+            _get_admin_auth_secret(),
+            payload_part.encode("ascii"),
+            hashlib.sha256,
+        ).digest()
+        actual_signature = _urlsafe_b64decode(signature_part)
+        if not hmac.compare_digest(actual_signature, expected_signature):
+            return None
+
+        payload = json.loads(_urlsafe_b64decode(payload_part).decode("utf-8"))
+        issued_at = int(payload.get("iat", 0))
+        expires_at = int(payload.get("exp", 0))
+        fingerprint = str(payload.get("fp", ""))
+        now_ts = int(time.time())
+
+        if issued_at <= 0 or expires_at <= now_ts:
+            return None
+        if fingerprint != _get_admin_auth_fingerprint():
+            return None
+        return {"iat": issued_at, "exp": expires_at, "fp": fingerprint}
+    except Exception:
+        return None
+
+
+def _render_admin_auth_bridge(token: str = "", clear: bool = False) -> None:
+    """Keep browser storage and URL token in sync for auth restoration."""
+    token_json = json.dumps(token or "", ensure_ascii=True)
+    components.html(
+        f"""
+        <script>
+        (function () {{
+            const parentWindow = window.parent || window;
+            const storageKey = {json.dumps(ADMIN_AUTH_STORAGE_KEY)};
+            const queryParam = {json.dumps(ADMIN_AUTH_QUERY_PARAM)};
+            const nextToken = {token_json};
+            const shouldClear = {"true" if clear else "false"};
+
+            const getUrl = () => new URL(parentWindow.location.href);
+            const getUrlToken = () => getUrl().searchParams.get(queryParam) || "";
+            const replaceUrlToken = (value) => {{
+                const url = getUrl();
+                if (value) {{
+                    url.searchParams.set(queryParam, value);
+                }} else {{
+                    url.searchParams.delete(queryParam);
+                }}
+                parentWindow.history.replaceState({{}}, "", url.toString());
+            }};
+
+            try {{
+                if (shouldClear) {{
+                    parentWindow.localStorage.removeItem(storageKey);
+                    if (getUrlToken()) {{
+                        replaceUrlToken("");
+                    }}
+                    return;
+                }}
+
+                if (nextToken) {{
+                    parentWindow.localStorage.setItem(storageKey, nextToken);
+                    if (getUrlToken() !== nextToken) {{
+                        replaceUrlToken(nextToken);
+                    }}
+                    return;
+                }}
+
+                const storedToken = parentWindow.localStorage.getItem(storageKey) || "";
+                const urlToken = getUrlToken();
+                if (storedToken && !urlToken) {{
+                    replaceUrlToken(storedToken);
+                    parentWindow.setTimeout(() => parentWindow.location.reload(), 40);
+                    return;
+                }}
+                if (urlToken && !storedToken) {{
+                    parentWindow.localStorage.setItem(storageKey, urlToken);
+                }}
+            }} catch (error) {{
+                console.debug("admin auth bridge failed", error);
+            }}
+        }})();
+        </script>
+        """,
+        height=0,
+        width=0,
+    )
+
+
+def _mark_admin_authenticated(issued_at: Optional[int] = None) -> None:
+    issued_at = int(issued_at or time.time())
+    token = _encode_admin_auth_token(issued_at)
+    st.session_state.authenticated = True
+    st.session_state.authenticated_at = issued_at
+    st.session_state.admin_auth_token = token
+    st.session_state.admin_auth_storage_clear_requested = False
+    _set_query_param(ADMIN_AUTH_QUERY_PARAM, token)
+
+
+def _logout_admin_session(clear_browser_storage: bool = True) -> None:
+    st.session_state.authenticated = False
+    st.session_state.pop("authenticated_at", None)
+    st.session_state.pop("admin_auth_token", None)
+    st.session_state.pop("login_password_input", None)
+    if clear_browser_storage:
+        st.session_state.admin_auth_storage_clear_requested = True
+        _clear_query_param(ADMIN_AUTH_QUERY_PARAM)
+    else:
+        st.session_state.admin_auth_storage_clear_requested = False
+
+
+def _restore_admin_session_from_token() -> None:
+    token = _get_query_param(ADMIN_AUTH_QUERY_PARAM)
+    if not token:
+        return
+
+    payload = _decode_admin_auth_token(token)
+    if not payload:
+        _logout_admin_session(clear_browser_storage=True)
+        return
+
+    st.session_state.authenticated = True
+    st.session_state.authenticated_at = int(payload["iat"])
+    st.session_state.admin_auth_token = token
+    st.session_state.admin_auth_storage_clear_requested = False
+
+
 def _show_login_page():
     """管理员密码登录页面"""
-    col1, col2, col3 = st.columns([1, 1.5, 1])
-    with col2:
+    if st.session_state.pop("admin_auth_storage_clear_requested", False):
+        _render_admin_auth_bridge(clear=True)
+    else:
+        _render_admin_auth_bridge()
+
+    st.markdown('<div class="login-page-spacer"></div>', unsafe_allow_html=True)
+    _left_col, center_col, _right_col = st.columns([1.2, 1.0, 1.2])
+    with center_col:
         with st.container(border=True):
             st.markdown('<p class="login-title" style="text-align: center;">系统登录</p>', unsafe_allow_html=True)
             st.markdown('<p class="login-subtitle">复合多AI智能体股票团队分析系统</p>', unsafe_allow_html=True)
@@ -3612,34 +3883,34 @@ def _show_login_page():
                 remain = lock_until - now_ts
                 st.error(f"尝试次数过多，请 {remain} 秒后重试")
 
-            password = st.text_input(
-                "管理员密码",
-                type="password",
-                placeholder="请输入管理员密码",
-                key="login_password_input",
-                disabled=is_locked,
-                label_visibility="collapsed"
-            )
+            with st.form("admin_login_form", clear_on_submit=False):
+                password = st.text_input(
+                    "管理员密码",
+                    type="password",
+                    placeholder="请输入管理员密码",
+                    key="login_password_input",
+                    disabled=is_locked,
+                    label_visibility="collapsed",
+                )
+                submitted = st.form_submit_button("登 录", type="primary", width='stretch', disabled=is_locked)
 
-            if st.button("登 录", type="primary", width='stretch', disabled=is_locked):
+            if submitted:
                 if _verify_admin_password(password):
-                    st.session_state.authenticated = True
-                    st.session_state.authenticated_at = int(time.time())
+                    _mark_admin_authenticated()
                     st.session_state.login_fail_count = 0
                     st.session_state.login_lock_until = 0
                     st.rerun()
-                else:
-                    fail_count = int(st.session_state.get("login_fail_count", 0)) + 1
-                    st.session_state.login_fail_count = fail_count
-                    if fail_count >= max(config.LOGIN_MAX_ATTEMPTS, 1):
-                        st.session_state.login_lock_until = int(time.time()) + max(config.LOGIN_LOCKOUT_SECONDS, 1)
-                        st.session_state.login_fail_count = 0
-                    st.error("密码错误，请重试")
+                fail_count = int(st.session_state.get("login_fail_count", 0)) + 1
+                st.session_state.login_fail_count = fail_count
+                if fail_count >= max(config.LOGIN_MAX_ATTEMPTS, 1):
+                    st.session_state.login_lock_until = int(time.time()) + max(config.LOGIN_LOCKOUT_SECONDS, 1)
+                    st.session_state.login_fail_count = 0
+                st.error("密码错误，请重试")
 
 
 def show_example_interface():
     """Render a compact default prompt area on the home page."""
-    st.caption("输入股票代码后开始分析，支持 A 股、港股、美股。")
+    st.caption("输入 1 个或多个股票代码后开始分析，支持 A 股、港股、美股。")
 
     col1, col2 = st.columns(2)
     with col1:
@@ -3675,12 +3946,12 @@ def _verify_admin_password(input_password: str) -> bool:
 if __name__ == "__main__":
     # 管理员密码门控
     if config.ADMIN_PASSWORD or getattr(config, "ADMIN_PASSWORD_HASH", ""):
+        _restore_admin_session_from_token()
         if st.session_state.get("authenticated", False):
             authed_at = int(st.session_state.get("authenticated_at", 0))
             ttl = max(getattr(config, "ADMIN_SESSION_TTL_SECONDS", 28800), 60)
             if authed_at <= 0 or int(time.time()) - authed_at > ttl:
-                st.session_state.authenticated = False
-                st.session_state.pop("authenticated_at", None)
+                _logout_admin_session(clear_browser_storage=True)
         if not st.session_state.get("authenticated", False):
             _show_login_page()
             st.stop()
