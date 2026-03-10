@@ -53,6 +53,7 @@ class PortfolioManager:
         )
         self._integrations_reconcile_pending = True
         self._stock_data_fetcher = None
+        self._basic_stock_info_cache: Dict[str, Dict[str, Any]] = {}
 
     def _mark_integrations_reconcile_pending(self) -> None:
         self._integrations_reconcile_pending = True
@@ -470,17 +471,61 @@ class PortfolioManager:
         except (TypeError, ValueError):
             return 0.0
 
+    def _normalize_optional_text(self, value: Any) -> str:
+        if value is None:
+            return ""
+        try:
+            if pd.isna(value):
+                return ""
+        except Exception:
+            pass
+
+        text = str(value).strip()
+        return "" if text in {"", "-", "--", "N/A", "NA", "未知", "未知行业", "null", "None", "nan"} else text
+
+    def _extract_industry_from_payload(self, payload: Any) -> Optional[str]:
+        if not isinstance(payload, dict):
+            return None
+
+        for key in ("industry", "所属同花顺行业", "所属行业", "所处行业", "行业", "sector"):
+            candidate = self._normalize_optional_text(payload.get(key))
+            if candidate:
+                return candidate
+        return None
+
+    def _get_basic_stock_info(self, code: Optional[str]) -> Dict[str, Any]:
+        normalized_code = self._normalize_stock_code(code or "")
+        if not normalized_code:
+            return {}
+
+        cached = self._basic_stock_info_cache.get(normalized_code)
+        if cached is not None:
+            return cached
+
+        info: Dict[str, Any] = {}
+        try:
+            from data_source_manager import data_source_manager
+
+            raw_info = data_source_manager.get_stock_basic_info(normalized_code)
+            if isinstance(raw_info, dict):
+                info = raw_info
+        except Exception as e:
+            print(f"[WARN] 股票基础信息回补失败 ({normalized_code}): {e}")
+
+        self._basic_stock_info_cache[normalized_code] = info
+        return info
+
     def _get_latest_price_and_industry(self, stock: Dict) -> Tuple[float, str]:
         current_price = self._safe_float(stock.get("current_price"))
-        industry = "未知行业"
+        industry = self._extract_industry_from_payload(stock) or "未知行业"
 
         stock_info = stock.get("stock_info")
         if isinstance(stock_info, dict):
             if current_price <= 0:
                 current_price = self._extract_first_number(stock_info.get("current_price"), allow_zero=True) or 0.0
-            industry = stock_info.get("industry", industry) or industry
+            industry = self._extract_industry_from_payload(stock_info) or industry
 
-        if current_price <= 0:
+        if current_price <= 0 or industry == "未知行业":
             latest_analysis = self.get_latest_analysis(stock["id"])
             if latest_analysis:
                 current_price = self._safe_float(latest_analysis.get("current_price"))
@@ -490,7 +535,11 @@ class PortfolioManager:
                         current_price = (
                             self._extract_first_number(latest_stock_info.get("current_price"), allow_zero=True) or 0.0
                         )
-                    industry = latest_stock_info.get("industry", industry) or industry
+                    industry = self._extract_industry_from_payload(latest_stock_info) or industry
+
+        if industry == "未知行业":
+            basic_info = self._get_basic_stock_info(stock.get("code") or stock.get("symbol"))
+            industry = self._extract_industry_from_payload(basic_info) or industry
 
         cost_price = self._safe_float(stock.get("cost_price"))
         if current_price <= 0:

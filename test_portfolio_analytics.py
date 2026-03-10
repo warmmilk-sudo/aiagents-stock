@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from datetime import date, datetime
@@ -89,6 +90,16 @@ class PortfolioAnalyticsTests(unittest.TestCase):
         self.assertIsNotNone(stock_id)
         return stock_id
 
+    def _reset_stock_info_migration_metadata(self):
+        conn = self.portfolio_db._get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "DELETE FROM investment_metadata WHERE meta_key = ?",
+            ("migrated_stock_info_schema::industry_v2",),
+        )
+        conn.commit()
+        conn.close()
+
     def test_calculate_portfolio_risk_includes_quant_metrics_and_settings(self):
         self._add_stock()
         self.manager.set_risk_free_rate_annual(0.02)
@@ -102,6 +113,74 @@ class PortfolioAnalyticsTests(unittest.TestCase):
         self.assertAlmostEqual(result["risk_free_rate_annual"], 0.02)
         self.assertGreater(result["data_coverage"]["available_days"], 20)
         self.assertEqual(result["benchmark_label"], "沪深300")
+
+    def test_save_analysis_normalizes_legacy_industry_alias(self):
+        stock_id = self._add_stock()
+        repo = self.portfolio_db.analysis_repository
+        repo._lookup_basic_info_industry = lambda symbol, industry_cache=None: ""
+
+        self.portfolio_db.save_analysis(
+            stock_id=stock_id,
+            rating="持有",
+            confidence=7.0,
+            current_price=10.5,
+            summary="alias normalization",
+            stock_info={"current_price": 10.5, "所属同花顺行业": "人工智能"},
+        )
+
+        latest = self.portfolio_db.get_latest_analysis(stock_id)
+        self.assertEqual(latest["stock_info"]["industry"], "人工智能")
+        self.assertNotIn("所属同花顺行业", latest["stock_info"])
+
+    def test_stock_info_schema_migration_canonicalizes_legacy_industry_key(self):
+        stock_id = self._add_stock()
+        repo = self.portfolio_db.analysis_repository
+        repo._lookup_basic_info_industry = lambda symbol, industry_cache=None: ""
+
+        analysis_id = self.portfolio_db.save_analysis(
+            stock_id=stock_id,
+            rating="持有",
+            confidence=7.0,
+            current_price=10.5,
+            summary="legacy migration",
+            stock_info={"current_price": 10.5, "industry": "未知"},
+        )
+
+        conn = self.portfolio_db._get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE analysis_records SET stock_info_json = ? WHERE id = ?",
+            (json.dumps({"current_price": 10.5, "所属同花顺行业": "机器人"}, ensure_ascii=False), analysis_id),
+        )
+        conn.commit()
+        conn.close()
+
+        self._reset_stock_info_migration_metadata()
+        updated = repo.migrate_stock_info_schema()
+
+        latest = self.portfolio_db.get_latest_analysis(stock_id)
+        self.assertEqual(updated, 1)
+        self.assertEqual(latest["stock_info"]["industry"], "机器人")
+        self.assertNotIn("所属同花顺行业", latest["stock_info"])
+
+    def test_calculate_portfolio_risk_backfills_unknown_industry_from_basic_info(self):
+        stock_id = self._add_stock()
+        repo = self.portfolio_db.analysis_repository
+        repo._lookup_basic_info_industry = lambda symbol, industry_cache=None: ""
+
+        self.portfolio_db.save_analysis(
+            stock_id=stock_id,
+            rating="持有",
+            confidence=7.0,
+            current_price=10.5,
+            summary="unknown industry",
+            stock_info={"current_price": 10.5, "industry": "未知"},
+        )
+
+        self.manager._get_basic_stock_info = lambda code: {"industry": "银行"}
+        result = self.manager.calculate_portfolio_risk(account_name="默认账户")
+
+        self.assertEqual(result["industry_distribution"][0]["industry"], "银行")
 
     def test_return_series_prefers_actual_snapshots_and_calendar_aggregates_daily_changes(self):
         self._add_stock()

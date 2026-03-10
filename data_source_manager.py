@@ -15,6 +15,20 @@ load_dotenv()
 
 class DataSourceManager:
     """数据源管理器 - 实现akshare与tushare自动切换"""
+
+    _MISSING_TEXT_VALUES = {"", "-", "--", "N/A", "NA", "未知", "null", "None", "nan"}
+    _INDUSTRY_LABELS = {
+        "所处行业",
+        "所属行业",
+        "所属同花顺行业",
+        "所属申万行业",
+        "申万行业",
+        "证监会行业",
+        "所属证监会行业",
+        "行业分类",
+        "行业",
+    }
+    _INDUSTRY_LABEL_EXCLUDES = ("市盈率", "市净率", "涨跌", "换手", "资金", "排名", "概念", "指数")
     
     def __init__(self):
         self.tushare_token = os.getenv('TUSHARE_TOKEN', '')
@@ -39,6 +53,47 @@ class DataSourceManager:
                 self.tushare_available = False
         else:
             print("[INFO] 未配置Tushare Token，将仅使用Akshare数据源")
+
+    def _clean_text_value(self, value):
+        if value is None:
+            return ""
+        try:
+            if pd.isna(value):
+                return ""
+        except Exception:
+            pass
+
+        text = str(value).strip()
+        return "" if text in self._MISSING_TEXT_VALUES else text
+
+    def _get_row_value(self, row, *candidates):
+        for field in candidates:
+            if field in row.index:
+                return row[field]
+        return None
+
+    def _extract_industry_from_stock_info(self, stock_info: pd.DataFrame) -> str:
+        if stock_info is None or stock_info.empty:
+            return ""
+
+        fuzzy_match = ""
+        for _, row in stock_info.iterrows():
+            key = self._clean_text_value(
+                self._get_row_value(row, 'item', '项目', '名称', '字段', 'title', 'key')
+            ).replace(" ", "")
+            value = self._clean_text_value(
+                self._get_row_value(row, 'value', '值', '内容', 'data', 'val')
+            )
+            if not key or not value:
+                continue
+
+            if key in self._INDUSTRY_LABELS:
+                return value
+
+            if "行业" in key and not any(excluded in key for excluded in self._INDUSTRY_LABEL_EXCLUDES):
+                fuzzy_match = fuzzy_match or value
+
+        return fuzzy_match
     
     def get_stock_hist_data(self, symbol, start_date=None, end_date=None, adjust='qfq'):
         """
@@ -161,19 +216,31 @@ class DataSourceManager:
         }
         
         # 优先使用akshare
+        akshare_loaded = False
         try:
             import akshare as ak
             print(f"[Akshare] 正在获取 {symbol} 的基本信息...")
             
             stock_info = ak.stock_individual_info_em(symbol=symbol)
             if stock_info is not None and not stock_info.empty:
+                akshare_loaded = True
+                extracted_industry = self._extract_industry_from_stock_info(stock_info)
+                if extracted_industry:
+                    info['industry'] = extracted_industry
+
                 for _, row in stock_info.iterrows():
-                    key = row['item']
-                    value = row['value']
+                    key = self._clean_text_value(
+                        self._get_row_value(row, 'item', '项目', '名称', '字段', 'title', 'key')
+                    ).replace(" ", "")
+                    value = self._clean_text_value(
+                        self._get_row_value(row, 'value', '值', '内容', 'data', 'val')
+                    )
+                    if not key or not value:
+                        continue
                     
                     if key == '股票简称':
                         info['name'] = value
-                    elif key == '所处行业':
+                    elif key in self._INDUSTRY_LABELS:
                         info['industry'] = value
                     elif key == '上市时间':
                         info['list_date'] = value
@@ -182,13 +249,17 @@ class DataSourceManager:
                     elif key == '流通市值':
                         info['circulating_market_cap'] = value
                 
-                print(f"[Akshare] 成功获取基本信息")
-                return info
+                if info['name'] != '未知' and info['industry'] != '未知':
+                    print(f"[Akshare] 成功获取基本信息")
+                    return info
         except Exception as e:
             print(f"[Akshare] 获取失败: {e}")
         
         # akshare失败，尝试tushare
-        if self.tushare_available:
+        should_use_tushare = self.tushare_available and (
+            not akshare_loaded or info['industry'] == '未知' or info['market'] == '未知'
+        )
+        if should_use_tushare:
             try:
                 print(f"[Tushare] 正在获取 {symbol} 的基本信息（备用数据源）...")
                 
@@ -199,16 +270,19 @@ class DataSourceManager:
                 )
                 
                 if df is not None and not df.empty:
-                    info['name'] = df.iloc[0]['name']
-                    info['industry'] = df.iloc[0]['industry']
-                    info['market'] = df.iloc[0]['market']
-                    info['list_date'] = df.iloc[0]['list_date']
+                    row = df.iloc[0]
+                    info['name'] = self._clean_text_value(row.get('name')) or info['name']
+                    info['industry'] = self._clean_text_value(row.get('industry')) or info['industry']
+                    info['market'] = self._clean_text_value(row.get('market')) or info['market']
+                    info['list_date'] = self._clean_text_value(row.get('list_date')) or info.get('list_date')
                     
                     print(f"[Tushare] 成功获取基本信息")
                     return info
             except Exception as e:
                 print(f"[Tushare] 获取失败: {e}")
         
+        if akshare_loaded:
+            print(f"[Akshare] 基本信息获取完成，行业识别结果: {info.get('industry', '未知')}")
         return info
     
     def get_realtime_quotes(self, symbol):

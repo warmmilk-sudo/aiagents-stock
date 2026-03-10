@@ -1207,28 +1207,13 @@ def render_ai_monitor_tasks_panel(show_header: bool = True, title: str = "AI监�
             st.rerun()
 
     for task in tasks:
-        interval_minutes = max(1, int(task.get('check_interval', 60) / 60))
-        source_text = "持仓托管" if task.get('managed_by_portfolio') else "手工"
-        status_text = "启用" if task.get('enabled') else "停用"
         asset = _get_task_asset(db, task)
         pending_actions = _get_pending_actions_for_task(db, task)
         buy_pending = next((item for item in pending_actions if item.get("action_type") == "buy"), None)
         sell_pending = next((item for item in pending_actions if item.get("action_type") == "sell"), None)
 
         with st.container():
-            head_col, status_col = st.columns([4, 1.2])
-            with head_col:
-                st.markdown(f"**{task['stock_code']}** {task.get('stock_name') or task['stock_code']}")
-                st.caption(
-                    f"{task.get('task_name') or task['stock_code']} | {interval_minutes} 分钟 | "
-                    f"手工执行 | {source_text} | "
-                    f"账户 {task.get('account_name') or DEFAULT_ACCOUNT_NAME}"
-                )
-            with status_col:
-                st.markdown(f"**{status_text}**")
-
-            if task.get('managed_by_portfolio'):
-                st.caption("该任务由持仓分析托管，同步来源中的核心策略参数不可在此修改。")
+            st.markdown(f"**{task['stock_code']}** {task.get('stock_name') or task['stock_code']}")
 
             strategy_context = task.get("strategy_context") or {}
             summary_col1, summary_col2, summary_col3 = st.columns(3)
@@ -1248,7 +1233,8 @@ def render_ai_monitor_tasks_panel(show_header: bool = True, title: str = "AI监�
                 pending_labels = [f"#{item['id']} {str(item.get('action_type', '')).upper()}" for item in pending_actions]
                 st.error(f"待人工处理动作: {' | '.join(pending_labels)}")
 
-            action_col1, action_col2, action_col3, action_col4, action_col5, action_col6 = st.columns(6)
+            action_columns = st.columns(5 if not task.get('managed_by_portfolio') else 4)
+            action_col1, action_col2, action_col3, action_col4 = action_columns[:4]
             with action_col1:
                 if st.button("立即分析", key=f"run_ai_task_{task['id']}", width='stretch'):
                     from monitor_service import monitor_service
@@ -1286,34 +1272,17 @@ def render_ai_monitor_tasks_panel(show_header: bool = True, title: str = "AI监�
                     st.session_state[f"ai_task_trade_open_{task['id']}"] = True
                     st.session_state[f"ai_task_trade_mode_{task['id']}"] = "sell"
                     st.rerun()
-            with action_col5:
-                if st.button(
-                    "忽略信号",
-                    key=f"reject_ai_task_{task['id']}",
-                    width='stretch',
-                    disabled=not pending_actions,
-                ):
-                    resolved_count = 0
-                    for pending_action in pending_actions:
-                        if db.resolve_pending_action(
-                            pending_action["id"],
-                            status="rejected",
-                            resolution_note="用户在智能盯盘页忽略信号",
-                        ):
-                            resolved_count += 1
-                    st.success(f"已忽略 {resolved_count} 条待处理信号。")
-                    st.rerun()
-            with action_col6:
-                delete_disabled = bool(task.get('managed_by_portfolio'))
-                if st.button(
-                    "删除" if not delete_disabled else "源头删除",
-                    key=f"delete_ai_task_{task['id']}",
-                    width='stretch',
-                    disabled=delete_disabled,
-                ):
-                    db.delete_monitor_task(task['id'])
-                    st.success("任务已删除。")
-                    st.rerun()
+            if not task.get('managed_by_portfolio'):
+                action_col5 = action_columns[4]
+                with action_col5:
+                    if st.button(
+                        "删除",
+                        key=f"delete_ai_task_{task['id']}",
+                        width='stretch',
+                    ):
+                        db.delete_monitor_task(task['id'])
+                        st.success("任务已删除。")
+                        st.rerun()
 
             signal_col1, signal_col2 = st.columns(2)
             with signal_col1:

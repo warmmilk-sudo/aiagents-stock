@@ -17,19 +17,34 @@ from investment_db_utils import (
 class AnalysisRepository:
     """Canonical analysis storage shared by research and portfolio domains."""
 
+    _MISSING_TEXT_VALUES = {"", "-", "--", "N/A", "NA", "未知", "未知行业", "null", "None", "nan"}
+    _STOCK_INFO_INDUSTRY_KEYS = ("industry", "所属同花顺行业", "所属行业", "所处行业", "行业", "sector")
+    _STOCK_INFO_ALIAS_KEYS = ("所属同花顺行业", "所属行业", "所处行业", "行业", "sector")
+
     def __init__(self, db_path: str = "investment.db", legacy_analysis_db_path: Optional[str] = None):
         self.seed_db_path = db_path
         self.db_path = resolve_investment_db_path(db_path)
         self.legacy_analysis_db_path = legacy_analysis_db_path or (
             db_path if is_legacy_seed_path(db_path) else "stock_analysis.db"
         )
+        self._stock_info_industry_cache: Dict[str, str] = {}
         self._init_database()
         self.migrate_legacy_analysis_db(self.legacy_analysis_db_path)
         self.cleanup_duplicate_records()
+        self.migrate_stock_info_schema()
 
     @staticmethod
     def _normalize_text(value: Any) -> str:
         return str(value or "").strip()
+
+    @classmethod
+    def _clean_stock_info_text(cls, value: Any) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, float) and value != value:
+            return ""
+        text = str(value).strip()
+        return "" if text in cls._MISSING_TEXT_VALUES else text
 
     @staticmethod
     def _sort_json_text(value: Any) -> str:
@@ -90,6 +105,68 @@ class AnalysisRepository:
             if allow_zero or number != 0:
                 return number
         return None
+
+    def _extract_stock_info_industry(self, stock_info: Optional[Dict]) -> str:
+        if not isinstance(stock_info, dict):
+            return ""
+
+        for key in self._STOCK_INFO_INDUSTRY_KEYS:
+            candidate = self._clean_stock_info_text(stock_info.get(key))
+            if candidate:
+                return candidate
+        return ""
+
+    def _lookup_basic_info_industry(
+        self,
+        symbol: str,
+        *,
+        industry_cache: Optional[Dict[str, str]] = None,
+    ) -> str:
+        normalized_symbol = self._normalize_text(symbol)
+        if not normalized_symbol:
+            return ""
+
+        cache = industry_cache if industry_cache is not None else self._stock_info_industry_cache
+        if normalized_symbol in cache:
+            return cache[normalized_symbol]
+
+        industry = ""
+        try:
+            from data_source_manager import data_source_manager
+
+            basic_info = data_source_manager.get_stock_basic_info(normalized_symbol)
+            industry = self._extract_stock_info_industry(basic_info)
+        except Exception:
+            industry = ""
+
+        cache[normalized_symbol] = industry
+        return industry
+
+    def _normalize_stock_info_payload(
+        self,
+        stock_info: Optional[Dict],
+        *,
+        symbol: str = "",
+        industry_cache: Optional[Dict[str, str]] = None,
+    ) -> Dict:
+        if not isinstance(stock_info, dict):
+            return {}
+
+        normalized = dict(stock_info)
+        had_industry_signal = any(key in normalized for key in self._STOCK_INFO_INDUSTRY_KEYS)
+        industry = self._extract_stock_info_industry(normalized)
+        if not industry and symbol:
+            industry = self._lookup_basic_info_industry(symbol, industry_cache=industry_cache)
+
+        for key in self._STOCK_INFO_ALIAS_KEYS:
+            normalized.pop(key, None)
+
+        if industry:
+            normalized["industry"] = industry
+        elif had_industry_signal:
+            normalized["industry"] = "未知"
+
+        return normalized
 
     def _deserialize_row(self, row: sqlite3.Row) -> Dict:
         record = dict(row)
@@ -370,7 +447,7 @@ class AnalysisRepository:
     ) -> int:
         normalized_scope = analysis_scope if analysis_scope in {"research", "portfolio"} else "research"
         final_decision = final_decision or {}
-        stock_info = stock_info or {}
+        stock_info = self._normalize_stock_info_payload(stock_info or {}, symbol=symbol)
         analysis_date = analysis_date or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         created_at = datetime.now().isoformat()
         effective_account_name = account_name or DEFAULT_ACCOUNT_NAME
@@ -797,6 +874,63 @@ class AnalysisRepository:
         conn.commit()
         conn.close()
         return migrated
+
+    def migrate_stock_info_schema(self) -> int:
+        conn = self._connect()
+        key = "migrated_stock_info_schema::industry_v2"
+        if get_metadata(conn, key):
+            conn.close()
+            return 0
+
+        cursor = conn.cursor()
+        industry_cache: Dict[str, str] = {}
+        updated = 0
+        unresolved = 0
+        try:
+            cursor.execute(
+                """
+                SELECT id, symbol, stock_info_json
+                FROM analysis_records
+                WHERE stock_info_json IS NOT NULL
+                  AND stock_info_json <> ''
+                ORDER BY id ASC
+                """
+            )
+            for row in cursor.fetchall():
+                stock_info = self._safe_json_loads(row["stock_info_json"], {})
+                if not isinstance(stock_info, dict):
+                    continue
+
+                normalized = self._normalize_stock_info_payload(
+                    stock_info,
+                    symbol=row["symbol"] or "",
+                    industry_cache=industry_cache,
+                )
+                if normalized == stock_info:
+                    pass
+                else:
+                    cursor.execute(
+                        "UPDATE analysis_records SET stock_info_json = ? WHERE id = ?",
+                        (self._serialize_json(normalized), row["id"]),
+                    )
+                    updated += 1
+
+                if any(alias_key in normalized for alias_key in self._STOCK_INFO_ALIAS_KEYS):
+                    unresolved += 1
+                    continue
+
+                if not self._clean_stock_info_text(normalized.get("industry")):
+                    unresolved += 1
+
+            if unresolved == 0:
+                set_metadata(conn, key, str(updated))
+            conn.commit()
+            return updated
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
 
 
 analysis_repository = AnalysisRepository()

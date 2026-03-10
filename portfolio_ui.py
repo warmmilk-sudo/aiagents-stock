@@ -7,10 +7,11 @@
 
 import html
 import re
+import plotly.express as px
 import streamlit as st
 import pandas as pd
 from datetime import date, datetime
-from typing import List, Dict
+from typing import Callable, Dict, List
 
 from portfolio_analysis_tasks import portfolio_analysis_task_manager
 from portfolio_manager import portfolio_manager
@@ -55,6 +56,88 @@ def _render_three_by_one_table(first_label: str, first_value: str, second_label:
                 }
             ]
         )
+    )
+
+
+def _render_distribution_pie_chart(
+    records: List[Dict],
+    *,
+    label_builder: Callable[[Dict], str],
+    empty_message: str,
+    chart_key: str,
+    max_slices: int = 8,
+) -> None:
+    """Render a compact pie chart for portfolio concentration views."""
+    if not records:
+        st.info(empty_message)
+        return
+
+    normalized_rows: List[Dict] = []
+    for item in records:
+        market_value = float(item.get("market_value") or 0.0)
+        weight = float(item.get("weight") or 0.0)
+        if market_value <= 0 and weight <= 0:
+            continue
+        normalized_rows.append(
+            {
+                "label": label_builder(item),
+                "market_value": market_value,
+                "weight": weight,
+            }
+        )
+
+    if not normalized_rows:
+        st.info(empty_message)
+        return
+
+    normalized_rows.sort(key=lambda row: row["market_value"], reverse=True)
+    if len(normalized_rows) > max_slices:
+        head = normalized_rows[: max_slices - 1]
+        tail = normalized_rows[max_slices - 1 :]
+        head.append(
+            {
+                "label": "其他",
+                "market_value": sum(row["market_value"] for row in tail),
+                "weight": sum(row["weight"] for row in tail),
+            }
+        )
+        normalized_rows = head
+
+    chart_df = pd.DataFrame(normalized_rows)
+    fig = px.pie(
+        chart_df,
+        names="label",
+        values="market_value",
+        color="label",
+        color_discrete_sequence=[
+            "#0F766E",
+            "#14B8A6",
+            "#22C55E",
+            "#84CC16",
+            "#F59E0B",
+            "#F97316",
+            "#EF4444",
+            "#94A3B8",
+        ],
+    )
+    fig.update_traces(
+        sort=False,
+        textinfo="label+percent" if len(chart_df) <= 6 else "percent",
+        textposition="inside",
+        hovertemplate="%{label}<br>市值: ¥%{value:,.2f}<br>占比: %{percent}<extra></extra>",
+        marker=dict(line=dict(color="white", width=2)),
+    )
+    fig.update_layout(
+        height=420,
+        margin=dict(t=10, b=10, l=10, r=10),
+        showlegend=True,
+        legend=dict(orientation="h", yanchor="bottom", y=-0.18, xanchor="center", x=0.5),
+    )
+    st.plotly_chart(
+        fig,
+        width="stretch",
+        key=chart_key,
+        config={"displayModeBar": False, "responsive": True},
     )
 
 
@@ -764,28 +847,22 @@ def _legacy_display_portfolio_risk():
     with col1:
         st.markdown("#### 🔄 行业集中度")
         industry_data = result.get("industry_distribution", [])
-        if industry_data:
-            df_ind = pd.DataFrame(industry_data)
-            df_ind["占比"] = df_ind["weight"].apply(lambda x: f"{x*100:.1f}%")
-            df_ind["市值"] = df_ind["market_value"].apply(lambda x: f"¥{x:,.2f}")
-            _render_static_table(
-                df_ind[["industry", "市值", "占比"]].rename(columns={"industry": "行业"})
-            )
-            
+        _render_distribution_pie_chart(
+            industry_data,
+            label_builder=lambda item: str(item.get("industry") or "未知行业"),
+            empty_message="暂无行业集中度数据",
+            chart_key="legacy_portfolio_risk_industry_pie",
+        )
+             
     with col2:
         st.markdown("#### 🎯 单票集中度")
         stock_data = result.get("stock_distribution", [])
-        if stock_data:
-            df_st = pd.DataFrame(stock_data)
-            df_st["占比"] = df_st["weight"].apply(lambda x: f"{x*100:.1f}%")
-            df_st["市值"] = df_st["market_value"].apply(lambda x: f"¥{x:,.2f}")
-            df_st["盈亏"] = df_st["pnl"].apply(lambda x: f"¥{x:,.2f}")
-            df_st["盈亏比例"] = df_st["pnl_pct"].apply(lambda x: f"{x*100:.2f}%")
-            _render_static_table(
-                df_st[["code", "name", "市值", "占比", "盈亏比例"]].rename(
-                    columns={"code": "证券代码", "name": "股票"}
-                )
-            )
+        _render_distribution_pie_chart(
+            stock_data,
+            label_builder=lambda item: f"{item.get('name') or item.get('code') or '未知'} ({item.get('code') or '--'})",
+            empty_message="暂无单票集中度数据",
+            chart_key="legacy_portfolio_risk_stock_pie",
+        )
 
 
 def display_portfolio_risk():
@@ -860,27 +937,22 @@ def display_portfolio_risk():
     with col1:
         st.markdown("#### 行业集中度")
         industry_data = result.get("industry_distribution", [])
-        if industry_data:
-            df_ind = pd.DataFrame(industry_data)
-            df_ind["占比"] = df_ind["weight"].apply(lambda x: f"{x * 100:.1f}%")
-            df_ind["市值"] = df_ind["market_value"].apply(lambda x: f"¥{x:,.2f}")
-            _render_static_table(
-                df_ind[["industry", "市值", "占比"]].rename(columns={"industry": "行业"})
-            )
+        _render_distribution_pie_chart(
+            industry_data,
+            label_builder=lambda item: str(item.get("industry") or "未知行业"),
+            empty_message="暂无行业集中度数据",
+            chart_key="portfolio_risk_industry_pie",
+        )
 
     with col2:
         st.markdown("#### 单票集中度")
         stock_data = result.get("stock_distribution", [])
-        if stock_data:
-            df_st = pd.DataFrame(stock_data)
-            df_st["占比"] = df_st["weight"].apply(lambda x: f"{x * 100:.1f}%")
-            df_st["市值"] = df_st["market_value"].apply(lambda x: f"¥{x:,.2f}")
-            df_st["盈亏比例"] = df_st["pnl_pct"].apply(lambda x: f"{x * 100:.2f}%")
-            _render_static_table(
-                df_st[["code", "name", "市值", "占比", "盈亏比例"]].rename(
-                    columns={"code": "证券代码", "name": "股票"}
-                )
-            )
+        _render_distribution_pie_chart(
+            stock_data,
+            label_builder=lambda item: f"{item.get('name') or item.get('code') or '未知'} ({item.get('code') or '--'})",
+            empty_message="暂无单票集中度数据",
+            chart_key="portfolio_risk_stock_pie",
+        )
 
 
 def display_portfolio_stocks(lightweight_model=None, reasoning_model=None):
