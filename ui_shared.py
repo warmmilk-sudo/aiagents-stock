@@ -168,6 +168,43 @@ FINAL_DECISION_FIELD_LABELS = {
     "decision_text": "决策文本",
 }
 
+REPORT_BODY_PRIORITY_KEYS = (
+    "report",
+    "report_body",
+    "body",
+    "content",
+    "content_text",
+    "analysis",
+    "summary",
+    "conclusion",
+    "recommendation",
+    "discussion_result",
+    "comprehensive_report",
+    "prediction_text",
+    "decision_text",
+    "text",
+    "message",
+)
+
+REPORT_METADATA_KEYS = {
+    "agent_name",
+    "agent_role",
+    "focus_areas",
+    "analysis_time",
+    "timestamp",
+    "rating",
+    "confidence_level",
+    "target_price",
+    "entry_range",
+    "entry_min",
+    "entry_max",
+    "take_profit",
+    "stop_loss",
+    "holding_period",
+    "position_size",
+    "risk_warning",
+}
+
 
 def _extract_embedded_json_mapping(text: str) -> tuple[Dict[str, Any], str]:
     if not text:
@@ -216,7 +253,7 @@ def _resolve_final_decision_content(final_decision: Any) -> tuple[Any, bool, str
 
 def _find_report_body_start(text: str) -> Optional[int]:
     report_patterns = (
-        r"(?m)^#\s*.+(?:分析报告|报告).*$",
+        r"(?m)^#\s*.+(?:分析报告|报告|深度分析|分析).*$",
         r"(?m)^##\s*基本概况.*$",
         r"(?m)^(?:一、|1[\.、])\s*(?:趋势分析|基本概况|核心结论|技术分析|投资建议).*$",
         r"(?m)^(?:##\s*)?(?:一、|1[\.、])\s*(?:周期仪表盘|康波周期仪表盘|综合资产配置建议|不同人群的具体建议|核心观点总结|周金涛名言对照).*$",
@@ -334,6 +371,93 @@ def _has_structured_decision_fields(value: Any) -> bool:
         key != "decision_text" and key in mapping and not _is_empty_display_value(mapping.get(key))
         for key in STRUCTURED_FINAL_DECISION_KEYS
     )
+
+
+def _deduplicate_text_segments(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        text = str(value or "").strip()
+        if not text:
+            continue
+        key = re.sub(r"\s+", " ", text)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(text)
+    return result
+
+
+def _format_report_scalar(key: str, value: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+
+    label = _humanize_field_label(key)
+    if key in REPORT_BODY_PRIORITY_KEYS or key in {"title", "heading"}:
+        return text
+    if "\n" in text or len(text) >= 120:
+        return f"#### {label}\n\n{text}" if label else text
+    if label:
+        return f"**{label}：** {text}"
+    return text
+
+
+def _collect_report_text_segments(value: Any, *, depth: int = 0) -> list[str]:
+    parsed = _coerce_json_value(value)
+    if parsed in (None, ""):
+        return []
+
+    if isinstance(parsed, str):
+        return [parsed.strip()]
+
+    if isinstance(parsed, dict):
+        prioritized_segments: list[str] = []
+        prioritized_keys_seen: set[str] = set()
+        for key in REPORT_BODY_PRIORITY_KEYS:
+            if key not in parsed:
+                continue
+            nested_segments = _collect_report_text_segments(parsed.get(key), depth=depth + 1)
+            if nested_segments:
+                prioritized_segments.extend(nested_segments)
+                prioritized_keys_seen.add(key)
+
+        fallback_segments: list[str] = []
+        for key, item in parsed.items():
+            if key in REPORT_METADATA_KEYS or key in prioritized_keys_seen:
+                continue
+            nested_value = _coerce_json_value(item)
+            if nested_value in (None, ""):
+                continue
+            if isinstance(nested_value, str):
+                fallback_segments.append(_format_report_scalar(str(key), nested_value))
+                continue
+            if isinstance(nested_value, (dict, list, tuple, set)):
+                fallback_segments.extend(
+                    _collect_report_text_segments(nested_value, depth=depth + 1)
+                )
+        return _deduplicate_text_segments(prioritized_segments + fallback_segments)
+
+    if isinstance(parsed, (list, tuple, set)):
+        segments: list[str] = []
+        for item in parsed:
+            segments.extend(_collect_report_text_segments(item, depth=depth + 1))
+        return _deduplicate_text_segments(segments)
+
+    return [str(parsed)]
+
+
+def _resolve_report_body_text(value: Any) -> str:
+    parsed = _coerce_json_value(value)
+    segments = _collect_report_text_segments(parsed)
+    if segments:
+        return "\n\n".join(segments).strip()
+
+    if isinstance(parsed, (dict, list, tuple, set)):
+        return json.dumps(parsed, ensure_ascii=False, indent=2, default=str)
+    if parsed in (None, ""):
+        return ""
+    return str(parsed).strip()
 
 
 def _render_structured_value(value: Any, *, field_key: str = "", title: str = "", depth: int = 0) -> None:
@@ -538,6 +662,7 @@ def render_agents_analysis_tabs(
     tab_labels: Optional[Dict[str, str]] = None,
     include_other_agents: bool = True,
     split_reasoning: bool = False,
+    display_mode: str = "default",
 ):
     if show_header:
         st.subheader("AI 分析师团队报告")
@@ -598,15 +723,32 @@ def render_agents_analysis_tabs(
             )
             analysis_payload = _coerce_json_value(agent_result.get("analysis", ""))
             if split_reasoning:
-                if isinstance(analysis_payload, (dict, list)):
+                if display_mode == "investment":
+                    report_body, reasoning_text = (
+                        _split_analysis_report_sections(analysis_payload)
+                        if not isinstance(analysis_payload, (dict, list))
+                        else ("", "")
+                    )
+                    report_body_text = _resolve_report_body_text(
+                        report_body if report_body else analysis_payload
+                    )
+                else:
+                    report_body_text = ""
                     report_body = ""
                     reasoning_text = ""
-                else:
+                if display_mode != "investment":
                     report_body, reasoning_text = _split_analysis_report_sections(
                         analysis_payload
                     )
                 st.markdown("**分析报告正文：**")
-                if isinstance(analysis_payload, (dict, list)):
+                if display_mode == "investment":
+                    if report_body_text:
+                        st.markdown(report_body_text)
+                    elif reasoning_text:
+                        st.info("未提取到结构化报告正文，已保留原始推理过程。")
+                    else:
+                        st.info("暂无分析")
+                elif isinstance(analysis_payload, (dict, list)):
                     _render_structured_value(analysis_payload, title="结构化分析报告")
                 elif report_body:
                     st.markdown(report_body)
@@ -622,18 +764,25 @@ def render_agents_analysis_tabs(
                 st.markdown("**分析报告：**")
                 if _is_empty_display_value(analysis_payload):
                     st.info("暂无分析")
+                elif display_mode == "investment":
+                    report_body_text = _resolve_report_body_text(analysis_payload)
+                    if report_body_text:
+                        st.markdown(report_body_text)
+                    else:
+                        st.info("暂无分析")
                 else:
                     _render_structured_value(analysis_payload, title="分析报告")
 
-            extra_fields = {
-                key: value
-                for key, value in agent_result.items()
-                if key not in {"agent_name", "agent_role", "focus_areas", "analysis", "analysis_time", "timestamp"}
-                and not _is_empty_display_value(value)
-            }
-            if extra_fields:
-                st.markdown("**补充结构化字段：**")
-                _render_structured_value(extra_fields)
+            if display_mode != "investment":
+                extra_fields = {
+                    key: value
+                    for key, value in agent_result.items()
+                    if key not in {"agent_name", "agent_role", "focus_areas", "analysis", "analysis_time", "timestamp"}
+                    and not _is_empty_display_value(value)
+                }
+                if extra_fields:
+                    st.markdown("**补充结构化字段：**")
+                    _render_structured_value(extra_fields)
 
 
 def render_team_discussion(discussion_result: Any, *, show_header: bool = True):
@@ -660,6 +809,7 @@ def render_reasoning_process(
     include_agents: bool = True,
     include_discussion: bool = True,
     extra_sections: Optional[list[tuple[str, Any]]] = None,
+    agents_display_mode: str = "default",
 ):
     normalized_agents_results, _ = _normalize_agents_results(agents_results)
     normalized_discussion = _normalize_discussion_result(discussion_result)
@@ -707,7 +857,11 @@ def render_reasoning_process(
             if normalized_discussion or normalized_extra_sections:
                 st.markdown("---")
             st.markdown("#### 分析师原始报告")
-            render_agents_analysis_tabs(normalized_agents_results, show_header=False)
+            render_agents_analysis_tabs(
+                normalized_agents_results,
+                show_header=False,
+                display_mode=agents_display_mode,
+            )
 
 
 def render_analysis_report_content(
@@ -763,7 +917,12 @@ def render_analysis_report_content(
     st.markdown(text)
 
 
-def render_final_decision(final_decision: Any, *, show_header: bool = True):
+def render_final_decision(
+    final_decision: Any,
+    *,
+    show_header: bool = True,
+    display_mode: str = "default",
+):
     if show_header:
         st.subheader("最终投资决策")
 
@@ -774,6 +933,88 @@ def render_final_decision(final_decision: Any, *, show_header: bool = True):
 
     if invalid:
         st.caption("最终决策原始数据格式异常，已降级为文本展示。")
+
+    if (
+        display_mode == "investment"
+        and isinstance(normalized_final_decision, dict)
+        and _has_structured_decision_fields(normalized_final_decision)
+    ):
+        raw_entry_range = normalized_final_decision.get("entry_range")
+        entry_range_display = _format_display_value("entry_range", raw_entry_range)
+        if _is_empty_display_value(raw_entry_range):
+            entry_range_display = format_entry_range(
+                normalized_final_decision.get("entry_min"),
+                normalized_final_decision.get("entry_max"),
+            )
+
+        col1, col2 = st.columns([1, 2])
+
+        with col1:
+            rating = normalized_final_decision.get("rating", "未知")
+            rating_color = get_recommendation_color(rating)
+            st.markdown(
+                f"""
+                <div class="decision-card">
+                    <h3 style="text-align: center; color: {rating_color};">{_safe_text(rating)}</h3>
+                    <h4 style="text-align: center;">投资评级</h4>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            st.metric(
+                "信心度",
+                _format_display_value(
+                    "confidence_level",
+                    normalized_final_decision.get("confidence_level"),
+                ),
+            )
+            st.metric(
+                "目标价格",
+                _format_display_value("target_price", normalized_final_decision.get("target_price")),
+            )
+            st.metric(
+                "建议仓位",
+                _format_display_value("position_size", normalized_final_decision.get("position_size")),
+            )
+
+        with col2:
+            st.markdown("**操作建议：**")
+            advice_text = _resolve_report_body_text(normalized_final_decision.get("operation_advice"))
+            if advice_text:
+                st.markdown(advice_text)
+            else:
+                st.info("暂无建议")
+
+            st.markdown("**关键位置：**")
+            left, right = st.columns(2)
+            with left:
+                st.write(f"**进场区间：** {entry_range_display or 'N/A'}")
+                st.write(
+                    f"**止盈位：** "
+                    f"{_format_display_value('take_profit', normalized_final_decision.get('take_profit'))}"
+                )
+            with right:
+                st.write(
+                    f"**止损位：** "
+                    f"{_format_display_value('stop_loss', normalized_final_decision.get('stop_loss'))}"
+                )
+                st.write(
+                    f"**持有周期：** "
+                    f"{_format_display_value('holding_period', normalized_final_decision.get('holding_period'))}"
+                )
+
+        risk_warning = normalized_final_decision.get("risk_warning", "")
+        if not _is_empty_display_value(risk_warning):
+            st.markdown(
+                f"""
+                <div class="warning-card">
+                    <h4>风险提示</h4>
+                    <p>{_safe_text(_format_display_value('risk_warning', risk_warning))}</p>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+        return
 
     if isinstance(normalized_final_decision, dict) and _has_structured_decision_fields(normalized_final_decision):
         raw_entry_range = normalized_final_decision.get("entry_range")
@@ -872,10 +1113,25 @@ def render_final_decision(final_decision: Any, *, show_header: bool = True):
 
     if isinstance(normalized_final_decision, dict):
         decision_text = normalized_final_decision.get("decision_text", str(normalized_final_decision))
-        _render_structured_value(decision_text, field_key="decision_text", title="决策文本")
-        if not _is_empty_display_value(extracted_reasoning):
+        if display_mode == "investment":
+            rendered_text = _resolve_report_body_text(decision_text)
+            if rendered_text:
+                st.markdown(rendered_text)
+            else:
+                st.info("暂无最终投资决策")
+        else:
+            _render_structured_value(decision_text, field_key="decision_text", title="决策文本")
+        if display_mode != "investment" and not _is_empty_display_value(extracted_reasoning):
             with st.expander("决策生成推理", expanded=False):
                 _render_reasoning_block("决策生成推理", extracted_reasoning)
+        return
+
+    if display_mode == "investment":
+        rendered_text = _resolve_report_body_text(normalized_final_decision)
+        if rendered_text:
+            st.markdown(rendered_text)
+            return
+        st.info("暂无最终投资决策")
         return
 
     _render_structured_value(normalized_final_decision, title="决策文本")

@@ -1865,7 +1865,7 @@ def display_history_record(record: Dict):
                 normalized_rating=normalized_rating,
             )
 
-            render_final_decision(final_decision_display)
+            render_final_decision(final_decision_display, display_mode="investment")
             st.subheader("分析师原始报告")
             render_agents_analysis_tabs(
                 agents_results,
@@ -1879,6 +1879,7 @@ def display_history_record(record: Dict):
                 },
                 include_other_agents=False,
                 split_reasoning=True,
+                display_mode="investment",
             )
             render_reasoning_process(
                 None,
@@ -1886,6 +1887,7 @@ def display_history_record(record: Dict):
                 expanded=False,
                 include_agents=False,
                 extra_sections=[("最终决策推理", decision_reasoning)] if decision_reasoning else None,
+                agents_display_mode="investment",
             )
             _render_history_delete_action(record)
             return

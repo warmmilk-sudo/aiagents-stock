@@ -108,6 +108,65 @@ class AnalysisRepository:
                 return number
         return None
 
+    @staticmethod
+    def _extract_embedded_json_mapping(text: str) -> tuple[Dict[str, Any], str]:
+        if not text:
+            return {}, ""
+
+        decoder = json.JSONDecoder()
+        candidate_mapping: Dict[str, Any] = {}
+        candidate_prefix = ""
+
+        for index, char in enumerate(text):
+            if char != "{":
+                continue
+
+            try:
+                parsed, end = decoder.raw_decode(text[index:])
+            except json.JSONDecodeError:
+                continue
+
+            trailing = text[index + end :].strip()
+            if trailing:
+                continue
+            if isinstance(parsed, dict):
+                candidate_mapping = parsed
+                candidate_prefix = text[:index].strip()
+
+        return candidate_mapping, candidate_prefix
+
+    @classmethod
+    def _resolve_final_decision_payload(cls, final_decision: Optional[Dict]) -> tuple[Dict[str, Any], bool]:
+        if not isinstance(final_decision, dict):
+            return final_decision or {}, False
+
+        structured_keys = (
+            "rating",
+            "confidence_level",
+            "target_price",
+            "operation_advice",
+            "entry_range",
+            "entry_min",
+            "entry_max",
+            "take_profit",
+            "stop_loss",
+            "holding_period",
+            "position_size",
+            "risk_warning",
+        )
+        has_structured_keys = any(key in final_decision for key in structured_keys)
+        decision_text = str(final_decision.get("decision_text") or "").strip()
+        if not decision_text or has_structured_keys:
+            return dict(final_decision), False
+
+        embedded_mapping, _ = cls._extract_embedded_json_mapping(decision_text)
+        if not embedded_mapping:
+            return dict(final_decision), False
+
+        merged = dict(embedded_mapping)
+        merged.setdefault("decision_text", decision_text)
+        return merged, True
+
     def _extract_stock_info_industry(self, stock_info: Optional[Dict]) -> str:
         if not isinstance(stock_info, dict):
             return ""
@@ -448,29 +507,40 @@ class AnalysisRepository:
         asset_status_snapshot: Optional[str] = None,
     ) -> int:
         normalized_scope = analysis_scope if analysis_scope in {"research", "portfolio"} else "research"
-        final_decision = final_decision or {}
+        final_decision, extracted_from_decision_text = self._resolve_final_decision_payload(final_decision or {})
         stock_info = self._normalize_stock_info_payload(stock_info or {}, symbol=symbol)
         analysis_date = analysis_date or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         created_at = datetime.now().isoformat()
         effective_account_name = account_name or DEFAULT_ACCOUNT_NAME
 
-        rating = rating or final_decision.get("rating")
-        confidence = confidence if confidence is not None else self._extract_first_number(
+        resolved_rating = self._normalize_text(final_decision.get("rating")) or None
+        if extracted_from_decision_text:
+            rating = resolved_rating or rating
+        else:
+            rating = rating or resolved_rating
+
+        resolved_confidence = self._extract_first_number(
             final_decision.get("confidence_level"),
             allow_zero=True,
         )
+        if extracted_from_decision_text and resolved_confidence is not None:
+            confidence = resolved_confidence
+        elif confidence is None:
+            confidence = resolved_confidence
+
         current_price = current_price if current_price is not None else self._extract_first_number(
             stock_info.get("current_price"),
             allow_zero=True,
         )
-        target_price = target_price if target_price is not None else self._extract_first_number(
-            final_decision.get("target_price")
-        )
-        if entry_min is None:
-            entry_min = self._extract_first_number(final_decision.get("entry_min"))
-        if entry_max is None:
-            entry_max = self._extract_first_number(final_decision.get("entry_max"))
-        if entry_min is None or entry_max is None:
+        resolved_target_price = self._extract_first_number(final_decision.get("target_price"))
+        if extracted_from_decision_text and resolved_target_price is not None:
+            target_price = resolved_target_price
+        elif target_price is None:
+            target_price = resolved_target_price
+
+        resolved_entry_min = self._extract_first_number(final_decision.get("entry_min"))
+        resolved_entry_max = self._extract_first_number(final_decision.get("entry_max"))
+        if resolved_entry_min is None or resolved_entry_max is None:
             entry_text = str(final_decision.get("entry_range") or "")
             if entry_text:
                 numbers = []
@@ -479,19 +549,42 @@ class AnalysisRepository:
                     if number is not None:
                         numbers.append(number)
                 if len(numbers) >= 2:
-                    if entry_min is None:
-                        entry_min = numbers[0]
-                    if entry_max is None:
-                        entry_max = numbers[1]
-        take_profit = take_profit if take_profit is not None else self._extract_first_number(final_decision.get("take_profit"))
-        stop_loss = stop_loss if stop_loss is not None else self._extract_first_number(final_decision.get("stop_loss"))
-        if not summary:
-            summary = str(
-                final_decision.get("operation_advice")
-                or final_decision.get("advice")
-                or final_decision.get("summary")
-                or ""
-            ).strip()
+                    if resolved_entry_min is None:
+                        resolved_entry_min = numbers[0]
+                    if resolved_entry_max is None:
+                        resolved_entry_max = numbers[1]
+        if extracted_from_decision_text:
+            if resolved_entry_min is not None:
+                entry_min = resolved_entry_min
+            if resolved_entry_max is not None:
+                entry_max = resolved_entry_max
+        else:
+            if entry_min is None:
+                entry_min = resolved_entry_min
+            if entry_max is None:
+                entry_max = resolved_entry_max
+        resolved_take_profit = self._extract_first_number(final_decision.get("take_profit"))
+        if extracted_from_decision_text and resolved_take_profit is not None:
+            take_profit = resolved_take_profit
+        elif take_profit is None:
+            take_profit = resolved_take_profit
+
+        resolved_stop_loss = self._extract_first_number(final_decision.get("stop_loss"))
+        if extracted_from_decision_text and resolved_stop_loss is not None:
+            stop_loss = resolved_stop_loss
+        elif stop_loss is None:
+            stop_loss = resolved_stop_loss
+
+        resolved_summary = str(
+            final_decision.get("operation_advice")
+            or final_decision.get("advice")
+            or final_decision.get("summary")
+            or ""
+        ).strip()
+        if extracted_from_decision_text and resolved_summary:
+            summary = resolved_summary
+        elif not summary:
+            summary = resolved_summary
         if has_full_report is None:
             has_full_report = any(
                 value not in (None, "", {}, [])

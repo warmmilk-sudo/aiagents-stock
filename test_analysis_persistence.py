@@ -7,6 +7,7 @@ import unittest
 import uuid
 from pathlib import Path
 
+from analysis_repository import AnalysisRepository
 from monitor_db import StockMonitorDatabase
 from portfolio_analysis_tasks import PortfolioAnalysisTaskManager
 from portfolio_db import PortfolioDB
@@ -21,6 +22,7 @@ from ui_shared import (
     _normalize_agents_results,
     _normalize_discussion_result,
     _normalize_mapping_input,
+    _resolve_report_body_text,
     _resolve_final_decision_content,
     _split_analysis_report_sections,
     _normalize_text_or_mapping,
@@ -450,6 +452,22 @@ class UiSharedNormalizationTests(unittest.TestCase):
         )
         self.assertEqual(reasoning, "先综合三位分析师的结论，再组织成最终策略。")
 
+    def test_split_analysis_report_sections_extracts_deep_analysis_body_after_reasoning(self):
+        body, reasoning = _split_analysis_report_sections(
+            "【推理过程】\n先整理情绪指标，再输出报告。\n"
+            "# 剑桥科技（603083）市场情绪深度分析\n"
+            "## 1. ARBR情绪指标分析\n"
+            "这里开始是市场情绪正文。"
+        )
+
+        self.assertEqual(
+            body,
+            "# 剑桥科技（603083）市场情绪深度分析\n"
+            "## 1. ARBR情绪指标分析\n"
+            "这里开始是市场情绪正文。",
+        )
+        self.assertEqual(reasoning, "先整理情绪指标，再输出报告。")
+
     def test_resolve_final_decision_content_extracts_embedded_json(self):
         final_decision, invalid, reasoning = _resolve_final_decision_content(
             {
@@ -474,6 +492,81 @@ class UiSharedNormalizationTests(unittest.TestCase):
         self.assertEqual(final_decision["rating"], "持有")
         self.assertEqual(final_decision["operation_advice"], "等待信号后分批建仓")
         self.assertIn("先核对会议结论", reasoning)
+
+    def test_resolve_report_body_text_prefers_report_body_over_metadata(self):
+        report_text = _resolve_report_body_text(
+            {
+                "analysis_time": "2026-03-10 23:01:02",
+                "rating": "买入",
+                "target_price": "140",
+                "report": "# 技术分析报告\n\n股价突破 60 日线后，等待回踩确认。",
+            }
+        )
+
+        self.assertEqual(report_text, "# 技术分析报告\n\n股价突破 60 日线后，等待回踩确认。")
+        self.assertNotIn("140", report_text)
+        self.assertNotIn("买入", report_text)
+
+    def test_resolve_report_body_text_collects_human_readable_content_from_nested_mapping(self):
+        report_text = _resolve_report_body_text(
+            {
+                "summary": "短线放量突破，趋势转强。",
+                "details": {
+                    "conclusion": "回踩 115-118 元区间可考虑低吸。",
+                    "risk_warning": "情绪过热时避免追高。",
+                },
+            }
+        )
+
+        self.assertIn("短线放量突破，趋势转强。", report_text)
+        self.assertIn("回踩 115-118 元区间可考虑低吸。", report_text)
+        self.assertNotIn("risk_warning", report_text)
+
+    def test_analysis_repository_extracts_embedded_final_decision_fields_before_persisting(self):
+        temp_dir = make_workspace_temp_dir("analysis_repo_")
+        try:
+            repository = AnalysisRepository(
+                str(temp_dir / "investment.db"),
+                legacy_analysis_db_path=str(temp_dir / "legacy.db"),
+            )
+            record_id = repository.save_record(
+                symbol="603083",
+                stock_name="剑桥科技",
+                period="1y",
+                stock_info={"symbol": "603083", "name": "剑桥科技", "current_price": 120.1},
+                final_decision={
+                    "decision_text": """【推理过程】
+先核对会议结论，再整理成 JSON。
+
+{
+  "rating": "买入",
+  "target_price": "140",
+  "operation_advice": "等待回调到 115-118 元区间后分批低吸。",
+  "entry_range": "115-118元",
+  "take_profit": "125元（第一止盈）",
+  "stop_loss": "108元（跌破后止损）",
+  "holding_period": "3-6个月",
+  "position_size": "中等仓位（单仓不超过15%）",
+  "confidence_level": "8分"
+}"""
+                },
+                rating="持有",
+                confidence=5.0,
+                summary="评级: 持有",
+            )
+
+            record = repository.get_record(record_id)
+            self.assertEqual(record["rating"], "买入")
+            self.assertEqual(record["confidence"], 8.0)
+            self.assertEqual(record["target_price"], 140.0)
+            self.assertEqual(record["entry_min"], 115.0)
+            self.assertEqual(record["entry_max"], 118.0)
+            self.assertEqual(record["take_profit"], 125.0)
+            self.assertEqual(record["stop_loss"], 108.0)
+            self.assertEqual(record["summary"], "等待回调到 115-118 元区间后分批低吸。")
+            self.assertEqual(record["final_decision"]["position_size"], "中等仓位（单仓不超过15%）")
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
 
     def test_structured_final_decision_detection_allows_decision_text_sidecar(self):
         self.assertTrue(

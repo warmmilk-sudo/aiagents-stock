@@ -44,6 +44,7 @@ from ui_analysis_task_utils import (
 from ui_shared import (
     get_dataframe_height,
     get_recommendation_color,
+    _resolve_final_decision_content,
     render_a_share_change_metric,
     render_agents_analysis_tabs as shared_render_agents_analysis_tabs,
     render_final_decision as shared_render_final_decision,
@@ -151,6 +152,10 @@ st.markdown("""
         --space-3: 0.7rem;
         --space-4: 1rem;
         --space-5: 1.35rem;
+        --investment-tab-accent: #ff4b4b;
+        --investment-tab-text: rgba(255,255,255,0.6);
+        --investment-tab-text-active: rgb(250,250,250);
+        --investment-tab-divider: rgba(250,250,250,0.14);
     }
 
     *, *::before, *::after {
@@ -369,27 +374,40 @@ st.markdown("""
         box-shadow: none !important;
     }
 
-    /* 横向 radio 统一改成下划线式切换 */
-    div[data-testid="stRadio"] > div[role="radiogroup"] {
+    /* 投资管理中的 tab 型 radio：只作用于伪 tab，不污染普通表单 radio */
+    div[data-testid="stRadio"] > div[role="radiogroup"]:is(
+        [aria-label="投资工作台"],
+        [aria-label="智能盯盘视图"],
+        [aria-label="持仓分析视图"],
+        [aria-label="持仓情况视图"],
+        [aria-label="决策事件视图"]
+    ) {
         display: flex;
         flex-wrap: nowrap;
         align-items: stretch;
-        justify-content: stretch;
-        gap: 0;
+        justify-content: flex-start;
+        gap: 1rem;
         width: 100%;
         padding: 0;
-        margin: 0 0 1rem 0;
-        border-bottom: 1px solid rgba(148,163,184,0.28);
+        margin: 0 0 0.95rem 0;
+        border-bottom: 1px solid var(--investment-tab-divider);
     }
-    div[data-testid="stRadio"] > div[role="radiogroup"] > label[data-baseweb="radio"] {
-        flex: 1 1 0 !important;
-        width: 100% !important;
+    div[data-testid="stRadio"] > div[role="radiogroup"]:is(
+        [aria-label="投资工作台"],
+        [aria-label="智能盯盘视图"],
+        [aria-label="持仓分析视图"],
+        [aria-label="持仓情况视图"],
+        [aria-label="决策事件视图"]
+    ) > label[data-baseweb="radio"] {
+        flex: 0 0 auto !important;
+        width: auto !important;
         margin: 0 !important;
         padding: 0 !important;
-        min-height: auto !important;
+        min-height: 3rem !important;
+        height: 3rem !important;
         position: relative !important;
         display: inline-flex !important;
-        align-items: center !important;
+        align-items: stretch !important;
         justify-content: center !important;
         border: none !important;
         border-radius: 0 !important;
@@ -398,10 +416,22 @@ st.markdown("""
         overflow: visible !important;
         cursor: pointer !important;
     }
-    div[data-testid="stRadio"] > div[role="radiogroup"] > label[data-baseweb="radio"] > div:first-child {
+    div[data-testid="stRadio"] > div[role="radiogroup"]:is(
+        [aria-label="投资工作台"],
+        [aria-label="智能盯盘视图"],
+        [aria-label="持仓分析视图"],
+        [aria-label="持仓情况视图"],
+        [aria-label="决策事件视图"]
+    ) > label[data-baseweb="radio"] > div:first-child {
         display: none !important;
     }
-    div[data-testid="stRadio"] > div[role="radiogroup"] > label[data-baseweb="radio"] > input[type="radio"] {
+    div[data-testid="stRadio"] > div[role="radiogroup"]:is(
+        [aria-label="投资工作台"],
+        [aria-label="智能盯盘视图"],
+        [aria-label="持仓分析视图"],
+        [aria-label="持仓情况视图"],
+        [aria-label="决策事件视图"]
+    ) > label[data-baseweb="radio"] > input[type="radio"] {
         position: absolute !important;
         inset: 0 !important;
         width: 100% !important;
@@ -410,35 +440,79 @@ st.markdown("""
         opacity: 0 !important;
         cursor: pointer !important;
     }
-    div[data-testid="stRadio"] > div[role="radiogroup"] > label[data-baseweb="radio"] > input[type="radio"] + div {
-        width: 100% !important;
+    div[data-testid="stRadio"] > div[role="radiogroup"]:is(
+        [aria-label="投资工作台"],
+        [aria-label="智能盯盘视图"],
+        [aria-label="持仓分析视图"],
+        [aria-label="持仓情况视图"],
+        [aria-label="决策事件视图"]
+    ) > label[data-baseweb="radio"] > input[type="radio"] + div {
+        width: auto !important;
         display: flex !important;
         align-items: center !important;
         justify-content: center !important;
-        padding: 0.2rem 0 0.95rem 0 !important;
-        border-bottom: 4px solid transparent !important;
+        height: 100% !important;
+        padding: 0 1rem !important;
+        border-bottom: 2px solid transparent !important;
         transition: border-color 0.18s ease;
     }
-    div[data-testid="stRadio"] > div[role="radiogroup"] > label[data-baseweb="radio"] p {
+    div[data-testid="stRadio"] > div[role="radiogroup"]:is(
+        [aria-label="投资工作台"],
+        [aria-label="智能盯盘视图"],
+        [aria-label="持仓分析视图"],
+        [aria-label="持仓情况视图"],
+        [aria-label="决策事件视图"]
+    ) > label[data-baseweb="radio"] p {
         margin: 0 !important;
-        color: rgba(226,232,240,0.68) !important;
-        font-size: 0.98rem !important;
+        color: var(--investment-tab-text) !important;
+        font-size: 0.94rem !important;
         font-weight: 500 !important;
         line-height: 1.2 !important;
         transition: color 0.18s ease;
         text-align: center !important;
+        letter-spacing: normal !important;
     }
-    div[data-testid="stRadio"] > div[role="radiogroup"] > label[data-baseweb="radio"] > input[type="radio"]:checked + div,
-    div[data-testid="stRadio"] > div[role="radiogroup"] > label[data-baseweb="radio"] > input[type="radio"][checked] + div {
-        border-bottom-color: var(--primary-color) !important;
+    div[data-testid="stRadio"] > div[role="radiogroup"]:is(
+        [aria-label="投资工作台"],
+        [aria-label="智能盯盘视图"],
+        [aria-label="持仓分析视图"],
+        [aria-label="持仓情况视图"],
+        [aria-label="决策事件视图"]
+    ) > label[data-baseweb="radio"]:has(> input[type="radio"]:checked) > div:last-child,
+    div[data-testid="stRadio"] > div[role="radiogroup"]:is(
+        [aria-label="投资工作台"],
+        [aria-label="智能盯盘视图"],
+        [aria-label="持仓分析视图"],
+        [aria-label="持仓情况视图"],
+        [aria-label="决策事件视图"]
+    ) > label[data-baseweb="radio"] > input[type="radio"]:checked + div {
+        border-bottom-color: var(--investment-tab-accent) !important;
     }
-    div[data-testid="stRadio"] > div[role="radiogroup"] > label[data-baseweb="radio"] > input[type="radio"]:checked + div p,
-    div[data-testid="stRadio"] > div[role="radiogroup"] > label[data-baseweb="radio"] > input[type="radio"][checked] + div p {
-        color: var(--text-color) !important;
-        font-weight: 600 !important;
+    div[data-testid="stRadio"] > div[role="radiogroup"]:is(
+        [aria-label="投资工作台"],
+        [aria-label="智能盯盘视图"],
+        [aria-label="持仓分析视图"],
+        [aria-label="持仓情况视图"],
+        [aria-label="决策事件视图"]
+    ) > label[data-baseweb="radio"]:has(> input[type="radio"]:checked) > div:last-child p,
+    div[data-testid="stRadio"] > div[role="radiogroup"]:is(
+        [aria-label="投资工作台"],
+        [aria-label="智能盯盘视图"],
+        [aria-label="持仓分析视图"],
+        [aria-label="持仓情况视图"],
+        [aria-label="决策事件视图"]
+    ) > label[data-baseweb="radio"] > input[type="radio"]:checked + div p {
+        color: var(--investment-tab-text-active) !important;
+        font-weight: 500 !important;
     }
-    div[data-testid="stRadio"] > div[role="radiogroup"] > label[data-baseweb="radio"]:hover p {
-        color: var(--text-color) !important;
+    div[data-testid="stRadio"] > div[role="radiogroup"]:is(
+        [aria-label="投资工作台"],
+        [aria-label="智能盯盘视图"],
+        [aria-label="持仓分析视图"],
+        [aria-label="持仓情况视图"],
+        [aria-label="决策事件视图"]
+    ) > label[data-baseweb="radio"]:hover p {
+        color: var(--investment-tab-text-active) !important;
     }
     
     /* 专业卡片样式 */
@@ -1195,7 +1269,43 @@ def _clear_history_record_detail() -> None:
     st.session_state.pop("viewing_record_id", None)
 
 
-def _render_analysis_history_actions(record: Dict[str, Any], *, key_prefix: str) -> None:
+def _build_analysis_history_final_decision_display(record: Dict[str, Any]) -> Any:
+    raw_final_decision = record.get("final_decision") or {}
+    resolved_final_decision, _, _ = _resolve_final_decision_content(raw_final_decision)
+    if isinstance(resolved_final_decision, dict):
+        display = dict(resolved_final_decision)
+    elif isinstance(raw_final_decision, dict):
+        display = dict(raw_final_decision)
+    else:
+        return raw_final_decision
+
+    if record.get("rating") and not display.get("rating"):
+        display["rating"] = record.get("rating")
+    if record.get("confidence") is not None and display.get("confidence_level") in (None, ""):
+        display["confidence_level"] = record.get("confidence")
+    if record.get("target_price") is not None and display.get("target_price") in (None, ""):
+        display["target_price"] = record.get("target_price")
+    if record.get("entry_min") is not None and display.get("entry_min") is None:
+        display["entry_min"] = record.get("entry_min")
+    if record.get("entry_max") is not None and display.get("entry_max") is None:
+        display["entry_max"] = record.get("entry_max")
+    if record.get("take_profit") is not None and display.get("take_profit") in (None, ""):
+        display["take_profit"] = record.get("take_profit")
+    if record.get("stop_loss") is not None and display.get("stop_loss") in (None, ""):
+        display["stop_loss"] = record.get("stop_loss")
+
+    summary = str(record.get("summary") or "").strip()
+    if summary and not summary.startswith("评级:") and not display.get("operation_advice"):
+        display["operation_advice"] = summary
+    return display
+
+
+def _render_analysis_history_actions(
+    record: Dict[str, Any],
+    *,
+    key_prefix: str,
+    is_selected: bool = False,
+) -> None:
     record_id = record.get("id")
     is_in_portfolio = bool(record.get("is_in_portfolio"))
     action_payload = _build_analysis_record_action_payload(
@@ -1205,8 +1315,12 @@ def _render_analysis_history_actions(record: Dict[str, Any], *, key_prefix: str)
 
     col1, col2, col3, col4, col5 = st.columns(5)
     with col1:
-        if st.button("查看详情", key=f"{key_prefix}_view", width="stretch") and record_id:
-            st.session_state.viewing_record_id = int(record_id)
+        detail_label = "收起详情" if is_selected else "查看详情"
+        if st.button(detail_label, key=f"{key_prefix}_view", width="stretch") and record_id:
+            if is_selected:
+                _clear_history_record_detail()
+            else:
+                st.session_state.viewing_record_id = int(record_id)
             st.rerun()
     with col2:
         if st.button("加入盯盘", key=f"{key_prefix}_monitor", width="stretch", disabled=not action_payload):
@@ -1233,18 +1347,41 @@ def _render_analysis_history_actions(record: Dict[str, Any], *, key_prefix: str)
 
 
 def _render_analysis_history_record(record: Dict[str, Any], *, key_prefix: str) -> None:
+    record_id = record.get("id")
+    is_selected = bool(record_id) and st.session_state.get("viewing_record_id") == int(record_id)
+    final_decision_display = _build_analysis_history_final_decision_display(record)
     stock_name = record.get("stock_name") or record.get("symbol") or "未知股票"
     symbol = record.get("symbol") or ""
-    rating = record.get("rating") or "未评级"
+    rating = (
+        final_decision_display.get("rating")
+        if isinstance(final_decision_display, dict) and final_decision_display.get("rating")
+        else record.get("rating")
+    ) or "未评级"
     analysis_time = record.get("analysis_time_text") or record.get("analysis_date") or ""
     portfolio_state_label = record.get("portfolio_state_label") or "未持仓"
     source_label = record.get("analysis_source_label") or "历史分析"
     summary = str(record.get("summary") or "").strip()
+    if (
+        isinstance(final_decision_display, dict)
+        and final_decision_display.get("operation_advice")
+        and (not summary or summary.startswith("评级:"))
+    ):
+        summary = str(final_decision_display.get("operation_advice") or "").strip()
     account_name = record.get("account_name") or DEFAULT_ACCOUNT_NAME
+    preview_target_price = (
+        final_decision_display.get("target_price")
+        if isinstance(final_decision_display, dict)
+        else record.get("target_price")
+    )
+    preview_confidence = (
+        final_decision_display.get("confidence_level")
+        if isinstance(final_decision_display, dict)
+        else record.get("confidence")
+    )
 
     with st.expander(
         f"{stock_name} ({symbol}) | {rating} | {portfolio_state_label} | {analysis_time}",
-        expanded=False,
+        expanded=is_selected,
     ):
         st.caption(f"`{portfolio_state_label}`  `{source_label}`  账户: `{account_name}`")
         if summary:
@@ -1256,13 +1393,16 @@ def _render_analysis_history_record(record: Dict[str, Any], *, key_prefix: str) 
         with detail_col1:
             st.metric("数据周期", record.get("period") or "N/A")
         with detail_col2:
-            st.metric("目标价格", record.get("target_price") or "N/A")
+            st.metric("目标价格", preview_target_price or "N/A")
         with detail_col3:
-            st.metric("信心度", record.get("confidence") or "N/A")
+            st.metric("信心度", preview_confidence or "N/A")
         with detail_col4:
             st.metric("当前状态", record.get("linked_asset_status_label") or portfolio_state_label)
 
-        _render_analysis_history_actions(record, key_prefix=key_prefix)
+        _render_analysis_history_actions(record, key_prefix=key_prefix, is_selected=is_selected)
+        if is_selected and record_id:
+            st.markdown("---")
+            display_record_detail(int(record_id), show_heading=False, show_actions=False, show_back_button=False)
 
 
 def _clear_single_analysis_state() -> None:
@@ -2776,11 +2916,16 @@ def display_stock_chart(stock_data, stock_info):
 
 def display_reasoning_process(agents_results, discussion_result, expanded=False):
     """将推理过程放到统一折叠区块中展示。"""
-    shared_render_reasoning_process(agents_results, discussion_result, expanded=expanded)
+    shared_render_reasoning_process(
+        agents_results,
+        discussion_result,
+        expanded=expanded,
+        agents_display_mode="investment",
+    )
 
 def display_final_decision(final_decision, stock_info, agents_results=None, discussion_result=None):
     """显示最终投资决策"""
-    shared_render_final_decision(final_decision)
+    shared_render_final_decision(final_decision, display_mode="investment")
 
     # 添加PDF导出功能
     st.markdown("---")
@@ -2846,10 +2991,6 @@ def display_analysis_history_workspace() -> None:
     """显示统一分析历史页面。"""
     st.subheader("分析历史")
 
-    if st.session_state.get("viewing_record_id"):
-        display_record_detail(int(st.session_state.viewing_record_id))
-        st.markdown("---")
-
     state_col, account_col, search_col, action_col = st.columns([1.1, 1.2, 2.2, 0.8])
     with state_col:
         selected_portfolio_state = st.selectbox(
@@ -2894,9 +3035,16 @@ def display_history_records() -> None:
     display_analysis_history_workspace()
 
 
-def display_record_detail(record_id):
+def display_record_detail(
+    record_id,
+    *,
+    show_heading: bool = True,
+    show_actions: bool = True,
+    show_back_button: bool = True,
+):
     """显示单条记录的详细信息"""
-    st.markdown("### 记录详情")
+    if show_heading:
+        st.markdown("### 记录详情")
 
     record = analysis_history_service.get_record(record_id)
     if not record:
@@ -2922,25 +3070,13 @@ def display_record_detail(record_id):
         f"周期: `{record.get('period') or 'N/A'}`"
     )
 
-    final_decision = dict(record.get("final_decision") or {})
-    if record.get("rating") and not final_decision.get("rating"):
-        final_decision["rating"] = record.get("rating")
-    if record.get("confidence") is not None and final_decision.get("confidence_level") in (None, ""):
-        final_decision["confidence_level"] = record.get("confidence")
-    if record.get("target_price") is not None and final_decision.get("target_price") in (None, ""):
-        final_decision["target_price"] = record.get("target_price")
-    if record.get("entry_min") is not None and final_decision.get("entry_min") is None:
-        final_decision["entry_min"] = record.get("entry_min")
-    if record.get("entry_max") is not None and final_decision.get("entry_max") is None:
-        final_decision["entry_max"] = record.get("entry_max")
-    if record.get("take_profit") is not None and final_decision.get("take_profit") in (None, ""):
-        final_decision["take_profit"] = record.get("take_profit")
-    if record.get("stop_loss") is not None and final_decision.get("stop_loss") in (None, ""):
-        final_decision["stop_loss"] = record.get("stop_loss")
-    if record.get("summary") and not final_decision.get("operation_advice"):
-        final_decision["operation_advice"] = record.get("summary")
+    final_decision = _build_analysis_history_final_decision_display(record)
     if final_decision:
-        shared_render_final_decision(final_decision, show_header=True)
+        shared_render_final_decision(
+            final_decision,
+            show_header=True,
+            display_mode="investment",
+        )
 
     stock_info = record.get("stock_info") or {}
     if stock_info:
@@ -2950,7 +3086,12 @@ def display_record_detail(record_id):
     agents_results = record.get("agents_results") or {}
     if agents_results:
         st.subheader("分析师原始报告")
-        shared_render_agents_analysis_tabs(agents_results, show_header=False)
+        shared_render_agents_analysis_tabs(
+            agents_results,
+            show_header=False,
+            split_reasoning=True,
+            display_mode="investment",
+        )
 
     discussion_result = record.get("discussion_result")
     shared_render_reasoning_process(
@@ -2958,13 +3099,15 @@ def display_record_detail(record_id):
         discussion_result,
         expanded=False,
         include_agents=not bool(agents_results),
+        agents_display_mode="investment",
     )
 
-    st.markdown("---")
-    st.subheader("操作")
-    _render_analysis_history_actions(record, key_prefix=f"analysis_history_{record_id}_detail")
+    if show_actions:
+        st.markdown("---")
+        st.subheader("操作")
+        _render_analysis_history_actions(record, key_prefix=f"analysis_history_{record_id}_detail")
 
-    if st.button("返回历史列表", key=f"history_detail_back_{record_id}", width="content"):
+    if show_back_button and st.button("返回历史列表", key=f"history_detail_back_{record_id}", width="content"):
         _clear_history_record_detail()
         st.rerun()
 
