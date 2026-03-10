@@ -3052,7 +3052,7 @@ def display_config_manager():
     config_info = config_manager.get_config_info()
 
     # 创建标签页
-    tab1, tab2, tab3, tab4 = st.tabs(["基本配置", "数据源配置", "量化交易配置", "通知配置"])
+    tab1, tab2, tab3 = st.tabs(["基本配置", "数据源配置", "通知配置"])
 
     # 使用session_state保存临时配置
     if 'temp_config' not in st.session_state:
@@ -3300,64 +3300,6 @@ def display_config_manager():
 
 
     with tab3:
-        st.markdown("### MiniQMT量化交易配置（可选）")
-
-
-        # 启用开关
-        miniqmt_enabled_info = config_info["MINIQMT_ENABLED"]
-        current_enabled = st.session_state.temp_config.get("MINIQMT_ENABLED", "false") == "true"
-
-        new_enabled = st.checkbox(
-            "启用MiniQMT量化交易",
-            value=current_enabled,
-            help="开启后可以使用量化交易功能",
-            key="input_miniqmt_enabled"
-        )
-        st.session_state.temp_config["MINIQMT_ENABLED"] = "true" if new_enabled else "false"
-
-        # 其他配置
-        col1, col2 = st.columns(2)
-
-        with col1:
-            account_id_info = config_info["MINIQMT_ACCOUNT_ID"]
-            current_account_id = st.session_state.temp_config.get("MINIQMT_ACCOUNT_ID", "")
-
-            new_account_id = st.text_input(
-                f"{account_id_info['description']}",
-                value=current_account_id,
-                disabled=not new_enabled,
-                key="input_miniqmt_account_id"
-            )
-            st.session_state.temp_config["MINIQMT_ACCOUNT_ID"] = new_account_id
-
-            host_info = config_info["MINIQMT_HOST"]
-            current_host = st.session_state.temp_config.get("MINIQMT_HOST", "")
-
-            new_host = st.text_input(
-                f"{host_info['description']}",
-                value=current_host,
-                disabled=not new_enabled,
-                key="input_miniqmt_host"
-            )
-            st.session_state.temp_config["MINIQMT_HOST"] = new_host
-
-        with col2:
-            port_info = config_info["MINIQMT_PORT"]
-            current_port = st.session_state.temp_config.get("MINIQMT_PORT", "")
-
-            new_port = st.text_input(
-                f"{port_info['description']}",
-                value=current_port,
-                disabled=not new_enabled,
-                key="input_miniqmt_port"
-            )
-            st.session_state.temp_config["MINIQMT_PORT"] = new_port
-
-
-
-        st.warning("警告：量化交易涉及真实资金操作，请谨慎配置和使用！")
-
-    with tab4:
         st.markdown("### 通知配置")
 
 

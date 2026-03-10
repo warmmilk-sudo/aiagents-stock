@@ -20,6 +20,13 @@ class MonitoringRepository:
     BUSY_TIMEOUT_MILLISECONDS = 30000
     INDEX_MIGRATION_KEY = "monitoring_index_migration_v1"
     MANAGED_BINDING_REPAIR_KEY = "monitoring_managed_binding_repair_v1"
+    CONFIG_CLEANUP_MIGRATION_KEY = "monitoring_config_cleanup_v1"
+    DEPRECATED_CONFIG_KEYS = {
+        "auto_trade",
+        "qmt_account_id",
+        "quant_enabled",
+        "quant_config",
+    }
 
     def __init__(self, db_path: str = "investment.db"):
         self.seed_db_path = db_path
@@ -137,6 +144,7 @@ class MonitoringRepository:
             self._ensure_indexes(cursor)
             self._repair_managed_bindings_if_needed(cursor)
             self._repair_portfolio_state_drift(cursor)
+            self._cleanup_deprecated_config_keys_if_needed(cursor)
             conn.commit()
         finally:
             conn.close()
@@ -476,14 +484,52 @@ class MonitoringRepository:
         except (TypeError, json.JSONDecodeError):
             return default
 
+    @classmethod
+    def _sanitize_monitor_config(cls, config: Optional[Dict]) -> Dict:
+        sanitized = dict(config or {})
+        for key in cls.DEPRECATED_CONFIG_KEYS:
+            sanitized.pop(key, None)
+        return sanitized
+
     def _row_to_item(self, row: sqlite3.Row) -> Dict:
         data = dict(row)
         data["enabled"] = bool(data.get("enabled", 1))
         data["trading_hours_only"] = bool(data.get("trading_hours_only", 1))
         data["notification_enabled"] = bool(data.get("notification_enabled", 1))
         data["managed_by_portfolio"] = bool(data.get("managed_by_portfolio", 0))
-        data["config"] = self._safe_json_loads(data.get("config_json"), {})
+        data["config"] = self._sanitize_monitor_config(self._safe_json_loads(data.get("config_json"), {}))
         return data
+
+    def _cleanup_deprecated_config_keys_if_needed(self, cursor: sqlite3.Cursor) -> None:
+        if self._get_metadata_from_cursor(cursor, self.CONFIG_CLEANUP_MIGRATION_KEY):
+            return
+
+        cursor.execute("SELECT id, config_json FROM monitoring_items")
+        changed = 0
+        for row in cursor.fetchall():
+            item_id = int(row["id"])
+            config = self._safe_json_loads(row["config_json"], {})
+            sanitized = self._sanitize_monitor_config(config)
+            if sanitized == config:
+                continue
+            cursor.execute(
+                "UPDATE monitoring_items SET config_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (json.dumps(sanitized, ensure_ascii=False), item_id),
+            )
+            if cursor.rowcount > 0:
+                changed += 1
+
+        self._set_metadata_on_cursor(
+            cursor,
+            self.CONFIG_CLEANUP_MIGRATION_KEY,
+            json.dumps(
+                {
+                    "changed": changed,
+                    "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                },
+                ensure_ascii=False,
+            ),
+        )
 
     def _set_metadata(self, key: str, value: str) -> None:
         conn = self._connect()
@@ -659,7 +705,7 @@ class MonitoringRepository:
 
     def create_item(self, item_data: Dict) -> int:
         item_data = self._ensure_asset_binding(dict(item_data))
-        config = dict(item_data.get("config") or {})
+        config = self._sanitize_monitor_config(item_data.get("config") or {})
         account_name = item_data.get("account_name")
         if item_data.get("monitor_type") == "ai_task":
             account_name = account_name or DEFAULT_ACCOUNT_NAME
@@ -758,7 +804,9 @@ class MonitoringRepository:
 
         if "config" in updates:
             fields.append("config_json = ?")
-            values.append(json.dumps(updates["config"] or {}, ensure_ascii=False))
+            values.append(
+                json.dumps(self._sanitize_monitor_config(updates["config"] or {}), ensure_ascii=False)
+            )
 
         if not fields:
             return False
@@ -865,8 +913,9 @@ class MonitoringRepository:
         if not existing:
             return self.create_item(item_data)
 
-        merged_config = dict(existing.get("config") or {})
-        merged_config.update(item_data.get("config") or {})
+        merged_config = self._sanitize_monitor_config(existing.get("config") or {})
+        merged_config.update(self._sanitize_monitor_config(item_data.get("config") or {}))
+        merged_config = self._sanitize_monitor_config(merged_config)
         updates = {
             "name": item_data.get("name", existing["name"]),
             "source": item_data.get("source", existing.get("source", "manual")),
@@ -1286,11 +1335,9 @@ class MonitoringRepository:
 
             config = {
                 "task_name": task.get("task_name"),
-                "auto_trade": bool(task.get("auto_trade", 0)),
                 "position_size_pct": task.get("position_size_pct", 20),
                 "stop_loss_pct": task.get("stop_loss_pct", 5),
                 "take_profit_pct": task.get("take_profit_pct", 10),
-                "qmt_account_id": task.get("qmt_account_id"),
                 "notify_email": task.get("notify_email"),
                 "notify_webhook": task.get("notify_webhook"),
                 "has_position": bool(task.get("has_position", 0)),
@@ -1369,8 +1416,6 @@ class MonitoringRepository:
                 "entry_range": self._safe_json_loads(stock.get("entry_range"), {}),
                 "take_profit": stock.get("take_profit"),
                 "stop_loss": stock.get("stop_loss"),
-                "quant_enabled": bool(stock.get("quant_enabled", 0)),
-                "quant_config": self._safe_json_loads(stock.get("quant_config"), {}),
             }
             item_data = {
                 "symbol": stock["symbol"],

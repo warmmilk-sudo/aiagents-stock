@@ -1,3 +1,4 @@
+import os
 import sqlite3
 import tempfile
 import unittest
@@ -5,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 
 from analysis_repository import AnalysisRepository
+from asset_repository import AssetRepository
 from investment_action_utils import build_analysis_action_payload
 from investment_lifecycle_service import InvestmentLifecycleService
 from monitor_db import StockMonitorDatabase
@@ -18,8 +20,11 @@ class InvestmentDomainRefactorTests(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.base = Path(self.temp_dir.name)
+        self.original_cwd = os.getcwd()
+        os.chdir(self.base)
 
     def tearDown(self):
+        os.chdir(self.original_cwd)
         self.temp_dir.cleanup()
 
     def test_canonical_migration_is_idempotent_across_legacy_sources(self):
@@ -34,6 +39,7 @@ class InvestmentDomainRefactorTests(unittest.TestCase):
         self._create_legacy_smart_db(smart_db)
         self._create_legacy_monitor_db(monitor_db_path)
 
+        AssetRepository(str(canonical_db))
         AnalysisRepository(str(analysis_db))
         PortfolioDB(str(portfolio_db_path))
         SmartMonitorDB(str(smart_db))
@@ -42,9 +48,19 @@ class InvestmentDomainRefactorTests(unittest.TestCase):
         self.assertEqual(self._count_rows(canonical_db, "analysis_records"), 2)
         self.assertEqual(self._count_rows(canonical_db, "portfolio_stocks"), 1)
         self.assertEqual(self._count_rows(canonical_db, "monitoring_items"), 2)
-        self.assertEqual(self._count_rows(canonical_db, "assets"), 3)
+        self.assertEqual(self._count_rows(canonical_db, "assets"), 2)
         self.assertEqual(self._count_rows(canonical_db, "asset_trade_history"), 0)
+        monitoring_repo = MonitoringRepository(str(canonical_db))
+        ai_task = monitoring_repo.get_item_by_symbol("600519", monitor_type="ai_task")
+        price_alert = monitoring_repo.get_item_by_symbol("000001", monitor_type="price_alert")
+        self.assertIsNotNone(ai_task)
+        self.assertIsNotNone(price_alert)
+        self.assertNotIn("auto_trade", ai_task["config"])
+        self.assertNotIn("qmt_account_id", ai_task["config"])
+        self.assertNotIn("quant_enabled", price_alert["config"])
+        self.assertNotIn("quant_config", price_alert["config"])
 
+        AssetRepository(str(canonical_db))
         AnalysisRepository(str(analysis_db))
         PortfolioDB(str(portfolio_db_path))
         SmartMonitorDB(str(smart_db))
@@ -53,7 +69,7 @@ class InvestmentDomainRefactorTests(unittest.TestCase):
         self.assertEqual(self._count_rows(canonical_db, "analysis_records"), 2)
         self.assertEqual(self._count_rows(canonical_db, "portfolio_stocks"), 1)
         self.assertEqual(self._count_rows(canonical_db, "monitoring_items"), 2)
-        self.assertEqual(self._count_rows(canonical_db, "assets"), 3)
+        self.assertEqual(self._count_rows(canonical_db, "assets"), 2)
 
     def test_multi_account_ai_tasks_are_isolated(self):
         db = SmartMonitorDB(str(self.base / "smart_monitor.db"))
@@ -154,6 +170,20 @@ class InvestmentDomainRefactorTests(unittest.TestCase):
         self.assertEqual(task["strategy_context"]["entry_min"], 148.0)
         self.assertEqual(alert["take_profit"], 168.0)
         self.assertEqual(alert["stop_loss"], 142.0)
+        task_item = smart_monitor_db.monitoring_repository.get_item_by_symbol(
+            "300750",
+            monitor_type="ai_task",
+            account_name="默认账户",
+        )
+        alert_item = realtime_monitor_db.repository.get_item_by_symbol(
+            "300750",
+            monitor_type="price_alert",
+            account_name="默认账户",
+        )
+        self.assertNotIn("auto_trade", task_item["config"])
+        self.assertNotIn("qmt_account_id", task_item["config"])
+        self.assertNotIn("quant_enabled", alert_item["config"])
+        self.assertNotIn("quant_config", alert_item["config"])
 
     def test_apply_monitor_execution_full_sell_downgrades_to_watchlist(self):
         portfolio_db = PortfolioDB(str(self.base / "portfolio.db"))

@@ -1,3 +1,4 @@
+import json
 import sqlite3
 import tempfile
 import unittest
@@ -41,9 +42,55 @@ class MonitoringRepositoryTests(unittest.TestCase):
         self.assertEqual(len(items), 1)
         self.assertEqual(first_id, second_id)
         self.assertEqual(items[0]["interval_minutes"], 7)
-        self.assertTrue(items[0]["config"]["auto_trade"])
+        self.assertNotIn("auto_trade", items[0]["config"])
         self.assertEqual(items[0]["config"]["position_size_pct"], 20)
         self.assertEqual(items[0]["config"]["stop_loss_pct"], 6)
+
+    def test_repository_init_cleans_deprecated_config_keys_from_existing_items(self):
+        conn = self.repo._connect()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO monitoring_items (
+                symbol, name, monitor_type, config_json
+            ) VALUES (?, ?, ?, ?)
+            """,
+            (
+                "600000",
+                "浦发银行",
+                "ai_task",
+                json.dumps(
+                    {
+                        "auto_trade": True,
+                        "qmt_account_id": "acct-001",
+                        "quant_enabled": True,
+                        "quant_config": {"mode": "full"},
+                        "position_size_pct": 25,
+                    },
+                    ensure_ascii=False,
+                ),
+            ),
+        )
+        cursor.execute(
+            "DELETE FROM monitoring_metadata WHERE meta_key = ?",
+            (self.repo.CONFIG_CLEANUP_MIGRATION_KEY,),
+        )
+        conn.commit()
+        conn.close()
+
+        repaired_repo = MonitoringRepository(str(self.base / "monitoring.db"))
+        item = repaired_repo.get_item_by_symbol("600000", monitor_type="ai_task")
+
+        self.assertIsNotNone(item)
+        self.assertEqual(item["config"]["position_size_pct"], 25)
+        self.assertNotIn("auto_trade", item["config"])
+        self.assertNotIn("qmt_account_id", item["config"])
+        self.assertNotIn("quant_enabled", item["config"])
+        self.assertNotIn("quant_config", item["config"])
+        cleanup_meta = json.loads(
+            repaired_repo._get_metadata(repaired_repo.CONFIG_CLEANUP_MIGRATION_KEY)
+        )
+        self.assertEqual(cleanup_meta["changed"], 1)
 
     def test_due_items_respect_runtime_and_service_switch(self):
         item_id = self.repo.create_item(
@@ -159,8 +206,9 @@ class MonitoringRepositoryTests(unittest.TestCase):
         ai_task = self.repo.get_item_by_symbol("600519", monitor_type="ai_task")
         self.assertIsNotNone(ai_task)
         self.assertEqual(ai_task["interval_minutes"], 2)
-        self.assertTrue(ai_task["config"]["auto_trade"])
         self.assertTrue(ai_task["config"]["has_position"])
+        self.assertNotIn("auto_trade", ai_task["config"])
+        self.assertNotIn("qmt_account_id", ai_task["config"])
         self.assertFalse(ai_task["enabled"])
         self.assertEqual(ai_task["source"], "legacy_conflict")
 
@@ -171,6 +219,9 @@ class MonitoringRepositoryTests(unittest.TestCase):
         self.assertEqual(len(managed_items), 1)
         self.assertEqual(len(manual_items), 2)
         self.assertFalse(managed_items[0]["enabled"])
+        for item in price_alerts:
+            self.assertNotIn("quant_enabled", item["config"])
+            self.assertNotIn("quant_config", item["config"])
 
         conn = self.repo._connect()
         cursor = conn.cursor()

@@ -64,21 +64,6 @@ TDX_ENABLED=false
 # TDX API服务地址（默认本地运行，可改为局域网IP）
 TDX_BASE_URL=http://127.0.0.1:8181
 
-
-# ========== MiniQMT量化交易配置（可选）==========
-# 是否启用MiniQMT量化交易接口
-MINIQMT_ENABLED=false
-
-# MiniQMT账户ID
-MINIQMT_ACCOUNT_ID=
-
-# MiniQMT服务器地址
-MINIQMT_HOST=127.0.0.1
-
-# MiniQMT服务器端口
-MINIQMT_PORT=58610
-
-
 # ========== 邮件通知配置（可选）==========
 # 是否启用邮件通知
 EMAIL_ENABLED=false

@@ -19,7 +19,6 @@ from monitor_service import monitor_service
 from notification_service import notification_service
 from stock_data import StockDataFetcher
 from stock_data_cache import extract_cache_meta, strip_cache_meta
-from miniqmt_interface import miniqmt, get_miniqmt_status, QuantStrategyConfig
 from ui_shared import format_price, get_recommendation_color
 from ui_state_keys import (
     INVESTMENT_PRICE_ALERT_PREFILL_KEY,
@@ -52,7 +51,7 @@ def _legacy_display_monitor_manager():
 def display_monitor_status():
     """显示监测服务状态"""
     
-    col1, col2, col3, col4, col5, col6 = st.columns(6)
+    col1, col2, col3, col4, col5 = st.columns(5)
     
     with col1:
         if monitor_service.running:
@@ -69,14 +68,6 @@ def display_monitor_status():
         st.metric("待处理通知", len(notifications))
     
     with col4:
-        # 显示MiniQMT状态
-        qmt_status = get_miniqmt_status()
-        if qmt_status['ready']:
-            st.success("🤖 QMT在线")
-        else:
-            st.info("🤖 QMT离线")
-    
-    with col5:
         if monitor_service.running:
             if st.button("⏹️ 停止监测", type="secondary"):
                 monitor_service.stop_monitoring()
@@ -88,7 +79,7 @@ def display_monitor_status():
                 st.success("✅ 监测服务已启动")
                 st.rerun()
     
-    with col6:
+    with col5:
         if st.button("🔄 刷新状态"):
             st.rerun()
     
@@ -197,32 +188,13 @@ def display_add_stock_section():
                 key="price_alert_form_rating",
             )
             
-            # 量化交易设置
-            st.markdown("**🤖 量化交易（MiniQMT）**")
-            quant_enabled = st.checkbox("启用量化自动交易", value=False, help="需要先配置MiniQMT连接")
-            
-            if quant_enabled:
-                max_position_pct = st.slider("最大仓位比例", 0.05, 0.5, 0.2, 0.05, help="单只股票最大占总资金的比例")
-                auto_stop_loss = st.checkbox("自动止损", value=True)
-                auto_take_profit = st.checkbox("自动止盈", value=True)
-        
         # 添加按钮
         if st.button("保存价格预警", type="primary", width='stretch'):
             if symbol and entry_min > 0 and entry_max > 0 and entry_max > entry_min:
                 try:
                     # 准备数据
                     entry_range = {"min": entry_min, "max": entry_max}
-                    
-                    # 准备量化配置
-                    quant_config = None
-                    if quant_enabled:
-                        quant_config = {
-                            'max_position_pct': max_position_pct,
-                            'auto_stop_loss': auto_stop_loss,
-                            'auto_take_profit': auto_take_profit,
-                            'min_trade_amount': 5000
-                        }
-                    
+
                     # 添加到数据库
                     stock_id = monitor_db.add_monitored_stock(
                         symbol=symbol.strip().upper(),
@@ -233,8 +205,6 @@ def display_add_stock_section():
                         stop_loss=stop_loss if stop_loss > 0 else None,
                         check_interval=check_interval,
                         notification_enabled=notification_enabled,
-                        quant_enabled=quant_enabled,
-                        quant_config=quant_config,
                         account_name=(account_name or DEFAULT_ACCOUNT_NAME).strip() or DEFAULT_ACCOUNT_NAME,
                         origin_analysis_id=st.session_state.get("price_alert_form_origin_analysis_id"),
                     )
@@ -343,7 +313,6 @@ def display_stock_card(stock: Dict):
             last_checked_text = str(stock["last_checked"])
 
     notify_text = "通知开启" if stock.get("notification_enabled") else "通知关闭"
-    quant_text = "量化开启" if stock.get("quant_enabled", False) else "量化关闭"
     rating = stock.get("rating", "未评级")
     rating_color = get_recommendation_color(rating)
 
@@ -377,7 +346,7 @@ def display_stock_card(stock: Dict):
         with info_col2:
             st.caption(f"监测间隔: {stock['check_interval']} 分钟")
             st.caption(f"最后检查: {last_checked_text}")
-            st.caption(f"{notify_text} · {quant_text}")
+            st.caption(notify_text)
 
         action_col1, action_col2 = st.columns(2)
 
@@ -447,17 +416,6 @@ def _legacy_display_edit_dialog(stock_id: int):
             rating = st.selectbox("投资评级", ["买入", "持有", "卖出"], 
                                  index=["买入", "持有", "卖出"].index(stock['rating']) if stock['rating'] in ["买入", "持有", "卖出"] else 0)
             notification_enabled = st.checkbox("启用通知", value=stock['notification_enabled'])
-            
-            # 量化交易设置
-            st.markdown("**🤖 量化交易**")
-            quant_enabled = st.checkbox("启用量化自动交易", value=stock.get('quant_enabled', False))
-            
-            if quant_enabled:
-                quant_config = stock.get('quant_config', {})
-                max_position_pct = st.slider("最大仓位比例", 0.05, 0.5, 
-                                            quant_config.get('max_position_pct', 0.2), 0.05)
-                auto_stop_loss = st.checkbox("自动止损", value=quant_config.get('auto_stop_loss', True))
-                auto_take_profit = st.checkbox("自动止盈", value=quant_config.get('auto_take_profit', True))
         
         col1, col2, col3 = st.columns(3)
         
@@ -472,17 +430,7 @@ def _legacy_display_edit_dialog(stock_id: int):
                 try:
                     # 更新数据库
                     new_entry_range = {"min": entry_min, "max": entry_max}
-                    
-                    # 准备量化配置
-                    new_quant_config = None
-                    if quant_enabled:
-                        new_quant_config = {
-                            'max_position_pct': max_position_pct,
-                            'auto_stop_loss': auto_stop_loss,
-                            'auto_take_profit': auto_take_profit,
-                            'min_trade_amount': 5000
-                        }
-                    
+
                     monitor_db.update_monitored_stock(
                         stock_id=stock_id,
                         rating=rating,
@@ -491,8 +439,6 @@ def _legacy_display_edit_dialog(stock_id: int):
                         stop_loss=stop_loss if stop_loss > 0 else None,
                         check_interval=check_interval,
                         notification_enabled=notification_enabled,
-                        quant_enabled=quant_enabled,
-                        quant_config=new_quant_config
                     )
                     
                     st.success("✅ 修改已保存")
@@ -570,10 +516,6 @@ def display_notification_management():
     """显示通知管理"""
     
     st.markdown("### 🔔 通知管理")
-    
-    # 显示MiniQMT量化交易状态
-    display_miniqmt_status()
-    
     st.markdown("---")
     
     # 通知设置
@@ -648,7 +590,6 @@ def display_notification_management():
                     'entry': '入场',
                     'take_profit': '止盈',
                     'stop_loss': '止损',
-                    'quant_trade': '量化'
                 }
                 icon = color_map.get(notification_type, '通知')
                 
@@ -678,82 +619,6 @@ def display_notification_management():
                     st.rerun()
         else:
             st.info("📭 暂无通知")
-
-def display_miniqmt_status():
-    """显示MiniQMT量化交易状态"""
-    st.markdown("### 🤖 MiniQMT量化交易")
-    
-    qmt_status = get_miniqmt_status()
-    
-    col1, col2 = st.columns([1, 1])
-    
-    with col1:
-        st.subheader("📊 连接状态")
-        
-        if qmt_status['enabled']:
-            st.success("✅ MiniQMT已启用")
-        else:
-            st.warning("⚠️ MiniQMT未启用")
-        
-        if qmt_status['connected']:
-            st.success("✅ 已连接到MiniQMT")
-        else:
-            st.info("⏸️ 未连接到MiniQMT")
-        
-        if qmt_status['account_id']:
-            st.info(f"**账户ID**: {qmt_status['account_id']}")
-        else:
-            st.caption("未配置账户ID")
-        
-        st.markdown("---")
-        st.markdown("**⚙️ 配置说明**")
-        st.caption("""
-        在 `config.py` 中配置以下参数：
-        ```python
-        MINIQMT_CONFIG = {
-            'enabled': True,
-            'account_id': 'your_account_id'
-        }
-        ```
-        
-        💡 提示：
-        - 需要安装并启动MiniQMT客户端
-        - 确保账户已登录
-        - 预留接口已实现，可对接真实交易
-        """)
-    
-    with col2:
-        st.subheader("📈 量化统计")
-        
-        # 统计启用量化的股票
-        stocks = monitor_db.get_monitored_stocks()
-        quant_stocks = [s for s in stocks if s.get('quant_enabled', False)]
-        
-        st.metric("启用量化的股票", f"{len(quant_stocks)}/{len(stocks)}")
-        
-        if quant_stocks:
-            st.markdown("**量化监测列表：**")
-            for stock in quant_stocks:
-                st.caption(f"🤖 {stock['symbol']} - {stock['name']}")
-        else:
-            st.info("暂无启用量化交易的股票")
-        
-        st.markdown("---")
-        
-        # 连接按钮
-        if qmt_status['enabled'] and not qmt_status['connected']:
-            if st.button("🔗 连接MiniQMT", type="primary", width='stretch'):
-                success, msg = miniqmt.connect()
-                if success:
-                    st.success(f"✅ {msg}")
-                else:
-                    st.error(f"❌ {msg}")
-                st.rerun()
-        elif qmt_status['connected']:
-            if st.button("🔌 断开连接", width='stretch'):
-                if miniqmt.disconnect():
-                    st.info("⏸️ 已断开MiniQMT连接")
-                    st.rerun()
 
 def display_scheduler_section():
     """显示定时调度配置区域"""

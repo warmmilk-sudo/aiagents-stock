@@ -69,11 +69,9 @@ class InvestmentLifecycleService:
             "origin_analysis_id": origin_analysis_id,
             "config": {
                 "task_name": task_name,
-                "auto_trade": bool(existing_config.get("auto_trade", False)),
                 "position_size_pct": existing_config.get("position_size_pct", 20),
                 "stop_loss_pct": existing_config.get("stop_loss_pct", 5),
                 "take_profit_pct": existing_config.get("take_profit_pct", 10),
-                "qmt_account_id": existing_config.get("qmt_account_id"),
                 "notify_email": existing_config.get("notify_email"),
                 "notify_webhook": existing_config.get("notify_webhook"),
                 "has_position": has_position,
@@ -113,8 +111,6 @@ class InvestmentLifecycleService:
                 "entry_range": {"min": float(entry_min), "max": float(entry_max)},
                 "take_profit": float(take_profit),
                 "stop_loss": float(stop_loss),
-                "quant_enabled": bool(existing_config.get("quant_enabled", False)),
-                "quant_config": existing_config.get("quant_config") or {},
                 "strategy_context": strategy_context,
             },
         }

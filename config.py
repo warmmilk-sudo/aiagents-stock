@@ -70,13 +70,6 @@ DATA_PERIOD = _safe_str_env("DATA_PERIOD", "1y")
 DEFAULT_INTERVAL = "1d"
 RISK_QUERY_TIMEOUT_SECONDS = _safe_int_env("RISK_QUERY_TIMEOUT_SECONDS", 10)
 
-MINIQMT_CONFIG = {
-    "enabled": _safe_str_env("MINIQMT_ENABLED", "false").lower() == "true",
-    "account_id": _safe_str_env("MINIQMT_ACCOUNT_ID", ""),
-    "host": _safe_str_env("MINIQMT_HOST", "127.0.0.1"),
-    "port": _safe_int_env("MINIQMT_PORT", 58610),
-}
-
 TDX_CONFIG = {
     "enabled": _safe_str_env("TDX_ENABLED", "false").lower() == "true",
     "base_url": _safe_str_env("TDX_BASE_URL", "http://127.0.0.1:8181"),

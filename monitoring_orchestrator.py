@@ -5,7 +5,6 @@ import time
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from miniqmt_interface import miniqmt
 from monitor_db import monitor_db
 from monitoring_repository import MonitoringRepository
 from notification_service import notification_service
@@ -156,7 +155,6 @@ class MonitoringOrchestrator:
         config = item.get("config") or {}
         result = self.engine.analyze_stock(
             stock_code=item["symbol"],
-            auto_trade=False,
             notify=bool(item.get("notification_enabled", True)),
             trading_hours_only=bool(item.get("trading_hours_only", True)),
             account_name=item.get("account_name"),
@@ -271,8 +269,6 @@ class MonitoringOrchestrator:
                     )
                     monitor_db.add_notification(stock["id"], "entry", message)
                     notification_service.send_notifications()
-                if stock.get("quant_enabled", False):
-                    self._execute_quant_trade(stock, "entry", current_price)
 
         if take_profit and current_price >= take_profit:
             if not monitor_db.has_recent_notification(stock["id"], "take_profit", minutes=60):
@@ -282,8 +278,6 @@ class MonitoringOrchestrator:
                 )
                 monitor_db.add_notification(stock["id"], "take_profit", message)
                 notification_service.send_notifications()
-            if stock.get("quant_enabled", False):
-                self._execute_quant_trade(stock, "take_profit", current_price)
 
         if stop_loss and current_price <= stop_loss:
             if not monitor_db.has_recent_notification(stock["id"], "stop_loss", minutes=60):
@@ -293,41 +287,6 @@ class MonitoringOrchestrator:
                 )
                 monitor_db.add_notification(stock["id"], "stop_loss", message)
                 notification_service.send_notifications()
-            if stock.get("quant_enabled", False):
-                self._execute_quant_trade(stock, "stop_loss", current_price)
-
-    def _execute_quant_trade(self, stock: Dict, signal_type: str, current_price: float):
-        try:
-            if not miniqmt.is_connected():
-                self.logger.warning(f"MiniQMT未连接，无法执行 {stock['symbol']} 的量化交易")
-                return
-
-            quant_config = stock.get("quant_config", {})
-            if not quant_config:
-                self.logger.warning(f"[{stock['symbol']}] 未配置量化参数")
-                return
-
-            signal = {
-                "type": signal_type,
-                "price": current_price,
-                "message": f"{signal_type} signal triggered",
-            }
-            position_size = quant_config.get("max_position_pct", 0.2)
-            success, msg = miniqmt.execute_strategy_signal(
-                stock["id"],
-                stock["symbol"],
-                signal,
-                position_size,
-            )
-            if success:
-                monitor_db.add_notification(stock["id"], "quant_trade", f"量化交易执行: {msg}")
-                notification_service.send_notifications()
-            else:
-                self.logger.warning(f"[{stock['symbol']}] 量化交易失败: {msg}")
-        except (ValueError, TypeError, RuntimeError, OSError, ConnectionError, TimeoutError) as exc:
-            self.logger.warning(f"[{stock['symbol']}] 执行量化交易失败，已降级: {exc}")
-        except Exception:
-            self.logger.exception("[%s] 执行量化交易出现未知异常", stock.get("symbol", "UNKNOWN"))
 
     def _is_trading_time(self) -> bool:
         try:

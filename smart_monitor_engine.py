@@ -1,6 +1,6 @@
 """
 智能盯盘 - 主引擎
-整合DeepSeek AI决策、数据获取、交易执行、通知等功能
+整合DeepSeek AI决策、数据获取、待办生成、通知等功能
 """
 
 import logging
@@ -11,7 +11,6 @@ import threading
 
 from smart_monitor_deepseek import SmartMonitorDeepSeek
 from smart_monitor_data import SmartMonitorDataFetcher
-from smart_monitor_qmt import SmartMonitorQMT, SmartMonitorQMTSimulator
 from smart_monitor_db import SmartMonitorDB
 from notification_service import notification_service  # 复用主程序的通知服务
 from config_manager import config_manager  # 复用主程序的配置管理器
@@ -24,8 +23,7 @@ from internal_events import event_bus, Events
 class SmartMonitorEngine:
     """智能盯盘引擎"""
     
-    def __init__(self, deepseek_api_key: str = None, qmt_account_id: str = None,
-                 use_simulator: bool = None, model: str = None,
+    def __init__(self, deepseek_api_key: str = None, model: str = None,
                  lightweight_model: str = None, reasoning_model: str = None,
                  lifecycle_service: InvestmentLifecycleService = None):
         """
@@ -33,8 +31,6 @@ class SmartMonitorEngine:
         
         Args:
             deepseek_api_key: DeepSeek API密钥（可选，从配置读取）
-            qmt_account_id: miniQMT账户ID（可选，从配置读取）
-            use_simulator: 是否使用模拟交易（可选，从配置读取）
         """
         self.logger = logging.getLogger(__name__)
         
@@ -44,15 +40,6 @@ class SmartMonitorEngine:
         # DeepSeek API
         if deepseek_api_key is None:
             deepseek_api_key = config.get('DEEPSEEK_API_KEY', '')
-        
-        # MiniQMT配置
-        if qmt_account_id is None:
-            qmt_account_id = config.get('MINIQMT_ACCOUNT_ID', '')
-        
-        if use_simulator is None:
-            # 如果MINIQMT_ENABLED=false，则使用模拟器
-            miniqmt_enabled = config.get('MINIQMT_ENABLED', 'false').lower() == 'true'
-            use_simulator = not miniqmt_enabled
 
         self.model = model
         self.lightweight_model = lightweight_model
@@ -69,26 +56,6 @@ class SmartMonitorEngine:
         self.db = SmartMonitorDB()
         self.notification = notification_service  # 使用主程序的通知服务
         self.lifecycle_service = lifecycle_service or investment_lifecycle_service
-        
-        # 初始化交易接口
-        if use_simulator:
-            self.qmt = SmartMonitorQMTSimulator()
-            self.qmt.connect(qmt_account_id or "simulator")
-            self.logger.info("使用模拟交易模式")
-        else:
-            self.qmt = SmartMonitorQMT()
-            if qmt_account_id:
-                success = self.qmt.connect(qmt_account_id)
-                if success:
-                    self.logger.info(f"已连接miniQMT账户: {qmt_account_id}")
-                else:
-                    self.logger.warning(f"连接miniQMT失败，切换到模拟模式")
-                    self.qmt = SmartMonitorQMTSimulator()
-                    self.qmt.connect("simulator")
-            else:
-                self.logger.warning("未配置miniQMT账户，使用模拟模式")
-                self.qmt = SmartMonitorQMTSimulator()
-                self.qmt.connect("simulator")
         
         # 监控控制(保留字典为了停止特定监控时注销事件)
         self.monitoring_stocks = set()
@@ -111,13 +78,38 @@ class SmartMonitorEngine:
             lightweight_model=lightweight_model,
             reasoning_model=reasoning_model,
         )
+
+    @staticmethod
+    def _build_manual_account_info(
+        asset: Optional[Dict],
+        *,
+        has_position: bool,
+        position_cost: float,
+        position_quantity: int,
+    ) -> Dict:
+        total_value = 0.0
+        if has_position:
+            total_value = round(position_cost * position_quantity, 3)
+
+        account_info = {
+            "available_cash": 0.0,
+            "total_value": total_value,
+            "positions_count": 1 if has_position else 0,
+            "total_profit_loss": 0.0,
+        }
+        if has_position:
+            account_info["current_position"] = {
+                "quantity": position_quantity,
+                "cost_price": position_cost,
+                "status": (asset or {}).get("status"),
+            }
+        return account_info
     
-    def analyze_stock(self, stock_code: str, auto_trade: bool = False,
-                     notify: bool = True, has_position: bool = False,
-                     position_cost: float = 0, position_quantity: int = 0,
-                     trading_hours_only: bool = True,
-                     account_name: str = DEFAULT_ACCOUNT_NAME,
-                     asset_id: Optional[int] = None,
+    def analyze_stock(self, stock_code: str, notify: bool = True, has_position: bool = False,
+                      position_cost: float = 0, position_quantity: int = 0,
+                      trading_hours_only: bool = True,
+                      account_name: str = DEFAULT_ACCOUNT_NAME,
+                      asset_id: Optional[int] = None,
                      portfolio_stock_id: Optional[int] = None,
                      strategy_context: Optional[Dict] = None) -> Dict:
         """
@@ -125,7 +117,6 @@ class SmartMonitorEngine:
         
         Args:
             stock_code: 股票代码
-            auto_trade: 是否自动交易
             notify: 是否发送通知
             has_position: 是否已持仓（可选）
             position_cost: 持仓成本（可选）
@@ -160,9 +151,6 @@ class SmartMonitorEngine:
                     'error': '获取市场数据失败'
                 }
             
-            # 3. 获取账户信息
-            account_info = self.qmt.get_account_info()
-
             task_context = self.db.get_monitor_task_by_code(
                 stock_code,
                 account_name=account_name,
@@ -182,11 +170,12 @@ class SmartMonitorEngine:
                 has_position = asset.get("status") == STATUS_PORTFOLIO and int(asset.get("quantity") or 0) > 0
                 position_cost = float(asset.get("cost_price") or 0)
                 position_quantity = int(asset.get("quantity") or 0)
-                account_info["current_position"] = {
-                    "quantity": position_quantity,
-                    "cost_price": position_cost,
-                    "status": asset.get("status"),
-                }
+            account_info = self._build_manual_account_info(
+                asset,
+                has_position=has_position,
+                position_cost=position_cost,
+                position_quantity=position_quantity,
+            )
             if strategy_context is None:
                 strategy_context = task_context.get("strategy_context") or {}
             if strategy_context is None or not strategy_context:
@@ -354,203 +343,6 @@ class SmartMonitorEngine:
             "pending_action_id": pending_action_id,
             "message": f"已创建待人工处理动作: {decision.get('action')}",
         }
-    
-    def _execute_decision(self, stock_code: str, decision: Dict,
-                         market_data: Dict, has_position: bool,
-                         account_name: str = DEFAULT_ACCOUNT_NAME,
-                         portfolio_stock_id: Optional[int] = None,
-                         origin_analysis_id: Optional[int] = None,
-                         ai_decision_id: Optional[int] = None) -> Dict:
-        """
-        执行AI决策
-        
-        Args:
-            stock_code: 股票代码
-            decision: AI决策
-            market_data: 市场数据
-            has_position: 是否已持有
-            
-        Returns:
-            执行结果
-        """
-        action = decision['action']
-        
-        try:
-            if action == 'BUY' and not has_position:
-                # 买入逻辑
-                return self._execute_buy(
-                    stock_code, decision, market_data,
-                    account_name=account_name,
-                    portfolio_stock_id=portfolio_stock_id,
-                    origin_analysis_id=origin_analysis_id,
-                    ai_decision_id=ai_decision_id,
-                )
-            
-            elif action == 'SELL' and has_position:
-                # 卖出逻辑
-                return self._execute_sell(
-                    stock_code, decision, market_data,
-                    account_name=account_name,
-                    portfolio_stock_id=portfolio_stock_id,
-                    origin_analysis_id=origin_analysis_id,
-                    ai_decision_id=ai_decision_id,
-                )
-            
-            elif action == 'HOLD':
-                # 持有，不操作
-                return {
-                    'success': True,
-                    'action': 'HOLD',
-                    'message': 'AI建议持有，未执行交易'
-                }
-            
-            else:
-                return {
-                    'success': False,
-                    'error': f'无效操作: {action}'
-                }
-                
-        except Exception as e:
-            self.logger.error(f"[{stock_code}] 执行交易失败: {e}")
-            return {
-                'success': False,
-                'error': str(e)
-            }
-    
-    def _execute_buy(
-        self,
-        stock_code: str,
-        decision: Dict,
-        market_data: Dict,
-        account_name: str = DEFAULT_ACCOUNT_NAME,
-        portfolio_stock_id: Optional[int] = None,
-        origin_analysis_id: Optional[int] = None,
-        ai_decision_id: Optional[int] = None,
-    ) -> Dict:
-        """执行买入"""
-        try:
-            # 获取账户信息
-            account_info = self.qmt.get_account_info()
-            available_cash = account_info['available_cash']
-            
-            # 计算买入金额
-            position_size_pct = decision.get('position_size_pct', 20)
-            buy_amount = available_cash * (position_size_pct / 100)
-            
-            # 计算买入数量（必须是100的整数倍）
-            current_price = market_data['current_price']
-            quantity = int(buy_amount / current_price / 100) * 100
-            
-            if quantity < 100:
-                return {
-                    'success': False,
-                    'error': f'资金不足，最少需要买入100股（约{current_price * 100:.2f}元）'
-                }
-            
-            # 执行买入
-            result = self.qmt.buy_stock(
-                stock_code=stock_code,
-                quantity=quantity,
-                price=current_price,
-                order_type='market'
-            )
-            
-            if result['success']:
-                lifecycle_result = self.lifecycle_service.apply_monitor_execution(
-                    stock_code=stock_code,
-                    stock_name=market_data.get('name') or stock_code,
-                    trade_type='buy',
-                    quantity=quantity,
-                    price=current_price,
-                    account_name=account_name,
-                    portfolio_stock_id=portfolio_stock_id,
-                    origin_analysis_id=origin_analysis_id,
-                    ai_decision_id=ai_decision_id,
-                    order_id=result.get('order_id'),
-                    order_status='已提交',
-                    trade_source='ai_monitor',
-                )
-                result['lifecycle_result'] = lifecycle_result
-                
-                self.logger.info(f"[{stock_code}] 买入成功: {quantity}股 @ {current_price:.2f}元")
-            
-            return result
-            
-        except Exception as e:
-            self.logger.error(f"[{stock_code}] 买入失败: {e}")
-            return {
-                'success': False,
-                'error': str(e)
-            }
-    
-    def _execute_sell(
-        self,
-        stock_code: str,
-        decision: Dict,
-        market_data: Dict,
-        account_name: str = DEFAULT_ACCOUNT_NAME,
-        portfolio_stock_id: Optional[int] = None,
-        origin_analysis_id: Optional[int] = None,
-        ai_decision_id: Optional[int] = None,
-    ) -> Dict:
-        """执行卖出"""
-        try:
-            # 获取持仓
-            position = self.qmt.get_position(stock_code)
-            if not position:
-                return {
-                    'success': False,
-                    'error': '未持有该股票'
-                }
-            
-            # 可卖数量（考虑T+1限制）
-            can_sell = position['can_sell']
-            if can_sell <= 0:
-                return {
-                    'success': False,
-                    'error': 'T+1限制，今天买入的股票明天才能卖出'
-                }
-            
-            # 执行卖出
-            current_price = market_data['current_price']
-            result = self.qmt.sell_stock(
-                stock_code=stock_code,
-                quantity=can_sell,
-                price=current_price,
-                order_type='market'
-            )
-            
-            if result['success']:
-                # 计算盈亏
-                profit_loss = (current_price - position['cost_price']) * can_sell
-                lifecycle_result = self.lifecycle_service.apply_monitor_execution(
-                    stock_code=stock_code,
-                    stock_name=market_data.get('name') or stock_code,
-                    trade_type='sell',
-                    quantity=can_sell,
-                    price=current_price,
-                    account_name=account_name,
-                    portfolio_stock_id=portfolio_stock_id,
-                    origin_analysis_id=origin_analysis_id,
-                    ai_decision_id=ai_decision_id,
-                    order_id=result.get('order_id'),
-                    order_status='已提交',
-                    trade_source='ai_monitor',
-                )
-                result['lifecycle_result'] = lifecycle_result
-                
-                self.logger.info(f"[{stock_code}] 卖出成功: {can_sell}股 @ {current_price:.2f}元, "
-                               f"盈亏: {profit_loss:+.2f}元")
-            
-            return result
-            
-        except Exception as e:
-            self.logger.error(f"[{stock_code}] 卖出失败: {e}")
-            return {
-                'success': False,
-                'error': str(e)
-            }
-    
     def _send_notification(
         self,
         stock_code: str,
@@ -674,7 +466,6 @@ class SmartMonitorEngine:
         self,
         stock_code: str,
         check_interval: int = 300,
-        auto_trade: bool = False,
         notify: bool = True,
         has_position: bool = False,
         position_cost: float = 0,
@@ -690,7 +481,6 @@ class SmartMonitorEngine:
         self.monitoring_stocks.add(stock_code)
         self.monitoring_contexts[stock_code] = {
             'check_interval': check_interval,
-            'auto_trade': auto_trade,
             'notify': notify,
             'has_position': has_position,
             'position_cost': position_cost,
@@ -703,7 +493,7 @@ class SmartMonitorEngine:
         }
         self.logger.info(
             f"[{stock_code}] 启动AI监控: interval={check_interval}s "
-            f"auto_trade={auto_trade} trading_hours_only={trading_hours_only}"
+            f"trading_hours_only={trading_hours_only}"
         )
 
     def stop_monitor(self, stock_code: str):
@@ -723,7 +513,6 @@ class SmartMonitorEngine:
 
         task = self.db.get_monitor_task_by_code(stock_code)
         if task:
-            context.setdefault('auto_trade', bool(task.get('auto_trade', 0)))
             context.setdefault('notify', True)
             context.setdefault('trading_hours_only', bool(task.get('trading_hours_only', 1)))
             context.setdefault('account_name', task.get('account_name') or DEFAULT_ACCOUNT_NAME)
@@ -733,7 +522,6 @@ class SmartMonitorEngine:
 
         result = self.analyze_stock(
             stock_code=stock_code,
-            auto_trade=bool(context.get('auto_trade', False)),
             notify=bool(context.get('notify', True)),
             has_position=bool(context.get('has_position', False)),
             position_cost=float(context.get('position_cost', 0) or 0),
@@ -765,15 +553,13 @@ if __name__ == '__main__':
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
     
-    # 使用模拟模式测试
     engine = SmartMonitorEngine(
         deepseek_api_key=os.getenv('DEEPSEEK_API_KEY'),
-        use_simulator=True
     )
     
     # 测试分析贵州茅台
     print("\n测试分析贵州茅台(600519)...")
-    result = engine.analyze_stock('600519', auto_trade=False, notify=False)
+    result = engine.analyze_stock('600519', notify=False)
     
     if result['success']:
         print(f"\n分析成功!")

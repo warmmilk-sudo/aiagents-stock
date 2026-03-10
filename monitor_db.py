@@ -18,16 +18,12 @@ class StockMonitorDatabase:
         entry_range: Optional[Dict],
         take_profit: Optional[float],
         stop_loss: Optional[float],
-        quant_enabled: bool = False,
-        quant_config: Optional[Dict] = None,
     ) -> Dict:
         return {
             "rating": rating,
             "entry_range": entry_range or {},
             "take_profit": take_profit,
             "stop_loss": stop_loss,
-            "quant_enabled": bool(quant_enabled),
-            "quant_config": quant_config or {},
         }
 
     @staticmethod
@@ -46,8 +42,6 @@ class StockMonitorDatabase:
             "check_interval": item.get("interval_minutes", 30),
             "notification_enabled": bool(item.get("notification_enabled", True)),
             "trading_hours_only": bool(item.get("trading_hours_only", True)),
-            "quant_enabled": bool(config.get("quant_enabled", False)),
-            "quant_config": config.get("quant_config") or {},
             "managed_by_portfolio": bool(item.get("managed_by_portfolio", False)),
             "account_name": item.get("account_name"),
             "asset_id": item.get("asset_id"),
@@ -68,8 +62,6 @@ class StockMonitorDatabase:
         check_interval: int = 30,
         notification_enabled: bool = True,
         trading_hours_only: bool = True,
-        quant_enabled: bool = False,
-        quant_config: Dict = None,
         managed_by_portfolio: bool = False,
         account_name: Optional[str] = None,
         asset_id: Optional[int] = None,
@@ -95,8 +87,6 @@ class StockMonitorDatabase:
                 entry_range,
                 take_profit,
                 stop_loss,
-                quant_enabled=quant_enabled,
-                quant_config=quant_config,
             ),
         }
         if managed_by_portfolio:
@@ -157,15 +147,12 @@ class StockMonitorDatabase:
         check_interval: int,
         notification_enabled: bool,
         trading_hours_only: bool = None,
-        quant_enabled: bool = None,
-        quant_config: Dict = None,
         managed_by_portfolio: Optional[bool] = None,
     ):
         item = self.repository.get_item(stock_id)
         if not item or item.get("monitor_type") != "price_alert":
             return False
 
-        current_config = dict(item.get("config") or {})
         updates = {
             "interval_minutes": check_interval,
             "notification_enabled": notification_enabled,
@@ -174,8 +161,6 @@ class StockMonitorDatabase:
                 entry_range,
                 take_profit,
                 stop_loss,
-                quant_enabled=current_config.get("quant_enabled", False) if quant_enabled is None else quant_enabled,
-                quant_config=current_config.get("quant_config", {}) if quant_config is None else quant_config,
             ),
         }
         if trading_hours_only is not None:

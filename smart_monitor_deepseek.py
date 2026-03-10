@@ -233,7 +233,7 @@ class SmartMonitorDeepSeek:
             strategy_context=strategy_context,
         )
         
-        system_prompt = """你是一位资深的A股量化交易专家，拥有15年实战经验。
+        system_prompt = """你是一位资深的A股盘中执行分析专家，拥有15年实战经验。
 
 你的职责是盘中战术执行，而不是重新做一遍盘后投资研究。
 如果提供了 strategy_context，请把它视为最新的战略基线，只围绕实时行情、持仓盈亏和该基线决定是否执行 BUY / SELL / HOLD。
@@ -454,11 +454,11 @@ KDJ:
 量比: {market_data.get('volume_ratio', 0):.2f} ({'放量' if market_data.get('volume_ratio', 0) > 1.2 else '缩量' if market_data.get('volume_ratio', 0) < 0.8 else '正常'})
 换手率: {market_data.get('turnover_rate', 0):.2f}%
 
-[ACCOUNT] 账户状态
+[EXECUTION_CONTEXT] 执行与持仓上下文
 ═══════════════════════════════════════════════════════════
-可用资金: ¥{account_info.get('available_cash', 0):,.2f}
-总资产: ¥{account_info.get('total_value', 0):,.2f}
-持仓数量: {account_info.get('positions_count', 0)}
+参考可用资金: ¥{account_info.get('available_cash', 0):,.2f}
+参考总资产: ¥{account_info.get('total_value', 0):,.2f}
+当前持仓笔数: {account_info.get('positions_count', 0)}
 账户名称: {account_name}
 资产ID: {asset_id or 'N/A'}
 持仓ID: {portfolio_stock_id or 'N/A'}

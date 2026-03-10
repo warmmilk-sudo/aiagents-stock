@@ -322,8 +322,8 @@ def display_strategy_simulation(stocks_df: pd.DataFrame, selector):
             st.session_state.show_strategy_simulation = True
     
     with col2:
-        if st.button("连接MiniQMT实盘", type="secondary", width='content'):
-            st.warning("MiniQMT实盘交易功能需要先配置环境变量，详见系统配置。")
+        if st.button("查看执行提示", type="secondary", width='content'):
+            st.info("当前系统仅提供策略模拟与提醒，不再接入实盘自动交易。")
     
     # 显示模拟结果
     if st.session_state.get('show_strategy_simulation'):
