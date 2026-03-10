@@ -136,6 +136,7 @@ class MonitoringRepository:
             self._migrate_indexes_if_needed(cursor)
             self._ensure_indexes(cursor)
             self._repair_managed_bindings_if_needed(cursor)
+            self._repair_portfolio_state_drift(cursor)
             conn.commit()
         finally:
             conn.close()
@@ -293,6 +294,57 @@ class MonitoringRepository:
                 cursor.execute(
                     f"UPDATE monitoring_items SET {', '.join(updates)}, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                     tuple(params),
+                )
+            except sqlite3.IntegrityError:
+                continue
+            if cursor.rowcount > 0:
+                repaired += 1
+
+        return repaired
+
+    def _repair_portfolio_state_drift(self, cursor: sqlite3.Cursor) -> int:
+        connection = cursor.connection
+        if not self._table_exists(connection, "monitoring_items") or not self._table_exists(connection, "assets"):
+            return 0
+
+        cursor.execute(
+            """
+            SELECT
+                mi.id,
+                mi.monitor_type,
+                mi.source,
+                mi.managed_by_portfolio,
+                mi.portfolio_stock_id
+            FROM monitoring_items mi
+            INNER JOIN assets a
+                ON a.id = mi.asset_id
+            WHERE mi.asset_id IS NOT NULL
+              AND a.deleted_at IS NULL
+              AND a.status <> 'portfolio'
+              AND (
+                    mi.managed_by_portfolio = 1
+                 OR mi.portfolio_stock_id IS NOT NULL
+                 OR mi.source = 'portfolio'
+              )
+            ORDER BY mi.id ASC
+            """
+        )
+        rows = [dict(row) for row in cursor.fetchall()]
+        repaired = 0
+
+        for row in rows:
+            normalized_source = "ai_monitor" if row.get("monitor_type") == "ai_task" else "manual"
+            try:
+                cursor.execute(
+                    """
+                    UPDATE monitoring_items
+                    SET managed_by_portfolio = 0,
+                        portfolio_stock_id = NULL,
+                        source = ?,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """,
+                    (normalized_source, row["id"]),
                 )
             except sqlite3.IntegrityError:
                 continue
@@ -512,16 +564,15 @@ class MonitoringRepository:
         portfolio_stock_id = item_data.get("portfolio_stock_id")
 
         if asset_id is not None:
-            by_asset = self.get_item_by_symbol(
-                symbol,
+            # `asset_id + monitor_type` is the canonical uniqueness boundary.
+            # Managed state, account, and symbol can legitimately drift during
+            # lifecycle transitions (for example, full sell -> watchlist).
+            by_asset = self.list_items(
                 monitor_type=monitor_type,
-                managed_only=managed if monitor_type == "price_alert" else None,
-                account_name=account_name if account_name is not None else None,
                 asset_id=asset_id,
-                portfolio_stock_id=portfolio_stock_id if monitor_type == "price_alert" and managed else None,
             )
             if by_asset:
-                return by_asset
+                return by_asset[0]
 
         if monitor_type == "ai_task":
             target_account = account_name or DEFAULT_ACCOUNT_NAME

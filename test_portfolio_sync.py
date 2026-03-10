@@ -1,5 +1,7 @@
+import sqlite3
 import tempfile
 import unittest
+from pathlib import Path
 
 from monitor_db import StockMonitorDatabase
 from portfolio_db import PortfolioDB
@@ -229,6 +231,106 @@ class PortfolioIntegrationTests(unittest.TestCase):
         disabled_tasks = self.smart_monitor_db.get_monitor_tasks(enabled_only=False)
         self.assertEqual(len(disabled_tasks), 2)
         self.assertTrue(all(task["enabled"] == 0 for task in disabled_tasks))
+
+    def test_save_ai_decision_resolves_binding_and_persists_extended_columns(self):
+        asset_id = self.smart_monitor_db.asset_repository.promote_to_watchlist(
+            symbol="600519",
+            name="贵州茅台",
+            account_name="账户A",
+        )
+        self.smart_monitor_db.upsert_monitor_task(
+            {
+                "task_name": "茅台任务",
+                "stock_code": "600519",
+                "stock_name": "贵州茅台",
+                "enabled": 1,
+                "account_name": "账户A",
+                "asset_id": asset_id,
+            }
+        )
+
+        decision_id = self.smart_monitor_db.save_ai_decision(
+            {
+                "stock_code": "600519",
+                "stock_name": "贵州茅台",
+                "action": "BUY",
+                "confidence": 88,
+                "reasoning": "测试决策写入",
+                "market_data": {"code": "600519"},
+                "account_info": {"cash": 1000},
+            }
+        )
+
+        decisions = self.smart_monitor_db.get_ai_decisions("600519", limit=5)
+        self.assertEqual(decisions[0]["id"], decision_id)
+        self.assertEqual(decisions[0]["account_name"], "账户A")
+        self.assertEqual(decisions[0]["asset_id"], asset_id)
+        self.assertEqual(decisions[0]["execution_mode"], "manual_only")
+        self.assertEqual(decisions[0]["action_status"], "pending")
+
+    def test_smart_monitor_db_repair_dedupes_and_backfills_legacy_ai_decisions(self):
+        repair_dir = Path(self.temp_dir.name) / "repair_case"
+        repair_dir.mkdir(parents=True, exist_ok=True)
+        seed_path = repair_dir / "smart.db"
+        canonical_path = repair_dir / "investment.db"
+
+        db = SmartMonitorDB(str(seed_path))
+        asset_id = db.asset_repository.promote_to_watchlist(
+            symbol="300136",
+            name="信维通信",
+            account_name="账户B",
+        )
+        db.upsert_monitor_task(
+            {
+                "task_name": "信维任务",
+                "stock_code": "300136",
+                "stock_name": "信维通信",
+                "enabled": 1,
+                "account_name": "账户B",
+                "asset_id": asset_id,
+            }
+        )
+
+        conn = sqlite3.connect(canonical_path)
+        cursor = conn.cursor()
+        duplicate_row = (
+            "300136",
+            "信维通信",
+            "2026-03-10 09:30:00",
+            "morning",
+            "SELL",
+            76,
+            "重复历史记录",
+            20.0,
+            5.0,
+            10.0,
+            "medium",
+            "{}",
+            "{}",
+            "{}",
+            0,
+            None,
+            "2026-03-10 09:30:00",
+        )
+        cursor.executemany(
+            """
+            INSERT INTO ai_decisions (
+                stock_code, stock_name, decision_time, trading_session, action, confidence,
+                reasoning, position_size_pct, stop_loss_pct, take_profit_pct, risk_level,
+                key_price_levels, market_data, account_info, executed, execution_result, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [duplicate_row, duplicate_row],
+        )
+        conn.commit()
+        conn.close()
+
+        repaired_db = SmartMonitorDB(str(seed_path))
+        decisions = repaired_db.get_ai_decisions("300136", limit=10)
+        self.assertEqual(len(decisions), 1)
+        self.assertEqual(decisions[0]["account_name"], "账户B")
+        self.assertEqual(decisions[0]["asset_id"], asset_id)
 
     def test_delete_stock_cascades_managed_integrations(self):
         stock_id = self._add_stock("002594", cost_price=220.0, quantity=300)

@@ -43,6 +43,7 @@ class SmartMonitorDB:
         self._init_database()
         self.monitoring_repository.migrate_legacy_smart_db(self.legacy_db_file)
         self._migrate_legacy_history_db(self.legacy_db_file)
+        self._repair_ai_decision_history()
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_file)
@@ -98,6 +99,9 @@ class SmartMonitorDB:
             )
             """
         )
+        self._ensure_column(cursor, "ai_decisions", "account_name", "TEXT")
+        self._ensure_column(cursor, "ai_decisions", "portfolio_stock_id", "INTEGER")
+        self._ensure_column(cursor, "ai_decisions", "origin_analysis_id", "INTEGER")
         self._ensure_column(cursor, "ai_decisions", "asset_id", "INTEGER")
         self._ensure_column(cursor, "ai_decisions", "execution_mode", "TEXT DEFAULT 'manual_only'")
         self._ensure_column(cursor, "ai_decisions", "action_status", "TEXT DEFAULT 'suggested'")
@@ -110,6 +114,280 @@ class SmartMonitorDB:
         existing_columns = {row[1] for row in cursor.fetchall()}
         if column not in existing_columns:
             cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+    @staticmethod
+    def _serialize_json_field(value, default):
+        if value in (None, ""):
+            return json.dumps(default, ensure_ascii=False)
+        if isinstance(value, str):
+            return value
+        return json.dumps(value, ensure_ascii=False)
+
+    @staticmethod
+    def _query_asset_binding_by_id(cursor: sqlite3.Cursor, asset_id: int) -> Optional[Dict]:
+        cursor.execute(
+            """
+            SELECT id, account_name
+            FROM assets
+            WHERE id = ? AND deleted_at IS NULL
+            LIMIT 1
+            """,
+            (asset_id,),
+        )
+        row = cursor.fetchone()
+        if not row:
+            return None
+        return {
+            "asset_id": int(row["id"]),
+            "account_name": row["account_name"] or DEFAULT_ACCOUNT_NAME,
+        }
+
+    @staticmethod
+    def _query_ai_task_binding(cursor: sqlite3.Cursor, stock_code: str) -> Optional[Dict]:
+        cursor.execute(
+            """
+            SELECT asset_id, account_name
+            FROM monitoring_items
+            WHERE monitor_type = 'ai_task'
+              AND symbol = ?
+              AND asset_id IS NOT NULL
+            ORDER BY enabled DESC, managed_by_portfolio DESC, datetime(updated_at) DESC, id DESC
+            """,
+            (stock_code,),
+        )
+        rows = cursor.fetchall()
+        bindings = {
+            (int(row["asset_id"]), row["account_name"] or DEFAULT_ACCOUNT_NAME)
+            for row in rows
+            if row["asset_id"] is not None
+        }
+        if len(bindings) != 1:
+            return None
+        asset_id, account_name = next(iter(bindings))
+        return {"asset_id": asset_id, "account_name": account_name}
+
+    @staticmethod
+    def _query_unique_asset_binding_by_symbol(cursor: sqlite3.Cursor, stock_code: str) -> Optional[Dict]:
+        cursor.execute(
+            """
+            SELECT id, account_name
+            FROM assets
+            WHERE symbol = ? AND deleted_at IS NULL
+            ORDER BY
+                CASE status
+                    WHEN 'portfolio' THEN 1
+                    WHEN 'watchlist' THEN 2
+                    ELSE 3
+                END,
+                id DESC
+            """,
+            (stock_code,),
+        )
+        rows = cursor.fetchall()
+        bindings = {
+            (int(row["id"]), row["account_name"] or DEFAULT_ACCOUNT_NAME)
+            for row in rows
+        }
+        if len(bindings) != 1:
+            return None
+        asset_id, account_name = next(iter(bindings))
+        return {"asset_id": asset_id, "account_name": account_name}
+
+    def _resolve_ai_decision_binding(self, cursor: sqlite3.Cursor, decision_data: Dict) -> Optional[Dict]:
+        asset_id = decision_data.get("asset_id")
+        if asset_id is not None:
+            binding = self._query_asset_binding_by_id(cursor, int(asset_id))
+            if binding:
+                return binding
+
+        portfolio_stock_id = decision_data.get("portfolio_stock_id")
+        if portfolio_stock_id is not None:
+            binding = self._query_asset_binding_by_id(cursor, int(portfolio_stock_id))
+            if binding:
+                return binding
+
+        stock_code = str(decision_data.get("stock_code") or "").strip()
+        if not stock_code:
+            return None
+
+        binding = self._query_ai_task_binding(cursor, stock_code)
+        if binding:
+            return binding
+
+        return self._query_unique_asset_binding_by_symbol(cursor, stock_code)
+
+    def _prepare_ai_decision_payload(
+        self,
+        cursor: sqlite3.Cursor,
+        decision_data: Dict,
+        *,
+        default_account: bool,
+        default_action_status: Optional[str] = None,
+    ) -> Dict:
+        payload = dict(decision_data)
+        binding = self._resolve_ai_decision_binding(cursor, payload)
+        if binding:
+            payload["asset_id"] = payload.get("asset_id") or binding["asset_id"]
+            payload["account_name"] = payload.get("account_name") or binding["account_name"]
+        if default_account and not payload.get("account_name"):
+            payload["account_name"] = DEFAULT_ACCOUNT_NAME
+
+        action = str(payload.get("action") or "").upper()
+        payload["execution_mode"] = payload.get("execution_mode") or "manual_only"
+        payload["action_status"] = payload.get("action_status") or default_action_status or (
+            "pending" if action in {"BUY", "SELL"} else "suggested"
+        )
+        return payload
+
+    def _insert_ai_decision(
+        self,
+        cursor: sqlite3.Cursor,
+        decision_data: Dict,
+        *,
+        default_account: bool,
+        default_action_status: Optional[str] = None,
+    ) -> int:
+        payload = self._prepare_ai_decision_payload(
+            cursor,
+            decision_data,
+            default_account=default_account,
+            default_action_status=default_action_status,
+        )
+        cursor.execute(
+            """
+            INSERT INTO ai_decisions (
+                stock_code, stock_name, account_name, asset_id, portfolio_stock_id, origin_analysis_id,
+                decision_time, trading_session, action, confidence, reasoning, position_size_pct,
+                stop_loss_pct, take_profit_pct, risk_level, key_price_levels, market_data,
+                account_info, execution_mode, action_status, executed, execution_result, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                payload.get("stock_code"),
+                payload.get("stock_name"),
+                payload.get("account_name"),
+                payload.get("asset_id"),
+                payload.get("portfolio_stock_id"),
+                payload.get("origin_analysis_id"),
+                payload.get("decision_time", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+                payload.get("trading_session"),
+                payload.get("action"),
+                payload.get("confidence"),
+                payload.get("reasoning"),
+                payload.get("position_size_pct"),
+                payload.get("stop_loss_pct"),
+                payload.get("take_profit_pct"),
+                payload.get("risk_level"),
+                self._serialize_json_field(payload.get("key_price_levels"), {}),
+                self._serialize_json_field(payload.get("market_data"), {}),
+                self._serialize_json_field(payload.get("account_info"), {}),
+                payload.get("execution_mode", "manual_only"),
+                payload.get("action_status", "suggested"),
+                int(payload.get("executed", 0) or 0),
+                payload.get("execution_result"),
+                payload.get("created_at") or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            ),
+        )
+        return int(cursor.lastrowid)
+
+    def _update_ai_decision_fields(self, cursor: sqlite3.Cursor, decision_id: int, updates: Dict[str, object]) -> bool:
+        if not updates:
+            return False
+        fields = [f"{key} = ?" for key in updates]
+        values = list(updates.values())
+        values.append(decision_id)
+        cursor.execute(
+            f"UPDATE ai_decisions SET {', '.join(fields)} WHERE id = ?",
+            tuple(values),
+        )
+        return cursor.rowcount > 0
+
+    def _dedupe_ai_decisions(self, cursor: sqlite3.Cursor) -> int:
+        cursor.execute("SELECT * FROM ai_decisions ORDER BY id ASC")
+        rows = [dict(row) for row in cursor.fetchall()]
+        key_fields = [
+            "stock_code",
+            "stock_name",
+            "account_name",
+            "asset_id",
+            "portfolio_stock_id",
+            "origin_analysis_id",
+            "decision_time",
+            "trading_session",
+            "action",
+            "confidence",
+            "reasoning",
+            "position_size_pct",
+            "stop_loss_pct",
+            "take_profit_pct",
+            "risk_level",
+            "key_price_levels",
+            "market_data",
+            "account_info",
+            "execution_mode",
+            "executed",
+            "execution_result",
+            "created_at",
+        ]
+        seen = {}
+        duplicate_ids = []
+        for row in rows:
+            key = tuple(row.get(field) for field in key_fields)
+            if key in seen:
+                duplicate_ids.append(int(row["id"]))
+            else:
+                seen[key] = int(row["id"])
+        if not duplicate_ids:
+            return 0
+        placeholders = ", ".join("?" for _ in duplicate_ids)
+        cursor.execute(f"DELETE FROM ai_decisions WHERE id IN ({placeholders})", tuple(duplicate_ids))
+        return len(duplicate_ids)
+
+    def _repair_ai_decision_history(self) -> Dict[str, int]:
+        conn = self._connect()
+        cursor = conn.cursor()
+        repaired_accounts = 0
+        repaired_assets = 0
+        removed_duplicates = 0
+        try:
+            cursor.execute("SELECT * FROM ai_decisions ORDER BY id ASC")
+            decisions = [dict(row) for row in cursor.fetchall()]
+            for decision in decisions:
+                prepared = self._prepare_ai_decision_payload(
+                    cursor,
+                    decision,
+                    default_account=False,
+                    default_action_status="suggested",
+                )
+                updates: Dict[str, object] = {}
+                if not decision.get("account_name") and prepared.get("account_name"):
+                    updates["account_name"] = prepared["account_name"]
+                if decision.get("asset_id") is None and prepared.get("asset_id") is not None:
+                    updates["asset_id"] = prepared["asset_id"]
+                if updates and self._update_ai_decision_fields(cursor, int(decision["id"]), updates):
+                    repaired_accounts += 1 if "account_name" in updates else 0
+                    repaired_assets += 1 if "asset_id" in updates else 0
+
+            removed_duplicates = self._dedupe_ai_decisions(cursor)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+        if repaired_accounts or repaired_assets or removed_duplicates:
+            self.logger.info(
+                "AI决策历史已修复: account_name=%s asset_id=%s duplicates=%s",
+                repaired_accounts,
+                repaired_assets,
+                removed_duplicates,
+            )
+        return {
+            "account_name": repaired_accounts,
+            "asset_id": repaired_assets,
+            "duplicates": removed_duplicates,
+        }
 
     def _migrate_legacy_history_db(self, legacy_db_path: str) -> int:
         if not legacy_db_path or not os.path.exists(legacy_db_path):
@@ -139,35 +417,11 @@ class SmartMonitorDB:
                 legacy_cursor.execute("SELECT * FROM ai_decisions ORDER BY id ASC")
                 for row in legacy_cursor.fetchall():
                     decision = dict(row)
-                    cursor.execute(
-                        """
-                        INSERT INTO ai_decisions (
-                            stock_code, stock_name, decision_time, trading_session,
-                            action, confidence, reasoning, position_size_pct, stop_loss_pct,
-                            take_profit_pct, risk_level, key_price_levels, market_data,
-                            account_info, executed, execution_result, created_at
-                        )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        (
-                            decision.get("stock_code"),
-                            decision.get("stock_name"),
-                            decision.get("decision_time") or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                            decision.get("trading_session"),
-                            decision.get("action"),
-                            decision.get("confidence"),
-                            decision.get("reasoning"),
-                            decision.get("position_size_pct"),
-                            decision.get("stop_loss_pct"),
-                            decision.get("take_profit_pct"),
-                            decision.get("risk_level"),
-                            decision.get("key_price_levels"),
-                            decision.get("market_data"),
-                            decision.get("account_info"),
-                            decision.get("executed", 0),
-                            decision.get("execution_result"),
-                            decision.get("created_at") or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        ),
+                    self._insert_ai_decision(
+                        cursor,
+                        decision,
+                        default_account=False,
+                        default_action_status="suggested",
                     )
                     migrated += 1
 
@@ -461,43 +715,12 @@ class SmartMonitorDB:
     def save_ai_decision(self, decision_data: Dict) -> int:
         conn = self._connect()
         cursor = conn.cursor()
-        cursor.execute(
-            """
-            INSERT INTO ai_decisions (
-                stock_code, stock_name, account_name, asset_id, portfolio_stock_id, origin_analysis_id,
-                decision_time, trading_session, action, confidence, reasoning, position_size_pct,
-                stop_loss_pct, take_profit_pct, risk_level, key_price_levels, market_data,
-                account_info, execution_mode, action_status
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                decision_data.get("stock_code"),
-                decision_data.get("stock_name"),
-                decision_data.get("account_name"),
-                decision_data.get("asset_id"),
-                decision_data.get("portfolio_stock_id"),
-                decision_data.get("origin_analysis_id"),
-                decision_data.get("decision_time", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-                decision_data.get("trading_session"),
-                decision_data.get("action"),
-                decision_data.get("confidence"),
-                decision_data.get("reasoning"),
-                decision_data.get("position_size_pct"),
-                decision_data.get("stop_loss_pct"),
-                decision_data.get("take_profit_pct"),
-                decision_data.get("risk_level"),
-                json.dumps(decision_data.get("key_price_levels", {}), ensure_ascii=False),
-                json.dumps(decision_data.get("market_data", {}), ensure_ascii=False),
-                json.dumps(decision_data.get("account_info", {}), ensure_ascii=False),
-                decision_data.get("execution_mode", "manual_only"),
-                decision_data.get("action_status", "suggested"),
-            ),
-        )
-        record_id = int(cursor.lastrowid)
-        conn.commit()
-        conn.close()
-        return record_id
+        try:
+            record_id = self._insert_ai_decision(cursor, decision_data, default_account=True)
+            conn.commit()
+            return record_id
+        finally:
+            conn.close()
 
     def get_ai_decisions(self, stock_code: str = None, limit: int = 100) -> List[Dict]:
         conn = self._connect()

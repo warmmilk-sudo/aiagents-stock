@@ -4,6 +4,7 @@ import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from asset_repository import AssetRepository, STATUS_PORTFOLIO, STATUS_WATCHLIST
 from monitoring_repository import MonitoringRepository
 
 
@@ -70,6 +71,77 @@ class MonitoringRepositoryTests(unittest.TestCase):
 
         due_later = self.repo.get_due_items(now=now + timedelta(minutes=4), service_running=True)
         self.assertEqual([item["id"] for item in due_later], [item_id])
+
+    def test_price_alert_upsert_reuses_existing_asset_record_when_managed_state_changes(self):
+        first_id = self.repo.create_item(
+            {
+                "symbol": "601318",
+                "name": "中国平安",
+                "monitor_type": "price_alert",
+                "managed_by_portfolio": True,
+                "account_name": "默认账户",
+                "asset_id": 88,
+                "portfolio_stock_id": 88,
+                "config": {"take_profit": 55.0},
+            }
+        )
+
+        second_id = self.repo.upsert_item(
+            {
+                "symbol": "601318",
+                "name": "中国平安",
+                "monitor_type": "price_alert",
+                "managed_by_portfolio": False,
+                "account_name": "默认账户",
+                "asset_id": 88,
+                "portfolio_stock_id": None,
+                "config": {"stop_loss": 46.0},
+            }
+        )
+
+        self.assertEqual(first_id, second_id)
+        items = self.repo.list_items(monitor_type="price_alert", asset_id=88)
+        self.assertEqual(len(items), 1)
+        self.assertFalse(items[0]["managed_by_portfolio"])
+        self.assertIsNone(items[0]["portfolio_stock_id"])
+        self.assertEqual(items[0]["config"]["take_profit"], 55.0)
+        self.assertEqual(items[0]["config"]["stop_loss"], 46.0)
+
+    def test_repository_init_repairs_managed_price_alert_after_asset_leaves_portfolio(self):
+        seed_path = str(self.base / "monitoring.db")
+        asset_repo = AssetRepository(seed_path)
+        asset_id = asset_repo.create_or_update_research_asset(
+            symbol="300179",
+            name="四方达",
+            account_name="zfy",
+        )
+        asset_repo.update_asset(
+            asset_id,
+            status=STATUS_PORTFOLIO,
+            cost_price=24.176,
+            quantity=200,
+        )
+
+        self.repo.create_item(
+            {
+                "symbol": "300179",
+                "name": "四方达",
+                "monitor_type": "price_alert",
+                "source": "portfolio",
+                "managed_by_portfolio": True,
+                "account_name": "zfy",
+                "asset_id": asset_id,
+                "portfolio_stock_id": asset_id,
+                "config": {"take_profit": 24.8, "stop_loss": 23.0},
+            }
+        )
+        asset_repo.transition_asset_status(asset_id, STATUS_WATCHLIST)
+
+        repaired_repo = MonitoringRepository(seed_path)
+        item = repaired_repo.list_items(monitor_type="price_alert", asset_id=asset_id)[0]
+        self.assertFalse(item["managed_by_portfolio"])
+        self.assertIsNone(item["portfolio_stock_id"])
+        self.assertEqual(item["source"], "manual")
 
     def test_legacy_migration_moves_smart_and_stock_data(self):
         legacy_smart_db = self.base / "legacy_smart.db"
