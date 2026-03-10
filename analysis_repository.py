@@ -464,6 +464,10 @@ class AnalysisRepository:
         target_price = target_price if target_price is not None else self._extract_first_number(
             final_decision.get("target_price")
         )
+        if entry_min is None:
+            entry_min = self._extract_first_number(final_decision.get("entry_min"))
+        if entry_max is None:
+            entry_max = self._extract_first_number(final_decision.get("entry_max"))
         if entry_min is None or entry_max is None:
             entry_text = str(final_decision.get("entry_range") or "")
             if entry_text:

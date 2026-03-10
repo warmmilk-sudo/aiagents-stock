@@ -10,6 +10,7 @@ import os
 from typing import Any, Dict, Optional
 import config
 import streamlit.components.v1 as components
+from analysis_history_service import analysis_history_service
 from model_config import get_lightweight_model_options, get_reasoning_model_options
 
 from stock_data import StockDataFetcher
@@ -24,7 +25,6 @@ from investment_workspace_ui import set_investment_workspace_tab
 from monitor_manager import display_monitor_manager
 from monitor_service import monitor_service
 from notification_service import notification_service
-from price_alert_service import create_price_alert_from_analysis, jump_to_price_alert_workspace
 from config_manager import config_manager
 from main_force_ui import display_main_force_selector
 from sector_strategy_ui import display_sector_strategy
@@ -43,6 +43,7 @@ from ui_shared import (
     get_dataframe_height,
     get_recommendation_color,
     render_a_share_change_metric,
+    render_agents_analysis_tabs as shared_render_agents_analysis_tabs,
     render_final_decision as shared_render_final_decision,
     render_reasoning_process as shared_render_reasoning_process,
     render_stock_info_metrics as shared_render_stock_info_metrics,
@@ -961,6 +962,7 @@ def get_selected_models():
 
 NAV_VIEW_KEYS = [
     "show_deep_analysis",
+    "show_analysis_history",
     "show_monitor_service",
     "show_monitor",
     "show_main_force",
@@ -979,6 +981,7 @@ NAV_VIEW_KEYS = [
 
 VIEW_TITLES = {
     "show_deep_analysis": "投资管理-深度分析",
+    "show_analysis_history": "投资管理-分析历史",
     "show_monitor_service": "投资管理-监测服务",
     "show_monitor": "投资管理-监测服务",
     "show_main_force": "选股板块-主力选股",
@@ -1109,6 +1112,78 @@ def _render_investment_action_buttons(action_payload: Optional[Dict[str, Any]], 
             open_investment_workspace("portfolio", "show_portfolio")
 
 
+def _clear_history_record_detail() -> None:
+    st.session_state.pop("viewing_record_id", None)
+
+
+def _render_analysis_history_actions(record: Dict[str, Any], *, key_prefix: str) -> None:
+    record_id = record.get("id")
+    scope = str(record.get("analysis_scope") or "research").strip().lower()
+    action_payload = _build_analysis_record_action_payload(
+        record,
+        analysis_source="history_record_detail" if key_prefix.endswith("_detail") else "history_record",
+    )
+
+    col1, col2, col3, col4, col5 = st.columns(5)
+    with col1:
+        if st.button("查看详情", key=f"{key_prefix}_view", width="stretch") and record_id:
+            st.session_state.viewing_record_id = int(record_id)
+            st.rerun()
+    with col2:
+        if st.button("加入盯盘", key=f"{key_prefix}_monitor", width="stretch", disabled=not action_payload):
+            _apply_ai_task_prefill(action_payload or {})
+            open_investment_workspace("ai_monitor", "show_smart_monitor")
+    with col3:
+        action_label = "设为持仓" if scope == "research" else "跳转持仓"
+        if st.button(action_label, key=f"{key_prefix}_portfolio", width="stretch", disabled=scope == "research" and not action_payload):
+            if scope == "research":
+                _apply_portfolio_prefill(action_payload or {})
+            open_investment_workspace("portfolio", "show_portfolio")
+    with col4:
+        if st.button("价格预警", key=f"{key_prefix}_price_alert", width="stretch", disabled=not action_payload):
+            _apply_price_alert_prefill(action_payload or {})
+            open_investment_workspace("price_alert", "show_smart_monitor")
+    with col5:
+        if st.button("删除", key=f"{key_prefix}_delete", width="stretch") and record_id:
+            if analysis_history_service.delete_record(int(record_id)):
+                if st.session_state.get("viewing_record_id") == int(record_id):
+                    _clear_history_record_detail()
+                st.success("记录已删除")
+                st.rerun()
+            st.error("删除失败")
+
+
+def _render_analysis_history_record(record: Dict[str, Any], *, key_prefix: str) -> None:
+    stock_name = record.get("stock_name") or record.get("symbol") or "未知股票"
+    symbol = record.get("symbol") or ""
+    rating = record.get("rating") or "未评级"
+    analysis_time = record.get("analysis_time_text") or record.get("analysis_date") or ""
+    scope_label = record.get("analysis_scope_label") or "深度分析"
+    source_label = record.get("analysis_source_label") or "历史分析"
+    summary = str(record.get("summary") or "").strip()
+    account_name = record.get("account_name") or DEFAULT_ACCOUNT_NAME
+
+    with st.expander(
+        f"{stock_name} ({symbol}) | {rating} | {analysis_time}",
+        expanded=False,
+    ):
+        st.caption(f"`{scope_label}`  `{source_label}`  账户: `{account_name}`")
+        if summary:
+            st.write(summary)
+        else:
+            st.caption("暂无摘要")
+
+        detail_col1, detail_col2, detail_col3 = st.columns(3)
+        with detail_col1:
+            st.metric("数据周期", record.get("period") or "N/A")
+        with detail_col2:
+            st.metric("目标价格", record.get("target_price") or "N/A")
+        with detail_col3:
+            st.metric("信心度", record.get("confidence") or "N/A")
+
+        _render_analysis_history_actions(record, key_prefix=key_prefix)
+
+
 def _clear_single_analysis_state() -> None:
     for key in (
         "analysis_completed",
@@ -1222,11 +1297,14 @@ def main():
             if st.button("深度分析", width='stretch', key="nav_deep_analysis", help="进入临时深度分析工作区"):
                 activate_view("show_deep_analysis")
 
-            if st.button("智能盯盘", width='stretch', key="nav_smart_monitor", help="DeepSeek AI自动盯盘决策交易（支持A股T+1）"):
-                open_investment_workspace("ai_monitor", "show_smart_monitor")
-
             if st.button("持仓分析", width='stretch', key="nav_portfolio", help="投资组合分析与定时跟踪"):
                 open_investment_workspace("portfolio", "show_portfolio")
+
+            if st.button("分析历史", width='stretch', key="nav_analysis_history", help="统一查看深度分析与持仓分析历史"):
+                activate_view("show_analysis_history")
+
+            if st.button("智能盯盘", width='stretch', key="nav_smart_monitor", help="DeepSeek AI自动盯盘决策交易（支持A股T+1）"):
+                open_investment_workspace("ai_monitor", "show_smart_monitor")
 
             if st.button("监测服务", width='stretch', key="nav_monitor", help="统一监测服务状态、调度与事件"):
                 open_investment_workspace("activity", "show_monitor_service")
@@ -1318,7 +1396,7 @@ def main():
             from monitor_db import monitor_db
             stocks = monitor_db.get_monitored_stocks()
             notifications = monitor_db.get_pending_notifications()
-            record_count = db.get_record_count()
+            record_count = analysis_history_service.count_records()
 
             st.markdown(f"**分析记录**: {record_count}条")
             st.markdown(f"**监测股票**: {len(stocks)}只")
@@ -1342,6 +1420,10 @@ def main():
 
     if st.session_state.get("show_deep_analysis"):
         display_home_workspace(api_key_status, period)
+        return
+
+    if st.session_state.get("show_analysis_history"):
+        display_analysis_history_workspace()
         return
 
     # 智能盯盘页面
@@ -1921,14 +2003,7 @@ def display_home_workspace(api_key_status: bool, period: str) -> None:
     _render_home_analysis_task_fragment()
     _restore_home_analysis_result_from_latest_task()
     _consume_finished_home_analysis_task()
-
-    tabs = st.tabs(["深度分析", "分析历史"])
-
-    with tabs[0]:
-        _render_home_analysis_workbench(api_key_status, period)
-
-    with tabs[1]:
-        display_history_records()
+    _render_home_analysis_workbench(api_key_status, period)
 
 def _legacy_analyze_single_stock_for_batch(symbol, period, enabled_analysts_config=None,
                                            selected_model=None,
@@ -2719,327 +2794,128 @@ def _legacy_show_example_interface():
     盈利能力（6项）、营运能力（3项）、偿债能力（2项）、市场表现（4项）、分红指标（3项）、股本结构（3项）
     """)
 
-def display_history_records():
-    """显示历史分析记录"""
-    st.subheader("历史分析记录")
+def display_analysis_history_workspace() -> None:
+    """显示统一分析历史页面。"""
+    st.subheader("分析历史")
 
-    # 获取所有记录
-    records = db.get_all_records()
+    if st.session_state.get("viewing_record_id"):
+        display_record_detail(int(st.session_state.viewing_record_id))
+        st.markdown("---")
 
+    scope_col, account_col, search_col, action_col = st.columns([1.1, 1.2, 2.2, 0.8])
+    with scope_col:
+        selected_scope = st.selectbox(
+            "范围",
+            analysis_history_service.list_scope_options(),
+            key="analysis_history_scope_filter",
+        )
+    with account_col:
+        selected_account = st.selectbox(
+            "账户",
+            analysis_history_service.list_account_options(),
+            key="analysis_history_account_filter",
+        )
+    with search_col:
+        search_term = st.text_input(
+            "股票代码/名称搜索",
+            key="analysis_history_search_term",
+            placeholder="输入股票代码或名称",
+        )
+    with action_col:
+        st.write("")
+        st.write("")
+        if st.button("刷新", key="analysis_history_refresh", width="stretch"):
+            st.rerun()
+
+    records = analysis_history_service.list_records(
+        scope=selected_scope,
+        account_name=selected_account,
+        search_term=search_term,
+    )
     if not records:
-        st.info("暂无历史分析记录")
+        st.info("暂无匹配的分析记录")
         return
 
-    st.write(f"共找到 {len(records)} 条分析记录")
+    st.caption(f"共 {len(records)} 条记录")
+    for record in records:
+        _render_analysis_history_record(record, key_prefix=f"analysis_history_{record.get('id')}")
 
-    # 搜索和筛选
-    col1, col2 = st.columns([3, 1])
-    with col1:
-        search_term = st.text_input("搜索股票代码或名称", placeholder="输入股票代码或名称进行搜索")
-    with col2:
-        st.write("")
-        st.write("")
-        if st.button("刷新列表"):
-            st.rerun()
 
-    # 筛选记录
-    filtered_records = records
-    if search_term:
-        filtered_records = [
-            record for record in records
-            if search_term.lower() in record['symbol'].lower() or
-               search_term.lower() in record['stock_name'].lower()
-        ]
+def display_history_records() -> None:
+    """兼容旧调用，转向统一分析历史页面。"""
+    display_analysis_history_workspace()
 
-    if not filtered_records:
-        st.warning("未找到匹配的记录")
-        return
-
-    # 显示记录列表
-    for record in filtered_records:
-        # 根据评级设置颜色和图标
-        rating = record.get('rating', '未知')
-        with st.expander(f"{record['stock_name']} ({record['symbol']}) - {record['analysis_date']} | {rating}"):
-            col1, col2, col3, col4, col5 = st.columns([2, 2, 1, 1, 1])
-
-            with col1:
-                st.write(f"**股票代码:** {record['symbol']}")
-                st.write(f"**股票名称:** {record['stock_name']}")
-
-            with col2:
-                st.write(f"**分析时间:** {record['analysis_date']}")
-                st.write(f"**数据周期:** {record['period']}")
-                st.write(f"**投资评级:** **{rating}**")
-
-            with col3:
-                if st.button("查看详情", key=f"view_{record['id']}"):
-                    st.session_state.viewing_record_id = record['id']
-
-            with col4:
-                if st.button("加入盯盘", key=f"history_ai_task_{record['id']}"):
-                    detail_record = db.get_record_by_id(record['id'])
-                    action_payload = _build_analysis_record_action_payload(
-                        detail_record,
-                        analysis_source="history_record",
-                    )
-                    _apply_ai_task_prefill(action_payload or {})
-                    open_investment_workspace("ai_monitor", "show_smart_monitor")
-
-            with col5:
-                if st.button("设为持仓", key=f"history_add_position_{record['id']}"):
-                    detail_record = db.get_record_by_id(record['id'])
-                    action_payload = _build_analysis_record_action_payload(
-                        detail_record,
-                        analysis_source="history_record",
-                    )
-                    _apply_portfolio_prefill(action_payload or {})
-                    open_investment_workspace("portfolio", "show_portfolio")
-
-            col6, col7 = st.columns([1, 3])
-            with col6:
-                if st.button("价格预警", key=f"history_price_alert_{record['id']}"):
-                    detail_record = db.get_record_by_id(record['id'])
-                    action_payload = _build_analysis_record_action_payload(
-                        detail_record,
-                        analysis_source="history_record",
-                    )
-                    _apply_price_alert_prefill(action_payload or {})
-                    open_investment_workspace("price_alert", "show_smart_monitor")
-
-            with col7:
-                if st.button("删除", key=f"delete_{record['id']}"):
-                    if db.delete_record(record['id']):
-                        st.success("记录已删除")
-                        st.rerun()
-                    else:
-                        st.error("删除失败")
-
-    # 查看详细记录
-    if 'viewing_record_id' in st.session_state:
-        display_record_detail(st.session_state.viewing_record_id)
-
-def display_add_to_monitor_dialog(record):
-    """显示加入价格预警的对话框"""
-    st.markdown("---")
-    st.subheader("加入价格预警")
-
-    final_decision = record['final_decision']
-
-    # 从final_decision中提取关键数据
-    if isinstance(final_decision, dict):
-        # 解析进场区间
-        entry_range_str = final_decision.get('entry_range', 'N/A')
-        entry_min = 0.0
-        entry_max = 0.0
-
-        # 尝试解析进场区间字符串，支持多种格式
-        if entry_range_str and entry_range_str != 'N/A':
-            try:
-                import re
-                # 移除常见的前缀和单位
-                clean_str = str(entry_range_str).replace('¥', '').replace('元', '').replace('$', '')
-                # 使用正则表达式提取数字
-                # 支持格式：10.5-12.0, 10.5 - 12.0, 10.5~12.0, 10.5至12.0 等
-                numbers = re.findall(r'\d+\.?\d*', clean_str)
-                if len(numbers) >= 2:
-                    entry_min = float(numbers[0])
-                    entry_max = float(numbers[1])
-            except:
-                # 如果解析失败，尝试用分隔符split
-                try:
-                    clean_str = str(entry_range_str).replace('¥', '').replace('元', '').replace('$', '')
-                    # 尝试多种分隔符
-                    for sep in ['-', '~', '至', '到']:
-                        if sep in clean_str:
-                            parts = clean_str.split(sep)
-                            if len(parts) == 2:
-                                entry_min = float(parts[0].strip())
-                                entry_max = float(parts[1].strip())
-                                break
-                except:
-                    pass
-
-        # 提取止盈和止损
-        take_profit_str = final_decision.get('take_profit', 'N/A')
-        stop_loss_str = final_decision.get('stop_loss', 'N/A')
-
-        take_profit = 0.0
-        stop_loss = 0.0
-
-        # 解析止盈位
-        if take_profit_str and take_profit_str != 'N/A':
-            try:
-                import re
-                # 移除单位和符号
-                clean_str = str(take_profit_str).replace('¥', '').replace('元', '').replace('$', '').strip()
-                # 提取第一个数字
-                numbers = re.findall(r'\d+\.?\d*', clean_str)
-                if numbers:
-                    take_profit = float(numbers[0])
-            except:
-                pass
-
-        # 解析止损位
-        if stop_loss_str and stop_loss_str != 'N/A':
-            try:
-                import re
-                # 移除单位和符号
-                clean_str = str(stop_loss_str).replace('¥', '').replace('元', '').replace('$', '').strip()
-                # 提取第一个数字
-                numbers = re.findall(r'\d+\.?\d*', clean_str)
-                if numbers:
-                    stop_loss = float(numbers[0])
-            except:
-                pass
-
-        # 获取评级
-        rating = final_decision.get('rating', '买入')
-
-        # 检查是否已经在价格预警列表中
-        from monitor_db import monitor_db
-        existing_stocks = monitor_db.get_monitored_stocks()
-        is_duplicate = any(stock['symbol'] == record['symbol'] for stock in existing_stocks)
-
-        if is_duplicate:
-            st.warning(f"{record['symbol']} 已经在价格预警列表中。继续添加将创建重复预警项。")
-
-        st.info(f"""
-        **从分析结果中提取的数据：**
-        - 进场区间: {entry_min} - {entry_max}
-        - 止盈位: {take_profit if take_profit > 0 else '未设置'}
-        - 止损位: {stop_loss if stop_loss > 0 else '未设置'}
-        - 投资评级: {rating}
-        """)
-
-        # 显示表单供用户确认或修改
-        with st.form(key=f"monitor_form_{record['id']}"):
-            st.markdown("**请确认或修改监测参数：**")
-
-            col1, col2 = st.columns([1, 1])
-
-            with col1:
-                st.subheader("关键位置")
-                new_entry_min = st.number_input("进场区间最低价", value=float(entry_min), step=0.01, format="%.2f")
-                new_entry_max = st.number_input("进场区间最高价", value=float(entry_max), step=0.01, format="%.2f")
-                new_take_profit = st.number_input("止盈价位", value=float(take_profit), step=0.01, format="%.2f")
-                new_stop_loss = st.number_input("止损价位", value=float(stop_loss), step=0.01, format="%.2f")
-
-            with col2:
-                st.subheader("监测设置")
-                check_interval = st.slider("监测间隔(分钟)", 5, 120, 30)
-                notification_enabled = st.checkbox("启用通知", value=True)
-                new_rating = st.selectbox("投资评级", ["买入", "持有", "卖出"],
-                                         index=["买入", "持有", "卖出"].index(rating) if rating in ["买入", "持有", "卖出"] else 0)
-
-            col_a, col_b, col_c = st.columns(3)
-
-            with col_a:
-                submit = st.form_submit_button("确认加入价格预警", type="primary", width='stretch')
-
-            with col_b:
-                cancel = st.form_submit_button("取消", width='stretch')
-
-            if submit:
-                if new_entry_min > 0 and new_entry_max > 0 and new_entry_max > new_entry_min:
-                    try:
-                        stock_id = create_price_alert_from_analysis(
-                            symbol=record['symbol'],
-                            name=record['stock_name'],
-                            entry_min=new_entry_min,
-                            entry_max=new_entry_max,
-                            rating=new_rating,
-                            take_profit=new_take_profit if new_take_profit > 0 else None,
-                            stop_loss=new_stop_loss if new_stop_loss > 0 else None,
-                            check_interval=check_interval,
-                            notification_enabled=notification_enabled,
-                        )
-
-                        st.success(f"已成功将 {record['symbol']} 加入价格预警。")
-                        st.balloons()
-
-                        # 立即更新一次价格
-                        from monitor_service import monitor_service
-                        monitor_service.manual_update_stock(stock_id)
-
-                        # 清理session state并跳转到监测页面
-                        if 'add_to_monitor_id' in st.session_state:
-                            del st.session_state.add_to_monitor_id
-                        if 'viewing_record_id' in st.session_state:
-                            del st.session_state.viewing_record_id
-                        if 'show_history' in st.session_state:
-                            del st.session_state.show_history
-
-                        jump_to_price_alert_workspace(record['symbol'])
-
-                        time.sleep(1.5)
-                        st.rerun()
-
-                    except Exception as e:
-                        st.error(f"加入价格预警失败: {str(e)}")
-                else:
-                    st.error("请输入有效的进场区间（最低价应小于最高价，且都大于0）")
-
-            if cancel:
-                if 'add_to_monitor_id' in st.session_state:
-                    del st.session_state.add_to_monitor_id
-                st.rerun()
-    else:
-        st.warning("无法从分析结果中提取关键数据")
-        if st.button("取消"):
-            if 'add_to_monitor_id' in st.session_state:
-                del st.session_state.add_to_monitor_id
-            st.rerun()
 
 def display_record_detail(record_id):
     """显示单条记录的详细信息"""
-    st.markdown("---")
-    st.subheader("详细分析记录")
+    st.markdown("### 记录详情")
 
-    record = db.get_record_by_id(record_id)
+    record = analysis_history_service.get_record(record_id)
     if not record:
         st.error("记录不存在")
+        _clear_history_record_detail()
         return
 
-    # 基本信息
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.metric("股票代码", record['symbol'])
+        st.metric("股票代码", record.get("symbol") or "")
     with col2:
-        st.metric("股票名称", record['stock_name'])
+        st.metric("股票名称", record.get("stock_name") or "")
     with col3:
-        st.metric("分析时间", record.get('analysis_date', ''))
+        st.metric("分析时间", record.get("analysis_time_text") or record.get("analysis_date") or "")
+    with col4:
+        st.metric("账户", record.get("account_name") or DEFAULT_ACCOUNT_NAME)
 
-    agents_results = record['agents_results']
-    discussion_result = record['discussion_result']
-
-    # 最终决策
-    st.subheader("最终投资决策")
-    final_decision = record['final_decision']
-    if final_decision:
-        shared_render_final_decision(final_decision, show_header=False)
-
-    # 股票基本信息
-    st.subheader("股票基本信息")
-    stock_info = record['stock_info']
-    if stock_info:
-        shared_render_stock_info_metrics(stock_info)
-
-    # 推理过程放在最后，默认折叠
-    shared_render_reasoning_process(agents_results, discussion_result, expanded=False)
-
-    # 加入价格预警功能
-    st.markdown("---")
-    st.subheader("操作")
-    _render_investment_action_buttons(
-        _build_analysis_record_action_payload(record, analysis_source="history_record_detail"),
-        key_prefix=f"history_detail_{record_id}",
+    st.caption(
+        f"`{record.get('analysis_scope_label') or '深度分析'}`  "
+        f"`{record.get('analysis_source_label') or '历史分析'}`  "
+        f"周期: `{record.get('period') or 'N/A'}`"
     )
 
-    # 返回按钮
+    final_decision = dict(record.get("final_decision") or {})
+    if record.get("rating") and not final_decision.get("rating"):
+        final_decision["rating"] = record.get("rating")
+    if record.get("confidence") is not None and final_decision.get("confidence_level") in (None, ""):
+        final_decision["confidence_level"] = record.get("confidence")
+    if record.get("target_price") is not None and final_decision.get("target_price") in (None, ""):
+        final_decision["target_price"] = record.get("target_price")
+    if record.get("entry_min") is not None and final_decision.get("entry_min") is None:
+        final_decision["entry_min"] = record.get("entry_min")
+    if record.get("entry_max") is not None and final_decision.get("entry_max") is None:
+        final_decision["entry_max"] = record.get("entry_max")
+    if record.get("take_profit") is not None and final_decision.get("take_profit") in (None, ""):
+        final_decision["take_profit"] = record.get("take_profit")
+    if record.get("stop_loss") is not None and final_decision.get("stop_loss") in (None, ""):
+        final_decision["stop_loss"] = record.get("stop_loss")
+    if record.get("summary") and not final_decision.get("operation_advice"):
+        final_decision["operation_advice"] = record.get("summary")
+    if final_decision:
+        shared_render_final_decision(final_decision, show_header=True)
+
+    stock_info = record.get("stock_info") or {}
+    if stock_info:
+        st.subheader("股票基本信息")
+        shared_render_stock_info_metrics(stock_info)
+
+    agents_results = record.get("agents_results") or {}
+    if agents_results:
+        st.subheader("分析师原始报告")
+        shared_render_agents_analysis_tabs(agents_results, show_header=False)
+
+    discussion_result = record.get("discussion_result")
+    shared_render_reasoning_process(
+        agents_results,
+        discussion_result,
+        expanded=False,
+        include_agents=not bool(agents_results),
+    )
+
     st.markdown("---")
-    if st.button("⬅️ 返回历史记录列表"):
-        if 'viewing_record_id' in st.session_state:
-            del st.session_state.viewing_record_id
+    st.subheader("操作")
+    _render_analysis_history_actions(record, key_prefix=f"analysis_history_{record_id}_detail")
+
+    if st.button("返回历史列表", key=f"history_detail_back_{record_id}", width="content"):
+        _clear_history_record_detail()
         st.rerun()
 
 def display_config_manager():

@@ -736,11 +736,10 @@ def display_portfolio_manager(lightweight_model=None, reasoning_model=None):
     _render_portfolio_analysis_live_status_fragment()
     
     # 创建标签页
-    tab1, tab2, tab3, tab4 = st.tabs([
+    tab1, tab2, tab3 = st.tabs([
         "持仓情况",
         "风险评估",
         "分析任务",
-        "分析历史"
     ])
     
     with tab1:
@@ -751,9 +750,6 @@ def display_portfolio_manager(lightweight_model=None, reasoning_model=None):
     
     with tab3:
         display_analysis_task_center(lightweight_model, reasoning_model)
-    
-    with tab4:
-        display_analysis_history()
 
 
 
@@ -1756,81 +1752,8 @@ def display_scheduler_management():
 
 
 def display_analysis_history():
-    """显示分析历史"""
-    
-    st.markdown("### 分析历史记录")
-    
-    stocks = _dedupe_items(
-        portfolio_manager.get_all_stocks(),
-        _build_stock_identity_key,
-        _build_stock_semantic_key,
-    )
-    
-    if not stocks:
-        st.info("暂无持仓股票")
-        return
-    
-    # 选择股票
-    stock_codes = list(dict.fromkeys(s["code"] for s in stocks))
-    selected_code = st.selectbox(
-        "选择股票",
-        options=["全部"] + stock_codes,
-        help="查看特定股票的分析历史"
-    )
-    # 获取历史记录
-    if selected_code == "全部":
-        # 获取所有股票的最新历史
-        all_history = []
-        for stock in stocks:
-            stock_id = stock["id"]
-            history = portfolio_manager.db.get_latest_analysis_history(
-                stock_id,
-                limit=5,
-            )
-            for h in history:
-                h["code"] = stock["code"]
-                h["name"] = stock["name"]
-            all_history.extend(history)
-        
-        # 按时间排序
-        all_history.sort(key=_get_history_record_time, reverse=True)
-        history_list = _dedupe_items(
-            all_history,
-            _build_history_record_identity_key,
-            _build_history_record_semantic_key,
-        )[:20]  # 只显示最近20条
-    else:
-        # 获取指定股票的历史
-        matched_stocks = [s for s in stocks if s["code"] == selected_code]
-        if matched_stocks:
-            history_list = []
-            for stock in matched_stocks:
-                single_history = portfolio_manager.db.get_latest_analysis_history(
-                    stock["id"],
-                    limit=20,
-                )
-                for h in single_history:
-                    h["code"] = stock["code"]
-                    h["name"] = stock["name"]
-                history_list.extend(single_history)
-            history_list.sort(key=_get_history_record_time, reverse=True)
-            history_list = _dedupe_items(
-                history_list,
-                _build_history_record_identity_key,
-                _build_history_record_semantic_key,
-            )
-        else:
-            history_list = []
-    
-    if not history_list:
-        st.info(f"暂无分析历史记录")
-        return
-    
-    # 显示历史记录
-    st.caption(f"共 {len(history_list)} 条记录")
-    
-    for record in history_list:
-        display_history_record(record)
+    """兼容旧入口，提示用户使用统一历史页面。"""
+    st.info("分析历史已迁移到侧边栏“分析历史”页面。")
 
 
 def _render_history_delete_action(record: Dict):

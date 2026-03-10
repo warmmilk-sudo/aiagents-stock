@@ -300,6 +300,21 @@ def format_price(value: Any, precision: int = 2, currency: str = "¥") -> str:
     return f"{currency}{number:.{precision}f}"
 
 
+def format_entry_range(entry_min: Any, entry_max: Any, *, precision: int = 2, currency: str = "¥") -> str:
+    min_value = to_float(entry_min)
+    max_value = to_float(entry_max)
+    if min_value is None and max_value is None:
+        return "N/A"
+    if min_value is None:
+        return format_price(max_value, precision=precision, currency=currency)
+    if max_value is None:
+        return format_price(min_value, precision=precision, currency=currency)
+    return (
+        f"{format_price(min_value, precision=precision, currency=currency)} - "
+        f"{format_price(max_value, precision=precision, currency=currency)}"
+    )
+
+
 def get_market_color(change_value: Any) -> str:
     number = to_float(change_value)
     if number is None:
@@ -554,6 +569,12 @@ def render_final_decision(final_decision: Any, *, show_header: bool = True):
         st.caption("最终决策原始数据格式异常，已降级为文本展示。")
 
     if isinstance(normalized_final_decision, dict) and "decision_text" not in normalized_final_decision:
+        entry_range_display = normalized_final_decision.get("entry_range")
+        if not entry_range_display:
+            entry_range_display = format_entry_range(
+                normalized_final_decision.get("entry_min"),
+                normalized_final_decision.get("entry_max"),
+            )
         col1, col2 = st.columns([1, 2])
 
         with col1:
@@ -578,7 +599,7 @@ def render_final_decision(final_decision: Any, *, show_header: bool = True):
             st.markdown("**关键位置：**")
             left, right = st.columns(2)
             with left:
-                st.write(f"**进场区间：** {normalized_final_decision.get('entry_range', 'N/A')}")
+                st.write(f"**进场区间：** {entry_range_display}")
                 st.write(f"**止盈位：** {normalized_final_decision.get('take_profit', 'N/A')}")
             with right:
                 st.write(f"**止损位：** {normalized_final_decision.get('stop_loss', 'N/A')}")

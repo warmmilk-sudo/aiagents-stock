@@ -50,6 +50,15 @@ def parse_entry_range(value: Any) -> Tuple[Optional[float], Optional[float]]:
     return number, number
 
 
+def resolve_entry_range(final_decision: Optional[Dict[str, Any]]) -> Tuple[Optional[float], Optional[float]]:
+    final_decision = final_decision or {}
+    entry_min = extract_first_number(final_decision.get("entry_min"))
+    entry_max = extract_first_number(final_decision.get("entry_max"))
+    if entry_min is not None or entry_max is not None:
+        return entry_min, entry_max
+    return parse_entry_range(final_decision.get("entry_range"))
+
+
 def build_strategy_context(
     final_decision: Optional[Dict[str, Any]],
     *,
@@ -59,7 +68,7 @@ def build_strategy_context(
     analysis_source: str = "manual",
 ) -> Dict[str, Any]:
     final_decision = final_decision or {}
-    entry_min, entry_max = parse_entry_range(final_decision.get("entry_range"))
+    entry_min, entry_max = resolve_entry_range(final_decision)
     take_profit = extract_first_number(final_decision.get("take_profit"))
     stop_loss = extract_first_number(final_decision.get("stop_loss"))
     normalized_summary = str(
