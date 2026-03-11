@@ -289,28 +289,39 @@ class PortfolioAnalyticsTests(unittest.TestCase):
             self.portfolio_db.has_snapshot_for_date(updated_stock["account_name"], snapshot_date)
         )
 
-    def test_record_trade_sell_keeps_remaining_cost_and_rejects_oversell(self):
+    def test_record_trade_sell_recalculates_remaining_cost_and_rejects_invalid_quantity(self):
         stock_id = self._add_stock(cost_price=10.0, quantity=200)
 
         success, msg, updated_stock = self.manager.record_trade(
             stock_id=stock_id,
             trade_type="sell",
-            quantity=50,
+            quantity=100,
             price=13.0,
             trade_date="2026-01-08",
             note="trim position",
         )
 
         self.assertTrue(success, msg)
-        self.assertEqual(updated_stock["quantity"], 150)
-        self.assertAlmostEqual(updated_stock["cost_price"], 10.0)
+        self.assertEqual(updated_stock["quantity"], 100)
+        self.assertAlmostEqual(updated_stock["cost_price"], 7.0)
+
+        failed_lot, lot_error_msg, _ = self.manager.record_trade(
+            stock_id=stock_id,
+            trade_type="sell",
+            quantity=50,
+            price=13.0,
+            trade_date="2026-01-09",
+            note="invalid lot",
+        )
+        self.assertFalse(failed_lot)
+        self.assertIn("100的整数倍", lot_error_msg)
 
         failed, error_msg, _ = self.manager.record_trade(
             stock_id=stock_id,
             trade_type="sell",
             quantity=999,
             price=13.0,
-            trade_date="2026-01-09",
+            trade_date="2026-01-10",
             note="invalid oversell",
         )
         self.assertFalse(failed)

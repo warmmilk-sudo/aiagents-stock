@@ -284,6 +284,9 @@ class AssetService:
 
         if trade_quantity <= 0:
             return False, "交易数量必须大于 0", None
+        if not clear_requested and trade_quantity % 100 != 0:
+            action_label = "加仓" if normalized_trade_type == "buy" else "减仓"
+            return False, f"{action_label}数量必须是100的整数倍", None
 
         if normalized_trade_type == "buy":
             if asset.get("status") == STATUS_PORTFOLIO and current_quantity > 0 and current_cost > 0:
@@ -321,7 +324,7 @@ class AssetService:
         if current_quantity <= 0:
             return False, "当前没有可卖出的持仓数量", None
         if trade_quantity > current_quantity:
-            return False, "卖出数量不能超过当前持仓数量", None
+            return False, "减仓数量不能超过当前持仓数量", None
 
         remaining_quantity = current_quantity - trade_quantity
         self.asset_repository.add_trade_history(

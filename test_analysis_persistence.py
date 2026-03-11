@@ -252,7 +252,7 @@ class PortfolioHistoryPersistenceTests(unittest.TestCase):
         success, msg, updated_stock = self.manager.record_trade(
             stock_id=stock_id,
             trade_type="buy",
-            quantity=50,
+            quantity=100,
             price=13.0,
             trade_date="2026-03-10",
             note="手工加仓",
@@ -260,16 +260,16 @@ class PortfolioHistoryPersistenceTests(unittest.TestCase):
 
         self.assertTrue(success, msg)
         self.assertIsNotNone(updated_stock)
-        self.assertEqual(int(updated_stock["quantity"]), 150)
-        self.assertAlmostEqual(float(updated_stock["cost_price"]), 11.0, places=6)
+        self.assertEqual(int(updated_stock["quantity"]), 200)
+        self.assertAlmostEqual(float(updated_stock["cost_price"]), 11.5, places=6)
 
-    def test_manual_sell_trade_recalculates_cost_by_tonghuashun_rule(self):
-        stock_id = self._add_stock("300760", cost_price=10.0, quantity=100)
+    def test_manual_sell_trade_recalculates_remaining_cost(self):
+        stock_id = self._add_stock("300760", cost_price=10.0, quantity=200)
 
         success, msg, updated_stock = self.manager.record_trade(
             stock_id=stock_id,
             trade_type="sell",
-            quantity=40,
+            quantity=100,
             price=12.0,
             trade_date="2026-03-10",
             note="手工减仓",
@@ -277,8 +277,8 @@ class PortfolioHistoryPersistenceTests(unittest.TestCase):
 
         self.assertTrue(success, msg)
         self.assertIsNotNone(updated_stock)
-        self.assertEqual(int(updated_stock["quantity"]), 60)
-        self.assertAlmostEqual(float(updated_stock["cost_price"]), (1000.0 - 480.0) / 60.0, places=6)
+        self.assertEqual(int(updated_stock["quantity"]), 100)
+        self.assertAlmostEqual(float(updated_stock["cost_price"]), 8.0, places=6)
 
     def test_manual_clear_trade_auto_downgrades_to_watchlist(self):
         stock_id = self._add_stock("300136", cost_price=10.0, quantity=100)

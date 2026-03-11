@@ -1533,10 +1533,16 @@ def display_stock_card(
                 st.session_state[trade_quantity_key] = max(1, int(quantity or 0))
                 if not st.session_state.get(trade_note_key):
                     st.session_state[trade_note_key] = "清仓"
+            else:
+                current_trade_quantity = int(st.session_state.get(trade_quantity_key) or 0)
+                if current_trade_quantity < 100:
+                    st.session_state[trade_quantity_key] = 100
+                elif current_trade_quantity % 100 != 0:
+                    st.session_state[trade_quantity_key] = ((current_trade_quantity + 99) // 100) * 100
 
             with st.form(key=f"trade_form_{stock_id}"):
                 st.markdown(f"#### 手工交易 - {display_name}")
-                st.caption("买入会按加权均价重算成本；卖出/清仓会按同花顺口径重算剩余成本。清仓后默认自动降级为盯盘。")
+                st.caption("买入、减仓都会按加权均价重算剩余成本；加仓/减仓数量需为 100 股的整数倍；清仓后默认自动降级为盯盘。")
 
                 trade_col1, trade_col2 = st.columns(2)
                 with trade_col1:
@@ -1563,13 +1569,15 @@ def display_stock_card(
                     )
                     trade_quantity = st.number_input(
                         "成交数量",
-                        min_value=1,
-                        step=1,
+                        min_value=100,
+                        step=100,
                         disabled=trade_type == "clear",
                         key=trade_quantity_key,
                     )
                     if trade_type == "clear":
                         st.caption(f"清仓将按当前持仓数量 {int(quantity or 0)} 股提交。")
+                    else:
+                        st.caption("加仓 / 减仓的最小变动单位为 100 股。")
 
                 trade_note = st.text_area(
                     "交易备注",
