@@ -25,6 +25,7 @@ from ui_analysis_task_utils import (
 )
 from ui_state_keys import (
     INVESTMENT_AI_TASK_PREFILL_KEY,
+    INVESTMENT_PRICE_ALERT_PREFILL_KEY,
     PORTFOLIO_ADD_ACCOUNT_NAME_KEY,
     PORTFOLIO_ADD_ORIGIN_ANALYSIS_ID_KEY,
     SMART_MONITOR_ACTIVE_TAB_KEY,
@@ -123,7 +124,7 @@ def _legacy_smart_monitor_ui(lightweight_model=None, reasoning_model=None):
         |------|------|
         | **监控任务** | 定时自动分析目标股票，生成提醒和待处理动作 |
         | **持仓管理** | 基于资产账本记录持仓成本，AI决策会考虑当前持仓情况 |
-        | **历史记录** | 查看所有AI决策历史、交易记录和通知记录 |
+        | **历史记录** | 查看最新监测事件、系统状态与提醒记录 |
         | **系统设置** | 配置API、数据源和通知等 |
         
         ---
@@ -754,7 +755,7 @@ def render_position_management():
             stock_code = selected_stock.split()[0]
             selected_position = next((p for p in rows if p['stock_code'] == stock_code), None)
             if selected_position:
-                st.info("请使用 AI 任务卡片中的“登记卖出”或投资工作台中的手工交易登记功能。")
+                st.info("请到持仓管理中进行手工交易登记。")
 
 
 def render_history(show_header: bool = True, title: str = "历史记录"):
@@ -765,117 +766,66 @@ def render_history(show_header: bool = True, title: str = "历史记录"):
     else:
         st.markdown(f"#### {title}")
     
-    from monitor_manager import display_monitor_status, display_notification_management
     from monitor_service import monitor_service
 
     db = st.session_state[SMART_MONITOR_DB_KEY]
     monitor_service.ensure_started()
     monitor_service.ensure_stopped_if_idle()
 
-    decisions = db.get_ai_decisions(limit=50)
-    events = db.monitoring_repository.get_recent_events(limit=80)
-    pending_notifications = db.monitoring_repository.get_pending_notifications()
+    events = db.monitoring_repository.get_recent_events(limit=60)
     enabled_ai_tasks = len(db.get_monitor_tasks(enabled_only=True))
-    enabled_price_alerts = len(
-        db.monitoring_repository.list_items(monitor_type="price_alert", enabled_only=True)
-    )
+    pending_actions = db.get_pending_actions(status="pending", limit=200)
 
-    summary_col1, summary_col2, summary_col3, summary_col4, summary_col5 = st.columns(5)
+    summary_col1, summary_col2, summary_col3, summary_col4 = st.columns(4)
     with summary_col1:
         st.metric("监测服务", "运行中" if monitor_service.running else "已停止")
     with summary_col2:
         st.metric("AI任务", enabled_ai_tasks)
     with summary_col3:
-        st.metric("价格预警", enabled_price_alerts)
-    with summary_col4:
         st.metric("监测事件", len(events))
-    with summary_col5:
-        st.metric("待发通知", len(pending_notifications))
+    with summary_col4:
+        st.metric("待人工动作", len(pending_actions))
 
-    with st.expander("监测服务控制台", expanded=False):
-        display_monitor_status()
+    st.subheader("最新监测事件")
+    if not events:
+        st.info("暂无监测事件。")
+        return
 
-    tab_decisions, tab_events = st.tabs(
-        ["AI决策历史", "监测事件与通知"]
-    )
+    filter_col1, filter_col2 = st.columns([1.3, 1])
+    event_types = ["全部"] + sorted({str(event.get("event_type") or "-") for event in events})
+    with filter_col1:
+        selected_event_type = st.selectbox("事件类型", event_types, key="smart_monitor_event_type_filter")
+    with filter_col2:
+        symbol_filter = st.text_input("筛选代码", value="", key="smart_monitor_event_symbol_filter").strip().upper()
 
-    with tab_decisions:
-        st.subheader("AI决策历史")
-        if not decisions:
-            st.info("暂无决策记录")
-        else:
-            st.caption(f"最近 {len(decisions)} 条 AI 决策，按时间倒序展示。")
-            for dec in decisions:
-                monitor_levels = dec.get("monitor_levels") or {}
-                with st.expander(
-                    f"{dec['decision_time']} - {dec['stock_code']} {dec['stock_name']} "
-                    f"- {dec['action']} (信心度{dec['confidence']}%)"
-                ):
-                    col1, col2 = st.columns([1, 3])
+    filtered_events = []
+    for event in events:
+        event_type = str(event.get("event_type") or "-")
+        symbol = str(event.get("symbol") or "").upper()
+        if selected_event_type != "全部" and event_type != selected_event_type:
+            continue
+        if symbol_filter and symbol_filter not in symbol:
+            continue
+        filtered_events.append(event)
 
-                    with col1:
-                        st.write(f"**时段:** {dec['trading_session']}")
-                        st.write(f"**风险:** {dec['risk_level']}")
-                        st.write(f"**仓位:** {dec['position_size_pct']}%")
-                        st.write(f"**执行模式:** {dec.get('execution_mode', 'manual_only')}")
-                        st.write(f"**状态:** {dec.get('action_status', 'suggested')}")
-                    with col2:
-                        st.write("**决策理由:**")
-                        st.text(dec['reasoning'])
-                        if monitor_levels:
-                            st.caption(
-                                f"运行时阈值: 进场 {monitor_levels.get('entry_min', '-')} - {monitor_levels.get('entry_max', '-')} | "
-                                f"止盈 {monitor_levels.get('take_profit', '-')} | 止损 {monitor_levels.get('stop_loss', '-')}"
-                            )
+    st.caption(f"当前展示最近 {len(filtered_events)} / {len(events)} 条监测事件。")
+    if not filtered_events:
+        st.info("没有符合筛选条件的事件。")
+        return
 
-    with tab_events:
-        st.subheader("监测事件")
-        if not events:
-            st.info("暂无事件记录。")
-        else:
-            filter_col1, filter_col2, filter_col3 = st.columns([1.2, 1, 1])
-            event_types = ["全部"] + sorted({str(event.get("event_type") or "-") for event in events})
-            with filter_col1:
-                selected_event_type = st.selectbox("事件类型", event_types, key="smart_monitor_event_type_filter")
-            with filter_col2:
-                notification_only = st.checkbox("仅待发通知", value=False, key="smart_monitor_event_notification_only")
-            with filter_col3:
-                symbol_filter = st.text_input("筛选代码", value="", key="smart_monitor_event_symbol_filter").strip().upper()
-
-            filtered_events = []
-            for event in events:
-                event_type = str(event.get("event_type") or "-")
-                symbol = str(event.get("symbol") or "").upper()
-                if selected_event_type != "全部" and event_type != selected_event_type:
-                    continue
-                if notification_only and not event.get("notification_pending"):
-                    continue
-                if symbol_filter and symbol_filter not in symbol:
-                    continue
-                filtered_events.append(event)
-
-            st.caption(f"当前展示 {len(filtered_events)} / {len(events)} 条监测事件。")
-            if not filtered_events:
-                st.info("没有符合筛选条件的事件。")
-            for event in filtered_events:
-                details = db.monitoring_repository._safe_json_loads(event.get("details_json"), {})
-                sent_text = "已发送" if event.get("sent") else "未发送"
-                pending_text = "通知待发送" if event.get("notification_pending") else "仅记录"
-                with st.expander(
-                    f"{event.get('created_at')} - {event.get('symbol')} - {event.get('event_type')} [{sent_text}]"
-                ):
-                    meta_col1, meta_col2, meta_col3 = st.columns(3)
-                    with meta_col1:
-                        st.caption(f"监控类型: {event.get('monitor_type') or '-'}")
-                    with meta_col2:
-                        st.caption(f"通知状态: {pending_text}")
-                    with meta_col3:
-                        st.caption(f"名称: {event.get('name') or '-'}")
-                    st.write(event.get("message"))
-                    if details:
-                        st.json(details)
-        st.markdown("---")
-        display_notification_management(key_prefix="smart_monitor_history")
+    for event in filtered_events:
+        details = db.monitoring_repository._safe_json_loads(event.get("details_json"), {})
+        with st.expander(
+            f"{event.get('created_at')} - {event.get('symbol')} - {event.get('event_type')}"
+        ):
+            meta_col1, meta_col2 = st.columns(2)
+            with meta_col1:
+                st.caption(f"监控类型: {event.get('monitor_type') or '-'}")
+            with meta_col2:
+                st.caption(f"名称: {event.get('name') or '-'}")
+            st.write(event.get("message"))
+            if details:
+                st.json(details)
 
 
 def render_settings(show_header: bool = True, title: str = "系统设置"):
@@ -1007,6 +957,80 @@ def _get_task_asset(db: SmartMonitorDB, task: Dict) -> Optional[Dict]:
         stock_code,
         task.get("account_name") or DEFAULT_ACCOUNT_NAME,
     )
+
+
+def _get_task_price_alert_item(db: SmartMonitorDB, task: Dict) -> Optional[Dict]:
+    symbol = task.get("stock_code")
+    if not symbol:
+        return None
+    account_name = task.get("account_name") or DEFAULT_ACCOUNT_NAME
+    asset_id = task.get("asset_id")
+    portfolio_stock_id = task.get("portfolio_stock_id")
+    item = db.monitoring_repository.get_item_by_symbol(
+        symbol,
+        monitor_type="price_alert",
+        account_name=account_name,
+        asset_id=asset_id,
+        portfolio_stock_id=portfolio_stock_id,
+    )
+    if item:
+        return item
+    return db.monitoring_repository.get_item_by_symbol(
+        symbol,
+        monitor_type="price_alert",
+        account_name=account_name,
+    )
+
+
+def _resolve_price_alert_levels(alert_item: Optional[Dict]) -> Optional[Dict[str, object]]:
+    if not alert_item:
+        return None
+    config_data = alert_item.get("config") or {}
+    runtime_thresholds = config_data.get("runtime_thresholds")
+    runtime_complete = isinstance(runtime_thresholds, dict) and all(
+        runtime_thresholds.get(key) not in (None, "")
+        for key in ("entry_min", "entry_max", "take_profit", "stop_loss")
+    )
+    if runtime_complete:
+        return {
+            "entry_min": runtime_thresholds.get("entry_min"),
+            "entry_max": runtime_thresholds.get("entry_max"),
+            "take_profit": runtime_thresholds.get("take_profit"),
+            "stop_loss": runtime_thresholds.get("stop_loss"),
+            "source": config_data.get("threshold_source") or "runtime_thresholds",
+        }
+
+    entry_range = config_data.get("entry_range") or {}
+    if any(
+        config_data.get(key) not in (None, "") for key in ("take_profit", "stop_loss")
+    ) or any(entry_range.get(key) not in (None, "") for key in ("min", "max")):
+        return {
+            "entry_min": entry_range.get("min"),
+            "entry_max": entry_range.get("max"),
+            "take_profit": config_data.get("take_profit"),
+            "stop_loss": config_data.get("stop_loss"),
+            "source": config_data.get("threshold_source") or "strategy_context",
+        }
+    return None
+
+
+def _get_latest_ai_decision_for_task(db: SmartMonitorDB, task: Dict) -> Optional[Dict]:
+    stock_code = task.get("stock_code")
+    if not stock_code:
+        return None
+    account_name = task.get("account_name") or DEFAULT_ACCOUNT_NAME
+    asset_id = task.get("asset_id")
+    decisions = db.get_ai_decisions(stock_code=stock_code, limit=10)
+    for decision in decisions:
+        account_info = decision.get("account_info") or {}
+        decision_account_name = account_info.get("account_name")
+        decision_asset_id = account_info.get("asset_id")
+        if decision_account_name and decision_account_name != account_name:
+            continue
+        if asset_id and decision_asset_id and int(decision_asset_id) != int(asset_id):
+            continue
+        return decision
+    return decisions[0] if decisions else None
 
 
 def _format_asset_status(asset: Optional[Dict]) -> str:
@@ -1225,6 +1249,8 @@ def render_ai_monitor_tasks_panel(show_header: bool = True, title: str = "AI监�
     st.caption(f"监测服务状态: {service_status}。启用中的任务会由统一监测服务按分钟调度执行。")
 
     prefill = st.session_state.pop(INVESTMENT_AI_TASK_PREFILL_KEY, None)
+    if not prefill:
+        prefill = st.session_state.pop(INVESTMENT_PRICE_ALERT_PREFILL_KEY, None)
     if prefill:
         st.session_state["ai_task_form_account_name"] = prefill.get("account_name") or DEFAULT_ACCOUNT_NAME
         st.session_state["ai_task_form_task_name"] = prefill.get("task_name") or f"{prefill.get('stock_name') or prefill.get('symbol')}盯盘"
@@ -1344,7 +1370,7 @@ def render_ai_monitor_tasks_panel(show_header: bool = True, title: str = "AI监�
         ):
             changed_count = db.set_all_monitor_tasks_enabled(True)
             monitor_service.ensure_started()
-            st.success(f"已启用 {changed_count} 个标的的 AI 盯盘与价格预警。")
+            st.success(f"已启用 {changed_count} 个标的的盯盘任务，实时预警同步生效。")
             st.rerun()
     with disable_all_col:
         if st.button(
@@ -1355,38 +1381,89 @@ def render_ai_monitor_tasks_panel(show_header: bool = True, title: str = "AI监�
         ):
             changed_count = db.set_all_monitor_tasks_enabled(False)
             monitor_service.ensure_stopped_if_idle()
-            st.success(f"已停用 {changed_count} 个标的的 AI 盯盘与价格预警。")
+            st.success(f"已停用 {changed_count} 个标的的盯盘任务，实时预警同步停用。")
             st.rerun()
 
     for task in tasks:
         asset = _get_task_asset(db, task)
+        alert_item = _get_task_price_alert_item(db, task)
+        alert_levels = _resolve_price_alert_levels(alert_item)
+        latest_decision = _get_latest_ai_decision_for_task(db, task)
         pending_actions = _get_pending_actions_for_task(db, task)
-        buy_pending = next((item for item in pending_actions if item.get("action_type") == "buy"), None)
-        sell_pending = next((item for item in pending_actions if item.get("action_type") == "sell"), None)
 
         with st.container():
             st.markdown(f"**{task['stock_code']}** {task.get('stock_name') or task['stock_code']}")
 
             strategy_context = task.get("strategy_context") or {}
-            summary_col1, summary_col2, summary_col3 = st.columns(3)
+            summary_col1, summary_col2, summary_col3, summary_col4 = st.columns(4)
             with summary_col1:
                 st.caption(f"资产状态: {_format_asset_status(asset)}")
             with summary_col2:
                 st.caption(f"持仓摘要: {_format_position_summary(asset)}")
             with summary_col3:
-                if strategy_context:
+                st.caption(f"轻 AI 间隔: {max(1, int(task.get('check_interval') or 60) // 60)} 分钟")
+            with summary_col4:
+                if alert_item:
                     st.caption(
-                        f"战略线: 止盈 {strategy_context.get('take_profit') or '-'} / 止损 {strategy_context.get('stop_loss') or '-'}"
+                        f"实时预警: {int(alert_item.get('interval_minutes') or _get_default_alert_interval_minutes())} 分钟"
                     )
                 else:
-                    st.caption("战略线: 尚未形成")
+                    st.caption("实时预警: 未建立")
+
+            threshold_line = None
+            if alert_levels:
+                threshold_line = (
+                    f"预警线: 进场 {alert_levels.get('entry_min') or '-'} - {alert_levels.get('entry_max') or '-'} | "
+                    f"止盈 {alert_levels.get('take_profit') or '-'} | 止损 {alert_levels.get('stop_loss') or '-'}"
+                )
+            elif strategy_context:
+                threshold_line = (
+                    f"预警线: 进场 {strategy_context.get('entry_min') or '-'} - {strategy_context.get('entry_max') or '-'} | "
+                    f"止盈 {strategy_context.get('take_profit') or '-'} | 止损 {strategy_context.get('stop_loss') or '-'}"
+                )
+
+            if threshold_line:
+                st.caption(threshold_line)
+            else:
+                st.caption("预警线: 尚未形成")
+
+            if alert_item:
+                alert_meta = []
+                current_price = alert_item.get("current_price")
+                if current_price not in (None, ""):
+                    alert_meta.append(f"最新价 {current_price}")
+                if alert_item.get("last_checked"):
+                    alert_meta.append(f"最近检查 {alert_item.get('last_checked')}")
+                if alert_levels and alert_levels.get("source"):
+                    alert_meta.append(f"阈值来源 {alert_levels.get('source')}")
+                if alert_meta:
+                    st.caption(" | ".join(alert_meta))
+            elif strategy_context:
+                st.caption("实时预警将随盯盘任务自动同步。")
+
+            if latest_decision:
+                decision_label = (
+                    f"{latest_decision.get('decision_time')} | {latest_decision.get('action')} "
+                    f"| 信心度 {latest_decision.get('confidence')}%"
+                )
+                with st.expander(f"最新 AI 决策: {decision_label}", expanded=False):
+                    decision_col1, decision_col2, decision_col3 = st.columns(3)
+                    with decision_col1:
+                        st.caption(f"交易时段: {latest_decision.get('trading_session') or '-'}")
+                    with decision_col2:
+                        st.caption(f"风险等级: {latest_decision.get('risk_level') or '-'}")
+                    with decision_col3:
+                        st.caption(f"建议仓位: {latest_decision.get('position_size_pct') or '-'}%")
+                    st.write(latest_decision.get("reasoning") or "暂无决策理由。")
+            else:
+                st.caption("尚无最新 AI 决策，可先执行一次“立即分析”。")
 
             if pending_actions:
                 pending_labels = [f"#{item['id']} {str(item.get('action_type', '')).upper()}" for item in pending_actions]
-                st.error(f"待人工处理动作: {' | '.join(pending_labels)}")
+                st.warning(f"待人工处理动作: {' | '.join(pending_labels)}。请到持仓管理完成交易登记。")
 
-            action_columns = st.columns(5 if not task.get('managed_by_portfolio') else 4)
-            action_col1, action_col2, action_col3, action_col4 = action_columns[:4]
+            action_columns = st.columns(3 if not task.get('managed_by_portfolio') else 2)
+            action_col1, action_col2 = action_columns[:2]
             with action_col1:
                 if st.button(
                     run_button_label,
@@ -1409,26 +1486,11 @@ def render_ai_monitor_tasks_panel(show_header: bool = True, title: str = "AI监�
                         monitor_service.ensure_stopped_if_idle()
                     else:
                         monitor_service.ensure_started()
-                    st.success(f"{task['stock_code']} 的 AI 盯盘与价格预警已{toggle_label}。")
-                    st.rerun()
-            with action_col3:
-                if st.button("登记买入", key=f"buy_ai_task_{task['id']}", width='stretch'):
-                    st.session_state[f"ai_task_trade_open_{task['id']}"] = True
-                    st.session_state[f"ai_task_trade_mode_{task['id']}"] = "buy"
-                    st.rerun()
-            with action_col4:
-                if st.button(
-                    "登记卖出",
-                    key=f"sell_ai_task_{task['id']}",
-                    width='stretch',
-                    disabled=asset is None or asset.get("status") != "portfolio" or int(asset.get("quantity") or 0) <= 0,
-                ):
-                    st.session_state[f"ai_task_trade_open_{task['id']}"] = True
-                    st.session_state[f"ai_task_trade_mode_{task['id']}"] = "sell"
+                    st.success(f"{task['stock_code']} 的盯盘任务已{toggle_label}，实时预警同步更新。")
                     st.rerun()
             if not task.get('managed_by_portfolio'):
-                action_col5 = action_columns[4]
-                with action_col5:
+                action_col3 = action_columns[2]
+                with action_col3:
                     if st.button(
                         "删除",
                         key=f"delete_ai_task_{task['id']}",
@@ -1438,20 +1500,6 @@ def render_ai_monitor_tasks_panel(show_header: bool = True, title: str = "AI监�
                         st.success("任务已删除。")
                         st.rerun()
 
-            signal_col1, signal_col2 = st.columns(2)
-            with signal_col1:
-                if buy_pending:
-                    st.caption(
-                        f"买入待办 #{buy_pending['id']} | 建议价 {((buy_pending.get('payload') or {}).get('current_price') or '-')}"
-                    )
-            with signal_col2:
-                if sell_pending:
-                    st.caption(
-                        f"卖出待办 #{sell_pending['id']} | 当前仓位 {int((asset or {}).get('quantity') or 0)} 股"
-                    )
-
-            _render_pending_action_trade_form(db, task, asset, pending_actions)
-
             st.markdown(
                 "<div style='margin:0.45rem 0 0.7rem 0; border-bottom:1px solid rgba(148,163,184,0.18);'></div>",
                 unsafe_allow_html=True,
@@ -1460,8 +1508,6 @@ def render_ai_monitor_tasks_panel(show_header: bool = True, title: str = "AI监�
 
 def smart_monitor_ui(lightweight_model=None, reasoning_model=None):
     """智能盯盘主界面（重构版）。"""
-    from monitor_manager import display_price_alert_workspace
-
     _ensure_smart_monitor_runtime(lightweight_model, reasoning_model)
 
     desired_view = st.session_state.get(SMART_MONITOR_ACTIVE_TAB_KEY, "watchlist")
@@ -1469,12 +1515,12 @@ def smart_monitor_ui(lightweight_model=None, reasoning_model=None):
         "watchlist": "盯盘列表",
         "ai_task": "盯盘列表",
         "realtime": "盯盘列表",
-        "price_alert": "价格预警",
+        "price_alert": "盯盘列表",
         "decision_events": "决策事件",
         "history": "决策事件",
         "settings": "系统设置",
     }
-    labels = ["盯盘列表", "价格预警", "决策事件", "系统设置"]
+    labels = ["盯盘列表", "决策事件", "系统设置"]
     current_label = view_key_to_label.get(desired_view, "盯盘列表")
     selected_label = st.radio(
         "智能盯盘视图",
@@ -1486,7 +1532,6 @@ def smart_monitor_ui(lightweight_model=None, reasoning_model=None):
     )
     label_to_key = {
         "盯盘列表": "watchlist",
-        "价格预警": "price_alert",
         "决策事件": "decision_events",
         "系统设置": "settings",
     }
@@ -1495,10 +1540,6 @@ def smart_monitor_ui(lightweight_model=None, reasoning_model=None):
 
     if selected_view == "watchlist":
         render_ai_monitor_tasks_panel(title="盯盘列表")
-        return
-
-    if selected_view == "price_alert":
-        display_price_alert_workspace()
         return
 
     if selected_view == "decision_events":

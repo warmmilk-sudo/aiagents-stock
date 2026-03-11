@@ -1251,7 +1251,7 @@ def open_investment_workspace(tab_key: str, view_key: str) -> None:
         view_key = "show_smart_monitor"
     elif view_key == "show_smart_monitor":
         if tab_key == "price_alert":
-            st.session_state[SMART_MONITOR_ACTIVE_TAB_KEY] = "price_alert"
+            st.session_state[SMART_MONITOR_ACTIVE_TAB_KEY] = "watchlist"
         elif tab_key == "activity":
             st.session_state[SMART_MONITOR_ACTIVE_TAB_KEY] = "decision_events"
         elif tab_key == "ai_monitor":
