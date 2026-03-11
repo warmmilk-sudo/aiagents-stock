@@ -307,14 +307,15 @@ class MonitoringOrchestrator:
                 last_status=action.lower(),
                 last_message=message,
             )
-            await asyncio.to_thread(
-                self.repository.record_event,
-                item_id=item["id"],
-                event_type="ai_analysis",
-                message=message,
-                notification_pending=False,
-                sent=True,
-            )
+            if result.get("decision_changed", True):
+                await asyncio.to_thread(
+                    self.repository.record_event,
+                    item_id=item["id"],
+                    event_type="ai_analysis",
+                    message=message,
+                    notification_pending=False,
+                    sent=True,
+                )
             return True
 
         if result.get("skipped"):

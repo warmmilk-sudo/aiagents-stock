@@ -6,7 +6,9 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
+import html
 import logging
+import re
 from typing import Dict, List, Optional
 from dotenv import load_dotenv
 import config
@@ -33,6 +35,9 @@ from ui_state_keys import (
     SMART_MONITOR_ENGINE_KEY,
 )
 from ui_shared import (
+    A_SHARE_DOWN_COLOR,
+    A_SHARE_UP_COLOR,
+    NON_MARKET_PALETTE,
     format_price,
     get_dataframe_height,
     get_action_color,
@@ -74,19 +79,69 @@ def _get_default_alert_interval_minutes() -> int:
     )
 
 
-def _apply_default_intervals_to_existing_items(
+def _get_default_position_size_pct() -> int:
+    return _coerce_interval_setting(
+        getattr(config, "SMART_MONITOR_DEFAULT_POSITION_SIZE_PCT", 20),
+        default=20,
+        minimum=5,
+        maximum=50,
+    )
+
+
+def _get_default_stop_loss_pct() -> int:
+    return _coerce_interval_setting(
+        getattr(config, "SMART_MONITOR_DEFAULT_STOP_LOSS_PCT", 5),
+        default=5,
+        minimum=1,
+        maximum=20,
+    )
+
+
+def _get_default_take_profit_pct() -> int:
+    return _coerce_interval_setting(
+        getattr(config, "SMART_MONITOR_DEFAULT_TAKE_PROFIT_PCT", 10),
+        default=10,
+        minimum=1,
+        maximum=30,
+    )
+
+
+def _apply_default_settings_to_existing_items(
     db: SmartMonitorDB,
     ai_interval_minutes: int,
     alert_interval_minutes: int,
-) -> tuple[int, int]:
+) -> tuple[int, int, int]:
     ai_updated = 0
     alert_updated = 0
+    task_defaults_updated = 0
 
-    for item in db.monitoring_repository.list_items(monitor_type="ai_task"):
-        if int(item.get("interval_minutes") or 0) == ai_interval_minutes:
-            continue
-        if db.monitoring_repository.update_item(int(item["id"]), {"interval_minutes": ai_interval_minutes}):
-            ai_updated += 1
+    for task in db.get_monitor_tasks(enabled_only=False):
+        task_updates = {
+            "account_name": task.get("account_name"),
+            "asset_id": task.get("asset_id"),
+            "portfolio_stock_id": task.get("portfolio_stock_id"),
+        }
+        interval_changed = int(task.get("check_interval") or 0) != ai_interval_minutes * 60
+        params_changed = any(
+            int(task.get(key) or 0) != value
+            for key, value in (
+                ("position_size_pct", _get_default_position_size_pct()),
+                ("stop_loss_pct", _get_default_stop_loss_pct()),
+                ("take_profit_pct", _get_default_take_profit_pct()),
+            )
+        )
+        if interval_changed:
+            task_updates["check_interval"] = ai_interval_minutes * 60
+        if params_changed:
+            task_updates["position_size_pct"] = _get_default_position_size_pct()
+            task_updates["stop_loss_pct"] = _get_default_stop_loss_pct()
+            task_updates["take_profit_pct"] = _get_default_take_profit_pct()
+        if interval_changed or params_changed:
+            if db.update_monitor_task(task["stock_code"], task_updates):
+                if interval_changed:
+                    ai_updated += 1
+                if params_changed:
+                    task_defaults_updated += 1
 
     for item in db.monitoring_repository.list_items(monitor_type="price_alert"):
         if int(item.get("interval_minutes") or 0) == alert_interval_minutes:
@@ -94,7 +149,7 @@ def _apply_default_intervals_to_existing_items(
         if db.monitoring_repository.update_item(int(item["id"]), {"interval_minutes": alert_interval_minutes}):
             alert_updated += 1
 
-    return ai_updated, alert_updated
+    return ai_updated, alert_updated, task_defaults_updated
 
 
 def _legacy_smart_monitor_ui(lightweight_model=None, reasoning_model=None):
@@ -772,60 +827,60 @@ def render_history(show_header: bool = True, title: str = "历史记录"):
     monitor_service.ensure_started()
     monitor_service.ensure_stopped_if_idle()
 
-    events = db.monitoring_repository.get_recent_events(limit=60)
-    enabled_ai_tasks = len(db.get_monitor_tasks(enabled_only=True))
-    pending_actions = db.get_pending_actions(status="pending", limit=200)
-
-    summary_col1, summary_col2, summary_col3, summary_col4 = st.columns(4)
-    with summary_col1:
-        st.metric("监测服务", "运行中" if monitor_service.running else "已停止")
-    with summary_col2:
-        st.metric("AI任务", enabled_ai_tasks)
-    with summary_col3:
-        st.metric("监测事件", len(events))
-    with summary_col4:
-        st.metric("待人工动作", len(pending_actions))
-
-    st.subheader("最新监测事件")
-    if not events:
-        st.info("暂无监测事件。")
-        return
-
-    filter_col1, filter_col2 = st.columns([1.3, 1])
-    event_types = ["全部"] + sorted({str(event.get("event_type") or "-") for event in events})
-    with filter_col1:
-        selected_event_type = st.selectbox("事件类型", event_types, key="smart_monitor_event_type_filter")
-    with filter_col2:
-        symbol_filter = st.text_input("筛选代码", value="", key="smart_monitor_event_symbol_filter").strip().upper()
-
-    filtered_events = []
-    for event in events:
-        event_type = str(event.get("event_type") or "-")
-        symbol = str(event.get("symbol") or "").upper()
-        if selected_event_type != "全部" and event_type != selected_event_type:
-            continue
-        if symbol_filter and symbol_filter not in symbol:
-            continue
-        filtered_events.append(event)
-
-    st.caption(f"当前展示最近 {len(filtered_events)} / {len(events)} 条监测事件。")
-    if not filtered_events:
-        st.info("没有符合筛选条件的事件。")
-        return
-
-    for event in filtered_events:
-        details = db.monitoring_repository._safe_json_loads(event.get("details_json"), {})
-        with st.expander(
-            f"{event.get('created_at')} - {event.get('symbol')} - {event.get('event_type')}"
+    recent_notifications = db.monitoring_repository.get_all_recent_notifications(limit=200)
+    notification_count = len(recent_notifications)
+    notification_summary_col, notification_action_col = st.columns([5, 1.2])
+    with notification_summary_col:
+        st.caption(f"当前通知 {notification_count} 条。清除后不会影响 AI 决策记录。")
+    with notification_action_col:
+        if st.button(
+            "清除通知",
+            key="smart_monitor_clear_notifications",
+            width="stretch",
+            disabled=notification_count == 0,
+            help="清空监测通知事件，不影响 AI 决策历史。",
         ):
-            meta_col1, meta_col2 = st.columns(2)
-            with meta_col1:
-                st.caption(f"监控类型: {event.get('monitor_type') or '-'}")
-            with meta_col2:
-                st.caption(f"名称: {event.get('name') or '-'}")
-            st.write(event.get("message"))
-            if details:
-                st.json(details)
+            cleared_count = db.monitoring_repository.clear_all_notifications()
+            st.success(f"已清除 {cleared_count} 条通知。")
+            st.rerun()
+
+    events = db.monitoring_repository.get_recent_events(limit=60)
+    decisions = db.get_ai_decisions(limit=30)
+    ai_events, monitor_events = _split_history_events(events)
+
+    decision_tab, event_tab = st.tabs(["最新AI决策", "最新监测事件"])
+
+    with decision_tab:
+        if not decisions and not ai_events:
+            st.info("暂无 AI 决策。")
+        else:
+            for decision in decisions:
+                _render_ai_decision_notice(decision)
+            for event in ai_events:
+                _render_monitor_event_notice(event)
+
+    with event_tab:
+        if not monitor_events:
+            st.info("暂无监测事件。")
+        else:
+            for event in monitor_events:
+                _render_monitor_event_notice(event)
+
+
+def _is_ai_decision_history_event(event: Dict) -> bool:
+    event_type = str((event or {}).get("event_type") or "").strip().lower()
+    return event_type == "ai_analysis"
+
+
+def _split_history_events(events: List[Dict]) -> tuple[List[Dict], List[Dict]]:
+    ai_events: List[Dict] = []
+    monitor_events: List[Dict] = []
+    for event in events:
+        if _is_ai_decision_history_event(event):
+            ai_events.append(event)
+        else:
+            monitor_events.append(event)
+    return ai_events, monitor_events
 
 
 def render_settings(show_header: bool = True, title: str = "系统设置"):
@@ -851,19 +906,24 @@ def render_settings(show_header: bool = True, title: str = "系统设置"):
         maximum=120,
     )
 
-    st.info("这里统一管理智能盯盘的默认调度频率。")
-
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("轻 AI 默认间隔", f"{current_ai_interval} 分钟")
-    with col2:
-        st.metric("价格预警默认间隔", f"{current_alert_interval} 分钟")
-    with col3:
-        api_key = current_config.get("DEEPSEEK_API_KEY", "")
-        st.metric("DeepSeek", "已配置" if api_key else "未配置")
-    with col4:
-        tdx_enabled = current_config.get("TDX_ENABLED", "false").lower() == "true"
-        st.metric("TDX", "已启用" if tdx_enabled else "未启用")
+    current_position_size_pct = _coerce_interval_setting(
+        current_config.get("SMART_MONITOR_DEFAULT_POSITION_SIZE_PCT"),
+        default=_get_default_position_size_pct(),
+        minimum=5,
+        maximum=50,
+    )
+    current_stop_loss_pct = _coerce_interval_setting(
+        current_config.get("SMART_MONITOR_DEFAULT_STOP_LOSS_PCT"),
+        default=_get_default_stop_loss_pct(),
+        minimum=1,
+        maximum=20,
+    )
+    current_take_profit_pct = _coerce_interval_setting(
+        current_config.get("SMART_MONITOR_DEFAULT_TAKE_PROFIT_PCT"),
+        default=_get_default_take_profit_pct(),
+        minimum=1,
+        maximum=30,
+    )
 
     with st.form("smart_monitor_settings_form", clear_on_submit=False):
         ai_interval_minutes = st.slider(
@@ -882,6 +942,30 @@ def render_settings(show_header: bool = True, title: str = "系统设置"):
             key="smart_monitor_settings_alert_interval",
             help="用于新建价格预警，以及自动托管价格预警时的默认值。",
         )
+        position_size_pct = st.slider(
+            "默认仓位百分比",
+            5,
+            50,
+            current_position_size_pct,
+            key="smart_monitor_settings_position_size_pct",
+            help="用于新建 AI 盯盘任务的默认仓位建议。",
+        )
+        stop_loss_pct = st.slider(
+            "默认止损百分比",
+            1,
+            20,
+            current_stop_loss_pct,
+            key="smart_monitor_settings_stop_loss_pct",
+            help="用于新建 AI 盯盘任务的默认止损建议。",
+        )
+        take_profit_pct = st.slider(
+            "默认止盈百分比",
+            1,
+            30,
+            current_take_profit_pct,
+            key="smart_monitor_settings_take_profit_pct",
+            help="用于新建 AI 盯盘任务的默认止盈建议。",
+        )
         apply_existing = st.checkbox(
             "同时同步当前已有的 AI 盯盘与价格预警",
             value=True,
@@ -893,20 +977,24 @@ def render_settings(show_header: bool = True, title: str = "系统设置"):
         updates = {
             "SMART_MONITOR_AI_INTERVAL_MINUTES": str(ai_interval_minutes),
             "SMART_MONITOR_PRICE_ALERT_INTERVAL_MINUTES": str(alert_interval_minutes),
+            "SMART_MONITOR_DEFAULT_POSITION_SIZE_PCT": str(position_size_pct),
+            "SMART_MONITOR_DEFAULT_STOP_LOSS_PCT": str(stop_loss_pct),
+            "SMART_MONITOR_DEFAULT_TAKE_PROFIT_PCT": str(take_profit_pct),
         }
         if config_manager.write_env(updates):
             config_manager.reload_config()
             ai_updated = 0
             alert_updated = 0
+            task_defaults_updated = 0
             if apply_existing and db is not None:
-                ai_updated, alert_updated = _apply_default_intervals_to_existing_items(
+                ai_updated, alert_updated, task_defaults_updated = _apply_default_settings_to_existing_items(
                     db,
                     ai_interval_minutes,
                     alert_interval_minutes,
                 )
             st.success("智能盯盘设置已保存。")
             if apply_existing and db is not None:
-                st.caption(f"已同步 {ai_updated} 个 AI 任务、{alert_updated} 个价格预警。")
+                st.caption(f"已同步 {ai_updated} 个 AI 任务间隔、{task_defaults_updated} 个 AI 任务参数、{alert_updated} 个价格预警。")
             st.rerun()
         else:
             st.error("保存智能盯盘设置失败。")
@@ -1064,6 +1152,290 @@ def _get_pending_actions_for_task(db: SmartMonitorDB, task: Dict) -> List[Dict]:
         account_name=task.get("account_name") or DEFAULT_ACCOUNT_NAME,
         asset_id=asset_id,
         limit=20,
+    )
+
+
+def _format_decision_action(action: Optional[str]) -> str:
+    return {
+        "BUY": "买入",
+        "SELL": "卖出",
+        "HOLD": "持有",
+    }.get(str(action or "").upper(), str(action or "-"))
+
+
+def _format_latest_decision_label(decision: Dict) -> str:
+    confidence = decision.get("confidence")
+    try:
+        confidence_text = f"{int(round(float(confidence)))}%"
+    except (TypeError, ValueError):
+        confidence_text = "0%"
+    return f"{_format_decision_action(decision.get('action'))}({confidence_text}) | {decision.get('decision_time') or '-'}"
+
+
+def _format_decision_reasoning_brief(reasoning: object, max_length: int = 36) -> str:
+    text = " ".join(str(reasoning or "").split())
+    if not text:
+        return ""
+
+    sentences = [
+        sentence.strip(" ，,:：")
+        for sentence in re.split(r"[\u3002\uff1b;\uff01\uff1f!?]", text)
+        if sentence.strip(" ，,:：")
+    ]
+    if not sentences:
+        sentences = [text]
+
+    action_keyword_weights = {
+        "\u5efa\u8bae": 10,
+        "\u7ee7\u7eed\u6301\u6709": 12,
+        "\u6682\u4e0d\u64cd\u4f5c": 10,
+        "\u6e05\u4ed3": 12,
+        "\u5356\u51fa": 11,
+        "\u4e70\u5165": 8,
+        "\u51cf\u4ed3": 10,
+        "\u52a0\u4ed3": 7,
+        "\u79bb\u573a": 11,
+        "\u89c2\u671b": 8,
+    }
+    action_keywords = tuple(action_keyword_weights.keys())
+    context_keywords = (
+        "\u672a\u89e6\u53d1",
+        "\u5df2\u89e6\u53d1",
+        "\u5df2\u8d85\u8fc7",
+        "\u63a5\u8fd1",
+        "\u8dcc\u7834",
+        "\u8fbe\u5230",
+        "\u4ed3\u4f4d",
+        "\u4e0a\u9650",
+        "\u6b62\u635f\u4f4d",
+        "\u6b62\u76c8\u4f4d",
+        "\u6b62\u635f\u7ebf",
+        "\u6b62\u76c8\u7ebf",
+        "\u6b63\u5e38\u5356\u51fa",
+        "\u65e0\u6cd5\u52a0\u4ed3",
+        "\u53ef\u7528\u8d44\u91d1",
+        "\u98ce\u63a7",
+        "\u98ce\u9669",
+        "\u6d6e\u76c8",
+        "\u6d6e\u4e8f",
+        "\u6b62\u635f",
+        "\u6b62\u76c8",
+    )
+    background_keywords = (
+        "\u76d8\u540e",
+        "\u65e0\u6cd5\u8fdb\u884c\u4ea4\u6613",
+        "\u7b49\u5f85\u660e\u65e5\u5f00\u76d8",
+        "\u7b49\u5f85\u6b21\u65e5\u5f00\u76d8",
+        "\u590d\u76d8\u65f6\u6bb5",
+    )
+    monitoring_keywords = (
+        "\u5f85",
+        "\u89c2\u5bdf",
+        "\u5173\u6ce8",
+        "\u8ddf\u8e2a",
+        "\u51fa\u73b0",
+    )
+
+    def _score_text(chunk: str) -> int:
+        score = 0
+        for keyword, weight in action_keyword_weights.items():
+            if keyword in chunk:
+                score += weight
+        for keyword in context_keywords:
+            if keyword in chunk:
+                score += 4
+        if any(char.isdigit() for char in chunk) and any(
+            keyword in chunk
+            for keyword in ("\u6b62\u635f", "\u6b62\u76c8", "\u4ed3\u4f4d")
+        ):
+            score += 2
+        if chunk.startswith(("\u5efa\u8bae", "\u53ef", "\u7ee7\u7eed", "\u5e94", "\u9700", "\u5b9c", "\u65e0\u9700")):
+            score += 3
+        if any(keyword in chunk for keyword in background_keywords) and score < 10:
+            score -= 6
+        if any(keyword in chunk for keyword in monitoring_keywords) and not any(
+            keyword in chunk for keyword in action_keywords
+        ):
+            score -= 4
+        return score
+
+    best_sentence = max(
+        sentences,
+        key=lambda sentence: (_score_text(sentence), -abs(len(sentence) - min(max_length + 6, 28))),
+    )
+    clauses = [
+        clause.strip()
+        for clause in re.split(r"[\uff0c,:\uff1a]", best_sentence)
+        if clause.strip()
+    ] or [best_sentence]
+    best_index = max(
+        range(len(clauses)),
+        key=lambda index: (_score_text(clauses[index]), -abs(len(clauses[index]) - min(max_length, 18))),
+    )
+    best_clause = clauses[best_index]
+    has_action = any(keyword in best_clause for keyword in action_keywords)
+    has_context = any(keyword in best_clause for keyword in context_keywords)
+
+    def _find_neighbor(index: int, *, step: int, keywords: tuple[str, ...]) -> str:
+        cursor = index + step
+        while 0 <= cursor < len(clauses):
+            clause = clauses[cursor]
+            if any(keyword in clause for keyword in keywords):
+                return clause
+            cursor += step
+        return ""
+
+    candidate = best_clause
+    previous_clause = _find_neighbor(best_index, step=-1, keywords=context_keywords)
+    next_clause = _find_neighbor(best_index, step=1, keywords=action_keywords)
+    if has_action and previous_clause:
+        candidate = f"{previous_clause}，{best_clause}"
+    elif has_context and next_clause:
+        candidate = f"{best_clause}，{next_clause}"
+
+    for prefix in ("\u5f53\u524d", "\u4e14", "\u540c\u65f6", "\u5219"):
+        if candidate.startswith(prefix):
+            candidate = candidate[len(prefix):]
+            break
+
+    if len(candidate) <= max_length:
+        return candidate
+    if len(best_clause) <= max_length:
+        return best_clause
+    return best_clause[: max_length - 3].rstrip() + "..."
+
+
+def _get_event_notice_style(event_type: str) -> tuple[str, str]:
+    normalized = str(event_type or "").strip().lower()
+    if normalized == "hold":
+        return "#112f4d", "#60a5fa"
+    if normalized == "entry":
+        return "#102920", A_SHARE_DOWN_COLOR
+    if normalized in {"sell", "sold", "take_profit"}:
+        return "#34161c", A_SHARE_UP_COLOR
+    if normalized in {"threshold_sync", "threshold_sync_skipped"}:
+        return "#2b313c", NON_MARKET_PALETTE["gray"]
+    if normalized in {"stop_loss", "error", "failed"}:
+        return "#3a1d20", A_SHARE_UP_COLOR
+    if normalized in {"buy", "ai_analysis"}:
+        return "#494d12", "#f5e76b"
+    return "#2d2344", "#a78bfa"
+
+
+def _render_notice_card(message: str, *, background: str, foreground: str) -> None:
+    st.markdown(
+        (
+            f"<div style='margin-bottom:0.5rem; padding:0.8rem 1rem; border-radius:0.7rem; "
+            f"background:{background}; color:{foreground}; font-size:0.94rem; line-height:1.5; "
+            f"border:1px solid rgba(255,255,255,0.06);'>"
+            f"{message}"
+            f"</div>"
+        ),
+        unsafe_allow_html=True,
+    )
+
+
+def _format_symbol_with_name(symbol: object, name: object) -> str:
+    normalized_symbol = str(symbol or "").strip()
+    normalized_name = str(name or "").strip()
+    if normalized_name and normalized_symbol:
+        return f"{normalized_name}({normalized_symbol})"
+    return normalized_name or normalized_symbol or "-"
+
+
+def _format_monitor_event_message(event: Dict) -> str:
+    message = str(event.get("message") or "").strip()
+    normalized_event_type = str(event.get("event_type") or "").strip().lower()
+    if normalized_event_type not in {"entry", "take_profit", "stop_loss"}:
+        return message
+
+    symbol = str(event.get("symbol") or "").strip()
+    name = str(event.get("name") or "").strip()
+    stock_prefix = f"股票 {symbol} ({name}) "
+    if symbol and name and message.startswith(stock_prefix):
+        message = message[len(stock_prefix):].strip()
+    return f"原因：{message}" if message else "原因：-"
+
+
+def _render_monitor_event_notice(event: Dict) -> None:
+    background, foreground = _get_event_notice_style(event.get("event_type"))
+    event_type = html.escape(str(event.get("event_type") or "-").upper())
+    created_at = html.escape(str(event.get("created_at") or "-"))
+    symbol = html.escape(_format_symbol_with_name(event.get("symbol"), event.get("name")))
+    message = html.escape(_format_monitor_event_message(event))
+    _render_notice_card(
+        (
+            f"<div style='display:flex; justify-content:space-between; gap:0.75rem; align-items:flex-start;'>"
+            f"<strong>{event_type}</strong>"
+            f"<span style='opacity:0.72; white-space:nowrap;'>{created_at}</span>"
+            f"</div>"
+            f"<div style='margin-top:0.18rem; font-weight:600;'>{symbol}</div>"
+            f"<div style='margin-top:0.2rem; opacity:0.92;'>{message}</div>"
+        ),
+        background=background,
+        foreground=foreground,
+    )
+
+
+def _get_decision_notice_style(action: str) -> tuple[str, str]:
+    normalized = str(action or "").strip().upper()
+    if normalized == "BUY":
+        return "#494d12", "#f5e76b"
+    if normalized == "SELL":
+        return "#102920", A_SHARE_DOWN_COLOR
+    return "#112f4d", "#60a5fa"
+
+
+def _render_ai_decision_notice(decision: Dict) -> None:
+    background, foreground = _get_decision_notice_style(decision.get("action"))
+    stock_display = html.escape(
+        _format_symbol_with_name(decision.get("stock_code"), decision.get("stock_name"))
+    )
+    action_label = html.escape(_format_decision_action(decision.get("action")))
+    confidence = decision.get("confidence")
+    try:
+        confidence_text = f"{int(round(float(confidence)))}%"
+    except (TypeError, ValueError):
+        confidence_text = "0%"
+    trading_session = html.escape(str(decision.get("trading_session") or "-"))
+    decision_time = html.escape(str(decision.get("decision_time") or "-"))
+    reasoning_brief = html.escape(_format_decision_reasoning_brief(decision.get("reasoning")))
+    risk_level = html.escape(str(decision.get("risk_level") or "-"))
+    reasoning_html = (
+        f"<div style='margin-top:0.2rem; opacity:0.9;'>要点: {reasoning_brief}</div>"
+        if reasoning_brief
+        else ""
+    )
+    _render_notice_card(
+        (
+            f"<div style='display:flex; justify-content:space-between; gap:0.75rem; align-items:flex-start;'>"
+            f"<strong>{action_label}({confidence_text})</strong>"
+            f"<span style='opacity:0.72; white-space:nowrap;'>{decision_time}</span>"
+            f"</div>"
+            f"<div style='margin-top:0.18rem; font-weight:600;'>{stock_display}</div>"
+            f"<div style='margin-top:0.2rem; opacity:0.82;'>时段: {trading_session} | 风险: {risk_level}</div>"
+            f"{reasoning_html}"
+        ),
+        background=background,
+        foreground=foreground,
+    )
+
+
+def _render_full_decision_reasoning(reasoning: object) -> None:
+    text = str(reasoning or "").strip()
+    if not text:
+        st.caption("暂无决策理由。")
+        return
+    escaped_text = html.escape(text).replace("\n", "<br>")
+    st.markdown(
+        (
+            "<div style='margin-top:0.45rem; padding:0.85rem 1rem; border-radius:0.7rem; "
+            "background:rgba(15,23,42,0.42); border:1px solid rgba(148,163,184,0.18); "
+            "line-height:1.75; font-size:0.95rem; white-space:normal; overflow-wrap:anywhere;'>"
+            f"{escaped_text}"
+            "</div>"
+        ),
+        unsafe_allow_html=True,
     )
 
 
@@ -1245,8 +1617,6 @@ def render_ai_monitor_tasks_panel(show_header: bool = True, title: str = "AI监�
     db = st.session_state[SMART_MONITOR_DB_KEY]
     monitor_service.ensure_started()
     monitor_service.ensure_stopped_if_idle()
-    service_status = "运行中" if monitor_service.running else "已停止"
-    st.caption(f"监测服务状态: {service_status}。启用中的任务会由统一监测服务按分钟调度执行。")
 
     prefill = st.session_state.pop(INVESTMENT_AI_TASK_PREFILL_KEY, None)
     if not prefill:
@@ -1268,9 +1638,6 @@ def render_ai_monitor_tasks_panel(show_header: bool = True, title: str = "AI监�
         st.session_state["ai_task_form_notice"] = f"{prefill.get('symbol')} 的战略基线已带入智能盯盘表单。"
 
     strategy_context = st.session_state.get("ai_task_form_strategy_context") or {}
-    preview_account_name = st.session_state.get("ai_task_form_account_name") or DEFAULT_ACCOUNT_NAME
-    preview_symbol = str(st.session_state.get("ai_task_form_stock_code") or "").strip().upper()
-    preview_asset = db.asset_repository.get_asset_by_symbol(preview_symbol, preview_account_name) if preview_symbol else None
 
     with st.expander("新增 AI 监控任务", expanded=bool(st.session_state.get("ai_task_form_stock_code"))):
         if st.session_state.get("ai_task_form_notice"):
@@ -1281,9 +1648,6 @@ def render_ai_monitor_tasks_panel(show_header: bool = True, title: str = "AI监�
                 f"进场 {strategy_context.get('entry_min') or '-'} - {strategy_context.get('entry_max') or '-'} | "
                 f"止盈 {strategy_context.get('take_profit') or '-'} | 止损 {strategy_context.get('stop_loss') or '-'}"
             )
-        st.caption(
-            f"当前资产状态：{_format_asset_status(preview_asset)} | 持仓摘要：{_format_position_summary(preview_asset)} | 执行模式：手工确认"
-        )
         with st.form("ai_monitor_task_form", clear_on_submit=False):
             col1, col2 = st.columns(2)
 
@@ -1292,20 +1656,9 @@ def render_ai_monitor_tasks_panel(show_header: bool = True, title: str = "AI监�
                 task_name = st.text_input("任务名称", placeholder="例如: 茅台 AI 监控", key="ai_task_form_task_name")
                 stock_code = st.text_input("股票代码", placeholder="例如: 600519", key="ai_task_form_stock_code")
                 stock_name = st.text_input("股票名称", placeholder="可选", key="ai_task_form_stock_name")
-                interval_minutes = st.slider(
-                    "检查间隔(分钟)",
-                    1,
-                    240,
-                    _get_default_ai_interval_minutes(),
-                    key="ai_task_form_interval_minutes",
-                )
-                st.caption("资产状态与持仓信息由 `assets` 主表实时投影，不在此页编辑。")
 
             with col2:
                 trading_hours_only = st.checkbox("仅交易时段执行", value=True, key="ai_task_form_trading_hours_only")
-                position_size_pct = st.slider("仓位百分比", 5, 50, 20, key="ai_task_form_position_size_pct")
-                stop_loss_pct = st.slider("止损百分比", 1, 20, 5, key="ai_task_form_stop_loss_pct")
-                take_profit_pct = st.slider("止盈百分比", 1, 30, 10, key="ai_task_form_take_profit_pct")
 
             submitted = st.form_submit_button("保存 AI 任务", type="primary", width='stretch')
 
@@ -1320,11 +1673,11 @@ def render_ai_monitor_tasks_panel(show_header: bool = True, title: str = "AI监�
                     'stock_code': normalized_code,
                     'stock_name': stock_name.strip() or normalized_code,
                     'enabled': 1,
-                    'check_interval': interval_minutes * 60,
+                    'check_interval': _get_default_ai_interval_minutes() * 60,
                     'trading_hours_only': 1 if trading_hours_only else 0,
-                    'position_size_pct': position_size_pct,
-                    'stop_loss_pct': stop_loss_pct,
-                    'take_profit_pct': take_profit_pct,
+                    'position_size_pct': _get_default_position_size_pct(),
+                    'stop_loss_pct': _get_default_stop_loss_pct(),
+                    'take_profit_pct': _get_default_take_profit_pct(),
                     'account_name': normalized_account,
                     'origin_analysis_id': st.session_state.get("ai_task_form_origin_analysis_id"),
                     'strategy_context': st.session_state.get("ai_task_form_strategy_context") or {},
@@ -1333,12 +1686,8 @@ def render_ai_monitor_tasks_panel(show_header: bool = True, title: str = "AI监�
                 st.session_state["ai_task_form_task_name"] = ""
                 st.session_state["ai_task_form_stock_code"] = ""
                 st.session_state["ai_task_form_stock_name"] = ""
-                st.session_state["ai_task_form_interval_minutes"] = _get_default_ai_interval_minutes()
                 monitor_service.ensure_started()
                 st.session_state["ai_task_form_trading_hours_only"] = True
-                st.session_state["ai_task_form_position_size_pct"] = 20
-                st.session_state["ai_task_form_stop_loss_pct"] = 5
-                st.session_state["ai_task_form_take_profit_pct"] = 10
                 st.session_state["ai_task_form_strategy_context"] = {}
                 st.session_state["ai_task_form_origin_analysis_id"] = None
                 st.session_state.pop("ai_task_form_notice", None)
@@ -1385,7 +1734,6 @@ def render_ai_monitor_tasks_panel(show_header: bool = True, title: str = "AI监�
             st.rerun()
 
     for task in tasks:
-        asset = _get_task_asset(db, task)
         alert_item = _get_task_price_alert_item(db, task)
         alert_levels = _resolve_price_alert_levels(alert_item)
         latest_decision = _get_latest_ai_decision_for_task(db, task)
@@ -1395,20 +1743,6 @@ def render_ai_monitor_tasks_panel(show_header: bool = True, title: str = "AI监�
             st.markdown(f"**{task['stock_code']}** {task.get('stock_name') or task['stock_code']}")
 
             strategy_context = task.get("strategy_context") or {}
-            summary_col1, summary_col2, summary_col3, summary_col4 = st.columns(4)
-            with summary_col1:
-                st.caption(f"资产状态: {_format_asset_status(asset)}")
-            with summary_col2:
-                st.caption(f"持仓摘要: {_format_position_summary(asset)}")
-            with summary_col3:
-                st.caption(f"轻 AI 间隔: {max(1, int(task.get('check_interval') or 60) // 60)} 分钟")
-            with summary_col4:
-                if alert_item:
-                    st.caption(
-                        f"实时预警: {int(alert_item.get('interval_minutes') or _get_default_alert_interval_minutes())} 分钟"
-                    )
-                else:
-                    st.caption("实时预警: 未建立")
 
             threshold_line = None
             if alert_levels:
@@ -1438,15 +1772,10 @@ def render_ai_monitor_tasks_panel(show_header: bool = True, title: str = "AI监�
                     alert_meta.append(f"阈值来源 {alert_levels.get('source')}")
                 if alert_meta:
                     st.caption(" | ".join(alert_meta))
-            elif strategy_context:
-                st.caption("实时预警将随盯盘任务自动同步。")
 
             if latest_decision:
-                decision_label = (
-                    f"{latest_decision.get('decision_time')} | {latest_decision.get('action')} "
-                    f"| 信心度 {latest_decision.get('confidence')}%"
-                )
-                with st.expander(f"最新 AI 决策: {decision_label}", expanded=False):
+                decision_label = _format_latest_decision_label(latest_decision)
+                with st.expander(f"最新AI决策: {decision_label}", expanded=False):
                     decision_col1, decision_col2, decision_col3 = st.columns(3)
                     with decision_col1:
                         st.caption(f"交易时段: {latest_decision.get('trading_session') or '-'}")
@@ -1454,13 +1783,9 @@ def render_ai_monitor_tasks_panel(show_header: bool = True, title: str = "AI监�
                         st.caption(f"风险等级: {latest_decision.get('risk_level') or '-'}")
                     with decision_col3:
                         st.caption(f"建议仓位: {latest_decision.get('position_size_pct') or '-'}%")
-                    st.write(latest_decision.get("reasoning") or "暂无决策理由。")
+                    _render_full_decision_reasoning(latest_decision.get("reasoning"))
             else:
                 st.caption("尚无最新 AI 决策，可先执行一次“立即分析”。")
-
-            if pending_actions:
-                pending_labels = [f"#{item['id']} {str(item.get('action_type', '')).upper()}" for item in pending_actions]
-                st.warning(f"待人工处理动作: {' | '.join(pending_labels)}。请到持仓管理完成交易登记。")
 
             action_columns = st.columns(3 if not task.get('managed_by_portfolio') else 2)
             action_col1, action_col2 = action_columns[:2]

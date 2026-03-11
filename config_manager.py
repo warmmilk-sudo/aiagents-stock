@@ -53,6 +53,24 @@ class ConfigManager:
                 "required": False,
                 "type": "text",
             },
+            "SMART_MONITOR_DEFAULT_POSITION_SIZE_PCT": {
+                "value": "20",
+                "description": "智能盯盘默认仓位百分比",
+                "required": False,
+                "type": "text",
+            },
+            "SMART_MONITOR_DEFAULT_STOP_LOSS_PCT": {
+                "value": "5",
+                "description": "智能盯盘默认止损百分比",
+                "required": False,
+                "type": "text",
+            },
+            "SMART_MONITOR_DEFAULT_TAKE_PROFIT_PCT": {
+                "value": "10",
+                "description": "智能盯盘默认止盈百分比",
+                "required": False,
+                "type": "text",
+            },
             "LIGHTWEIGHT_MODEL_NAME": {
                 "value": "deepseek-chat",
                 "description": "轻量模型名称（技术/情绪/新闻/批量筛选等任务）",

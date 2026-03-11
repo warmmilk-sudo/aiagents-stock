@@ -93,6 +93,18 @@ SMART_MONITOR_REASONING_MAX_TOKENS = max(
     1500,
     _safe_int_env("SMART_MONITOR_REASONING_MAX_TOKENS", 3000),
 )
+SMART_MONITOR_DEFAULT_POSITION_SIZE_PCT = max(
+    5,
+    min(50, _safe_int_env("SMART_MONITOR_DEFAULT_POSITION_SIZE_PCT", 20)),
+)
+SMART_MONITOR_DEFAULT_STOP_LOSS_PCT = max(
+    1,
+    min(20, _safe_int_env("SMART_MONITOR_DEFAULT_STOP_LOSS_PCT", 5)),
+)
+SMART_MONITOR_DEFAULT_TAKE_PROFIT_PCT = max(
+    1,
+    min(30, _safe_int_env("SMART_MONITOR_DEFAULT_TAKE_PROFIT_PCT", 10)),
+)
 
 TDX_CONFIG = {
     "enabled": _safe_str_env("TDX_ENABLED", "false").lower() == "true",

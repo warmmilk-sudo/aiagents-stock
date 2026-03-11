@@ -68,6 +68,9 @@ class FakeSmartMonitorDB:
         self.saved_decisions.append(payload)
         return len(self.saved_decisions)
 
+    def save_ai_decision_if_changed(self, payload):
+        return self.save_ai_decision(payload), True
+
     def create_pending_action(self, **kwargs):
         self.pending_actions.append(kwargs)
         return len(self.pending_actions)
@@ -165,6 +168,63 @@ class ManualOnlyMonitoringTests(unittest.TestCase):
         self.assertEqual(fake_db.pending_actions[0]["action_type"], "buy")
         self.assertEqual(fake_db.saved_decisions[0]["execution_mode"], "manual_only")
         self.assertEqual(fake_db.saved_decisions[0]["action_status"], "pending")
+
+    def test_same_action_as_latest_decision_does_not_create_new_message(self):
+        fake_db = FakeSmartMonitorDB()
+        notifications = []
+        fake_db.save_ai_decision_if_changed = lambda payload: (7, False)
+
+        with patch.object(smart_monitor_engine_module, "SmartMonitorDB", return_value=fake_db), patch.object(
+            smart_monitor_engine_module.event_bus,
+            "subscribe",
+            return_value=None,
+        ):
+            engine = smart_monitor_engine_module.SmartMonitorEngine(deepseek_api_key="stub")
+
+        engine.deepseek.get_trading_session = lambda: {
+            "session": "涓婂崍鐩?",
+            "can_trade": True,
+            "recommendation": "",
+        }
+        engine.data_fetcher.get_comprehensive_data = lambda stock_code: {
+            "name": "璐靛窞鑼呭彴",
+            "current_price": 1520.0,
+            "change_pct": 1.25,
+            "change_amount": 18.8,
+            "volume": 123456,
+            "turnover_rate": 0.75,
+        }
+        engine.deepseek.analyze_stock_and_decide = lambda **kwargs: {
+            "success": True,
+            "decision": {
+                "action": "SELL",
+                "confidence": 80,
+                "reasoning": "鍚屼竴鍐崇瓥涓嶉噸澶嶅啓鍏ユ柊娑堟伅銆?",
+                "position_size_pct": 20,
+                "stop_loss_pct": 5,
+                "take_profit_pct": 12,
+                "risk_level": "涓?",
+                "key_price_levels": {"support": 1500, "resistance": 1560},
+                "monitor_levels": {
+                    "entry_min": 1505,
+                    "entry_max": 1515,
+                    "take_profit": 1702.4,
+                    "stop_loss": 1444.0,
+                },
+            },
+        }
+        engine._send_notification = lambda **kwargs: notifications.append(kwargs)
+        engine._sync_runtime_thresholds = lambda **kwargs: True
+
+        result = engine.analyze_stock("600519", notify=True, account_name="娴嬭瘯璐︽埛")
+
+        self.assertTrue(result["success"])
+        self.assertFalse(result["decision_changed"])
+        self.assertIsNone(result["execution_result"])
+        self.assertIsNone(result["pending_action"])
+        self.assertEqual(result["decision_id"], 7)
+        self.assertEqual(len(fake_db.pending_actions), 0)
+        self.assertEqual(notifications, [])
 
 
 if __name__ == "__main__":

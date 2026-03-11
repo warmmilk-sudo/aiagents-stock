@@ -918,6 +918,53 @@ class SmartMonitorDB:
 
         return run_with_monitoring_write_lock(_save)
 
+    def get_latest_ai_decision_for_context(
+        self,
+        *,
+        stock_code: str,
+        account_name: Optional[str] = None,
+        asset_id: Optional[int] = None,
+        portfolio_stock_id: Optional[int] = None,
+    ) -> Optional[Dict]:
+        decisions = self.get_ai_decisions(stock_code=stock_code, limit=20)
+        normalized_account = (account_name or DEFAULT_ACCOUNT_NAME).strip() or DEFAULT_ACCOUNT_NAME
+        target_asset_id = int(asset_id) if asset_id is not None else None
+        target_portfolio_stock_id = int(portfolio_stock_id) if portfolio_stock_id is not None else None
+        for decision in decisions:
+            decision_account_name = str(decision.get("account_name") or "").strip() or str(
+                (decision.get("account_info") or {}).get("account_name") or DEFAULT_ACCOUNT_NAME
+            ).strip()
+            decision_asset_id = decision.get("asset_id")
+            decision_portfolio_stock_id = decision.get("portfolio_stock_id")
+            if decision_account_name != normalized_account:
+                continue
+            if target_asset_id is not None and decision_asset_id is not None and int(decision_asset_id) != target_asset_id:
+                continue
+            if (
+                target_portfolio_stock_id is not None
+                and decision_portfolio_stock_id is not None
+                and int(decision_portfolio_stock_id) != target_portfolio_stock_id
+            ):
+                continue
+            return decision
+        return None
+
+    def save_ai_decision_if_changed(self, decision_data: Dict) -> tuple[int, bool]:
+        stock_code = str(decision_data.get("stock_code") or "").strip()
+        if not stock_code:
+            return self.save_ai_decision(decision_data), True
+        latest = self.get_latest_ai_decision_for_context(
+            stock_code=stock_code,
+            account_name=decision_data.get("account_name"),
+            asset_id=decision_data.get("asset_id"),
+            portfolio_stock_id=decision_data.get("portfolio_stock_id"),
+        )
+        latest_action = str((latest or {}).get("action") or "").upper()
+        current_action = str(decision_data.get("action") or "").upper()
+        if latest and latest_action and latest_action == current_action:
+            return int(latest["id"]), False
+        return self.save_ai_decision(decision_data), True
+
     def get_ai_decisions(self, stock_code: str = None, limit: int = 100) -> List[Dict]:
         conn = self._connect()
         cursor = conn.cursor()

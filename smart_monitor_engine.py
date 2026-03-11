@@ -383,7 +383,7 @@ class SmartMonitorEngine:
             self.logger.info(f"[{stock_code}] 决策理由: {decision['reasoning'][:100]}...")
             
             # 6. 保存AI决策到数据库
-            decision_id = self.db.save_ai_decision({
+            decision_id, decision_changed = self.db.save_ai_decision_if_changed({
                 'stock_code': stock_code,
                 'stock_name': market_data.get('name'),
                 'account_name': account_name,
@@ -406,21 +406,22 @@ class SmartMonitorEngine:
                 'action_status': 'pending' if str(decision.get('action', '')).upper() in {'BUY', 'SELL'} else 'suggested',
             })
 
-            self._sync_runtime_thresholds(
-                stock_code=stock_code,
-                stock_name=market_data.get('name') or stock_code,
-                decision=decision,
-                decision_id=decision_id,
-                account_name=account_name,
-                asset_id=asset_id,
-                portfolio_stock_id=portfolio_stock_id,
-                strategy_context=strategy_context,
-            )
+            if decision_changed:
+                self._sync_runtime_thresholds(
+                    stock_code=stock_code,
+                    stock_name=market_data.get('name') or stock_code,
+                    decision=decision,
+                    decision_id=decision_id,
+                    account_name=account_name,
+                    asset_id=asset_id,
+                    portfolio_stock_id=portfolio_stock_id,
+                    strategy_context=strategy_context,
+                )
 
             # 7. 手工执行模式下只生成待处理动作
             execution_result = None
             pending_action = None
-            if str(decision.get('action', '')).upper() in {'BUY', 'SELL'}:
+            if decision_changed and str(decision.get('action', '')).upper() in {'BUY', 'SELL'}:
                 pending_action = self._create_pending_action(
                     stock_code=stock_code,
                     stock_name=market_data.get('name') or stock_code,
@@ -433,7 +434,7 @@ class SmartMonitorEngine:
                 execution_result = pending_action
 
             # 8. 发送通知
-            if notify:
+            if notify and decision_changed:
                 self._send_notification(
                     stock_code=stock_code,
                     stock_name=market_data.get('name'),
@@ -457,6 +458,7 @@ class SmartMonitorEngine:
                 'market_data': market_data,
                 'decision': decision,
                 'decision_id': decision_id,
+                'decision_changed': decision_changed,
                 'execution_result': execution_result,
                 'pending_action': pending_action,
                 'account_name': account_name,

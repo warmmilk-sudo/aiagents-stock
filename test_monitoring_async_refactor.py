@@ -245,6 +245,44 @@ class MonitoringOrchestratorAsyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("trading_hours_only", captured)
         self.assertFalse(captured["trading_hours_only"])
 
+    async def test_process_ai_task_same_decision_does_not_record_new_event(self):
+        repo = _FakeRepository(
+            [
+                {
+                    "id": 13,
+                    "symbol": "600519",
+                    "name": "璐靛窞鑼呭彴",
+                    "monitor_type": "ai_task",
+                    "enabled": 1,
+                    "notification_enabled": 1,
+                    "trading_hours_only": 0,
+                }
+            ]
+        )
+        fake_monitor_db = _FakeMonitorDB(repo, {})
+
+        class _FakeEngine:
+            def analyze_stock(self, **kwargs):
+                return {
+                    "success": True,
+                    "decision": {"action": "HOLD"},
+                    "decision_changed": False,
+                }
+
+        with patch.object(monitoring_orchestrator, "monitor_db", fake_monitor_db), patch.object(
+            monitoring_orchestrator,
+            "SmartMonitorEngine",
+            return_value=_FakeEngine(),
+        ), patch.object(monitoring_orchestrator, "TDX_AVAILABLE", False):
+            orchestrator = monitoring_orchestrator.MonitoringOrchestrator()
+
+        result = await orchestrator._process_ai_task(repo.items[0])
+
+        self.assertTrue(result)
+        self.assertTrue(repo.runtime_updates)
+        self.assertEqual(repo.runtime_updates[-1]["last_status"], "hold")
+        self.assertEqual(repo.events, [])
+
     async def test_get_latest_price_falls_back_after_tdx_timeout(self):
         repo = _FakeRepository([])
         fake_monitor_db = _FakeMonitorDB(repo, {})
