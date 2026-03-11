@@ -419,6 +419,10 @@ class PortfolioManager:
         """获取指定持仓的交易流水。"""
         return self.db.get_trade_history(stock_id, limit=limit)
 
+    def get_trade_records(self, account_name: Optional[str] = None, limit: int = 100) -> List[Dict]:
+        """获取账户范围内的交易流水。"""
+        return self.db.get_trade_records(account_name=account_name, limit=limit)
+
     def get_trade_summary_map(self, stock_ids: List[int]) -> Dict[int, Dict]:
         """批量获取持仓交易摘要。"""
         if not stock_ids:

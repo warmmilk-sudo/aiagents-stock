@@ -728,8 +728,6 @@ def render_history(show_header: bool = True, title: str = "历史记录"):
     monitor_service.ensure_stopped_if_idle()
 
     decisions = db.get_ai_decisions(limit=50)
-    actions = db.get_pending_actions(status=None, limit=100)
-    trades = db.get_trade_records(limit=50)
     events = db.monitoring_repository.get_recent_events(limit=80)
     pending_notifications = db.monitoring_repository.get_pending_notifications()
     enabled_ai_tasks = len(db.get_monitor_tasks(enabled_only=True))
@@ -745,15 +743,15 @@ def render_history(show_header: bool = True, title: str = "历史记录"):
     with summary_col3:
         st.metric("价格预警", enabled_price_alerts)
     with summary_col4:
-        st.metric("待办动作", sum(1 for item in actions if item.get("status") == "pending"))
+        st.metric("监测事件", len(events))
     with summary_col5:
         st.metric("待发通知", len(pending_notifications))
 
     with st.expander("监测服务控制台", expanded=False):
         display_monitor_status()
 
-    tab_decisions, tab_actions, tab_trades, tab_events, tab_notifications = st.tabs(
-        ["AI决策历史", "待人工动作", "交易记录", "监测事件", "通知管理"]
+    tab_decisions, tab_events = st.tabs(
+        ["AI决策历史", "监测事件与通知"]
     )
 
     with tab_decisions:
@@ -784,67 +782,6 @@ def render_history(show_header: bool = True, title: str = "历史记录"):
                                 f"运行时阈值: 进场 {monitor_levels.get('entry_min', '-')} - {monitor_levels.get('entry_max', '-')} | "
                                 f"止盈 {monitor_levels.get('take_profit', '-')} | 止损 {monitor_levels.get('stop_loss', '-')}"
                             )
-
-    with tab_actions:
-        st.subheader("待人工动作")
-        if not actions:
-            st.info("暂无待人工动作。")
-        else:
-            pending_count = sum(1 for item in actions if item.get("status") == "pending")
-            resolved_count = len(actions) - pending_count
-            stat_col1, stat_col2, stat_col3 = st.columns(3)
-            with stat_col1:
-                st.metric("动作总数", len(actions))
-            with stat_col2:
-                st.metric("待处理", pending_count)
-            with stat_col3:
-                st.metric("已处理", resolved_count)
-
-            for action in actions:
-                payload = action.get("payload") or {}
-                with st.expander(
-                    f"{action.get('created_at')} - {action.get('symbol')} {action.get('name') or action.get('symbol')} "
-                    f"- {str(action.get('action_type', '')).upper()} [{action.get('status')}]"
-                ):
-                    info_col1, info_col2 = st.columns(2)
-                    with info_col1:
-                        st.write(f"**账户:** {action.get('account_name') or DEFAULT_ACCOUNT_NAME}")
-                        st.write(f"**资产状态:** {_format_asset_status(action)}")
-                        st.write(f"**当前持仓:** {_format_position_summary(action)}")
-                    with info_col2:
-                        st.write(f"**决策ID:** {action.get('origin_decision_id') or '-'}")
-                        st.write(f"**建议价格:** {payload.get('current_price') or payload.get('market_data', {}).get('current_price') or '-'}")
-                        st.write(f"**备注:** {action.get('resolution_note') or '待处理'}")
-                    decision_block = payload.get("decision") or {}
-                    if decision_block:
-                        st.write("**AI 建议摘要:**")
-                        st.text(str(decision_block.get("reasoning") or "")[:300])
-
-    with tab_trades:
-        st.subheader("交易记录")
-        if not trades:
-            st.info("暂无交易记录")
-        else:
-            df = pd.DataFrame(trades)
-            st.dataframe(
-                df[[
-                    'trade_time', 'stock_code', 'stock_name', 'trade_type',
-                    'quantity', 'price', 'amount', 'profit_loss'
-                ]],
-                column_config={
-                    "trade_time": "时间",
-                    "stock_code": "代码",
-                    "stock_name": "名称",
-                    "trade_type": "类型",
-                    "quantity": "数量",
-                    "price": "价格",
-                    "amount": "金额",
-                    "profit_loss": "盈亏"
-                },
-                hide_index=True,
-                width='stretch',
-                height=get_dataframe_height(len(df), max_rows=50),
-            )
 
     with tab_events:
         st.subheader("监测事件")
@@ -892,8 +829,7 @@ def render_history(show_header: bool = True, title: str = "历史记录"):
                     st.write(event.get("message"))
                     if details:
                         st.json(details)
-
-    with tab_notifications:
+        st.markdown("---")
         display_notification_management()
 
 

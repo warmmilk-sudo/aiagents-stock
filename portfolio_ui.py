@@ -13,6 +13,7 @@ import pandas as pd
 from datetime import date, datetime
 from typing import Callable, Dict, List
 
+from investment_db_utils import DEFAULT_ACCOUNT_NAME
 from portfolio_analysis_tasks import (
     PORTFOLIO_ANALYSIS_GLOBAL_SESSION_ID,
     portfolio_analysis_task_manager,
@@ -1028,7 +1029,7 @@ def display_portfolio_stocks(lightweight_model=None, reasoning_model=None):
 
     selected_subview = st.radio(
         "持仓情况视图",
-        ["持仓列表", "复盘报告"],
+        ["持仓列表", "交易记录", "复盘报告"],
         horizontal=True,
         key=PORTFOLIO_STOCKS_ACTIVE_VIEW_KEY,
         label_visibility="collapsed",
@@ -1036,6 +1037,10 @@ def display_portfolio_stocks(lightweight_model=None, reasoning_model=None):
 
     if selected_subview == "持仓列表":
         _render_portfolio_stock_list(stocks, lightweight_model=lightweight_model, reasoning_model=reasoning_model)
+        return
+
+    if selected_subview == "交易记录":
+        display_portfolio_trade_records(account_filter)
         return
 
     display_portfolio_review_reports(account_filter)
@@ -1075,6 +1080,84 @@ def _render_portfolio_stock_list(
             lightweight_model=lightweight_model,
             reasoning_model=reasoning_model,
         )
+
+
+def display_portfolio_trade_records(account_filter: str | None) -> None:
+    trades = portfolio_manager.get_trade_records(account_name=account_filter, limit=120)
+    account_label = account_filter or "全部账户"
+
+    st.markdown("#### 交易记录")
+    st.caption(f"展示 {account_label} 最近 120 笔已登记交易。")
+
+    if not trades:
+        st.info("暂无交易记录。")
+        return
+
+    trade_type_labels = {
+        "buy": "买入 / 加仓",
+        "sell": "卖出 / 减仓",
+        "clear": "清仓",
+    }
+
+    metric_col1, metric_col2, metric_col3, metric_col4 = st.columns(4)
+    with metric_col1:
+        st.metric("交易总数", len(trades))
+    with metric_col2:
+        st.metric("买入 / 加仓", sum(1 for item in trades if item.get("trade_type") == "buy"))
+    with metric_col3:
+        st.metric("卖出 / 清仓", sum(1 for item in trades if item.get("trade_type") in {"sell", "clear"}))
+    with metric_col4:
+        st.metric("最近交易", trades[0].get("trade_time") or "-")
+
+    filter_col1, filter_col2 = st.columns([1.3, 1])
+    with filter_col1:
+        symbol_filter = st.text_input(
+            "筛选代码 / 名称",
+            value="",
+            key=f"portfolio_trade_records_symbol_{account_label}",
+        ).strip().upper()
+    with filter_col2:
+        selected_trade_type = st.selectbox(
+            "交易类型",
+            ["全部", "买入 / 加仓", "卖出 / 减仓", "清仓"],
+            key=f"portfolio_trade_records_type_{account_label}",
+        )
+
+    filtered_trades = []
+    for item in trades:
+        trade_type = str(item.get("trade_type") or "").lower()
+        trade_type_label = trade_type_labels.get(trade_type, trade_type or "-")
+        symbol = str(item.get("stock_code") or "").upper()
+        stock_name = str(item.get("stock_name") or "")
+        if symbol_filter and symbol_filter not in symbol and symbol_filter not in stock_name.upper():
+            continue
+        if selected_trade_type != "全部" and trade_type_label != selected_trade_type:
+            continue
+        filtered_trades.append(
+            {
+                "时间": item.get("trade_time"),
+                "账户": item.get("account_name") or DEFAULT_ACCOUNT_NAME,
+                "代码": symbol,
+                "名称": stock_name,
+                "类型": trade_type_label,
+                "数量": int(item.get("quantity") or 0),
+                "价格": format_price(item.get("price")),
+                "金额": format_price(item.get("amount")),
+                "来源": item.get("trade_source") or "manual",
+                "备注": item.get("note") or "",
+            }
+        )
+
+    if not filtered_trades:
+        st.info("没有符合筛选条件的交易记录。")
+        return
+
+    st.dataframe(
+        pd.DataFrame(filtered_trades),
+        width="stretch",
+        hide_index=True,
+        height=min(920, 80 + 36 * min(len(filtered_trades), 16)),
+    )
 
 
 def display_portfolio_review_reports(account_filter: str | None) -> None:

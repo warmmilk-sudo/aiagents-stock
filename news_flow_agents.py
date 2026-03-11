@@ -5,6 +5,7 @@
 """
 import json
 import logging
+import re
 import time
 from datetime import datetime
 from typing import Dict, List, Optional
@@ -816,34 +817,66 @@ class NewsFlowAgents:
     
     def _parse_json_response(self, response: str) -> Optional[Dict]:
         """解析JSON响应"""
+        decoder = json.JSONDecoder()
         try:
-            # 清理响应文本
-            text = response.strip()
-            
-            # 处理markdown代码块
-            if '```json' in text:
-                text = text.split('```json')[1].split('```')[0]
-            elif '```' in text:
-                text = text.split('```')[1].split('```')[0]
-            
-            # 移除可能的推理过程
+            text = str(response or "").strip()
+            if not text:
+                return None
+
             if '【推理过程】' in text:
                 parts = text.split('【推理过程】')
                 text = parts[-1] if len(parts) > 1 else parts[0]
-            
-            # 查找JSON部分
-            start = text.find('{')
-            end = text.rfind('}') + 1
-            
-            if start >= 0 and end > start:
-                json_text = text[start:end]
-                return json.loads(json_text)
-            
+
+            candidates = []
+            fenced_blocks = re.findall(r"```(?:json)?\s*([\s\S]*?)```", text, flags=re.IGNORECASE)
+            for block in fenced_blocks:
+                block_text = block.strip()
+                if block_text:
+                    candidates.append(block_text)
+            candidates.append(text)
+
+            for candidate in candidates:
+                parsed = self._decode_first_json_object(candidate, decoder)
+                if parsed is not None:
+                    return parsed
+
+            logger.error("JSON解析失败: 未找到可解析的JSON对象")
             return None
-            
         except json.JSONDecodeError as e:
             logger.error(f"JSON解析失败: {e}")
             return None
+
+    def _decode_first_json_object(self, text: str, decoder: json.JSONDecoder) -> Optional[Dict]:
+        """从文本中提取第一个完整JSON对象。"""
+        normalized = text.lstrip("\ufeff").strip()
+        if not normalized:
+            return None
+
+        candidate_positions = []
+        for marker in ("{", "["):
+            search_from = 0
+            while True:
+                index = normalized.find(marker, search_from)
+                if index < 0:
+                    break
+                candidate_positions.append(index)
+                search_from = index + 1
+
+        for start in sorted(set(candidate_positions)):
+            snippet = normalized[start:].strip()
+            if not snippet:
+                continue
+            try:
+                parsed, _ = decoder.raw_decode(snippet)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(parsed, dict):
+                return parsed
+            if isinstance(parsed, list):
+                first_dict = next((item for item in parsed if isinstance(item, dict)), None)
+                if first_dict is not None:
+                    return first_dict
+        return None
     
     # ==================== 降级方法 ====================
     
