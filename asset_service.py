@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Dict, Optional, Tuple
 
+import config
+
 from analysis_repository import AnalysisRepository, analysis_repository
 from asset_repository import (
     STATUS_PORTFOLIO,
@@ -18,9 +20,6 @@ from monitoring_repository import MonitoringRepository
 class AssetService:
     """Lifecycle orchestration for research, watchlist, and portfolio assets."""
 
-    DEFAULT_AI_INTERVAL_MINUTES = 60
-    DEFAULT_ALERT_INTERVAL_MINUTES = 3
-
     def __init__(
         self,
         *,
@@ -31,6 +30,17 @@ class AssetService:
         self.asset_repository = asset_store or asset_repository
         self.analysis_repository = analysis_store or analysis_repository
         self.monitoring_repository = monitoring_store
+
+    @staticmethod
+    def get_default_ai_interval_minutes() -> int:
+        return max(1, int(getattr(config, "SMART_MONITOR_AI_INTERVAL_MINUTES", 60) or 60))
+
+    @staticmethod
+    def get_default_alert_interval_minutes() -> int:
+        return max(
+            3,
+            int(getattr(config, "SMART_MONITOR_PRICE_ALERT_INTERVAL_MINUTES", 3) or 3),
+        )
 
     def _get_strategy_context(self, asset: Dict) -> Optional[Dict]:
         return self.analysis_repository.get_latest_strategy_context(
@@ -81,7 +91,9 @@ class AssetService:
             "monitor_type": "ai_task",
             "source": "portfolio" if status == STATUS_PORTFOLIO else "ai_monitor",
             "enabled": bool(asset.get("monitor_enabled", True)),
-            "interval_minutes": int(existing_item.get("interval_minutes") or self.DEFAULT_AI_INTERVAL_MINUTES),
+            "interval_minutes": int(
+                existing_item.get("interval_minutes") or self.get_default_ai_interval_minutes()
+            ),
             "trading_hours_only": bool(existing_item.get("trading_hours_only", True)),
             "notification_enabled": bool(existing_item.get("notification_enabled", True)),
             "managed_by_portfolio": status == STATUS_PORTFOLIO,
@@ -143,7 +155,9 @@ class AssetService:
             "monitor_type": "price_alert",
             "source": "portfolio" if status == STATUS_PORTFOLIO else "ai_monitor",
             "enabled": bool(asset.get("monitor_enabled", True)),
-            "interval_minutes": int(existing_item.get("interval_minutes") or self.DEFAULT_ALERT_INTERVAL_MINUTES),
+            "interval_minutes": int(
+                existing_item.get("interval_minutes") or self.get_default_alert_interval_minutes()
+            ),
             "trading_hours_only": bool(existing_item.get("trading_hours_only", True)),
             "notification_enabled": bool(existing_item.get("notification_enabled", True)),
             "managed_by_portfolio": status == STATUS_PORTFOLIO,

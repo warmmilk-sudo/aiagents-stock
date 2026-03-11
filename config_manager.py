@@ -119,6 +119,18 @@ class ConfigManager:
                 "required": False,
                 "type": "text",
             },
+            "SMART_MONITOR_AI_INTERVAL_MINUTES": {
+                "value": "60",
+                "description": "智能盯盘默认轻 AI 分析间隔（分钟）",
+                "required": False,
+                "type": "text",
+            },
+            "SMART_MONITOR_PRICE_ALERT_INTERVAL_MINUTES": {
+                "value": "3",
+                "description": "智能盯盘默认价格预警间隔（分钟）",
+                "required": False,
+                "type": "text",
+            },
             "EMAIL_ENABLED": {
                 "value": "false",
                 "description": "启用邮件通知",

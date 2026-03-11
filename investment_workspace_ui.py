@@ -63,7 +63,7 @@ def _render_activity_panel() -> None:
     with event_tab:
         display_recent_monitor_events()
     with notification_tab:
-        display_notification_management()
+        display_notification_management(key_prefix="investment_workspace_activity")
 
 
 def display_investment_workspace(lightweight_model=None, reasoning_model=None) -> None:

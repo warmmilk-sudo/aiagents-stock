@@ -69,6 +69,11 @@ ICP_LINK = _safe_str_env("ICP_LINK", "")
 DATA_PERIOD = _safe_str_env("DATA_PERIOD", "1y")
 DEFAULT_INTERVAL = "1d"
 RISK_QUERY_TIMEOUT_SECONDS = _safe_int_env("RISK_QUERY_TIMEOUT_SECONDS", 10)
+SMART_MONITOR_AI_INTERVAL_MINUTES = max(1, _safe_int_env("SMART_MONITOR_AI_INTERVAL_MINUTES", 60))
+SMART_MONITOR_PRICE_ALERT_INTERVAL_MINUTES = max(
+    3,
+    _safe_int_env("SMART_MONITOR_PRICE_ALERT_INTERVAL_MINUTES", 3),
+)
 
 TDX_CONFIG = {
     "enabled": _safe_str_env("TDX_ENABLED", "false").lower() == "true",

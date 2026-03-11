@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
+import config
+
 from analysis_repository import AnalysisRepository, analysis_repository
 from asset_service import AssetService, asset_service
 from investment_db_utils import DEFAULT_ACCOUNT_NAME
@@ -13,9 +15,6 @@ from portfolio_db import PortfolioDB, portfolio_db
 
 class InvestmentLifecycleService:
     """Coordinates canonical positions, strategy projections, and monitor write-back."""
-
-    DEFAULT_AI_INTERVAL_SECONDS = 3600
-    DEFAULT_ALERT_INTERVAL_MINUTES = 3
 
     def __init__(
         self,
@@ -33,6 +32,17 @@ class InvestmentLifecycleService:
             asset_store=getattr(self.portfolio_db, "asset_repository", None),
             analysis_store=self.analysis_repository,
             monitoring_store=self.monitoring_repository,
+        )
+
+    @staticmethod
+    def get_default_ai_interval_minutes() -> int:
+        return max(1, int(getattr(config, "SMART_MONITOR_AI_INTERVAL_MINUTES", 60) or 60))
+
+    @staticmethod
+    def get_default_alert_interval_minutes() -> int:
+        return max(
+            3,
+            int(getattr(config, "SMART_MONITOR_PRICE_ALERT_INTERVAL_MINUTES", 3) or 3),
         )
 
     def _build_strategy_context(self, stock: Dict) -> Optional[Dict]:
@@ -60,7 +70,7 @@ class InvestmentLifecycleService:
             "monitor_type": "ai_task",
             "source": "portfolio",
             "enabled": bool(existing.get("enabled", False)),
-            "interval_minutes": int(existing.get("interval_minutes") or max(1, self.DEFAULT_AI_INTERVAL_SECONDS // 60)),
+            "interval_minutes": int(existing.get("interval_minutes") or self.get_default_ai_interval_minutes()),
             "trading_hours_only": bool(existing.get("trading_hours_only", True)),
             "notification_enabled": bool(existing.get("notification_enabled", True)),
             "managed_by_portfolio": True,
@@ -99,7 +109,9 @@ class InvestmentLifecycleService:
             "monitor_type": "price_alert",
             "source": "portfolio",
             "enabled": True,
-            "interval_minutes": int(existing.get("interval_minutes") or self.DEFAULT_ALERT_INTERVAL_MINUTES),
+            "interval_minutes": int(
+                existing.get("interval_minutes") or self.get_default_alert_interval_minutes()
+            ),
             "trading_hours_only": bool(existing.get("trading_hours_only", True)),
             "notification_enabled": bool(existing.get("notification_enabled", True)),
             "managed_by_portfolio": True,

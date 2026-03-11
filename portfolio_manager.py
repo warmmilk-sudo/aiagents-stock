@@ -13,6 +13,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import numpy as np
 import pandas as pd
+import config
 
 # 导入必要的模块
 from portfolio_db import portfolio_db
@@ -24,8 +25,6 @@ from smart_monitor_db import SmartMonitorDB
 class PortfolioManager:
     """持仓管理器类"""
 
-    DEFAULT_SMART_MONITOR_CHECK_INTERVAL = 3600
-    DEFAULT_REALTIME_MONITOR_CHECK_INTERVAL = 3
     DEFAULT_RISK_FREE_RATE = 0.015
     AGGREGATE_ACCOUNT_NAME = "全部账户"
     DEFAULT_ANALYSIS_AGENTS = ["technical", "fundamental", "fund_flow", "risk"]
@@ -54,6 +53,14 @@ class PortfolioManager:
         self._integrations_reconcile_pending = True
         self._stock_data_fetcher = None
         self._basic_stock_info_cache: Dict[str, Dict[str, Any]] = {}
+
+    @staticmethod
+    def get_default_smart_monitor_check_interval() -> int:
+        return max(60, int(getattr(config, "SMART_MONITOR_AI_INTERVAL_MINUTES", 60) or 60) * 60)
+
+    @staticmethod
+    def get_default_realtime_monitor_check_interval() -> int:
+        return max(3, int(getattr(config, "SMART_MONITOR_PRICE_ALERT_INTERVAL_MINUTES", 3) or 3))
 
     def _mark_integrations_reconcile_pending(self) -> None:
         self._integrations_reconcile_pending = True
@@ -1663,7 +1670,10 @@ class PortfolioManager:
             "stock_code": stock["code"],
             "stock_name": stock.get("name"),
             "enabled": existing_task.get("enabled", 0),
-            "check_interval": existing_task.get("check_interval", self.DEFAULT_SMART_MONITOR_CHECK_INTERVAL),
+            "check_interval": existing_task.get(
+                "check_interval",
+                self.get_default_smart_monitor_check_interval(),
+            ),
             "trading_hours_only": existing_task.get("trading_hours_only", 1),
             "position_size_pct": existing_task.get("position_size_pct", 20),
             "stop_loss_pct": existing_task.get("stop_loss_pct", 5),
@@ -1699,7 +1709,11 @@ class PortfolioManager:
             "entry_max": float(entry_max),
             "take_profit": float(take_profit),
             "stop_loss": float(stop_loss),
-            "check_interval": existing.get("check_interval", self.DEFAULT_REALTIME_MONITOR_CHECK_INTERVAL) if existing else self.DEFAULT_REALTIME_MONITOR_CHECK_INTERVAL,
+            "check_interval": (
+                existing.get("check_interval", self.get_default_realtime_monitor_check_interval())
+                if existing
+                else self.get_default_realtime_monitor_check_interval()
+            ),
             "notification_enabled": existing.get("notification_enabled", True) if existing else True,
             "trading_hours_only": existing.get("trading_hours_only", True) if existing else True,
             "managed_by_portfolio": True,

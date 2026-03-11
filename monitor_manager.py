@@ -13,10 +13,11 @@ from datetime import datetime, timedelta
 from typing import Dict, List
 import json
 
+import config
+
 from investment_db_utils import DEFAULT_ACCOUNT_NAME
 from monitor_db import monitor_db
 from monitor_service import monitor_service
-from notification_service import notification_service
 from stock_data import StockDataFetcher
 from stock_data_cache import extract_cache_meta, strip_cache_meta
 from ui_shared import format_price, get_recommendation_color
@@ -46,7 +47,15 @@ def _legacy_display_monitor_manager():
     display_monitored_stocks()
     
     # 通知管理
-    display_notification_management()
+    display_notification_management(key_prefix="legacy_monitor_manager")
+
+
+def _get_default_price_alert_interval_minutes() -> int:
+    try:
+        interval = int(getattr(config, "SMART_MONITOR_PRICE_ALERT_INTERVAL_MINUTES", 3) or 3)
+    except (TypeError, ValueError):
+        interval = 3
+    return max(3, min(120, interval))
 
 def display_monitor_status():
     """显示监测服务状态"""
@@ -177,7 +186,12 @@ def display_add_stock_section():
             
             # 监测参数
             st.markdown("**⏰ 监测参数**")
-            check_interval = st.slider("监测间隔(分钟)", 3, 120, 3)
+            check_interval = st.slider(
+                "监测间隔(分钟)",
+                3,
+                120,
+                _get_default_price_alert_interval_minutes(),
+            )
             notification_enabled = st.checkbox("启用通知", value=True)
             
             # 投资评级
@@ -518,113 +532,52 @@ def _legacy_display_delete_confirm_dialog(stock_id: int):
             del st.session_state[MONITOR_DELETING_STOCK_ID_KEY]
             st.rerun()
 
-def display_notification_management():
+def display_notification_management(key_prefix: str = "monitor_notifications"):
     """显示通知管理"""
     
     st.markdown("### 🔔 通知管理")
-    st.markdown("---")
-    
-    # 通知设置
-    col1, col2 = st.columns([1, 1])
-    
-    with col1:
-        st.subheader("📧 邮件通知设置")
-        
-        # 获取当前邮件配置状态
-        email_config = notification_service.get_email_config_status()
-        
-        # 显示配置状态
-        if email_config['configured']:
-            st.success("✅ 邮件配置已完成")
-        else:
-            st.warning("⚠️ 邮件未配置或配置不完整")
-        
-        # 显示配置信息
-        st.info(f"""
-        **当前配置：**
-        - SMTP服务器: {email_config['smtp_server']}
-        - SMTP端口: {email_config['smtp_port']}
-        - 发送邮箱: {email_config['email_from']}
-        - 接收邮箱: {email_config['email_to']}
-        - 启用状态: {'是' if email_config['enabled'] else '否'}
-        """)
-        
-        st.markdown("---")
-        st.markdown("**⚙️ 配置说明**")
-        st.caption("""
-        在 `.env` 文件中配置以下参数：
-        ```
-        EMAIL_ENABLED=true
-        SMTP_SERVER=smtp.qq.com
-        SMTP_PORT=587
-        EMAIL_FROM=your_email@qq.com
-        EMAIL_PASSWORD=your_authorization_code
-        EMAIL_TO=receiver@example.com
-        ```
-        
-        💡 提示：
-        - 端口：587 (TLS) 或 465 (SSL)
-        - 密码：使用邮箱授权码，不是登录密码
-        - QQ邮箱授权码获取：设置 → 账户 → POP3/IMAP/SMTP → 生成授权码
-        """)
-        
-        # 测试邮件按钮
-        if email_config['configured']:
-            if st.button("📧 发送测试邮件", type="primary", width='stretch'):
-                with st.spinner("正在发送测试邮件..."):
-                    success, message = notification_service.send_test_email()
-                    if success:
-                        st.success(f"✅ {message}")
-                        st.balloons()
-                    else:
-                        st.error(f"❌ {message}")
-        else:
-            st.button("📧 发送测试邮件", type="primary", width='stretch', disabled=True)
-            st.caption("请先在.env文件中配置邮件参数")
-    
-    with col2:
-        st.subheader("📱 通知历史")
-        
-        # 显示所有通知（包括已发送和未发送的）
-        all_notifications = monitor_db.get_all_recent_notifications(limit=10)
-        
-        if all_notifications:
-            # 显示通知列表
-            for notification in all_notifications:
-                notification_type = notification['type']
-                color_map = {
-                    'entry': '入场',
-                    'take_profit': '止盈',
-                    'stop_loss': '止损',
-                }
-                icon = color_map.get(notification_type, '通知')
-                
-                # 显示已发送状态
-                sent_status = "✅ 已发送" if notification.get('sent') else "⏳ 待发送"
-                
-                # 显示通知信息
-                st.info(f"[{icon}] **{notification['symbol']}** - {notification['message']}\n\n_{notification['triggered_at']}_ | {sent_status}")
-            
-            # 显示待发送通知数量
-            pending_count = len([n for n in all_notifications if not n.get('sent')])
-            if pending_count > 0:
-                st.warning(f"⚠️ 有 {pending_count} 条待发送通知")
-            
-            # 清空通知按钮
-            col_a, col_b = st.columns(2)
-            with col_a:
-                if st.button("✅ 标记已读"):
-                    monitor_db.mark_all_notifications_sent()
-                    st.success("✅ 所有通知已标记为已读")
-                    st.rerun()
-            
-            with col_b:
-                if st.button("🗑️ 清空通知"):
-                    monitor_db.clear_all_notifications()
-                    st.success("✅ 通知已清空")
-                    st.rerun()
-        else:
-            st.info("📭 暂无通知")
+    all_notifications = monitor_db.get_all_recent_notifications(limit=20)
+    pending_count = sum(1 for notification in all_notifications if not notification.get("sent"))
+
+    summary_col1, summary_col2 = st.columns(2)
+    with summary_col1:
+        st.metric("最近通知", len(all_notifications))
+    with summary_col2:
+        st.metric("待发送", pending_count)
+
+    if all_notifications:
+        for notification in all_notifications:
+            notification_type = notification["type"]
+            type_label = {
+                "entry": "入场",
+                "take_profit": "止盈",
+                "stop_loss": "止损",
+            }.get(notification_type, "通知")
+            status_text = "已发送" if notification.get("sent") else "待发送"
+            with st.expander(
+                f"{notification['triggered_at']} - {notification['symbol']} - {type_label} [{status_text}]"
+            ):
+                st.write(notification["message"])
+                target = str(notification.get("notify_target") or "").strip()
+                if target:
+                    st.caption(f"发送目标: {target}")
+                error_msg = str(notification.get("error_msg") or "").strip()
+                if error_msg:
+                    st.caption(f"错误信息: {error_msg}")
+
+        action_col1, action_col2 = st.columns(2)
+        with action_col1:
+            if st.button("标记全部已读", width="stretch", key=f"{key_prefix}_mark_all_read"):
+                monitor_db.mark_all_notifications_sent()
+                st.success("所有通知已标记为已读。")
+                st.rerun()
+        with action_col2:
+            if st.button("清空通知记录", width="stretch", key=f"{key_prefix}_clear_all"):
+                monitor_db.clear_all_notifications()
+                st.success("通知记录已清空。")
+                st.rerun()
+    else:
+        st.info("暂无通知记录。")
 
 def display_scheduler_section():
     """显示定时调度配置区域"""
@@ -899,7 +852,7 @@ def display_monitor_manager():
     st.header("监测服务")
     display_monitor_status()
     display_recent_monitor_events()
-    display_notification_management()
+    display_notification_management(key_prefix="monitor_manager")
 
 
 def get_monitor_summary():

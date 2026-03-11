@@ -136,17 +136,17 @@ def collapse_sidebar():
 st.markdown("""
 <style>
     :root {
-        --font-size-body: 0.98rem;
-        --font-size-caption: 0.82rem;
+        --font-size-body: 1.01rem;
+        --font-size-caption: 0.85rem;
         --font-size-h1: 1.95rem;
         --font-size-h2: 1.6rem;
         --font-size-h3: 1.18rem;
         --font-size-h4: 1rem;
         --font-size-h5: 0.92rem;
         --font-size-h6: 0.88rem;
-        --font-size-metric-label: 0.82rem;
-        --font-size-metric-value: 1.18rem;
-        --font-size-metric-delta: 0.82rem;
+        --font-size-metric-label: 0.85rem;
+        --font-size-metric-value: 1.21rem;
+        --font-size-metric-delta: 0.85rem;
         --line-height-body: 1.6;
         --line-height-heading: 1.3;
         --space-1: 0.25rem;
@@ -245,6 +245,20 @@ st.markdown("""
     .stCaption,
     .ui-meta-text {
         font-size: var(--font-size-caption) !important;
+    }
+    label[data-testid="stWidgetLabel"] p,
+    [data-testid="stCheckbox"] label p,
+    div[data-baseweb="select"] span,
+    div[data-baseweb="select"] input,
+    .stTextInput input,
+    .stNumberInput input,
+    .stTextArea textarea,
+    .stDateInput input,
+    .stTimeInput input,
+    [data-baseweb="input"] input,
+    [data-baseweb="textarea"] textarea {
+        font-size: var(--font-size-body) !important;
+        line-height: var(--line-height-body) !important;
     }
     div[data-testid="stHeading"] {
         margin: 0 0 var(--space-2) 0;
@@ -362,7 +376,7 @@ st.markdown("""
     }
     .stTabs [data-baseweb="tab"] {
         height: 3rem;
-        font-size: 0.94rem;
+        font-size: 0.97rem;
         font-weight: 500;
         color: rgba(255,255,255,0.6);
         background: transparent;
@@ -467,7 +481,7 @@ st.markdown("""
     ) > label[data-baseweb="radio"] p {
         margin: 0 !important;
         color: var(--investment-tab-text) !important;
-        font-size: 0.94rem !important;
+        font-size: 0.97rem !important;
         font-weight: 500 !important;
         line-height: 1.2 !important;
         transition: color 0.18s ease;
@@ -567,7 +581,7 @@ st.markdown("""
         background: rgba(30,41,59,0.34);
     }
     .reasoning-section__title {
-        font-size: 0.94rem;
+        font-size: 0.97rem;
         font-weight: 600;
         line-height: 1.35;
         color: rgba(255,255,255,0.96);
@@ -575,7 +589,7 @@ st.markdown("""
     }
     .reasoning-section__description {
         margin-top: 0.28rem;
-        font-size: 0.78rem;
+        font-size: 0.81rem;
         line-height: 1.45;
         color: rgba(255,255,255,0.6);
     }
@@ -588,7 +602,7 @@ st.markdown("""
     }
     .reasoning-body p {
         margin: 0 0 0.72rem 0 !important;
-        font-size: 0.88rem !important;
+        font-size: 0.91rem !important;
         line-height: 1.72 !important;
         color: rgba(226,232,240,0.9);
         word-break: break-word;
@@ -670,7 +684,7 @@ st.markdown("""
         color: var(--text-color);
         border: 1px solid rgba(255,255,255,0.2);
         border-radius: 6px;
-        font-size: 0.94rem;
+        font-size: 0.97rem;
         font-weight: 500;
         min-height: 2.5rem;
         padding: 0.42rem 0.95rem;
@@ -784,7 +798,7 @@ st.markdown("""
         border: 1px solid rgba(255,255,255,0.1);
         border-radius: 6px;
         color: var(--text-color);
-        font-size: 0.94rem;
+        font-size: 0.97rem;
         font-weight: 500;
     }
     div[data-testid="stExpander"] {
@@ -812,7 +826,7 @@ st.markdown("""
     .site-filing {
         padding-top: 1.25rem;
         text-align: center;
-        font-size: 0.72rem;
+        font-size: 0.75rem;
         line-height: 1.2;
         color: rgba(255,255,255,0.42);
     }
@@ -839,12 +853,12 @@ st.markdown("""
         flex-wrap: wrap;
     }
     .portfolio-stock-card__title {
-        font-size: 1rem;
+        font-size: 1.03rem;
         font-weight: 600;
         line-height: 1.35;
     }
     .portfolio-stock-card__badge {
-        font-size: 0.92rem;
+        font-size: 0.95rem;
         font-weight: 600;
         line-height: 1.2;
         white-space: nowrap;
@@ -927,8 +941,8 @@ st.markdown("""
             --font-size-h2: 1.42rem;
             --font-size-h3: 1.1rem;
             --font-size-h4: 0.98rem;
-            --font-size-body: 0.95rem;
-            --font-size-caption: 0.8rem;
+            --font-size-body: 0.98rem;
+            --font-size-caption: 0.83rem;
         }
         [data-testid="stSidebar"] {
             min-width: min(82vw, 18rem) !important;
@@ -1002,7 +1016,7 @@ st.markdown("""
         .stMultiSelect [data-baseweb="select"] > div,
         [data-baseweb="input"] input,
         [data-baseweb="textarea"] textarea {
-            font-size: 16.5px !important;
+            font-size: 17px !important;
             line-height: 1.35 !important;
         }
         .stTextArea textarea {
@@ -1017,17 +1031,17 @@ st.markdown("""
             padding: 0.58rem 0.7rem;
         }
         .reasoning-section__title {
-            font-size: 0.88rem;
+            font-size: 0.91rem;
         }
         .reasoning-section__description {
-            font-size: 0.74rem;
+            font-size: 0.77rem;
         }
         .reasoning-body {
             margin-bottom: 0.72rem;
             padding: 0.72rem 0.8rem;
         }
         .reasoning-body p {
-            font-size: 0.8rem !important;
+            font-size: 0.83rem !important;
             line-height: 1.66 !important;
         }
         .js-plotly-plot,
@@ -1045,13 +1059,13 @@ st.markdown("""
             min-height: 2.35rem;
             padding-left: 0.6rem;
             padding-right: 0.6rem;
-            font-size: 0.88rem;
+            font-size: 0.91rem;
         }
         .portfolio-stock-card {
             gap: 0.4rem;
         }
         .portfolio-stock-card__title {
-            font-size: 0.98rem;
+            font-size: 1.01rem;
         }
         .portfolio-stock-card__chips {
             gap: 0.34rem;
@@ -1062,7 +1076,7 @@ st.markdown("""
         .portfolio-stock-card__analysis-meta,
         .portfolio-stock-card__note,
         .portfolio-stock-card__summary {
-            font-size: 0.79rem;
+            font-size: 0.82rem;
         }
     }
 </style>
