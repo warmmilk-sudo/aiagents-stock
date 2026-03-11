@@ -326,6 +326,8 @@ def display_stock_card(stock: Dict):
             st.markdown(f"**{stock['symbol']}** {stock['name']}")
             if stock.get('managed_by_portfolio'):
                 st.caption("来源: 持仓同步")
+            elif stock.get("source") == "ai_monitor":
+                st.caption("来源: 智能盯盘")
 
             st.markdown(
                 f"评级: <span style='color: {rating_color}; font-weight: 600;'>{rating}</span>",
@@ -349,6 +351,7 @@ def display_stock_card(stock: Dict):
         with info_col2:
             st.caption(f"监测间隔: {stock['check_interval']} 分钟")
             st.caption(f"最后检查: {last_checked_text}")
+            st.caption(f"监控状态: {'已启用' if stock.get('enabled', True) else '已停用'}")
             st.caption(notify_text)
 
         action_col1, action_col2 = st.columns(2)
@@ -923,9 +926,10 @@ def display_edit_dialog(stock_id: int):
     st.markdown("---")
     st.markdown(f"### 编辑价格预警 - {stock['symbol']} {stock['name']}")
 
-    managed = bool(stock.get('managed_by_portfolio'))
+    managed = bool(stock.get('managed_by_portfolio') or stock.get("source") == "ai_monitor")
     if managed:
-        st.info("该价格预警来自持仓分析托管。这里仅允许调整通知开关，核心价位请回到持仓分析源头修改。")
+        owner_label = "持仓分析" if stock.get("managed_by_portfolio") else "智能盯盘"
+        st.info(f"该价格预警来自{owner_label}托管。这里仅允许调整通知开关，核心价位请回到上游源头修改。")
 
     with st.form(key=f"price_alert_edit_{stock_id}"):
         if managed:
@@ -985,8 +989,9 @@ def display_delete_confirm_dialog(stock_id: int):
     st.markdown("---")
     st.markdown("### 删除价格预警")
 
-    if stock.get('managed_by_portfolio'):
-        st.warning("该价格预警来自持仓分析托管，不能在这里删除。请到持仓分析源头移除。")
+    if stock.get('managed_by_portfolio') or stock.get("source") == "ai_monitor":
+        owner_label = "持仓分析" if stock.get("managed_by_portfolio") else "智能盯盘"
+        st.warning(f"该价格预警来自{owner_label}托管，不能在这里删除。请到上游源头移除。")
         if st.button("关闭", key=f"close_delete_blocked_{stock_id}", width='stretch'):
             st.session_state.pop(MONITOR_DELETING_STOCK_ID_KEY, None)
             st.rerun()

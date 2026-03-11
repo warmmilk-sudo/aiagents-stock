@@ -24,6 +24,7 @@ class SmartMonitorDB:
     """Repository-backed smart monitor facade."""
 
     NOTIFICATION_CLEANUP_MIGRATION_KEY = "smart_monitor_notification_cleanup_v1"
+    TASK_ENABLE_SYNC_MIGRATION_KEY = "smart_monitor_task_enable_sync_v1"
     VALID_NOTIFICATION_STATUSES = {"pending", "sent", "failed"}
 
     def __init__(self, db_file: str = "smart_monitor.db"):
@@ -55,6 +56,7 @@ class SmartMonitorDB:
         self._migrate_legacy_history_db(self.legacy_db_file)
         self._repair_ai_decision_history()
         self._cleanup_notification_history()
+        self._reconcile_task_enable_projection()
 
     def _connect(self) -> sqlite3.Connection:
         return connect_sqlite(self.db_file)
@@ -484,6 +486,58 @@ class SmartMonitorDB:
             "status": repaired_status,
         }
 
+    def _reconcile_task_enable_projection(self) -> Dict[str, int]:
+        conn = self._connect()
+        cleanup_key = self.TASK_ENABLE_SYNC_MIGRATION_KEY
+        if get_metadata(conn, cleanup_key):
+            conn.close()
+            return {"assets": 0, "alerts": 0}
+        conn.close()
+
+        synchronized_assets = 0
+        synchronized_alerts = 0
+        processed_asset_ids = set()
+        for item in self.monitoring_repository.list_items(monitor_type="ai_task", enabled_only=False):
+            asset_id = item.get("asset_id")
+            if asset_id is None:
+                continue
+            asset_id = int(asset_id)
+            if asset_id in processed_asset_ids:
+                continue
+            processed_asset_ids.add(asset_id)
+
+            asset = self.asset_repository.get_asset(asset_id)
+            if not asset:
+                continue
+
+            target_enabled = bool(item.get("enabled", True))
+            if bool(asset.get("monitor_enabled", True)) != target_enabled:
+                self.asset_repository.update_asset(asset_id, monitor_enabled=target_enabled)
+                synchronized_assets += 1
+
+            sync_result = self.asset_service.sync_managed_monitors(asset_id)
+            synchronized_alerts += int(sync_result.get("price_alerts_upserted", 0))
+
+        conn = self._connect()
+        try:
+            set_metadata(
+                conn,
+                cleanup_key,
+                json.dumps(
+                    {
+                        "assets": synchronized_assets,
+                        "alerts": synchronized_alerts,
+                        "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    },
+                    ensure_ascii=False,
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        return {"assets": synchronized_assets, "alerts": synchronized_alerts}
+
     def _migrate_legacy_history_db(self, legacy_db_path: str) -> int:
         if not legacy_db_path or not os.path.exists(legacy_db_path):
             return 0
@@ -661,6 +715,7 @@ class SmartMonitorDB:
         if not item:
             return False
 
+        target_asset_id = asset_id if asset_id is not None else item.get("asset_id")
         updates: Dict[str, object] = {}
         config = dict(item.get("config") or {})
         config_updates = self._task_config_from_data(task_data)
@@ -703,15 +758,56 @@ class SmartMonitorDB:
 
         if not updates:
             return False
-        return self.monitoring_repository.update_item(item["id"], updates)
+
+        if "enabled" in task_data and target_asset_id is not None:
+            self.asset_repository.update_asset(target_asset_id, monitor_enabled=bool(task_data.get("enabled")))
+
+        changed = self.monitoring_repository.update_item(item["id"], updates)
+        if target_asset_id is not None:
+            self.asset_service.sync_managed_monitors(int(target_asset_id))
+        return changed
+
+    def _get_linked_price_alert_item(self, task_item: Dict) -> Optional[Dict]:
+        return self.monitoring_repository.get_item_by_symbol(
+            task_item.get("symbol"),
+            monitor_type="price_alert",
+            managed_only=True if task_item.get("managed_by_portfolio") else None,
+            account_name=task_item.get("account_name"),
+            asset_id=task_item.get("asset_id"),
+            portfolio_stock_id=task_item.get("portfolio_stock_id"),
+        )
+
+    def set_monitor_task_enabled(self, task_id: int, enabled: bool) -> bool:
+        item = self.monitoring_repository.get_item(task_id)
+        if not item or item.get("monitor_type") != "ai_task":
+            return False
+
+        target_enabled = bool(enabled)
+        linked_alert = self._get_linked_price_alert_item(item)
+        asset = self.asset_repository.get_asset(int(item["asset_id"])) if item.get("asset_id") is not None else None
+        needs_change = (
+            bool(item.get("enabled", True)) != target_enabled
+            or linked_alert is None
+            or (linked_alert is not None and bool(linked_alert.get("enabled", True)) != target_enabled)
+            or (asset is not None and bool(asset.get("monitor_enabled", True)) != target_enabled)
+        )
+        if not needs_change:
+            return False
+
+        if asset is not None:
+            self.asset_service.set_monitoring_enabled(int(asset["id"]), target_enabled)
+            return True
+
+        self.monitoring_repository.update_item(item["id"], {"enabled": target_enabled})
+        if linked_alert is not None:
+            self.monitoring_repository.update_item(linked_alert["id"], {"enabled": target_enabled})
+        return True
 
     def set_all_monitor_tasks_enabled(self, enabled: bool) -> int:
         changed_count = 0
         target_enabled = bool(enabled)
-        for item in self.monitoring_repository.list_items(monitor_type="ai_task"):
-            if bool(item.get("enabled", True)) == target_enabled:
-                continue
-            if self.monitoring_repository.update_item(item["id"], {"enabled": target_enabled}):
+        for item in self.monitoring_repository.list_items(monitor_type="ai_task", enabled_only=False):
+            if self.set_monitor_task_enabled(int(item["id"]), target_enabled):
                 changed_count += 1
         return changed_count
 
@@ -747,6 +843,7 @@ class SmartMonitorDB:
         managed_sync = bool(task_data.get("managed_by_portfolio"))
         account_name = task_data.get("account_name") or DEFAULT_ACCOUNT_NAME
         asset_id = task_data.get("asset_id")
+        target_enabled = bool(task_data.get("enabled", 1))
         if asset_id is None:
             _, _, asset_id = self.asset_service.promote_to_watchlist(
                 symbol=stock_code,
@@ -754,7 +851,10 @@ class SmartMonitorDB:
                 account_name=account_name,
                 note="",
                 origin_analysis_id=task_data.get("origin_analysis_id"),
+                monitor_enabled=target_enabled,
             )
+        elif "enabled" in task_data:
+            self.asset_repository.update_asset(int(asset_id), monitor_enabled=target_enabled)
         existing = self.monitoring_repository.get_item_by_symbol(
             stock_code,
             monitor_type="ai_task",
@@ -765,13 +865,13 @@ class SmartMonitorDB:
             self.logger.info(f"跳过持仓同步任务 {stock_code}，同账户下手工任务已存在")
             return int(existing["id"])
 
-        return self.monitoring_repository.upsert_item(
+        task_id = self.monitoring_repository.upsert_item(
             {
                 "symbol": stock_code,
                 "name": task_data.get("stock_name"),
                 "monitor_type": "ai_task",
                 "source": "portfolio" if managed_sync else "ai_monitor",
-                "enabled": bool(task_data.get("enabled", 1)),
+                "enabled": target_enabled,
                 "interval_minutes": self._seconds_to_interval_minutes(task_data.get("check_interval", 300)),
                 "trading_hours_only": bool(task_data.get("trading_hours_only", 1)),
                 "notification_enabled": True,
@@ -783,6 +883,9 @@ class SmartMonitorDB:
                 "config": self._task_config_from_data(task_data),
             }
         )
+        if asset_id is not None:
+            self.asset_service.sync_managed_monitors(int(asset_id))
+        return task_id
 
     def delete_monitor_task(self, task_id: int):
         return self.monitoring_repository.delete_item(task_id)

@@ -248,7 +248,7 @@ class MonitoringOrchestrator:
             if monitor_type == "price_alert":
                 return await self._process_price_alert(item, force=force)
             if monitor_type == "ai_task":
-                return await self._process_ai_task(item)
+                return await self._process_ai_task(item, force=force)
             self.logger.warning("未知监控类型: %s", monitor_type)
             return False
         except (KeyError, TypeError, ValueError) as exc:
@@ -272,14 +272,14 @@ class MonitoringOrchestrator:
                 )
             return False
 
-    async def _process_ai_task(self, item: Dict) -> bool:
+    async def _process_ai_task(self, item: Dict, force: bool = False) -> bool:
         try:
             result = await self._await_to_thread(
                 self.engine.analyze_stock,
                 self.AI_TASK_TIMEOUT_SECONDS,
                 stock_code=item["symbol"],
                 notify=bool(item.get("notification_enabled", True)),
-                trading_hours_only=bool(item.get("trading_hours_only", True)),
+                trading_hours_only=bool(item.get("trading_hours_only", True)) and not force,
                 account_name=item.get("account_name"),
                 asset_id=item.get("asset_id"),
                 portfolio_stock_id=item.get("portfolio_stock_id"),

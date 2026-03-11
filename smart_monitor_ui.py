@@ -1285,7 +1285,7 @@ def render_ai_monitor_tasks_panel(show_header: bool = True, title: str = "AI监�
         ):
             changed_count = db.set_all_monitor_tasks_enabled(True)
             monitor_service.ensure_started()
-            st.success(f"已启用 {changed_count} 个任务。")
+            st.success(f"已启用 {changed_count} 个标的的 AI 盯盘与价格预警。")
             st.rerun()
     with disable_all_col:
         if st.button(
@@ -1296,7 +1296,7 @@ def render_ai_monitor_tasks_panel(show_header: bool = True, title: str = "AI监�
         ):
             changed_count = db.set_all_monitor_tasks_enabled(False)
             monitor_service.ensure_stopped_if_idle()
-            st.success(f"已停用 {changed_count} 个任务。")
+            st.success(f"已停用 {changed_count} 个标的的 AI 盯盘与价格预警。")
             st.rerun()
 
     for task in tasks:
@@ -1345,19 +1345,12 @@ def render_ai_monitor_tasks_panel(show_header: bool = True, title: str = "AI监�
             with action_col2:
                 toggle_label = "停用" if task.get('enabled') else "启用"
                 if st.button(toggle_label, key=f"toggle_ai_task_{task['id']}", width='stretch'):
-                    db.update_monitor_task(
-                        task['stock_code'],
-                        {
-                            'enabled': 0 if task.get('enabled') else 1,
-                            'account_name': task.get('account_name') or DEFAULT_ACCOUNT_NAME,
-                            'portfolio_stock_id': task.get('portfolio_stock_id'),
-                        },
-                    )
+                    db.set_monitor_task_enabled(int(task["id"]), not task.get("enabled"))
                     if task.get('enabled'):
                         monitor_service.ensure_stopped_if_idle()
                     else:
                         monitor_service.ensure_started()
-                    st.success(f"任务已{toggle_label}。")
+                    st.success(f"{task['stock_code']} 的 AI 盯盘与价格预警已{toggle_label}。")
                     st.rerun()
             with action_col3:
                 if st.button("登记买入", key=f"buy_ai_task_{task['id']}", width='stretch'):

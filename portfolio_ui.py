@@ -1057,13 +1057,10 @@ def _render_portfolio_stock_list(
         st.info("当前账户暂无持仓股票。")
         return
 
-    col1, col2, col3 = st.columns(3)
+    col1, col2 = st.columns(2)
     with col1:
         st.metric("持仓股票数", len(stocks))
     with col2:
-        auto_monitor_count = sum(1 for s in stocks if s.get("auto_monitor"))
-        st.metric("启用自动监测", auto_monitor_count)
-    with col3:
         total_cost = sum(
             s.get("cost_price", 0) * s.get("quantity", 0) 
             for s in stocks 
@@ -1432,14 +1429,12 @@ def display_stock_card(
     cost_price = stock.get("cost_price")
     quantity = stock.get("quantity")
     note = stock.get("note", "")
-    auto_monitor = stock.get("auto_monitor", True)
     view_model = portfolio_manager.build_stock_card_view_model(stock, latest_analysis)
     rating = view_model.get("rating", "待分析")
     analysis_time_text = view_model.get("analysis_time_text") or "尚未分析"
     display_name = view_model.get("display_name") or code
     edit_state_key = f"portfolio_editing_{stock_id}"
     trade_state_key = f"portfolio_trading_{stock_id}"
-    auto_monitor_key = f"portfolio_auto_monitor_{stock_id}"
     trade_type_key = f"portfolio_trade_type_{stock_id}"
     trade_date_key = f"portfolio_trade_date_{stock_id}"
     trade_price_key = f"portfolio_trade_price_{stock_id}"
@@ -1493,26 +1488,11 @@ def display_stock_card(
         if meta_bits:
             st.caption(" | ".join(meta_bits))
 
-        action_col1, action_col2, action_col3, action_col4, action_col5 = st.columns(
-            [1.05, 0.95, 0.9, 1.1, 0.8],
+        action_col1, action_col2, action_col3, action_col4 = st.columns(
+            [1.0, 0.95, 1.1, 0.8],
             gap="small",
         )
         with action_col1:
-            toggle_value = st.toggle(
-                "监测",
-                value=view_model.get("auto_monitor", True),
-                key=auto_monitor_key,
-                help="自动监测：启用后会自动同步到监测",
-            )
-            if toggle_value != auto_monitor:
-                success, msg = portfolio_manager.update_stock(stock_id, auto_monitor=toggle_value)
-                if success:
-                    st.success(msg)
-                else:
-                    st.session_state[auto_monitor_key] = auto_monitor
-                    st.error(msg)
-                st.rerun()
-        with action_col2:
             if st.button(
                 analysis_button_label,
                 key=f"analyze_{stock_id}",
@@ -1526,12 +1506,12 @@ def display_stock_card(
                 disabled=analysis_disabled,
             ):
                 run_single_stock_analysis(stock, lightweight_model, reasoning_model)
-        with action_col3:
+        with action_col2:
             if st.button("编辑", key=f"edit_{stock_id}", help="编辑"):
                 st.session_state[edit_state_key] = True
                 st.session_state.pop(trade_state_key, None)
                 st.rerun()
-        with action_col4:
+        with action_col3:
             if st.button("交易", key=f"trade_{stock_id}", help="记录买入、卖出或清仓"):
                 st.session_state[trade_state_key] = True
                 st.session_state[trade_type_key] = "buy"
@@ -1541,11 +1521,10 @@ def display_stock_card(
                 st.session_state[trade_note_key] = ""
                 st.session_state.pop(edit_state_key, None)
                 st.rerun()
-        with action_col5:
+        with action_col4:
             if st.button("删除", key=f"del_{stock_id}", help="删除"):
                 success, msg = portfolio_manager.delete_stock(stock_id)
                 if success:
-                    st.session_state.pop(auto_monitor_key, None)
                     st.session_state.pop(edit_state_key, None)
                     st.session_state.pop(trade_state_key, None)
                     st.session_state.pop(trade_type_key, None)

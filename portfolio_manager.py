@@ -1707,16 +1707,16 @@ class PortfolioManager:
 
     def _sync_stock_to_smart_monitor(self, stock: Dict) -> bool:
         """同步单只持仓到 AI 盯盘任务。"""
-        if not stock or not stock.get("auto_monitor"):
+        if not stock:
             return False
         result = self.lifecycle_service.sync_position(stock_id=stock["id"])
         return bool(result.get("ai_tasks_upserted"))
 
     def sync_portfolio_to_smart_monitor(self) -> Dict[str, int]:
-        """同步所有启用自动监测的持仓到 AI 盯盘。"""
+        """同步所有持仓到 AI 盯盘。"""
         synced = 0
         failed = 0
-        for stock in self.get_all_stocks(auto_monitor_only=True):
+        for stock in self.get_all_stocks(auto_monitor_only=False):
             try:
                 result = self.lifecycle_service.sync_position(stock_id=stock["id"])
                 if result.get("ai_tasks_upserted"):
@@ -1730,7 +1730,7 @@ class PortfolioManager:
         """将最新持仓分析结果同步到实时监测。"""
         added = 0
         failed = 0
-        stocks = self.db.get_all_stocks(auto_monitor_only=True)
+        stocks = self.db.get_all_stocks(auto_monitor_only=False)
         if codes:
             code_set = {self._normalize_stock_code(code) for code in codes if code}
             stocks = [stock for stock in stocks if stock["code"] in code_set]
@@ -1760,7 +1760,7 @@ class PortfolioManager:
 
     def cleanup_managed_integrations(self) -> Dict[str, int]:
         """清理已经不再受持仓托管的下游记录。"""
-        active_codes = {stock["code"] for stock in self.get_all_stocks(auto_monitor_only=True)}
+        active_codes = {stock["code"] for stock in self.get_all_stocks(auto_monitor_only=False)}
         cleaned_smart = 0
         cleaned_monitor = 0
 

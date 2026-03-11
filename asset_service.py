@@ -100,27 +100,39 @@ class AssetService:
             },
         }
 
-    def _build_price_alert_payload(self, asset: Dict, strategy_context: Dict, existing_item: Optional[Dict] = None) -> Optional[Dict]:
+    def _build_price_alert_payload(self, asset: Dict, strategy_context: Dict, existing_item: Optional[Dict] = None) -> Dict:
+        existing_item = existing_item or {}
+        existing_config = existing_item.get("config") or {}
+        status = asset.get("status")
         entry_min = strategy_context.get("entry_min")
         entry_max = strategy_context.get("entry_max")
         take_profit = strategy_context.get("take_profit")
         stop_loss = strategy_context.get("stop_loss")
-        if not all(value is not None for value in (entry_min, entry_max, take_profit, stop_loss)):
-            return None
-        existing_item = existing_item or {}
-        existing_config = existing_item.get("config") or {}
-        status = asset.get("status")
+        has_complete_strategy_levels = all(
+            value is not None for value in (entry_min, entry_max, take_profit, stop_loss)
+        )
         config = {
-            "rating": strategy_context.get("rating") or "持有",
-            "entry_range": {"min": float(entry_min), "max": float(entry_max)},
-            "take_profit": float(take_profit),
-            "stop_loss": float(stop_loss),
-            "strategy_context": strategy_context,
-            "threshold_source": "strategy_context",
-            "threshold_updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "rating": strategy_context.get("rating") or existing_config.get("rating") or "持有",
+            "entry_range": existing_config.get("entry_range") or {},
+            "take_profit": existing_config.get("take_profit"),
+            "stop_loss": existing_config.get("stop_loss"),
+            "strategy_context": strategy_context if strategy_context else (existing_config.get("strategy_context") or {}),
+            "threshold_source": existing_config.get("threshold_source") or "pending_ai",
+            "threshold_updated_at": existing_config.get("threshold_updated_at"),
             "runtime_thresholds": None,
             "origin_decision_id": None,
         }
+        if has_complete_strategy_levels:
+            config.update(
+                {
+                    "entry_range": {"min": float(entry_min), "max": float(entry_max)},
+                    "take_profit": float(take_profit),
+                    "stop_loss": float(stop_loss),
+                    "strategy_context": strategy_context,
+                    "threshold_source": "strategy_context",
+                    "threshold_updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                }
+            )
         if self._should_preserve_runtime_thresholds(existing_item, strategy_context):
             for key in ("runtime_thresholds", "origin_decision_id", "threshold_source", "threshold_updated_at"):
                 if key in existing_config:
@@ -129,7 +141,7 @@ class AssetService:
             "symbol": asset["symbol"],
             "name": asset.get("name") or asset["symbol"],
             "monitor_type": "price_alert",
-            "source": "portfolio" if status == STATUS_PORTFOLIO else "manual",
+            "source": "portfolio" if status == STATUS_PORTFOLIO else "ai_monitor",
             "enabled": bool(asset.get("monitor_enabled", True)),
             "interval_minutes": int(existing_item.get("interval_minutes") or self.DEFAULT_ALERT_INTERVAL_MINUTES),
             "trading_hours_only": bool(existing_item.get("trading_hours_only", True)),
@@ -151,7 +163,7 @@ class AssetService:
             return {"ai_tasks_upserted": 0, "price_alerts_upserted": 0, "removed": 0}
 
         status = asset.get("status")
-        if status == STATUS_RESEARCH or not asset.get("monitor_enabled", True):
+        if status == STATUS_RESEARCH:
             removed = 0
             for monitor_type in ("ai_task", "price_alert"):
                 if self.monitoring_repository.delete_by_symbol(
@@ -178,14 +190,16 @@ class AssetService:
             asset_id=asset["id"],
         )
         alert_payload = self._build_price_alert_payload(asset, strategy_context, existing_alert)
-        upserted_alerts = 0
-        removed = 0
-        if alert_payload:
-            self.monitoring_repository.upsert_item(alert_payload)
-            upserted_alerts = 1
-        elif existing_alert and self.monitoring_repository.delete_item(existing_alert["id"]):
-            removed = 1
-        return {"ai_tasks_upserted": 1, "price_alerts_upserted": upserted_alerts, "removed": removed}
+        self.monitoring_repository.upsert_item(alert_payload)
+        return {"ai_tasks_upserted": 1, "price_alerts_upserted": 1, "removed": 0}
+
+    def set_monitoring_enabled(self, asset_id: int, enabled: bool) -> Dict[str, int]:
+        asset = self.asset_repository.get_asset(asset_id)
+        if not asset:
+            return {"ai_tasks_upserted": 0, "price_alerts_upserted": 0, "removed": 0}
+
+        self.asset_repository.update_asset(asset_id, monitor_enabled=bool(enabled))
+        return self.sync_managed_monitors(asset_id)
 
     def create_or_update_research_asset(
         self,
@@ -212,6 +226,7 @@ class AssetService:
         account_name: str = DEFAULT_ACCOUNT_NAME,
         note: str = "",
         origin_analysis_id: Optional[int] = None,
+        monitor_enabled: bool = True,
     ) -> Tuple[bool, str, Optional[int]]:
         asset_id = self.asset_repository.promote_to_watchlist(
             symbol=symbol,
@@ -219,6 +234,7 @@ class AssetService:
             account_name=account_name,
             note=note,
             origin_analysis_id=origin_analysis_id,
+            monitor_enabled=monitor_enabled,
         )
         self.sync_managed_monitors(asset_id)
         return True, f"已加入盯盘: {symbol}", asset_id

@@ -78,7 +78,16 @@ class PortfolioIntegrationTests(unittest.TestCase):
 
         success, msg = self.manager.update_stock(stock_id, auto_monitor=False)
         self.assertTrue(success, msg)
-        self.assertIsNone(self.smart_monitor_db.get_monitor_task_by_code("000001", managed_only=True))
+        disabled_task = self.smart_monitor_db.get_monitor_task_by_code("000001", managed_only=True)
+        self.assertIsNotNone(disabled_task)
+        self.assertEqual(disabled_task["enabled"], 0)
+        disabled_alert = self.realtime_monitor_db.get_monitor_by_code(
+            "000001",
+            account_name="默认账户",
+            asset_id=stock_id,
+        )
+        self.assertIsNotNone(disabled_alert)
+        self.assertFalse(disabled_alert["enabled"])
 
     def test_persist_analysis_results_saves_portfolio_history_and_syncs_realtime_monitor(self):
         stock_id = self._add_stock("300750", cost_price=150.0, quantity=100)
@@ -227,6 +236,13 @@ class PortfolioIntegrationTests(unittest.TestCase):
         enabled_tasks = self.smart_monitor_db.get_monitor_tasks(enabled_only=False)
         self.assertEqual(len(enabled_tasks), 2)
         self.assertTrue(all(task["enabled"] == 1 for task in enabled_tasks))
+        enabled_alerts = {
+            stock["symbol"]: stock
+            for stock in self.realtime_monitor_db.get_monitored_stocks()
+        }
+        self.assertIn("600519", enabled_alerts)
+        self.assertIn("000001", enabled_alerts)
+        self.assertTrue(all(alert["enabled"] for alert in enabled_alerts.values()))
 
         changed = self.smart_monitor_db.set_all_monitor_tasks_enabled(False)
         self.assertEqual(changed, 2)
@@ -234,6 +250,27 @@ class PortfolioIntegrationTests(unittest.TestCase):
         disabled_tasks = self.smart_monitor_db.get_monitor_tasks(enabled_only=False)
         self.assertEqual(len(disabled_tasks), 2)
         self.assertTrue(all(task["enabled"] == 0 for task in disabled_tasks))
+        disabled_alerts = self.realtime_monitor_db.get_monitored_stocks()
+        self.assertEqual(len(disabled_alerts), 2)
+        self.assertTrue(all(not alert["enabled"] for alert in disabled_alerts))
+
+    def test_watchlist_task_sync_creates_placeholder_price_alert(self):
+        self.smart_monitor_db.upsert_monitor_task(
+            {
+                "task_name": "宁德时代任务",
+                "stock_code": "300750",
+                "stock_name": "宁德时代",
+                "enabled": 1,
+                "account_name": "默认账户",
+            }
+        )
+
+        alert = self.realtime_monitor_db.get_monitor_by_code("300750", account_name="默认账户")
+
+        self.assertIsNotNone(alert)
+        self.assertTrue(alert["enabled"])
+        self.assertEqual(alert["check_interval"], 3)
+        self.assertIn(alert["threshold_source"], {"pending_ai", "strategy_context", "ai_runtime", "manual"})
 
     def test_save_ai_decision_resolves_binding_and_persists_extended_columns(self):
         asset_id = self.smart_monitor_db.asset_repository.promote_to_watchlist(

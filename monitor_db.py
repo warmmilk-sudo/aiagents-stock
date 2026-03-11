@@ -124,6 +124,8 @@ class StockMonitorDatabase:
             "id": item["id"],
             "symbol": item["symbol"],
             "name": item.get("name") or item["symbol"],
+            "enabled": bool(item.get("enabled", True)),
+            "source": item.get("source") or "manual",
             "rating": config.get("rating", "持有"),
             "entry_range": {
                 "min": levels.get("entry_min"),
