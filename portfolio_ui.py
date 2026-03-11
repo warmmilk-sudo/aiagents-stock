@@ -13,7 +13,10 @@ import pandas as pd
 from datetime import date, datetime
 from typing import Callable, Dict, List
 
-from portfolio_analysis_tasks import portfolio_analysis_task_manager
+from portfolio_analysis_tasks import (
+    PORTFOLIO_ANALYSIS_GLOBAL_SESSION_ID,
+    portfolio_analysis_task_manager,
+)
 from portfolio_manager import portfolio_manager
 from portfolio_scheduler import portfolio_scheduler
 from ui_shared import (
@@ -226,7 +229,7 @@ def _build_history_final_decision_display(
 
 
 PORTFOLIO_ANALYSIS_SESSION_KEY = "portfolio_analysis_session_id"
-PORTFOLIO_ANALYSIS_SCOPE_ID = "portfolio-analysis-global"
+PORTFOLIO_ANALYSIS_SCOPE_ID = PORTFOLIO_ANALYSIS_GLOBAL_SESSION_ID
 PORTFOLIO_ANALYSIS_LIVE_STATUS_KEY = "portfolio_analysis_live_status_task_id"
 PORTFOLIO_ANALYSIS_REFRESH_SIGNATURE_KEY = "portfolio_analysis_refresh_signature"
 
@@ -454,7 +457,7 @@ def _render_portfolio_analysis_live_status_card():
 
 
 @st.fragment(run_every=3.0)
-def _render_portfolio_analysis_live_status_fragment():
+def render_portfolio_analysis_live_status_fragment():
     _render_portfolio_analysis_live_status_card()
 
 
@@ -737,7 +740,7 @@ def _render_batch_analysis_feedback():
 
 def display_portfolio_manager(lightweight_model=None, reasoning_model=None):
     """显示持仓管理主界面"""
-    _render_portfolio_analysis_live_status_fragment()
+    render_portfolio_analysis_live_status_fragment()
 
     view_col, sync_col = st.columns([4.2, 1.1])
     with view_col:

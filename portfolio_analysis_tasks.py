@@ -11,6 +11,8 @@ from typing import Any, Callable, Dict, Optional
 
 TaskRunner = Callable[[str, Callable[..., None]], Dict[str, Any]]
 
+PORTFOLIO_ANALYSIS_GLOBAL_SESSION_ID = "portfolio-analysis-global"
+
 
 class PortfolioAnalysisTaskManager:
     """Keep portfolio analysis tasks alive across Streamlit reruns."""

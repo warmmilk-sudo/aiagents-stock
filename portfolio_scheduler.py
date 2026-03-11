@@ -14,6 +14,10 @@ import traceback
 
 from portfolio_manager import portfolio_manager
 from notification_service import NotificationService
+from portfolio_analysis_tasks import (
+    PORTFOLIO_ANALYSIS_GLOBAL_SESSION_ID,
+    portfolio_analysis_task_manager,
+)
 
 
 @dataclass
@@ -255,78 +259,142 @@ class PortfolioScheduler:
         self.set_auto_monitor_sync(config.auto_monitor_sync)
         self.set_notification_enabled(config.notification_enabled)
         self.set_selected_agents(config.selected_agents)
-    
-    def _scheduled_job(self):
-        """定时任务执行的作业"""
-        print("\n" + "="*60)
-        print(f"定时分析开始: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        print("="*60 + "\n")
-        
-        try:
-            config = self.get_task_config()
-            # 1. 执行批量分析
-            print("[1/4] 执行持仓批量分析...")
-            analysis_results = portfolio_manager.batch_analyze_portfolio(
-                mode=config.analysis_mode,
-                max_workers=config.max_workers,
-                selected_agents=config.selected_agents,
+
+    def _merge_sync_result(self, summary: Optional[dict], sync_result: Optional[dict]) -> Optional[dict]:
+        if summary is None:
+            return None
+        if not sync_result:
+            return summary
+        for key in ("added", "updated", "failed", "total"):
+            summary[key] = int(summary.get(key, 0)) + int(sync_result.get(key, 0) or 0)
+        return summary
+
+    def _build_progress_message(self, current: int, total: int, code: str, status: str) -> str:
+        status_map = {
+            "analyzing": "正在分析",
+            "success": "已完成",
+            "failed": "失败",
+            "error": "异常",
+        }
+        base = status_map.get(status, "处理中")
+        if total:
+            return f"{base} {code} ({current}/{total})"
+        return f"{base} {code}"
+
+    def _run_scheduled_analysis_task(self, report_progress, *, trigger: str) -> dict:
+        config = self.get_task_config()
+        stock_count = portfolio_manager.get_stock_count()
+        trigger_label = "定时" if trigger == "scheduled" else "手动"
+        task_label = f"{trigger_label}持仓分析"
+        saved_ids: List[int] = []
+        aggregated_sync_result = (
+            {"added": 0, "updated": 0, "failed": 0, "total": 0}
+            if config.auto_monitor_sync
+            else None
+        )
+
+        print("\n" + "=" * 60)
+        print(f"{task_label}开始: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print("=" * 60 + "\n")
+
+        report_progress(
+            current=0,
+            total=stock_count,
+            step_status="analyzing",
+            message=f"正在准备{task_label}任务...",
+        )
+
+        def progress_callback(current, callback_total, code, status):
+            report_progress(
+                current=current,
+                total=callback_total,
+                step_code=code,
+                step_status=status,
+                message=self._build_progress_message(current, callback_total, code, status),
             )
-            
-            if not analysis_results.get("success"):
-                error_msg = analysis_results.get("error", "未知错误")
-                print(f"[ERROR] 批量分析失败: {error_msg}")
-                
-                # 发送错误通知
-                if config.notification_enabled:
-                    self._send_error_notification(error_msg)
-                
-                self.last_run_time = datetime.now()
-                return
-            
-            # 2. 保存分析结果
-            print("\n[2/4] 保存分析结果...")
-            persistence_result = portfolio_manager.persist_analysis_results(
-                analysis_results,
+
+        def result_callback(code, single_result):
+            persistence_result = portfolio_manager.persist_single_analysis_result(
+                code,
+                single_result,
                 sync_realtime_monitor=config.auto_monitor_sync,
                 analysis_source="portfolio_scheduler",
                 analysis_period="1y",
             )
-            saved_ids = persistence_result["saved_ids"]
-            print(f"[OK] 保存 {len(saved_ids)} 条分析记录")
-            
-            # 3. 自动监测同步
-            sync_result = persistence_result["sync_result"]
-            if config.auto_monitor_sync:
-                print("\n[3/4] 自动同步到监测列表...")
-                if sync_result is None:
-                    sync_result = {"added": 0, "updated": 0, "failed": 0, "total": 0}
-                print(f"[OK] 同步完成: 新增{sync_result.get('added', 0)}只, 更新{sync_result.get('updated', 0)}只, 失败{sync_result.get('failed', 0)}只")
-            else:
-                print("\n[3/4] 跳过监测同步（已禁用）")
-            
-            # 4. 发送通知
+            saved_ids.extend(persistence_result.get("saved_ids", []))
+            self._merge_sync_result(aggregated_sync_result, persistence_result.get("sync_result"))
+
+        try:
+            analysis_results = portfolio_manager.batch_analyze_portfolio(
+                mode=config.analysis_mode,
+                max_workers=config.max_workers,
+                selected_agents=config.selected_agents,
+                progress_callback=progress_callback,
+                result_callback=result_callback,
+            )
+            if not analysis_results.get("success"):
+                error_msg = analysis_results.get("error", "未知错误")
+                raise RuntimeError(error_msg)
+
             if config.notification_enabled:
-                print("\n[4/4] 发送通知...")
-                self._send_notification(analysis_results, sync_result)
-            else:
-                print("\n[4/4] 跳过通知发送（已禁用）")
-            
-            # 更新运行时间
+                self._send_notification(analysis_results, aggregated_sync_result)
+
             self.last_run_time = datetime.now()
-            
-            print("\n" + "="*60)
-            print(f"定时分析完成: {self.last_run_time.strftime('%Y-%m-%d %H:%M:%S')}")
-            print("="*60 + "\n")
-            
-        except Exception as e:
-            print(f"\n[ERROR] 定时任务执行异常: {str(e)}")
+            report_progress(
+                current=analysis_results.get("total", stock_count),
+                total=analysis_results.get("total", stock_count) or stock_count or 1,
+                step_status="success",
+                message=(
+                    f"{task_label}完成：成功 {analysis_results.get('succeeded', 0)}，"
+                    f"失败 {analysis_results.get('failed', 0)}，已写入 {len(saved_ids)} 条历史"
+                ),
+            )
+            print("\n" + "=" * 60)
+            print(f"{task_label}完成: {self.last_run_time.strftime('%Y-%m-%d %H:%M:%S')}")
+            print("=" * 60 + "\n")
+            return {
+                "task_type": "batch",
+                "trigger": trigger,
+                "analysis_source": "portfolio_scheduler",
+                "analysis_result": analysis_results,
+                "persistence_result": {
+                    "saved_ids": list(saved_ids),
+                    "sync_result": aggregated_sync_result,
+                },
+                "auto_sync": config.auto_monitor_sync,
+                "send_notification": config.notification_enabled,
+            }
+        except Exception as exc:
+            print(f"\n[ERROR] {task_label}执行异常: {exc}")
             traceback.print_exc()
-            
-            # 发送错误通知
-            if self.notification_enabled:
-                self._send_error_notification(str(e))
-            
+            if config.notification_enabled:
+                self._send_error_notification(str(exc))
             self.last_run_time = datetime.now()
+            raise
+
+    def _scheduled_job(self, trigger: str = "scheduled"):
+        """定时任务执行入口：将分析任务提交到后台队列。"""
+        stock_count = portfolio_manager.get_stock_count()
+        if stock_count == 0:
+            print("[ERROR] 没有持仓股票，跳过定时分析")
+            return None
+
+        label = "定时持仓分析任务" if trigger == "scheduled" else "手动持仓分析任务"
+        return portfolio_analysis_task_manager.start_task(
+            PORTFOLIO_ANALYSIS_GLOBAL_SESSION_ID,
+            task_type="batch",
+            label=label,
+            runner=lambda _task_id, report_progress: self._run_scheduled_analysis_task(
+                report_progress,
+                trigger=trigger,
+            ),
+            metadata={
+                "trigger": trigger,
+                "analysis_mode": self.analysis_mode,
+                "max_workers": self.max_workers,
+                "selected_agents": self.selected_agents,
+            },
+        )
     
     def _sync_to_monitor(self, analysis_results: dict) -> dict:
         """
@@ -609,8 +677,7 @@ class PortfolioScheduler:
             return False
         
         print("[OK] 立即执行持仓分析...")
-        self._scheduled_job()
-        return True
+        return self._scheduled_job(trigger="manual") is not None
     
     def get_status(self) -> dict:
         """

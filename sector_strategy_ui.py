@@ -91,6 +91,26 @@ def _run_sector_strategy_analysis_task(
     }
 
 
+def _sync_sector_strategy_finished_task() -> None:
+    finished_task = consume_finished_ui_analysis_task(
+        SECTOR_STRATEGY_TASK_TYPE,
+        SECTOR_STRATEGY_TASK_DONE_KEY,
+    )
+    if not finished_task:
+        return
+
+    if finished_task.get("status") == "success":
+        payload = finished_task.get("result") or {}
+        st.session_state.sector_strategy_result = payload.get("result")
+        st.session_state.sector_strategy_data_summary = payload.get("data_summary")
+        st.success(payload.get("message") or "智策分析完成。")
+        return
+
+    error_message = finished_task.get("error") or "未知错误"
+    st.session_state.sector_strategy_result = {"success": False, "error": error_message}
+    st.error(f"分析失败: {error_message}")
+
+
 def _parse_json_field(value, default):
     """将可能的JSON字符串安全转换为Python对象"""
     try:
@@ -181,6 +201,8 @@ def _render_sector_summary(summary_data: dict):
 
 def display_sector_strategy(lightweight_model=None, reasoning_model=None):
     """显示智策板块分析主界面"""
+    _render_sector_strategy_task_fragment()
+    _sync_sector_strategy_finished_task()
 
     # 创建标签页
     tab1, tab2 = st.tabs(["智策分析", "历史报告"])
@@ -246,19 +268,6 @@ def display_analysis_tab(lightweight_model=None, reasoning_model=None):
     
     st.markdown("---")
     
-    _render_sector_strategy_task_fragment()
-    finished_task = consume_finished_ui_analysis_task(SECTOR_STRATEGY_TASK_TYPE, SECTOR_STRATEGY_TASK_DONE_KEY)
-    if finished_task:
-        if finished_task.get("status") == "success":
-            payload = finished_task.get("result") or {}
-            st.session_state.sector_strategy_result = payload.get("result")
-            st.session_state.sector_strategy_data_summary = payload.get("data_summary")
-            st.success(payload.get("message") or "智策分析完成。")
-        else:
-            error_message = finished_task.get("error") or "未知错误"
-            st.session_state.sector_strategy_result = {"success": False, "error": error_message}
-            st.error(f"分析失败: {error_message}")
-
     action_label, action_disabled, action_help = get_ui_analysis_button_state(
         SECTOR_STRATEGY_TASK_TYPE,
         "开始智策分析",
@@ -1163,6 +1172,10 @@ def display_scheduler_settings():
             )
             
             schedule_time_str = schedule_time.strftime("%H:%M")
+            run_now_label, run_now_disabled, run_now_help = get_ui_analysis_button_state(
+                SECTOR_STRATEGY_TASK_TYPE,
+                "立即运行",
+            )
             
             # 控制按钮
             col_a, col_b, col_c = st.columns(3)
@@ -1186,10 +1199,17 @@ def display_scheduler_settings():
                             st.error("停止失败")
             
             with col_b:
-                if st.button("立即运行", width='content'):
-                    with st.spinner("正在运行分析..."):
-                        sector_strategy_scheduler.manual_run()
-                    st.success("手动分析完成。")
+                if st.button(
+                    run_now_label,
+                    width='content',
+                    disabled=run_now_disabled,
+                    help=run_now_help,
+                ):
+                    if sector_strategy_scheduler.manual_run():
+                        st.success("已提交后台智策分析任务。")
+                        st.rerun()
+                    else:
+                        st.warning("后台任务提交失败，请稍后重试。")
             
             with col_c:
                 if st.button("测试邮件", width='content'):

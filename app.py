@@ -32,7 +32,10 @@ from main_force_ui import display_main_force_selector
 from sector_strategy_ui import display_sector_strategy
 from longhubang_ui import display_longhubang
 from smart_monitor_ui import smart_monitor_ui
-from portfolio_ui import display_portfolio_manager
+from portfolio_ui import (
+    display_portfolio_manager,
+    render_portfolio_analysis_live_status_fragment,
+)
 from news_flow_ui import display_news_flow_monitor
 from ui_analysis_task_utils import (
     consume_finished_ui_analysis_task,
@@ -2990,6 +2993,8 @@ def _legacy_show_example_interface():
 def display_analysis_history_workspace() -> None:
     """显示统一分析历史页面。"""
     st.subheader("分析历史")
+    _render_home_analysis_task_fragment()
+    render_portfolio_analysis_live_status_fragment()
 
     state_col, account_col, search_col, action_col = st.columns([1.1, 1.2, 2.2, 0.8])
     with state_col:

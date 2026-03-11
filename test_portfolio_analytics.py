@@ -1,11 +1,18 @@
 import json
+import sys
 import tempfile
+import time
+import types
 import unittest
 from datetime import date, datetime
+from unittest.mock import patch
 
 import pandas as pd
 
+sys.modules.setdefault("streamlit", types.SimpleNamespace())
+
 from monitor_db import StockMonitorDatabase
+from portfolio_analysis_tasks import PortfolioAnalysisTaskManager
 from portfolio_db import PortfolioDB
 from portfolio_manager import PortfolioManager
 from portfolio_scheduler import PortfolioAnalysisTaskConfig, PortfolioScheduler
@@ -331,6 +338,97 @@ class PortfolioSchedulerConfigTests(unittest.TestCase):
         self.assertFalse(current.notification_enabled)
         self.assertEqual(current.selected_agents, ["technical", "risk"])
         self.assertEqual(status["selected_agents"], ["technical", "risk"])
+
+    def test_scheduler_enqueues_background_task_and_persists_each_result_immediately(self):
+        scheduler = PortfolioScheduler()
+        scheduler.set_task_config(
+            PortfolioAnalysisTaskConfig(
+                analysis_mode="sequential",
+                max_workers=1,
+                auto_monitor_sync=True,
+                notification_enabled=False,
+                selected_agents=["technical"],
+            )
+        )
+
+        task_manager = PortfolioAnalysisTaskManager()
+        persisted_codes = []
+
+        class FakePortfolioManager:
+            def get_stock_count(self):
+                return 2
+
+            def batch_analyze_portfolio(
+                self,
+                mode="sequential",
+                period="1y",
+                selected_agents=None,
+                max_workers=3,
+                progress_callback=None,
+                result_callback=None,
+                model=None,
+                lightweight_model=None,
+                reasoning_model=None,
+            ):
+                results = []
+                for index, code in enumerate(["000001", "000002"], start=1):
+                    single_result = {
+                        "success": True,
+                        "stock_info": {"symbol": code, "name": f"Stock{code}"},
+                        "final_decision": {"rating": "持有"},
+                    }
+                    if progress_callback:
+                        progress_callback(index, 2, code, "success")
+                    if result_callback:
+                        result_callback(code, single_result)
+                    results.append({"code": code, "result": single_result})
+                return {
+                    "success": True,
+                    "mode": mode,
+                    "total": 2,
+                    "succeeded": 2,
+                    "failed": 0,
+                    "results": results,
+                    "failed_stocks": [],
+                    "elapsed_time": 0.1,
+                }
+
+            def persist_single_analysis_result(
+                self,
+                code,
+                analysis_result,
+                *,
+                sync_realtime_monitor=True,
+                analysis_source="portfolio_batch_analysis",
+                analysis_period="1y",
+            ):
+                persisted_codes.append(code)
+                return {
+                    "saved_ids": [len(persisted_codes)],
+                    "sync_result": {"added": 1, "updated": 0, "failed": 0, "total": 1},
+                }
+
+        with patch("portfolio_scheduler.portfolio_analysis_task_manager", task_manager), patch(
+            "portfolio_scheduler.portfolio_manager",
+            FakePortfolioManager(),
+        ):
+            task_id = scheduler._scheduled_job()
+            self.assertIsNotNone(task_id)
+
+            for _ in range(60):
+                task = task_manager.get_task(task_id)
+                if task and task.get("status") == "success":
+                    break
+                time.sleep(0.02)
+            else:
+                self.fail("scheduled portfolio task did not finish in time")
+
+        task = task_manager.get_task(task_id)
+        self.assertEqual(task["status"], "success")
+        self.assertEqual(persisted_codes, ["000001", "000002"])
+        self.assertEqual(task["result"]["analysis_source"], "portfolio_scheduler")
+        self.assertEqual(task["result"]["persistence_result"]["saved_ids"], [1, 2])
+        self.assertEqual(task["message"], "定时持仓分析完成：成功 2，失败 0，已写入 2 条历史")
 
 
 if __name__ == "__main__":

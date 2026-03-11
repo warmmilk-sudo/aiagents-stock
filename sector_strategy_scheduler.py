@@ -10,7 +10,10 @@ from datetime import datetime
 from sector_strategy_data import SectorStrategyDataFetcher
 from sector_strategy_engine import SectorStrategyEngine
 from notification_service import notification_service
+from ui_analysis_task_utils import enqueue_ui_analysis_task
 import json
+
+SECTOR_STRATEGY_TASK_TYPE = "sector_strategy_analysis"
 
 
 class SectorStrategyScheduler:
@@ -96,65 +99,93 @@ class SectorStrategyScheduler:
                 time.sleep(60)
     
     def _run_analysis_safe(self):
-        """运行智策分析（带锁保护，防止并发执行）"""
-        # 尝试获取锁，如果已被占用则跳过本次执行
-        if not self._analysis_lock.acquire(blocking=False):
-            print("[智策定时] ⚠️ 上一次分析还未完成，跳过本次执行")
-            return
-        
-        try:
-            self._run_analysis()
-        finally:
-            self._analysis_lock.release()
-    
-    def _run_analysis(self):
-        """运行智策分析"""
+        """调度入口：将智策分析提交到后台任务队列。"""
+        self._enqueue_analysis_task(trigger="scheduled")
+
+    def _run_analysis_task(self, report_progress, *, trigger: str):
+        """运行智策分析并通过后台任务管理器上报进度。"""
         print("\n" + "="*60)
-        print(f"[智策定时] 开始定时分析 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"[智策定时] 开始{'定时' if trigger == 'scheduled' else '手动'}分析 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print("="*60)
         
         try:
             # 1. 获取数据
+            report_progress(current=0, total=4, message="正在获取市场数据...")
             print("[智策定时] [1/3] 获取市场数据...")
             fetcher = SectorStrategyDataFetcher()
             data = fetcher.get_all_sector_data()
             
             if not data.get("success"):
                 print("[智策定时] ✗ 数据获取失败")
-                self._send_error_notification("数据获取失败")
-                return
+                raise RuntimeError("数据获取失败")
             
             print("[智策定时] ✓ 数据获取成功")
             
             # 2. 运行AI分析
+            report_progress(current=1, total=4, message="市场数据获取完成，正在执行AI分析...")
             print("[智策定时] [2/3] AI智能体分析中...")
             engine = SectorStrategyEngine()
             result = engine.run_comprehensive_analysis(data)
             
             if not result.get("success"):
                 print("[智策定时] ✗ 分析失败")
-                self._send_error_notification("AI分析失败")
-                return
+                raise RuntimeError(result.get("error") or "AI分析失败")
             
             print("[智策定时] ✓ 分析完成")
             
             # 3. 发送邮件通知
+            report_progress(current=3, total=4, message="智策分析完成，正在发送通知并同步历史...")
             print("[智策定时] [3/3] 发送邮件通知...")
             self._send_analysis_notification(result)
             
             # 保存最后运行结果
             self.last_run_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             self.last_result = result
+            report_progress(current=4, total=4, message="智策分析完成。")
             
             print("="*60)
             print("[智策定时] ✓ 定时分析完成！")
             print("="*60 + "\n")
+            return {
+                "result": result,
+                "data_summary": {
+                    "from_cache": bool(data.get("from_cache")),
+                    "cache_warning": data.get("cache_warning", ""),
+                    "market_overview": data.get("market_overview", {}),
+                    "sectors": data.get("sectors", {}) or {},
+                    "concepts": data.get("concepts", {}) or {},
+                },
+                "message": "智策分析完成。",
+                "trigger": trigger,
+            }
             
         except Exception as e:
             print(f"[智策定时] ✗ 分析过程出错: {e}")
             import traceback
             traceback.print_exc()
             self._send_error_notification(f"分析异常: {str(e)}")
+            raise
+
+    def _enqueue_analysis_task(self, *, trigger: str) -> bool:
+        """把智策分析排入后台队列，供页面实时展示进度。"""
+        if not self._analysis_lock.acquire(blocking=False):
+            print("[智策定时] ⚠️ 任务提交过于频繁，跳过本次触发")
+            return False
+
+        try:
+            label = "定时智策分析" if trigger == "scheduled" else "手动智策分析"
+            enqueue_ui_analysis_task(
+                task_type=SECTOR_STRATEGY_TASK_TYPE,
+                label=label,
+                runner=lambda _task_id, report_progress: self._run_analysis_task(
+                    report_progress,
+                    trigger=trigger,
+                ),
+                metadata={"trigger": trigger},
+            )
+            return True
+        finally:
+            self._analysis_lock.release()
     
     def _send_analysis_notification(self, result):
         """发送分析结果通知（邮件和/或webhook）- 带去重保护"""
@@ -569,7 +600,7 @@ class SectorStrategyScheduler:
     def manual_run(self):
         """手动触发一次分析"""
         print("[智策定时] 手动触发分析...")
-        self._run_analysis()
+        return self._enqueue_analysis_task(trigger="manual")
     
     def get_status(self):
         """获取调度器状态"""
