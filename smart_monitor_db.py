@@ -23,6 +23,9 @@ from portfolio_db import PortfolioDB
 class SmartMonitorDB:
     """Repository-backed smart monitor facade."""
 
+    NOTIFICATION_CLEANUP_MIGRATION_KEY = "smart_monitor_notification_cleanup_v1"
+    VALID_NOTIFICATION_STATUSES = {"pending", "sent", "failed"}
+
     def __init__(self, db_file: str = "smart_monitor.db"):
         self.seed_db_file = db_file
         self.db_file = resolve_investment_db_path(db_file)
@@ -51,6 +54,7 @@ class SmartMonitorDB:
         self.monitoring_repository.migrate_legacy_smart_db(self.legacy_db_file)
         self._migrate_legacy_history_db(self.legacy_db_file)
         self._repair_ai_decision_history()
+        self._cleanup_notification_history()
 
     def _connect(self) -> sqlite3.Connection:
         return connect_sqlite(self.db_file)
@@ -392,6 +396,92 @@ class SmartMonitorDB:
             "account_name": repaired_accounts,
             "asset_id": repaired_assets,
             "duplicates": removed_duplicates,
+        }
+
+    def _cleanup_notification_history(self) -> Dict[str, int]:
+        conn = self._connect()
+        cleanup_key = self.NOTIFICATION_CLEANUP_MIGRATION_KEY
+        if get_metadata(conn, cleanup_key):
+            conn.close()
+            return {"invalid": 0, "duplicates": 0, "status": 0}
+
+        cursor = conn.cursor()
+        removed_invalid = 0
+        removed_duplicates = 0
+        repaired_status = 0
+        seen = set()
+        duplicate_ids: List[int] = []
+        invalid_ids: List[int] = []
+        status_updates: List[tuple[str, int]] = []
+        try:
+            cursor.execute("SELECT * FROM notifications ORDER BY datetime(created_at) DESC, id DESC")
+            for row in cursor.fetchall():
+                notification = dict(row)
+                notification_id = int(notification["id"])
+                notify_type = str(notification.get("notify_type") or "").strip().lower()
+                subject = str(notification.get("subject") or "").strip()
+                content = str(notification.get("content") or "").strip()
+                status = str(notification.get("status") or "").strip().lower() or "pending"
+                if not notify_type or not (subject or content):
+                    invalid_ids.append(notification_id)
+                    continue
+                normalized_status = status if status in self.VALID_NOTIFICATION_STATUSES else "pending"
+                if normalized_status != status:
+                    status_updates.append((normalized_status, notification_id))
+                dedupe_key = (
+                    str(notification.get("stock_code") or "").strip().upper(),
+                    notify_type,
+                    str(notification.get("notify_target") or "").strip(),
+                    subject,
+                    content,
+                    normalized_status,
+                    str(notification.get("error_msg") or "").strip(),
+                    str(notification.get("sent_at") or "").strip(),
+                    str(notification.get("created_at") or "").strip(),
+                )
+                if dedupe_key in seen:
+                    duplicate_ids.append(notification_id)
+                    continue
+                seen.add(dedupe_key)
+
+            if invalid_ids:
+                placeholders = ", ".join("?" for _ in invalid_ids)
+                cursor.execute(f"DELETE FROM notifications WHERE id IN ({placeholders})", tuple(invalid_ids))
+                removed_invalid = int(cursor.rowcount or 0)
+            if duplicate_ids:
+                placeholders = ", ".join("?" for _ in duplicate_ids)
+                cursor.execute(f"DELETE FROM notifications WHERE id IN ({placeholders})", tuple(duplicate_ids))
+                removed_duplicates = int(cursor.rowcount or 0)
+            for normalized_status, notification_id in status_updates:
+                cursor.execute(
+                    "UPDATE notifications SET status = ? WHERE id = ?",
+                    (normalized_status, notification_id),
+                )
+                repaired_status += 1 if cursor.rowcount > 0 else 0
+
+            set_metadata(
+                conn,
+                cleanup_key,
+                json.dumps(
+                    {
+                        "invalid": removed_invalid,
+                        "duplicates": removed_duplicates,
+                        "status": repaired_status,
+                        "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    },
+                    ensure_ascii=False,
+                ),
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+        return {
+            "invalid": removed_invalid,
+            "duplicates": removed_duplicates,
+            "status": repaired_status,
         }
 
     def _migrate_legacy_history_db(self, legacy_db_path: str) -> int:
@@ -826,23 +916,6 @@ class SmartMonitorDB:
         conn.close()
         if rows:
             return [dict(row) for row in rows]
-
-        if stock_code and self.legacy_db_file and os.path.exists(self.legacy_db_file):
-            legacy_conn = sqlite3.connect(self.legacy_db_file)
-            legacy_conn.row_factory = sqlite3.Row
-            legacy_cursor = legacy_conn.cursor()
-            legacy_cursor.execute(
-                """
-                SELECT * FROM trade_records
-                WHERE stock_code = ?
-                ORDER BY datetime(trade_time) DESC, id DESC
-                LIMIT ?
-                """,
-                (stock_code, limit),
-            )
-            legacy_rows = legacy_cursor.fetchall()
-            legacy_conn.close()
-            return [dict(row) for row in legacy_rows]
         return []
 
     def save_position(self, position_data: Dict):
@@ -878,15 +951,6 @@ class SmartMonitorDB:
             )
         if positions:
             return positions
-
-        if self.legacy_db_file and os.path.exists(self.legacy_db_file):
-            legacy_conn = sqlite3.connect(self.legacy_db_file)
-            legacy_conn.row_factory = sqlite3.Row
-            legacy_cursor = legacy_conn.cursor()
-            legacy_cursor.execute('SELECT * FROM position_monitor WHERE status = "holding" ORDER BY id DESC')
-            rows = legacy_cursor.fetchall()
-            legacy_conn.close()
-            return [dict(row) for row in rows]
         return []
 
     def close_position(self, stock_code: str, account_name: str = DEFAULT_ACCOUNT_NAME):

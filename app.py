@@ -24,7 +24,6 @@ from database import db
 from investment_action_utils import build_analysis_action_payload
 from investment_db_utils import DEFAULT_ACCOUNT_NAME
 from investment_workspace_ui import set_investment_workspace_tab
-from monitor_manager import display_monitor_manager
 from monitor_service import monitor_service
 from notification_service import notification_service
 from config_manager import config_manager
@@ -1190,8 +1189,8 @@ NAV_VIEW_KEYS = [
 VIEW_TITLES = {
     "show_deep_analysis": "投资管理-深度分析",
     "show_analysis_history": "投资管理-分析历史",
-    "show_monitor_service": "投资管理-监测服务",
-    "show_monitor": "投资管理-监测服务",
+    "show_monitor_service": "投资管理-智能盯盘",
+    "show_monitor": "投资管理-智能盯盘",
     "show_main_force": "选股板块-主力选股",
     "show_low_price_bull": "选股板块-低价擒牛",
     "show_small_cap": "选股板块-小市值策略",
@@ -1233,9 +1232,14 @@ def activate_view(view_key: Optional[str] = None) -> None:
 
 def open_investment_workspace(tab_key: str, view_key: str) -> None:
     set_investment_workspace_tab(tab_key)
-    if view_key == "show_smart_monitor":
+    if view_key in {"show_monitor_service", "show_monitor"}:
+        st.session_state[SMART_MONITOR_ACTIVE_TAB_KEY] = "decision_events"
+        view_key = "show_smart_monitor"
+    elif view_key == "show_smart_monitor":
         if tab_key == "price_alert":
             st.session_state[SMART_MONITOR_ACTIVE_TAB_KEY] = "price_alert"
+        elif tab_key == "activity":
+            st.session_state[SMART_MONITOR_ACTIVE_TAB_KEY] = "decision_events"
         elif tab_key == "ai_monitor":
             st.session_state[SMART_MONITOR_ACTIVE_TAB_KEY] = "watchlist"
     activate_view(view_key)
@@ -1586,9 +1590,6 @@ def main():
             if st.button("智能盯盘", width='stretch', key="nav_smart_monitor", help="DeepSeek AI自动盯盘决策交易（支持A股T+1）"):
                 open_investment_workspace("ai_monitor", "show_smart_monitor")
 
-            if st.button("监测服务", width='stretch', key="nav_monitor", help="统一监测服务状态、调度与事件"):
-                open_investment_workspace("activity", "show_monitor_service")
-
             if st.button("分析历史", width='stretch', key="nav_analysis_history", help="统一查看深度分析与持仓分析历史"):
                 activate_view("show_analysis_history")
 
@@ -1725,9 +1726,15 @@ def main():
         )
         return
 
-    # 监测服务页面
     if st.session_state.get("show_monitor_service") or st.session_state.get("show_monitor"):
-        display_monitor_manager()
+        st.session_state[SMART_MONITOR_ACTIVE_TAB_KEY] = "decision_events"
+        st.session_state["show_smart_monitor"] = True
+        st.session_state.pop("show_monitor_service", None)
+        st.session_state.pop("show_monitor", None)
+        smart_monitor_ui(
+            lightweight_model=selected_lightweight_model,
+            reasoning_model=selected_reasoning_model,
+        )
         return
 
     # 检查是否显示主力选股

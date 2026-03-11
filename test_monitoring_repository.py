@@ -92,6 +92,157 @@ class MonitoringRepositoryTests(unittest.TestCase):
         )
         self.assertEqual(cleanup_meta["changed"], 1)
 
+    def test_repository_init_cleans_dirty_items_and_rewires_duplicate_history(self):
+        seed_path = self.repo.db_path
+        conn = sqlite3.connect(seed_path)
+        cursor = conn.cursor()
+        cursor.execute("DROP INDEX IF EXISTS idx_monitoring_asset_type")
+        cursor.execute("DROP INDEX IF EXISTS idx_monitoring_ai_task_account_symbol")
+        cursor.execute("DROP INDEX IF EXISTS idx_monitoring_managed_alert_position")
+        cursor.execute("DELETE FROM monitoring_metadata WHERE meta_key = ?", (self.repo.DIRTY_DATA_CLEANUP_KEY,))
+        cursor.execute("DELETE FROM monitoring_items")
+        cursor.execute("DELETE FROM monitoring_events")
+        cursor.execute("DELETE FROM monitoring_price_history")
+        cursor.execute(
+            """
+            INSERT INTO monitoring_items (
+                id, symbol, name, monitor_type, source, enabled, interval_minutes,
+                trading_hours_only, notification_enabled, managed_by_portfolio,
+                account_name, config_json, updated_at, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                1,
+                "600519",
+                "贵州茅台",
+                "ai_task",
+                "ai_monitor",
+                1,
+                60,
+                1,
+                1,
+                0,
+                "默认账户",
+                json.dumps({"position_size_pct": 20}, ensure_ascii=False),
+                "2026-03-11 09:31:00",
+                "2026-03-11 09:31:00",
+            ),
+        )
+        cursor.execute(
+            """
+            INSERT INTO monitoring_items (
+                id, symbol, name, monitor_type, source, enabled, interval_minutes,
+                trading_hours_only, notification_enabled, managed_by_portfolio,
+                account_name, last_status, last_message, config_json, updated_at, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                2,
+                "600519",
+                "",
+                "ai_task",
+                "",
+                1,
+                5,
+                1,
+                1,
+                0,
+                "",
+                "buy",
+                "duplicate_row",
+                json.dumps({"notify_email": "ops@example.com"}, ensure_ascii=False),
+                "2026-03-11 09:30:00",
+                "2026-03-11 09:30:00",
+            ),
+        )
+        cursor.execute(
+            """
+            INSERT INTO monitoring_items (
+                id, symbol, name, monitor_type, source, config_json
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                3,
+                "",
+                "坏数据",
+                "legacy",
+                "manual",
+                "{}",
+            ),
+        )
+        cursor.execute(
+            """
+            INSERT INTO monitoring_events (
+                monitoring_item_id, symbol, name, monitor_type, event_type, message, details_json, notification_pending, sent, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                2,
+                "OLD",
+                "旧任务",
+                "ai_task",
+                "buy",
+                "duplicate_event",
+                json.dumps({"source": "duplicate"}, ensure_ascii=False),
+                1,
+                0,
+                "2026-03-11 09:30:30",
+            ),
+        )
+        cursor.execute(
+            """
+            INSERT INTO monitoring_events (
+                monitoring_item_id, symbol, name, monitor_type, event_type, message, details_json, notification_pending, sent, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                None,
+                "",
+                None,
+                None,
+                "orphan",
+                "invalid_blank_event",
+                "{}",
+                0,
+                1,
+                "2026-03-11 09:30:31",
+            ),
+        )
+        cursor.execute(
+            "INSERT INTO monitoring_price_history (monitoring_item_id, price, created_at) VALUES (?, ?, ?)",
+            (2, 1510.0, "2026-03-11 09:30:32"),
+        )
+        conn.commit()
+        conn.close()
+
+        repaired_repo = MonitoringRepository(seed_path)
+        items = repaired_repo.list_items(monitor_type="ai_task")
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["symbol"], "600519")
+        self.assertEqual(items[0]["account_name"], "默认账户")
+        self.assertEqual(items[0]["config"]["position_size_pct"], 20)
+        self.assertEqual(items[0]["config"]["notify_email"], "ops@example.com")
+
+        events = repaired_repo.get_recent_events(limit=10)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["monitoring_item_id"], items[0]["id"])
+        self.assertEqual(events[0]["symbol"], "600519")
+        self.assertEqual(events[0]["name"], "贵州茅台")
+
+        conn = repaired_repo._connect()
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) AS total FROM monitoring_price_history WHERE monitoring_item_id = ?", (items[0]["id"],))
+        price_history_count = int(cursor.fetchone()["total"])
+        cursor.execute("SELECT COUNT(*) AS total FROM monitoring_items WHERE TRIM(COALESCE(symbol, '')) = '' OR monitor_type NOT IN ('ai_task', 'price_alert')")
+        invalid_count = int(cursor.fetchone()["total"])
+        conn.close()
+
+        self.assertEqual(price_history_count, 1)
+        self.assertEqual(invalid_count, 0)
+        cleanup_meta = json.loads(repaired_repo._get_metadata(repaired_repo.DIRTY_DATA_CLEANUP_KEY))
+        self.assertEqual(cleanup_meta["deduplicated_items"], 1)
+        self.assertEqual(cleanup_meta["invalid_events"], 1)
+
     def test_due_items_respect_runtime_and_service_switch(self):
         item_id = self.repo.create_item(
             {

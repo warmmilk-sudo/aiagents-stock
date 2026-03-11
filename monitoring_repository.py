@@ -28,6 +28,9 @@ class MonitoringRepository:
     INDEX_MIGRATION_KEY = "monitoring_index_migration_v1"
     MANAGED_BINDING_REPAIR_KEY = "monitoring_managed_binding_repair_v1"
     CONFIG_CLEANUP_MIGRATION_KEY = "monitoring_config_cleanup_v1"
+    DIRTY_DATA_CLEANUP_KEY = "monitoring_dirty_data_cleanup_v1"
+    VALID_MONITOR_TYPES = {"ai_task", "price_alert"}
+    VALID_SOURCES = {"manual", "portfolio", "ai_monitor", "legacy_conflict"}
     DEPRECATED_CONFIG_KEYS = {
         "auto_trade",
         "qmt_account_id",
@@ -138,6 +141,7 @@ class MonitoringRepository:
             self._ensure_column(cursor, "monitoring_items", "asset_id", "INTEGER")
             self._ensure_column(cursor, "monitoring_items", "portfolio_stock_id", "INTEGER")
             self._ensure_column(cursor, "monitoring_items", "origin_analysis_id", "INTEGER")
+            self._cleanup_dirty_monitoring_data_if_needed(cursor)
             self._migrate_indexes_if_needed(cursor)
             self._ensure_indexes(cursor)
             self._repair_managed_bindings_if_needed(cursor)
@@ -489,6 +493,31 @@ class MonitoringRepository:
             sanitized.pop(key, None)
         return sanitized
 
+    @staticmethod
+    def _normalize_optional_text(value: Optional[object]) -> Optional[str]:
+        text = str(value or "").strip()
+        return text or None
+
+    @classmethod
+    def _normalize_source_for_row(cls, row: Dict) -> str:
+        monitor_type = str(row.get("monitor_type") or "").strip().lower()
+        managed_by_portfolio = bool(row.get("managed_by_portfolio"))
+        if managed_by_portfolio:
+            return "portfolio"
+        if monitor_type == "ai_task":
+            return "ai_monitor"
+        return "manual"
+
+    @staticmethod
+    def _parse_sortable_timestamp(raw_value: Optional[object]) -> datetime:
+        text = str(raw_value or "").strip()
+        if not text:
+            return datetime.min
+        try:
+            return datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return datetime.min
+
     def _row_to_item(self, row: sqlite3.Row) -> Dict:
         data = dict(row)
         data["enabled"] = bool(data.get("enabled", 1))
@@ -528,6 +557,386 @@ class MonitoringRepository:
                 ensure_ascii=False,
             ),
         )
+
+    def _cleanup_dirty_monitoring_data_if_needed(self, cursor: sqlite3.Cursor) -> None:
+        if self._get_metadata_from_cursor(cursor, self.DIRTY_DATA_CLEANUP_KEY):
+            return
+
+        summary = self._cleanup_dirty_monitoring_data(cursor)
+        self._set_metadata_on_cursor(
+            cursor,
+            self.DIRTY_DATA_CLEANUP_KEY,
+            json.dumps(
+                {
+                    **summary,
+                    "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                },
+                ensure_ascii=False,
+            ),
+        )
+
+    def _cleanup_dirty_monitoring_data(self, cursor: sqlite3.Cursor) -> Dict[str, int]:
+        summary = {
+            "invalid_items": 0,
+            "normalized_items": 0,
+            "orphan_asset_items": 0,
+            "deduplicated_items": 0,
+            "rewired_events": 0,
+            "rewired_price_history": 0,
+            "orphan_events": 0,
+            "orphan_price_history": 0,
+            "invalid_events": 0,
+            "repaired_events": 0,
+        }
+
+        summary["invalid_items"] += self._delete_invalid_monitoring_items(cursor)
+        normalized_count, rewired_event_count, rewired_price_count = self._dedupe_monitoring_items(cursor)
+        summary["deduplicated_items"] += normalized_count
+        summary["rewired_events"] += rewired_event_count
+        summary["rewired_price_history"] += rewired_price_count
+        summary["normalized_items"] += self._normalize_monitoring_items(cursor)
+        summary["orphan_asset_items"] += self._cleanup_orphan_asset_bindings(cursor)
+        summary["invalid_events"] += self._delete_invalid_monitoring_events(cursor)
+        summary["orphan_events"] += self._delete_orphan_monitoring_events(cursor)
+        summary["orphan_price_history"] += self._delete_orphan_price_history(cursor)
+        summary["repaired_events"] += self._repair_monitoring_event_payloads(cursor)
+        return summary
+
+    def _delete_item_graph(self, cursor: sqlite3.Cursor, item_id: int) -> int:
+        deleted_rows = 0
+        cursor.execute("DELETE FROM monitoring_price_history WHERE monitoring_item_id = ?", (item_id,))
+        deleted_rows += int(cursor.rowcount or 0)
+        cursor.execute("DELETE FROM monitoring_events WHERE monitoring_item_id = ?", (item_id,))
+        deleted_rows += int(cursor.rowcount or 0)
+        cursor.execute("DELETE FROM monitoring_items WHERE id = ?", (item_id,))
+        deleted_rows += int(cursor.rowcount or 0)
+        return deleted_rows
+
+    def _delete_invalid_monitoring_items(self, cursor: sqlite3.Cursor) -> int:
+        cursor.execute("SELECT id, symbol, monitor_type FROM monitoring_items ORDER BY id ASC")
+        invalid_item_ids: List[int] = []
+        for row in cursor.fetchall():
+            symbol = str(row["symbol"] or "").strip()
+            monitor_type = str(row["monitor_type"] or "").strip().lower()
+            if not symbol or monitor_type not in self.VALID_MONITOR_TYPES:
+                invalid_item_ids.append(int(row["id"]))
+        removed = 0
+        for item_id in invalid_item_ids:
+            removed += self._delete_item_graph(cursor, item_id)
+        return removed
+
+    def _normalize_monitoring_items(self, cursor: sqlite3.Cursor) -> int:
+        cursor.execute("SELECT * FROM monitoring_items ORDER BY id ASC")
+        changed = 0
+        for row in cursor.fetchall():
+            item = dict(row)
+            item_id = int(item["id"])
+            symbol = str(item.get("symbol") or "").strip().upper()
+            monitor_type = str(item.get("monitor_type") or "").strip().lower()
+            name = str(item.get("name") or "").strip() or symbol
+            account_name = self._normalize_optional_text(item.get("account_name"))
+            if monitor_type == "ai_task":
+                account_name = account_name or DEFAULT_ACCOUNT_NAME
+            source = self._normalize_optional_text(item.get("source"))
+            normalized_source = source if source in self.VALID_SOURCES else self._normalize_source_for_row(item)
+            interval_minutes = self._normalize_interval_minutes(item.get("interval_minutes"))
+            config = self._sanitize_monitor_config(self._safe_json_loads(item.get("config_json"), {}))
+            config_json = json.dumps(config, ensure_ascii=False)
+            updates: List[str] = []
+            params: List[object] = []
+
+            if symbol != item.get("symbol"):
+                updates.append("symbol = ?")
+                params.append(symbol)
+            if name != item.get("name"):
+                updates.append("name = ?")
+                params.append(name)
+            if monitor_type != item.get("monitor_type"):
+                updates.append("monitor_type = ?")
+                params.append(monitor_type)
+            if account_name != item.get("account_name"):
+                updates.append("account_name = ?")
+                params.append(account_name)
+            if normalized_source != item.get("source"):
+                updates.append("source = ?")
+                params.append(normalized_source)
+            if interval_minutes != int(item.get("interval_minutes") or 0):
+                updates.append("interval_minutes = ?")
+                params.append(interval_minutes)
+            if config_json != (item.get("config_json") or "{}"):
+                updates.append("config_json = ?")
+                params.append(config_json)
+
+            if not updates:
+                continue
+
+            params.append(item_id)
+            cursor.execute(
+                f"UPDATE monitoring_items SET {', '.join(updates)}, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                tuple(params),
+            )
+            changed += 1 if cursor.rowcount > 0 else 0
+        return changed
+
+    def _cleanup_orphan_asset_bindings(self, cursor: sqlite3.Cursor) -> int:
+        if not self._table_exists(cursor.connection, "assets"):
+            return 0
+
+        cursor.execute(
+            """
+            SELECT mi.*
+            FROM monitoring_items mi
+            LEFT JOIN assets a
+                ON a.id = mi.asset_id
+            WHERE mi.asset_id IS NOT NULL
+              AND (a.id IS NULL OR a.deleted_at IS NOT NULL)
+            ORDER BY mi.id ASC
+            """
+        )
+        rows = [dict(row) for row in cursor.fetchall()]
+        changed = 0
+        for row in rows:
+            item_id = int(row["id"])
+            if row.get("managed_by_portfolio") or row.get("portfolio_stock_id") is not None or row.get("source") == "portfolio":
+                changed += self._delete_item_graph(cursor, item_id)
+                continue
+
+            normalized_source = self._normalize_source_for_row(row)
+            account_name = self._normalize_optional_text(row.get("account_name"))
+            if row.get("monitor_type") == "ai_task":
+                account_name = account_name or DEFAULT_ACCOUNT_NAME
+
+            cursor.execute(
+                """
+                UPDATE monitoring_items
+                SET asset_id = NULL,
+                    portfolio_stock_id = NULL,
+                    managed_by_portfolio = 0,
+                    account_name = ?,
+                    source = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (account_name, normalized_source, item_id),
+            )
+            changed += 1 if cursor.rowcount > 0 else 0
+        return changed
+
+    @classmethod
+    def _duplicate_priority(cls, row: Dict) -> tuple:
+        return (
+            1 if row.get("enabled") else 0,
+            1 if row.get("managed_by_portfolio") else 0,
+            1 if row.get("asset_id") is not None else 0,
+            1 if row.get("portfolio_stock_id") is not None else 0,
+            cls._parse_sortable_timestamp(row.get("updated_at")),
+            cls._parse_sortable_timestamp(row.get("created_at")),
+            int(row.get("id") or 0),
+        )
+
+    @classmethod
+    def _build_deduplication_keys(cls, row: Dict) -> List[tuple]:
+        keys: List[tuple] = []
+        monitor_type = str(row.get("monitor_type") or "").strip().lower()
+        symbol = str(row.get("symbol") or "").strip().upper()
+        account_name = cls._normalize_optional_text(row.get("account_name"))
+        asset_id = row.get("asset_id")
+        portfolio_stock_id = row.get("portfolio_stock_id")
+
+        if monitor_type == "ai_task":
+            keys.append(("ai_task_symbol", account_name or DEFAULT_ACCOUNT_NAME, symbol))
+        if asset_id is not None:
+            keys.append(("asset_binding", int(asset_id), monitor_type))
+        if monitor_type == "price_alert" and row.get("managed_by_portfolio") and portfolio_stock_id is not None:
+            keys.append(("managed_position", int(portfolio_stock_id), monitor_type))
+        return keys
+
+    def _dedupe_monitoring_items(self, cursor: sqlite3.Cursor) -> tuple[int, int, int]:
+        cursor.execute("SELECT * FROM monitoring_items ORDER BY id ASC")
+        rows = [dict(row) for row in cursor.fetchall()]
+        if not rows:
+            return 0, 0, 0
+
+        ordered_rows = sorted(rows, key=self._duplicate_priority, reverse=True)
+        seen_keys: Dict[tuple, int] = {}
+        keep_rows: Dict[int, Dict] = {}
+        duplicate_pairs: List[tuple[int, int]] = []
+
+        for row in ordered_rows:
+            dedupe_keys = self._build_deduplication_keys(row)
+            duplicate_keep_id = next((seen_keys[key] for key in dedupe_keys if key in seen_keys), None)
+            if duplicate_keep_id is not None:
+                duplicate_pairs.append((duplicate_keep_id, int(row["id"])))
+                continue
+            keep_rows[int(row["id"])] = dict(row)
+            for key in dedupe_keys:
+                seen_keys[key] = int(row["id"])
+
+        if not duplicate_pairs:
+            return 0, 0, 0
+
+        deduped_count = 0
+        rewired_events = 0
+        rewired_price_history = 0
+        for keep_id, drop_id in duplicate_pairs:
+            keep_row = keep_rows.get(keep_id)
+            drop_row = next((row for row in rows if int(row["id"]) == drop_id), None)
+            if not keep_row or not drop_row:
+                continue
+
+            keep_config = self._sanitize_monitor_config(self._safe_json_loads(keep_row.get("config_json"), {}))
+            drop_config = self._sanitize_monitor_config(self._safe_json_loads(drop_row.get("config_json"), {}))
+            merged_config = dict(drop_config)
+            merged_config.update(keep_config)
+            normalized_account_name = self._normalize_optional_text(keep_row.get("account_name"))
+            if keep_row.get("monitor_type") == "ai_task":
+                normalized_account_name = normalized_account_name or DEFAULT_ACCOUNT_NAME
+
+            cursor.execute(
+                """
+                UPDATE monitoring_items
+                SET name = ?,
+                    source = ?,
+                    enabled = ?,
+                    interval_minutes = ?,
+                    trading_hours_only = ?,
+                    notification_enabled = ?,
+                    managed_by_portfolio = ?,
+                    account_name = ?,
+                    asset_id = ?,
+                    portfolio_stock_id = ?,
+                    origin_analysis_id = ?,
+                    current_price = ?,
+                    last_checked = ?,
+                    last_status = ?,
+                    last_message = ?,
+                    config_json = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (
+                    str(keep_row.get("name") or drop_row.get("name") or keep_row.get("symbol") or "").strip() or str(keep_row.get("symbol") or "").strip(),
+                    self._normalize_optional_text(keep_row.get("source")) or self._normalize_source_for_row(keep_row),
+                    1 if keep_row.get("enabled", drop_row.get("enabled", 1)) else 0,
+                    self._normalize_interval_minutes(keep_row.get("interval_minutes") or drop_row.get("interval_minutes")),
+                    1 if keep_row.get("trading_hours_only", drop_row.get("trading_hours_only", 1)) else 0,
+                    1 if keep_row.get("notification_enabled", drop_row.get("notification_enabled", 1)) else 0,
+                    1 if keep_row.get("managed_by_portfolio", drop_row.get("managed_by_portfolio", 0)) else 0,
+                    normalized_account_name,
+                    keep_row.get("asset_id") if keep_row.get("asset_id") is not None else drop_row.get("asset_id"),
+                    keep_row.get("portfolio_stock_id") if keep_row.get("portfolio_stock_id") is not None else drop_row.get("portfolio_stock_id"),
+                    keep_row.get("origin_analysis_id") if keep_row.get("origin_analysis_id") is not None else drop_row.get("origin_analysis_id"),
+                    keep_row.get("current_price") if keep_row.get("current_price") is not None else drop_row.get("current_price"),
+                    keep_row.get("last_checked") or drop_row.get("last_checked"),
+                    keep_row.get("last_status") or drop_row.get("last_status"),
+                    keep_row.get("last_message") or drop_row.get("last_message"),
+                    json.dumps(merged_config, ensure_ascii=False),
+                    keep_id,
+                ),
+            )
+            if cursor.rowcount > 0:
+                keep_row.update(
+                    {
+                        "name": str(keep_row.get("name") or drop_row.get("name") or keep_row.get("symbol") or "").strip() or str(keep_row.get("symbol") or "").strip(),
+                        "source": self._normalize_optional_text(keep_row.get("source")) or self._normalize_source_for_row(keep_row),
+                        "account_name": normalized_account_name,
+                        "asset_id": keep_row.get("asset_id") if keep_row.get("asset_id") is not None else drop_row.get("asset_id"),
+                        "portfolio_stock_id": keep_row.get("portfolio_stock_id") if keep_row.get("portfolio_stock_id") is not None else drop_row.get("portfolio_stock_id"),
+                        "origin_analysis_id": keep_row.get("origin_analysis_id") if keep_row.get("origin_analysis_id") is not None else drop_row.get("origin_analysis_id"),
+                        "config_json": json.dumps(merged_config, ensure_ascii=False),
+                    }
+                )
+
+            cursor.execute(
+                """
+                UPDATE monitoring_events
+                SET monitoring_item_id = ?,
+                    symbol = ?,
+                    name = ?,
+                    monitor_type = ?
+                WHERE monitoring_item_id = ?
+                """,
+                (
+                    keep_id,
+                    keep_row.get("symbol"),
+                    keep_row.get("name"),
+                    keep_row.get("monitor_type"),
+                    drop_id,
+                ),
+            )
+            rewired_events += int(cursor.rowcount or 0)
+
+            cursor.execute(
+                "UPDATE monitoring_price_history SET monitoring_item_id = ? WHERE monitoring_item_id = ?",
+                (keep_id, drop_id),
+            )
+            rewired_price_history += int(cursor.rowcount or 0)
+
+            cursor.execute("DELETE FROM monitoring_items WHERE id = ?", (drop_id,))
+            deduped_count += 1 if cursor.rowcount > 0 else 0
+        return deduped_count, rewired_events, rewired_price_history
+
+    def _delete_invalid_monitoring_events(self, cursor: sqlite3.Cursor) -> int:
+        cursor.execute(
+            """
+            DELETE FROM monitoring_events
+            WHERE monitoring_item_id IS NULL
+              AND TRIM(COALESCE(symbol, '')) = ''
+            """
+        )
+        return int(cursor.rowcount or 0)
+
+    def _delete_orphan_monitoring_events(self, cursor: sqlite3.Cursor) -> int:
+        cursor.execute(
+            """
+            DELETE FROM monitoring_events
+            WHERE monitoring_item_id IS NOT NULL
+              AND monitoring_item_id NOT IN (SELECT id FROM monitoring_items)
+            """
+        )
+        return int(cursor.rowcount or 0)
+
+    def _delete_orphan_price_history(self, cursor: sqlite3.Cursor) -> int:
+        cursor.execute(
+            """
+            DELETE FROM monitoring_price_history
+            WHERE monitoring_item_id NOT IN (SELECT id FROM monitoring_items)
+            """
+        )
+        return int(cursor.rowcount or 0)
+
+    def _repair_monitoring_event_payloads(self, cursor: sqlite3.Cursor) -> int:
+        cursor.execute(
+            """
+            SELECT e.id, e.symbol, e.name, e.monitor_type, i.symbol AS item_symbol, i.name AS item_name, i.monitor_type AS item_monitor_type
+            FROM monitoring_events e
+            INNER JOIN monitoring_items i
+                ON i.id = e.monitoring_item_id
+            ORDER BY e.id ASC
+            """
+        )
+        changed = 0
+        for row in cursor.fetchall():
+            event = dict(row)
+            symbol = str(event.get("item_symbol") or "").strip().upper()
+            name = str(event.get("item_name") or "").strip() or symbol
+            monitor_type = str(event.get("item_monitor_type") or "").strip().lower() or None
+            if (
+                symbol == str(event.get("symbol") or "").strip()
+                and name == str(event.get("name") or "").strip()
+                and monitor_type == event.get("monitor_type")
+            ):
+                continue
+            cursor.execute(
+                """
+                UPDATE monitoring_events
+                SET symbol = ?, name = ?, monitor_type = ?
+                WHERE id = ?
+                """,
+                (symbol, name, monitor_type, int(event["id"])),
+            )
+            changed += 1 if cursor.rowcount > 0 else 0
+        return changed
 
     def _set_metadata(self, key: str, value: str) -> None:
         conn = self._connect()

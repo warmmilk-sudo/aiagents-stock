@@ -1,3 +1,4 @@
+import os
 import sqlite3
 import tempfile
 import unittest
@@ -269,6 +270,114 @@ class PortfolioIntegrationTests(unittest.TestCase):
         self.assertEqual(decisions[0]["asset_id"], asset_id)
         self.assertEqual(decisions[0]["execution_mode"], "manual_only")
         self.assertEqual(decisions[0]["action_status"], "pending")
+
+    def test_smart_monitor_db_cleans_invalid_and_duplicate_notifications(self):
+        canonical_path = Path(self.temp_dir.name) / "investment.db"
+        conn = sqlite3.connect(canonical_path)
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM notifications")
+        cursor.execute("DELETE FROM investment_metadata WHERE meta_key = ?", (SmartMonitorDB.NOTIFICATION_CLEANUP_MIGRATION_KEY,))
+        valid_row = (
+            "600519",
+            "decision",
+            None,
+            "智能盯盘 - 买入信号",
+            "测试通知正文",
+            "queued",
+            None,
+            None,
+            "2026-03-11 10:00:00",
+        )
+        cursor.executemany(
+            """
+            INSERT INTO notifications (
+                stock_code, notify_type, notify_target, subject, content,
+                status, error_msg, sent_at, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                valid_row,
+                valid_row,
+                ("000001", "", None, "", "", "pending", None, None, "2026-03-11 10:01:00"),
+            ],
+        )
+        conn.commit()
+        conn.close()
+
+        repaired_db = SmartMonitorDB(str(Path(self.temp_dir.name) / "smart.db"))
+        conn = sqlite3.connect(canonical_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT stock_code, notify_type, status FROM notifications ORDER BY id ASC")
+        rows = cursor.fetchall()
+        conn.close()
+
+        self.assertEqual(rows, [("600519", "decision", "pending")])
+        cleanup_meta = repaired_db._connect()
+        meta_cursor = cleanup_meta.cursor()
+        meta_cursor.execute(
+            "SELECT meta_value FROM investment_metadata WHERE meta_key = ?",
+            (SmartMonitorDB.NOTIFICATION_CLEANUP_MIGRATION_KEY,),
+        )
+        meta_value = meta_cursor.fetchone()
+        cleanup_meta.close()
+        self.assertIsNotNone(meta_value)
+
+    def test_smart_monitor_db_does_not_fallback_to_legacy_position_and_trade_tables(self):
+        isolated_dir = Path(self.temp_dir.name) / "legacy_only"
+        isolated_dir.mkdir(parents=True, exist_ok=True)
+        legacy_path = isolated_dir / "smart.db"
+        legacy_conn = sqlite3.connect(legacy_path)
+        legacy_cursor = legacy_conn.cursor()
+        legacy_cursor.execute(
+            """
+            CREATE TABLE position_monitor (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                stock_code TEXT,
+                stock_name TEXT,
+                quantity INTEGER,
+                cost_price REAL,
+                status TEXT
+            )
+            """
+        )
+        legacy_cursor.execute(
+            """
+            CREATE TABLE trade_records (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                stock_code TEXT,
+                stock_name TEXT,
+                trade_type TEXT,
+                quantity INTEGER,
+                price REAL,
+                trade_time TEXT
+            )
+            """
+        )
+        legacy_cursor.execute(
+            """
+            INSERT INTO position_monitor (stock_code, stock_name, quantity, cost_price, status)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            ("600519", "贵州茅台", 100, 1500.0, "holding"),
+        )
+        legacy_cursor.execute(
+            """
+            INSERT INTO trade_records (stock_code, stock_name, trade_type, quantity, price, trade_time)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            ("600519", "贵州茅台", "BUY", 100, 1500.0, "2026-03-11 10:00:00"),
+        )
+        legacy_conn.commit()
+        legacy_conn.close()
+
+        original_cwd = os.getcwd()
+        os.chdir(isolated_dir)
+        try:
+            repaired_db = SmartMonitorDB(str(legacy_path))
+            self.assertEqual(repaired_db.get_positions(), [])
+            self.assertEqual(repaired_db.get_trade_records("600519", limit=10), [])
+        finally:
+            os.chdir(original_cwd)
 
     def test_smart_monitor_db_repair_dedupes_and_backfills_legacy_ai_decisions(self):
         repair_dir = Path(self.temp_dir.name) / "repair_case"

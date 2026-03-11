@@ -31,7 +31,6 @@ from ui_state_keys import (
     SMART_MONITOR_ACTIVE_TAB_KEY,
     SMART_MONITOR_DB_KEY,
     SMART_MONITOR_ENGINE_KEY,
-    SMART_MONITOR_HISTORY_ACTIVE_VIEW_KEY,
 )
 from ui_shared import (
     format_price,
@@ -721,50 +720,86 @@ def render_history(show_header: bool = True, title: str = "历史记录"):
     else:
         st.markdown(f"#### {title}")
     
-    db = st.session_state[SMART_MONITOR_DB_KEY]
+    from monitor_manager import display_monitor_status, display_notification_management
+    from monitor_service import monitor_service
 
-    selected_view = st.radio(
-        "决策事件视图",
-        ["AI决策历史", "待人工动作", "交易记录", "信号事件"],
-        horizontal=True,
-        key=SMART_MONITOR_HISTORY_ACTIVE_VIEW_KEY,
-        label_visibility="collapsed",
+    db = st.session_state[SMART_MONITOR_DB_KEY]
+    monitor_service.ensure_started()
+    monitor_service.ensure_stopped_if_idle()
+
+    decisions = db.get_ai_decisions(limit=50)
+    actions = db.get_pending_actions(status=None, limit=100)
+    trades = db.get_trade_records(limit=50)
+    events = db.monitoring_repository.get_recent_events(limit=80)
+    pending_notifications = db.monitoring_repository.get_pending_notifications()
+    enabled_ai_tasks = len(db.get_monitor_tasks(enabled_only=True))
+    enabled_price_alerts = len(
+        db.monitoring_repository.list_items(monitor_type="price_alert", enabled_only=True)
     )
 
-    if selected_view == "AI决策历史":
+    summary_col1, summary_col2, summary_col3, summary_col4, summary_col5 = st.columns(5)
+    with summary_col1:
+        st.metric("监测服务", "运行中" if monitor_service.running else "已停止")
+    with summary_col2:
+        st.metric("AI任务", enabled_ai_tasks)
+    with summary_col3:
+        st.metric("价格预警", enabled_price_alerts)
+    with summary_col4:
+        st.metric("待办动作", sum(1 for item in actions if item.get("status") == "pending"))
+    with summary_col5:
+        st.metric("待发通知", len(pending_notifications))
+
+    with st.expander("监测服务控制台", expanded=False):
+        display_monitor_status()
+
+    tab_decisions, tab_actions, tab_trades, tab_events, tab_notifications = st.tabs(
+        ["AI决策历史", "待人工动作", "交易记录", "监测事件", "通知管理"]
+    )
+
+    with tab_decisions:
         st.subheader("AI决策历史")
-        decisions = db.get_ai_decisions(limit=50)
         if not decisions:
             st.info("暂无决策记录")
         else:
+            st.caption(f"最近 {len(decisions)} 条 AI 决策，按时间倒序展示。")
             for dec in decisions:
+                monitor_levels = dec.get("monitor_levels") or {}
                 with st.expander(
                     f"{dec['decision_time']} - {dec['stock_code']} {dec['stock_name']} "
                     f"- {dec['action']} (信心度{dec['confidence']}%)"
                 ):
                     col1, col2 = st.columns([1, 3])
-                    
+
                     with col1:
                         st.write(f"**时段:** {dec['trading_session']}")
                         st.write(f"**风险:** {dec['risk_level']}")
                         st.write(f"**仓位:** {dec['position_size_pct']}%")
                         st.write(f"**执行模式:** {dec.get('execution_mode', 'manual_only')}")
                         st.write(f"**状态:** {dec.get('action_status', 'suggested')}")
-                    
                     with col2:
                         st.write("**决策理由:**")
                         st.text(dec['reasoning'])
-        return
+                        if monitor_levels:
+                            st.caption(
+                                f"运行时阈值: 进场 {monitor_levels.get('entry_min', '-')} - {monitor_levels.get('entry_max', '-')} | "
+                                f"止盈 {monitor_levels.get('take_profit', '-')} | 止损 {monitor_levels.get('stop_loss', '-')}"
+                            )
 
-    if selected_view == "待人工动作":
+    with tab_actions:
         st.subheader("待人工动作")
-
-        actions = db.get_pending_actions(status=None, limit=100)
         if not actions:
             st.info("暂无待人工动作。")
         else:
             pending_count = sum(1 for item in actions if item.get("status") == "pending")
-            st.caption(f"共 {len(actions)} 条动作，其中待处理 {pending_count} 条。")
+            resolved_count = len(actions) - pending_count
+            stat_col1, stat_col2, stat_col3 = st.columns(3)
+            with stat_col1:
+                st.metric("动作总数", len(actions))
+            with stat_col2:
+                st.metric("待处理", pending_count)
+            with stat_col3:
+                st.metric("已处理", resolved_count)
+
             for action in actions:
                 payload = action.get("payload") or {}
                 with st.expander(
@@ -784,11 +819,9 @@ def render_history(show_header: bool = True, title: str = "历史记录"):
                     if decision_block:
                         st.write("**AI 建议摘要:**")
                         st.text(str(decision_block.get("reasoning") or "")[:300])
-        return
 
-    if selected_view == "交易记录":
+    with tab_trades:
         st.subheader("交易记录")
-        trades = db.get_trade_records(limit=50)
         if not trades:
             st.info("暂无交易记录")
         else:
@@ -812,23 +845,56 @@ def render_history(show_header: bool = True, title: str = "历史记录"):
                 width='stretch',
                 height=get_dataframe_height(len(df), max_rows=50),
             )
-        return
 
-    st.subheader("信号事件")
-    events = db.monitoring_repository.get_recent_events(limit=50)
-    if not events:
-        st.info("暂无事件记录。")
-        return
+    with tab_events:
+        st.subheader("监测事件")
+        if not events:
+            st.info("暂无事件记录。")
+        else:
+            filter_col1, filter_col2, filter_col3 = st.columns([1.2, 1, 1])
+            event_types = ["全部"] + sorted({str(event.get("event_type") or "-") for event in events})
+            with filter_col1:
+                selected_event_type = st.selectbox("事件类型", event_types, key="smart_monitor_event_type_filter")
+            with filter_col2:
+                notification_only = st.checkbox("仅待发通知", value=False, key="smart_monitor_event_notification_only")
+            with filter_col3:
+                symbol_filter = st.text_input("筛选代码", value="", key="smart_monitor_event_symbol_filter").strip().upper()
 
-    for event in events:
-        details = db.monitoring_repository._safe_json_loads(event.get("details_json"), {})
-        with st.expander(
-            f"{event.get('created_at')} - {event.get('symbol')} "
-            f"- {event.get('event_type')} {'[已发送]' if event.get('sent') else '[未发送]'}"
-        ):
-            st.write(event.get("message"))
-            if details:
-                st.json(details)
+            filtered_events = []
+            for event in events:
+                event_type = str(event.get("event_type") or "-")
+                symbol = str(event.get("symbol") or "").upper()
+                if selected_event_type != "全部" and event_type != selected_event_type:
+                    continue
+                if notification_only and not event.get("notification_pending"):
+                    continue
+                if symbol_filter and symbol_filter not in symbol:
+                    continue
+                filtered_events.append(event)
+
+            st.caption(f"当前展示 {len(filtered_events)} / {len(events)} 条监测事件。")
+            if not filtered_events:
+                st.info("没有符合筛选条件的事件。")
+            for event in filtered_events:
+                details = db.monitoring_repository._safe_json_loads(event.get("details_json"), {})
+                sent_text = "已发送" if event.get("sent") else "未发送"
+                pending_text = "通知待发送" if event.get("notification_pending") else "仅记录"
+                with st.expander(
+                    f"{event.get('created_at')} - {event.get('symbol')} - {event.get('event_type')} [{sent_text}]"
+                ):
+                    meta_col1, meta_col2, meta_col3 = st.columns(3)
+                    with meta_col1:
+                        st.caption(f"监控类型: {event.get('monitor_type') or '-'}")
+                    with meta_col2:
+                        st.caption(f"通知状态: {pending_text}")
+                    with meta_col3:
+                        st.caption(f"名称: {event.get('name') or '-'}")
+                    st.write(event.get("message"))
+                    if details:
+                        st.json(details)
+
+    with tab_notifications:
+        display_notification_management()
 
 
 def render_settings(show_header: bool = True, title: str = "系统设置"):
