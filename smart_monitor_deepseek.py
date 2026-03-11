@@ -169,7 +169,8 @@ class SmartMonitorDeepSeek:
             }
 
     def chat_completion(self, messages: List[Dict], model: str = None,
-                       temperature: float = 0.7, max_tokens: int = 2000) -> Dict:
+                       temperature: float = 0.7, max_tokens: int = 2000,
+                       tier: ModelTier = ModelTier.LIGHTWEIGHT) -> Dict:
         """
         调用DeepSeek API
         
@@ -183,7 +184,7 @@ class SmartMonitorDeepSeek:
             API响应
         """
         model_to_use = resolve_model_name(
-            tier=ModelTier.REASONING,
+            tier=tier,
             explicit_model=model,
             forced_model=self.model,
             lightweight_model=self.lightweight_model,
@@ -428,7 +429,12 @@ MACD金叉且柱状图持续放大，RSI 62处于健康区间。今日成交量�
         ]
 
         try:
-            response = self.chat_completion(messages, temperature=0.3)
+            response = self.chat_completion(
+                messages,
+                temperature=0.3,
+                max_tokens=1600,
+                tier=ModelTier.LIGHTWEIGHT,
+            )
             ai_response = response['choices'][0]['message']['content']
             
             # 解析JSON决策
