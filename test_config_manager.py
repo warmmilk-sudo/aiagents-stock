@@ -1,0 +1,71 @@
+import tempfile
+import unittest
+from pathlib import Path
+
+from config_manager import ConfigManager
+
+
+class ConfigManagerEnvFormatTests(unittest.TestCase):
+    def test_write_env_preserves_existing_layout_and_quote_style(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            env_path = Path(temp_dir) / ".env"
+            env_path.write_text(
+                "# top comment\n"
+                "LIGHTWEIGHT_MODEL_NAME=\"deepseek-chat\"\n"
+                "DEEPSEEK_BASE_URL = https://api.deepseek.com/v1  # inline comment\n"
+                "REASONING_MODEL_NAME='deepseek-reasoner'\n"
+                "OTHER_KEY=keepme\n",
+                encoding="utf-8",
+            )
+
+            manager = ConfigManager(str(env_path))
+            saved = manager.write_env(
+                {
+                    "LIGHTWEIGHT_MODEL_NAME": "qwen-plus",
+                    "DEEPSEEK_BASE_URL": "https://example.com/v1",
+                    "REASONING_MODEL_NAME": "qwen-max",
+                }
+            )
+
+            self.assertTrue(saved)
+            self.assertEqual(
+                env_path.read_text(encoding="utf-8"),
+                "# top comment\n"
+                "LIGHTWEIGHT_MODEL_NAME=\"qwen-plus\"\n"
+                "DEEPSEEK_BASE_URL = https://example.com/v1  # inline comment\n"
+                "REASONING_MODEL_NAME='qwen-max'\n"
+                "OTHER_KEY=keepme\n",
+            )
+
+    def test_write_env_only_appends_missing_managed_keys(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            env_path = Path(temp_dir) / ".env"
+            env_path.write_text("CUSTOM_KEY=1\n", encoding="utf-8")
+
+            manager = ConfigManager(str(env_path))
+            saved = manager.write_env({"LIGHTWEIGHT_MODEL_NAME": "qwen-plus"})
+
+            self.assertTrue(saved)
+            self.assertEqual(
+                env_path.read_text(encoding="utf-8"),
+                "CUSTOM_KEY=1\n\nLIGHTWEIGHT_MODEL_NAME=qwen-plus\n",
+            )
+
+    def test_read_env_ignores_inline_comments_and_decodes_quotes(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            env_path = Path(temp_dir) / ".env"
+            env_path.write_text(
+                "LIGHTWEIGHT_MODEL_NAME=\"qwen-plus\" # active model\n"
+                "REASONING_MODEL_NAME='qwen-max'\n",
+                encoding="utf-8",
+            )
+
+            manager = ConfigManager(str(env_path))
+            values = manager.read_env()
+
+            self.assertEqual(values["LIGHTWEIGHT_MODEL_NAME"], "qwen-plus")
+            self.assertEqual(values["REASONING_MODEL_NAME"], "qwen-max")
+
+
+if __name__ == "__main__":
+    unittest.main()

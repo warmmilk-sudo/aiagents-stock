@@ -1091,10 +1091,64 @@ def render_site_filing() -> None:
     st.markdown(f'<div class="site-filing">{content}</div>', unsafe_allow_html=True)
 
 
+def _get_persisted_default_models() -> tuple[str, str]:
+    env_config = config_manager.read_env()
+    default_lightweight_model = (
+        str(env_config.get("LIGHTWEIGHT_MODEL_NAME") or config.LIGHTWEIGHT_MODEL_NAME or "deepseek-chat").strip()
+        or "deepseek-chat"
+    )
+    default_reasoning_model = (
+        str(env_config.get("REASONING_MODEL_NAME") or config.REASONING_MODEL_NAME or "deepseek-reasoner").strip()
+        or "deepseek-reasoner"
+    )
+    return default_lightweight_model, default_reasoning_model
+
+
+def _sync_temp_model_config(lightweight_model: str, reasoning_model: str) -> None:
+    if "temp_config" not in st.session_state:
+        return
+
+    st.session_state.temp_config["LIGHTWEIGHT_MODEL_NAME"] = lightweight_model
+    st.session_state.temp_config["REASONING_MODEL_NAME"] = reasoning_model
+
+
+def persist_sidebar_model_selection() -> None:
+    """Persist sidebar model selections as the new defaults."""
+    current_env = config_manager.read_env()
+    lightweight_model = str(st.session_state.get("selected_lightweight_model") or "").strip()
+    reasoning_model = str(st.session_state.get("selected_reasoning_model") or "").strip()
+
+    if lightweight_model:
+        st.session_state.selected_lightweight_model = lightweight_model
+    else:
+        lightweight_model = str(current_env.get("LIGHTWEIGHT_MODEL_NAME") or "").strip()
+
+    if reasoning_model:
+        st.session_state.selected_reasoning_model = reasoning_model
+    else:
+        reasoning_model = str(current_env.get("REASONING_MODEL_NAME") or "").strip()
+
+    _sync_temp_model_config(lightweight_model, reasoning_model)
+
+    updates = {}
+    if lightweight_model and lightweight_model != str(current_env.get("LIGHTWEIGHT_MODEL_NAME") or "").strip():
+        updates["LIGHTWEIGHT_MODEL_NAME"] = lightweight_model
+    if reasoning_model and reasoning_model != str(current_env.get("REASONING_MODEL_NAME") or "").strip():
+        updates["REASONING_MODEL_NAME"] = reasoning_model
+
+    if not updates:
+        return
+
+    if config_manager.write_env(updates):
+        try:
+            config_manager.reload_config()
+        except Exception as e:
+            print(f"重载模型配置失败: {e}")
+
+
 def ensure_model_session_state() -> None:
     """初始化当前会话的模型选择。"""
-    default_lightweight_model = config.LIGHTWEIGHT_MODEL_NAME or "deepseek-chat"
-    default_reasoning_model = config.REASONING_MODEL_NAME or "deepseek-reasoner"
+    default_lightweight_model, default_reasoning_model = _get_persisted_default_models()
 
     if "selected_lightweight_model" not in st.session_state:
         st.session_state.selected_lightweight_model = default_lightweight_model
@@ -1602,7 +1656,8 @@ def main():
             options=lightweight_model_keys,
             format_func=lambda model_name: lightweight_model_options.get(model_name, model_name),
             key="selected_lightweight_model",
-            help="用于数据拉取、技术指标解读、资金面/新闻整理等轻量任务，速度优先。",
+            help="用于数据拉取、技术指标解读、资金面/新闻整理等轻量任务。修改后会自动保存，并持续生效直到下次更改。",
+            on_change=persist_sidebar_model_selection,
         )
 
         st.selectbox(
@@ -1610,7 +1665,8 @@ def main():
             options=reasoning_model_keys,
             format_func=lambda model_name: reasoning_model_options.get(model_name, model_name),
             key="selected_reasoning_model",
-            help="用于多分析师讨论与最终投资决策生成等复杂推理任务，质量优先。",
+            help="用于多分析师讨论与最终投资决策生成等复杂推理任务。修改后会自动保存，并持续生效直到下次更改。",
+            on_change=persist_sidebar_model_selection,
         )
 
         st.markdown("---")
@@ -2993,7 +3049,6 @@ def _legacy_show_example_interface():
 def display_analysis_history_workspace() -> None:
     """显示统一分析历史页面。"""
     st.subheader("分析历史")
-    _render_home_analysis_task_fragment()
     render_portfolio_analysis_live_status_fragment()
 
     state_col, account_col, search_col, action_col = st.columns([1.1, 1.2, 2.2, 0.8])
@@ -3167,7 +3222,7 @@ def display_config_manager():
 
         st.markdown("---")
 
-        st.caption("这里配置的是应用重启后的默认模型；侧边栏下拉框可临时覆盖当前会话中的模型选择。")
+        st.caption("这里配置的是默认模型。无论在这里还是在侧边栏修改，都会保存并持续生效，直到下次更改。")
 
         lightweight_model_info = config_info["LIGHTWEIGHT_MODEL_NAME"]
         current_lightweight_model = st.session_state.temp_config.get(
@@ -3178,7 +3233,7 @@ def display_config_manager():
         new_lightweight_model = st.text_input(
             f"{lightweight_model_info['description']}",
             value=current_lightweight_model,
-            help="轻量任务默认使用的 OpenAI 兼容模型名称，保存后重启生效",
+            help="轻量任务默认使用的 OpenAI 兼容模型名称，保存后立即生效",
             key="input_lightweight_model_name"
         )
         st.session_state.temp_config["LIGHTWEIGHT_MODEL_NAME"] = new_lightweight_model.strip()
@@ -3209,7 +3264,7 @@ def display_config_manager():
         new_reasoning_model = st.text_input(
             f"{reasoning_model_info['description']}",
             value=current_reasoning_model,
-            help="强推理任务默认使用的 OpenAI 兼容模型名称，保存后重启生效",
+            help="强推理任务默认使用的 OpenAI 兼容模型名称，保存后立即生效",
             key="input_reasoning_model_name"
         )
         st.session_state.temp_config["REASONING_MODEL_NAME"] = new_reasoning_model.strip()
@@ -3568,7 +3623,6 @@ def display_config_manager():
                 # 保存配置
                 if config_manager.write_env(st.session_state.temp_config):
                     st.success("配置已保存到 .env 文件")
-                    st.info("ℹ️ 请重启应用使配置生效")
 
                     # 尝试重新加载配置
                     try:
@@ -3576,6 +3630,18 @@ def display_config_manager():
                         st.success("配置已重新加载")
                     except Exception as e:
                         st.warning(f"配置重新加载失败: {e}")
+
+                    saved_lightweight_model = (
+                        str(st.session_state.temp_config.get("LIGHTWEIGHT_MODEL_NAME") or "").strip()
+                        or "deepseek-chat"
+                    )
+                    saved_reasoning_model = (
+                        str(st.session_state.temp_config.get("REASONING_MODEL_NAME") or "").strip()
+                        or "deepseek-reasoner"
+                    )
+                    st.session_state.selected_lightweight_model = saved_lightweight_model
+                    st.session_state.selected_reasoning_model = saved_reasoning_model
+                    _sync_temp_model_config(saved_lightweight_model, saved_reasoning_model)
 
                     time.sleep(2)
                     st.rerun()

@@ -1,11 +1,18 @@
 """Environment configuration manager."""
 
+import importlib
+import re
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 
 class ConfigManager:
     """Read, validate, and write `.env` configuration."""
+
+    _ENV_ASSIGNMENT_RE = re.compile(
+        r"^(?P<leading>\s*)(?P<export>export\s+)?(?P<key>[A-Za-z_][A-Za-z0-9_]*)"
+        r"(?P<separator>\s*=\s*)(?P<value>.*?)(?P<newline>\r?\n?)$"
+    )
 
     def __init__(self, env_file: str = ".env"):
         self.env_file = Path(env_file)
@@ -181,6 +188,139 @@ class ConfigManager:
             },
         }
 
+    def _normalize_env_value(self, value: Any) -> str:
+        if value is None:
+            return ""
+        return str(value)
+
+    def _split_value_and_comment(self, raw_value: str) -> tuple[str, str]:
+        in_single_quote = False
+        in_double_quote = False
+        escaping = False
+
+        for index, char in enumerate(raw_value):
+            if char == "\\" and in_double_quote and not escaping:
+                escaping = True
+                continue
+
+            if char == "'" and not in_double_quote:
+                in_single_quote = not in_single_quote
+            elif char == '"' and not in_single_quote and not escaping:
+                in_double_quote = not in_double_quote
+            elif char == "#" and not in_single_quote and not in_double_quote:
+                if index == 0 or raw_value[index - 1].isspace():
+                    return raw_value[:index], raw_value[index:]
+
+            escaping = False
+
+        return raw_value, ""
+
+    def _detect_quote_style(self, raw_value: str) -> Optional[str]:
+        stripped = raw_value.strip()
+        if len(stripped) >= 2 and stripped[0] == stripped[-1] and stripped[0] in {'"', "'"}:
+            return stripped[0]
+        return None
+
+    def _decode_env_value(self, raw_value: str) -> str:
+        value_part, _ = self._split_value_and_comment(raw_value)
+        stripped = value_part.strip()
+        quote_style = self._detect_quote_style(stripped)
+
+        if quote_style is None:
+            return stripped
+
+        inner_value = stripped[1:-1]
+        if quote_style == '"':
+            return inner_value.replace("\\\"", '"').replace("\\\\", "\\")
+        return inner_value.replace("\\'", "'").replace("\\\\", "\\")
+
+    def _format_env_value(self, value: Any, quote_style: Optional[str] = None) -> str:
+        normalized = self._normalize_env_value(value)
+
+        if quote_style == '"':
+            escaped = normalized.replace("\\", "\\\\").replace('"', '\\"')
+            return f'"{escaped}"'
+
+        if quote_style == "'":
+            escaped = normalized.replace("\\", "\\\\").replace("'", "\\'")
+            return f"'{escaped}'"
+
+        if not normalized:
+            return ""
+
+        if any(char.isspace() for char in normalized) or "#" in normalized:
+            escaped = normalized.replace("\\", "\\\\").replace('"', '\\"')
+            return f'"{escaped}"'
+
+        return normalized
+
+    def _render_updated_assignment(self, match: re.Match[str], value: Any) -> str:
+        raw_value = match.group("value")
+        value_part, comment = self._split_value_and_comment(raw_value)
+        leading_space = value_part[: len(value_part) - len(value_part.lstrip())]
+        trailing_space = value_part[len(value_part.rstrip()):]
+        quote_style = self._detect_quote_style(value_part)
+        rendered_value = self._format_env_value(value, quote_style=quote_style)
+
+        return (
+            f"{match.group('leading')}{match.group('export') or ''}{match.group('key')}"
+            f"{match.group('separator')}{leading_space}{rendered_value}{trailing_space}"
+            f"{comment}{match.group('newline')}"
+        )
+
+    def _get_newline(self, content: str) -> str:
+        if "\r\n" in content:
+            return "\r\n"
+        return "\n"
+
+    def _build_minimal_env_content(self, updates: Dict[str, str]) -> str:
+        ordered_keys = [key for key in self.default_config if key in updates]
+        for key in updates:
+            if key not in ordered_keys:
+                ordered_keys.append(key)
+
+        if not ordered_keys:
+            return ""
+
+        lines = [f"{key}={self._format_env_value(updates[key])}" for key in ordered_keys]
+        return "\n".join(lines) + "\n"
+
+    def _merge_env_content(self, content: str, updates: Dict[str, str]) -> str:
+        lines = content.splitlines(keepends=True)
+        updated_lines = []
+        updated_keys = set()
+
+        for raw_line in lines:
+            match = self._ENV_ASSIGNMENT_RE.match(raw_line)
+            if not match:
+                updated_lines.append(raw_line)
+                continue
+
+            key = match.group("key")
+            if key not in updates:
+                updated_lines.append(raw_line)
+                continue
+
+            updated_lines.append(self._render_updated_assignment(match, updates[key]))
+            updated_keys.add(key)
+
+        missing_keys = [
+            key for key in self.default_config if key in updates and key not in updated_keys
+        ]
+        if not missing_keys:
+            return "".join(updated_lines)
+
+        newline = self._get_newline(content)
+        if updated_lines and not updated_lines[-1].endswith(("\n", "\r")):
+            updated_lines[-1] = updated_lines[-1] + newline
+        if updated_lines and updated_lines[-1].strip():
+            updated_lines.append(newline)
+
+        for key in missing_keys:
+            updated_lines.append(f"{key}={self._format_env_value(updates[key])}{newline}")
+
+        return "".join(updated_lines)
+
     def read_env(self) -> Dict[str, str]:
         """Read `.env` values and merge defaults."""
         config: Dict[str, str] = {}
@@ -189,20 +329,12 @@ class ConfigManager:
             try:
                 with open(self.env_file, "r", encoding="utf-8") as f:
                     for raw_line in f:
-                        line = raw_line.strip()
-                        if not line or line.startswith("#") or "=" not in line:
+                        match = self._ENV_ASSIGNMENT_RE.match(raw_line)
+                        if not match:
                             continue
 
-                        key, value = line.split("=", 1)
-                        key = key.strip()
-                        value = value.strip()
-
-                        if value.startswith('"') and value.endswith('"'):
-                            value = value[1:-1]
-                        elif value.startswith("'") and value.endswith("'"):
-                            value = value[1:-1]
-
-                        config[key] = value
+                        key = match.group("key").strip()
+                        config[key] = self._decode_env_value(match.group("value"))
             except Exception as e:
                 print(f"读取 .env 失败: {e}")
 
@@ -212,53 +344,29 @@ class ConfigManager:
         return config
 
     def write_env(self, config: Dict[str, str]) -> bool:
-        """Write managed configuration back to `.env`."""
+        """Update managed configuration in `.env` while preserving existing layout."""
         try:
-            lines = [
-                "# AI股票分析系统环境配置",
-                "# 由系统自动生成和管理",
-                "",
-                "# ========== DeepSeek API 配置 ==========",
-                f'DEEPSEEK_API_KEY="{config.get("DEEPSEEK_API_KEY", "")}"',
-                f'DEEPSEEK_BASE_URL="{config.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")}"',
-                f'LIGHTWEIGHT_MODEL_NAME="{config.get("LIGHTWEIGHT_MODEL_NAME", "deepseek-chat")}"',
-                f'LIGHTWEIGHT_MODEL_OPTIONS="{config.get("LIGHTWEIGHT_MODEL_OPTIONS", "")}"',
-                f'REASONING_MODEL_NAME="{config.get("REASONING_MODEL_NAME", "deepseek-reasoner")}"',
-                f'REASONING_MODEL_OPTIONS="{config.get("REASONING_MODEL_OPTIONS", "")}"',
-                f'ADMIN_PASSWORD="{config.get("ADMIN_PASSWORD", "")}"',
-                f'ADMIN_PASSWORD_HASH="{config.get("ADMIN_PASSWORD_HASH", "")}"',
-                f'LOGIN_MAX_ATTEMPTS="{config.get("LOGIN_MAX_ATTEMPTS", "5")}"',
-                f'LOGIN_LOCKOUT_SECONDS="{config.get("LOGIN_LOCKOUT_SECONDS", "300")}"',
-                f'ADMIN_SESSION_TTL_SECONDS="{config.get("ADMIN_SESSION_TTL_SECONDS", "28800")}"',
-                f'ICP_NUMBER="{config.get("ICP_NUMBER", "")}"',
-                f'ICP_LINK="{config.get("ICP_LINK", "")}"',
-                "",
-                "# ========== Tushare 配置 ==========",
-                f'TUSHARE_TOKEN="{config.get("TUSHARE_TOKEN", "")}"',
-                f'TUSHARE_URL="{config.get("TUSHARE_URL", "https://api.tushare.pro")}"',
-                "",
-                "# ========== 全局分析配置 ==========",
-                f'DATA_PERIOD="{config.get("DATA_PERIOD", "1y")}"',
-                f'TDX_ENABLED="{config.get("TDX_ENABLED", "false")}"',
-                f'TDX_BASE_URL="{config.get("TDX_BASE_URL", "http://127.0.0.1:8181")}"',
-                "",
-                "# ========== 邮件通知配置 ==========",
-                f'EMAIL_ENABLED="{config.get("EMAIL_ENABLED", "false")}"',
-                f'SMTP_SERVER="{config.get("SMTP_SERVER", "")}"',
-                f'SMTP_PORT="{config.get("SMTP_PORT", "587")}"',
-                f'EMAIL_FROM="{config.get("EMAIL_FROM", "")}"',
-                f'EMAIL_PASSWORD="{config.get("EMAIL_PASSWORD", "")}"',
-                f'EMAIL_TO="{config.get("EMAIL_TO", "")}"',
-                "",
-                "# ========== Webhook 配置 ==========",
-                f'WEBHOOK_ENABLED="{config.get("WEBHOOK_ENABLED", "false")}"',
-                f'WEBHOOK_TYPE="{config.get("WEBHOOK_TYPE", "dingtalk")}"',
-                f'WEBHOOK_URL="{config.get("WEBHOOK_URL", "")}"',
-                f'WEBHOOK_KEYWORD="{config.get("WEBHOOK_KEYWORD", "aiagents通知")}"',
-            ]
+            updates = {
+                key: self._normalize_env_value(config.get(key, self.default_config[key]["value"]))
+                for key in self.default_config
+                if key in config
+            }
+
+            for key, value in config.items():
+                if key not in updates and key in self.default_config:
+                    updates[key] = self._normalize_env_value(value)
+
+            if not updates:
+                return True
+
+            if self.env_file.exists():
+                existing_content = self.env_file.read_text(encoding="utf-8")
+                rendered_content = self._merge_env_content(existing_content, updates)
+            else:
+                rendered_content = self._build_minimal_env_content(updates)
 
             with open(self.env_file, "w", encoding="utf-8") as f:
-                f.write("\n".join(lines))
+                f.write(rendered_content)
 
             return True
         except Exception as e:
@@ -299,6 +407,12 @@ class ConfigManager:
         from dotenv import load_dotenv
 
         load_dotenv(override=True)
+        try:
+            import config as config_module
+
+            importlib.reload(config_module)
+        except Exception as e:
+            print(f"重载 config 模块失败: {e}")
 
 
 config_manager = ConfigManager()
