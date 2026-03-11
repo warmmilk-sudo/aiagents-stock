@@ -6,7 +6,11 @@
 import logging
 from typing import Dict, List, Optional
 from datetime import datetime, time
+import time as time_module
+
 import pytz
+import requests
+
 import config
 from model_routing import ModelTier, resolve_model_name
 
@@ -32,6 +36,18 @@ class SmartMonitorDeepSeek:
             "Content-Type": "application/json"
         }
         self.logger = logging.getLogger(__name__)
+        self.http_timeout_seconds = max(
+            15,
+            int(getattr(config, "SMART_MONITOR_HTTP_TIMEOUT_SECONDS", 30) or 30),
+        )
+        self.http_retry_count = max(
+            0,
+            int(getattr(config, "SMART_MONITOR_HTTP_RETRY_COUNT", 1) or 1),
+        )
+        self.reasoning_max_tokens = max(
+            1500,
+            int(getattr(config, "SMART_MONITOR_REASONING_MAX_TOKENS", 3000) or 3000),
+        )
 
     def set_model_overrides(self, model: str = None,
                             lightweight_model: str = None,
@@ -166,8 +182,6 @@ class SmartMonitorDeepSeek:
         Returns:
             API响应
         """
-        import requests
-        
         model_to_use = resolve_model_name(
             tier=ModelTier.REASONING,
             explicit_model=model,
@@ -177,7 +191,7 @@ class SmartMonitorDeepSeek:
         )
 
         if "reasoner" in model_to_use.lower() and max_tokens <= 2000:
-            max_tokens = 8000
+            max_tokens = max(max_tokens, self.reasoning_max_tokens)
         
         payload = {
             "model": model_to_use,
@@ -186,18 +200,53 @@ class SmartMonitorDeepSeek:
             "max_tokens": max_tokens
         }
         
-        try:
-            response = requests.post(
-                f"{self.base_url}/chat/completions",
-                headers=self.headers,
-                json=payload,
-                timeout=25
+        endpoint = f"{self.base_url.rstrip('/')}/chat/completions"
+        request_timeout = (10, self.http_timeout_seconds)
+        total_attempts = self.http_retry_count + 1
+        retryable_errors = (requests.exceptions.Timeout, requests.exceptions.ConnectionError)
+        last_error: Optional[Exception] = None
+
+        for attempt_index in range(total_attempts):
+            try:
+                response = requests.post(
+                    endpoint,
+                    headers=self.headers,
+                    json=payload,
+                    timeout=request_timeout
+                )
+                response.raise_for_status()
+                return response.json()
+            except retryable_errors as exc:
+                last_error = exc
+                if attempt_index >= self.http_retry_count:
+                    break
+                self.logger.warning(
+                    "DeepSeek API请求超时或连接失败，准备重试 (%s/%s)，model=%s，read_timeout=%ss: %s",
+                    attempt_index + 1,
+                    total_attempts,
+                    model_to_use,
+                    self.http_timeout_seconds,
+                    exc,
+                )
+                time_module.sleep(min(2, attempt_index + 1))
+            except Exception as exc:
+                self.logger.error(
+                    "DeepSeek API调用失败，model=%s，timeout=%ss: %s",
+                    model_to_use,
+                    self.http_timeout_seconds,
+                    exc,
+                )
+                raise
+
+        if last_error is not None:
+            self.logger.error(
+                "DeepSeek API调用失败，重试后仍未成功，model=%s，timeout=%ss: %s",
+                model_to_use,
+                self.http_timeout_seconds,
+                last_error,
             )
-            response.raise_for_status()
-            return response.json()
-        except Exception as e:
-            self.logger.error(f"DeepSeek API调用失败: {e}")
-            raise
+            raise last_error
+        raise RuntimeError("DeepSeek API调用失败: unknown_request_error")
 
     def analyze_stock_and_decide(self, stock_code: str, market_data: Dict,
                                  account_info: Dict, has_position: bool = False,

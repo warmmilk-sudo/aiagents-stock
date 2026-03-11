@@ -317,6 +317,20 @@ class MonitoringOrchestratorAsyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(stop_calls), 1)
         self.assertFalse(orchestrator.running)
 
+    def test_orchestrator_ai_timeout_tracks_engine_timeout_budget(self):
+        repo = _FakeRepository([])
+        fake_monitor_db = _FakeMonitorDB(repo, {})
+        fake_engine = types.SimpleNamespace(ai_decision_timeout_seconds=70)
+
+        with patch.object(monitoring_orchestrator, "monitor_db", fake_monitor_db), patch.object(
+            monitoring_orchestrator,
+            "SmartMonitorEngine",
+            return_value=fake_engine,
+        ), patch.object(monitoring_orchestrator, "TDX_AVAILABLE", False):
+            orchestrator = monitoring_orchestrator.MonitoringOrchestrator()
+
+        self.assertEqual(orchestrator.AI_TASK_TIMEOUT_SECONDS, 75)
+
 
 class MonitoringWriteSerializationTests(unittest.TestCase):
     def setUp(self):
