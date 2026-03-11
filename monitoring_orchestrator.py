@@ -5,6 +5,7 @@ import threading
 from datetime import datetime
 from typing import Dict, List, Optional, Set
 
+import config
 from monitor_db import monitor_db
 from monitoring_repository import MonitoringRepository
 from notification_service import notification_service
@@ -34,6 +35,10 @@ class MonitoringOrchestrator:
         self.logger = logging.getLogger(__name__)
         self.repository: MonitoringRepository = monitor_db.repository
         self.engine = SmartMonitorEngine()
+        self.AI_TASK_TIMEOUT_SECONDS = max(
+            int(getattr(self.engine, "ai_decision_timeout_seconds", self.AI_TASK_TIMEOUT_SECONDS) or self.AI_TASK_TIMEOUT_SECONDS) + 5,
+            int(getattr(config, "SMART_MONITOR_AI_TIMEOUT_SECONDS", self.AI_TASK_TIMEOUT_SECONDS) or self.AI_TASK_TIMEOUT_SECONDS) + 5,
+        )
         self.fetcher = StockDataFetcher()
         self.running = False
         self.thread: Optional[threading.Thread] = None

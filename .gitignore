@@ -13,3 +13,5 @@ TradEnv/
 *.log
 __pycache__/
 .codex_test_tmp/
+*.db
+

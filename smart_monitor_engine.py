@@ -10,6 +10,7 @@ from typing import Dict, List, Optional
 from datetime import datetime
 import threading
 
+import config
 from smart_monitor_deepseek import SmartMonitorDeepSeek
 from smart_monitor_data import SmartMonitorDataFetcher
 from smart_monitor_db import SmartMonitorDB
@@ -55,6 +56,10 @@ class SmartMonitorEngine:
             model=model,
             lightweight_model=lightweight_model,
             reasoning_model=reasoning_model,
+        )
+        self.ai_decision_timeout_seconds = max(
+            int(getattr(config, "SMART_MONITOR_AI_TIMEOUT_SECONDS", self.AI_DECISION_TIMEOUT_SECONDS) or self.AI_DECISION_TIMEOUT_SECONDS),
+            int(getattr(self.deepseek, "http_timeout_seconds", self.AI_DECISION_TIMEOUT_SECONDS) or self.AI_DECISION_TIMEOUT_SECONDS) + 10,
         )
         self.data_fetcher = SmartMonitorDataFetcher()
         self.db = SmartMonitorDB()
@@ -111,12 +116,15 @@ class SmartMonitorEngine:
 
     @staticmethod
     def _run_with_timeout(func, timeout_seconds: int, *args, **kwargs):
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(func, *args, **kwargs)
-            try:
-                return future.result(timeout=timeout_seconds)
-            except FutureTimeoutError as exc:
-                raise TimeoutError(f"operation_timed_out_after_{timeout_seconds}s") from exc
+        executor = ThreadPoolExecutor(max_workers=1)
+        future = executor.submit(func, *args, **kwargs)
+        try:
+            return future.result(timeout=timeout_seconds)
+        except FutureTimeoutError as exc:
+            future.cancel()
+            raise TimeoutError(f"operation_timed_out_after_{timeout_seconds}s") from exc
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
 
     @staticmethod
     def _map_action_to_rating(action: str, fallback: str = "持有") -> str:
@@ -348,7 +356,7 @@ class SmartMonitorEngine:
             # 5. 调用DeepSeek AI决策
             ai_result = self._run_with_timeout(
                 self.deepseek.analyze_stock_and_decide,
-                self.AI_DECISION_TIMEOUT_SECONDS,
+                self.ai_decision_timeout_seconds,
                 stock_code=stock_code,
                 market_data=market_data,
                 account_info=account_info,
