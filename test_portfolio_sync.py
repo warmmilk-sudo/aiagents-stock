@@ -2,7 +2,9 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
+import smart_monitor_engine as smart_monitor_engine_module
 from monitor_db import StockMonitorDatabase
 from portfolio_db import PortfolioDB
 from portfolio_manager import PortfolioManager
@@ -57,7 +59,7 @@ class PortfolioIntegrationTests(unittest.TestCase):
 
         task = self.smart_monitor_db.get_monitor_task_by_code("000001", managed_only=True)
         self.assertIsNotNone(task)
-        self.assertEqual(task["enabled"], 0)
+        self.assertEqual(task["enabled"], 1)
         self.assertEqual(task["has_position"], 1)
         self.assertEqual(task["position_cost"], 10.5)
         self.assertEqual(task["position_quantity"], 200)
@@ -331,6 +333,78 @@ class PortfolioIntegrationTests(unittest.TestCase):
         self.assertEqual(len(decisions), 1)
         self.assertEqual(decisions[0]["account_name"], "账户B")
         self.assertEqual(decisions[0]["asset_id"], asset_id)
+
+    def test_ai_runtime_thresholds_sync_and_clear_on_new_strategy_context(self):
+        asset_id = self.smart_monitor_db.asset_repository.promote_to_watchlist(
+            symbol="600519",
+            name="贵州茅台",
+            account_name="默认账户",
+        )
+        self.smart_monitor_db.upsert_monitor_task(
+            {
+                "task_name": "茅台任务",
+                "stock_code": "600519",
+                "stock_name": "贵州茅台",
+                "enabled": 1,
+                "account_name": "默认账户",
+                "asset_id": asset_id,
+            }
+        )
+
+        with patch.object(smart_monitor_engine_module, "SmartMonitorDB", return_value=self.smart_monitor_db), patch.object(
+            smart_monitor_engine_module.event_bus,
+            "subscribe",
+            return_value=None,
+        ), patch("monitor_db.monitor_db", self.realtime_monitor_db):
+            engine = smart_monitor_engine_module.SmartMonitorEngine(deepseek_api_key="stub")
+            synced = engine._sync_runtime_thresholds(
+                stock_code="600519",
+                stock_name="贵州茅台",
+                decision={"action": "BUY", "monitor_levels": {"entry_min": 1498.0, "entry_max": 1506.0, "take_profit": 1588.0, "stop_loss": 1452.0}},
+                decision_id=77,
+                account_name="默认账户",
+                asset_id=asset_id,
+                portfolio_stock_id=None,
+                strategy_context={},
+            )
+
+        self.assertTrue(synced)
+        monitor = self.realtime_monitor_db.get_monitor_by_code("600519", account_name="默认账户", asset_id=asset_id)
+        self.assertIsNotNone(monitor)
+        self.assertEqual(monitor["threshold_source"], "ai_runtime")
+        self.assertEqual(monitor["entry_range"]["min"], 1498.0)
+        self.assertEqual(monitor["take_profit"], 1588.0)
+        self.assertEqual(monitor["origin_decision_id"], 77)
+
+        self.smart_monitor_db.asset_service.sync_managed_monitors(asset_id)
+        preserved = self.realtime_monitor_db.get_monitor_by_code("600519", account_name="默认账户", asset_id=asset_id)
+        self.assertEqual(preserved["threshold_source"], "ai_runtime")
+        self.assertEqual(preserved["runtime_thresholds"]["stop_loss"], 1452.0)
+
+        new_record_id = self.smart_monitor_db.analysis_repository.save_record(
+            symbol="600519",
+            stock_name="贵州茅台",
+            period="1y",
+            account_name="默认账户",
+            asset_id=asset_id,
+            analysis_scope="portfolio",
+            analysis_source="test",
+            entry_min=1510.0,
+            entry_max=1520.0,
+            take_profit=1618.0,
+            stop_loss=1480.0,
+            final_decision={"rating": "持有"},
+            has_full_report=True,
+            asset_status_snapshot="watchlist",
+        )
+        self.assertGreater(new_record_id, 0)
+
+        self.smart_monitor_db.asset_service.sync_managed_monitors(asset_id)
+        refreshed = self.realtime_monitor_db.get_monitor_by_code("600519", account_name="默认账户", asset_id=asset_id)
+        self.assertEqual(refreshed["threshold_source"], "strategy_context")
+        self.assertEqual(refreshed["entry_range"]["min"], 1510.0)
+        self.assertEqual(refreshed["take_profit"], 1618.0)
+        self.assertEqual(refreshed["runtime_thresholds"], {})
 
     def test_delete_stock_cascades_managed_integrations(self):
         stock_id = self._add_stock("002594", cost_price=220.0, quantity=300)

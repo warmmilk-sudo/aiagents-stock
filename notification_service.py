@@ -4,7 +4,11 @@ from email.mime.multipart import MIMEMultipart
 import json
 import os
 from typing import Dict, List
-import streamlit as st
+
+try:
+    import streamlit as st
+except ImportError:  # pragma: no cover - exercised in non-UI test environments
+    st = None
 
 from monitor_db import monitor_db
 
@@ -99,9 +103,8 @@ class NotificationService:
             if email_success:
                 success = True
         
-        # 如果两者都未启用或都失败，使用界面通知作为备用
+        # 未配置外部通知通道时，保留数据库事件供 UI 轮询展示。
         if not success:
-            self._show_streamlit_notification(notification)
             success = True
         
         return success
@@ -112,12 +115,11 @@ class NotificationService:
             # 检查邮件配置是否完整
             if not all([self.config['smtp_server'], self.config['email_from'], 
                        self.config['email_password'], self.config['email_to']]):
-                print("⚠️ 邮件配置不完整，使用界面通知")
+                print("⚠️ 邮件配置不完整，跳过邮件发送")
                 print(f"  - SMTP服务器: {self.config['smtp_server'] or '未配置'}")
                 print(f"  - 发件人: {self.config['email_from'] or '未配置'}")
                 print(f"  - 收件人: {self.config['email_to'] or '未配置'}")
                 print(f"  - 密码: {'已配置' if self.config['email_password'] else '未配置'}")
-                self._show_streamlit_notification(notification)
                 return True
             
             # 创建邮件
@@ -163,13 +165,12 @@ class NotificationService:
             
         except Exception as e:
             print(f"邮件发送失败: {e}")
-            # 邮件发送失败时，使用界面通知作为备用方案
-            print("使用界面通知作为备用方案")
-            self._show_streamlit_notification(notification)
-            return True
+            return False
     
     def _show_streamlit_notification(self, notification: Dict):
         """在Streamlit界面显示通知"""
+        if st is None:
+            return
         # 使用session_state存储通知
         if 'notifications' not in st.session_state:
             st.session_state.notifications = []
@@ -187,13 +188,23 @@ class NotificationService:
             })
     
     def get_streamlit_notifications(self) -> List[Dict]:
-        """获取Streamlit界面通知"""
-        return st.session_state.get('notifications', [])
+        """兼容旧接口，改为从数据库读取最近通知。"""
+        notifications = monitor_db.get_all_recent_notifications(limit=20)
+        return [
+            {
+                'key': f"{item['id']}_{item['triggered_at']}",
+                'symbol': item['symbol'],
+                'name': item['name'],
+                'type': item['type'],
+                'message': item['message'],
+                'timestamp': item['triggered_at'],
+            }
+            for item in notifications
+        ]
     
     def clear_streamlit_notifications(self):
-        """清空Streamlit界面通知"""
-        if 'notifications' in st.session_state:
-            st.session_state.notifications = []
+        """兼容旧接口，清空数据库中的待显示通知。"""
+        monitor_db.clear_all_notifications()
     
     def test_email_config(self) -> bool:
         """测试邮件配置"""

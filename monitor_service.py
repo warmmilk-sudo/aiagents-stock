@@ -21,6 +21,12 @@ class StockMonitorService:
     def stop_monitoring(self):
         self.orchestrator.stop()
 
+    def ensure_started(self):
+        self.orchestrator.ensure_started()
+
+    def ensure_stopped_if_idle(self):
+        self.orchestrator.ensure_stopped_if_idle()
+
     def manual_update_stock(self, stock_id: int):
         return self.orchestrator.manual_update_stock(stock_id)
 

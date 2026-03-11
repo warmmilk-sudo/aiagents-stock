@@ -5,7 +5,14 @@ import sqlite3
 from datetime import datetime, timedelta
 from typing import Dict, Iterable, List, Optional
 
-from investment_db_utils import DEFAULT_ACCOUNT_NAME, resolve_investment_db_path
+from investment_db_utils import (
+    DEFAULT_ACCOUNT_NAME,
+    SQLITE_BUSY_TIMEOUT_MILLISECONDS,
+    SQLITE_TIMEOUT_SECONDS,
+    configure_sqlite_connection,
+    resolve_investment_db_path,
+    run_with_monitoring_write_lock,
+)
 
 
 def resolve_monitoring_db_path(seed_db_path: str) -> str:
@@ -16,8 +23,8 @@ def resolve_monitoring_db_path(seed_db_path: str) -> str:
 class MonitoringRepository:
     """Canonical monitoring storage for AI tasks and price alerts."""
 
-    CONNECTION_TIMEOUT_SECONDS = 30
-    BUSY_TIMEOUT_MILLISECONDS = 30000
+    CONNECTION_TIMEOUT_SECONDS = SQLITE_TIMEOUT_SECONDS
+    BUSY_TIMEOUT_MILLISECONDS = SQLITE_BUSY_TIMEOUT_MILLISECONDS
     INDEX_MIGRATION_KEY = "monitoring_index_migration_v1"
     MANAGED_BINDING_REPAIR_KEY = "monitoring_managed_binding_repair_v1"
     CONFIG_CLEANUP_MIGRATION_KEY = "monitoring_config_cleanup_v1"
@@ -41,16 +48,7 @@ class MonitoringRepository:
             self.db_path,
             timeout=self.CONNECTION_TIMEOUT_SECONDS,
         )
-        conn.row_factory = sqlite3.Row
-        conn.execute(f"PRAGMA busy_timeout = {self.BUSY_TIMEOUT_MILLISECONDS}")
-        conn.execute("PRAGMA foreign_keys = ON")
-        conn.execute("PRAGMA synchronous = NORMAL")
-        try:
-            conn.execute("PRAGMA journal_mode = WAL")
-        except sqlite3.OperationalError:
-            # Some readonly/legacy contexts may not allow changing journal mode.
-            pass
-        return conn
+        return configure_sqlite_connection(conn)
 
     def _init_database(self) -> None:
         conn = self._connect()
@@ -704,66 +702,69 @@ class MonitoringRepository:
         return int(existing["id"])
 
     def create_item(self, item_data: Dict) -> int:
-        item_data = self._ensure_asset_binding(dict(item_data))
-        config = self._sanitize_monitor_config(item_data.get("config") or {})
-        account_name = item_data.get("account_name")
-        if item_data.get("monitor_type") == "ai_task":
-            account_name = account_name or DEFAULT_ACCOUNT_NAME
-            item_data["account_name"] = account_name
-        integrity_error = None
-        item_id = None
-        conn = self._connect()
-        try:
-            cursor = conn.cursor()
-            cursor.execute(
-                """
-                INSERT INTO monitoring_items (
-                    symbol, name, monitor_type, source, enabled, interval_minutes,
-                    trading_hours_only, notification_enabled, managed_by_portfolio,
-                    account_name, asset_id, portfolio_stock_id, origin_analysis_id,
-                    current_price, last_checked, last_status, last_message, config_json
+        def _create() -> int:
+            bound_item = self._ensure_asset_binding(dict(item_data))
+            config = self._sanitize_monitor_config(bound_item.get("config") or {})
+            account_name = bound_item.get("account_name")
+            if bound_item.get("monitor_type") == "ai_task":
+                account_name = account_name or DEFAULT_ACCOUNT_NAME
+                bound_item["account_name"] = account_name
+            integrity_error = None
+            item_id = None
+            conn = self._connect()
+            try:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    INSERT INTO monitoring_items (
+                        symbol, name, monitor_type, source, enabled, interval_minutes,
+                        trading_hours_only, notification_enabled, managed_by_portfolio,
+                        account_name, asset_id, portfolio_stock_id, origin_analysis_id,
+                        current_price, last_checked, last_status, last_message, config_json
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        bound_item["symbol"],
+                        bound_item.get("name") or bound_item["symbol"],
+                        bound_item["monitor_type"],
+                        bound_item.get("source", "manual"),
+                        1 if bound_item.get("enabled", True) else 0,
+                        self._normalize_interval_minutes(bound_item.get("interval_minutes", 30)),
+                        1 if bound_item.get("trading_hours_only", True) else 0,
+                        1 if bound_item.get("notification_enabled", True) else 0,
+                        1 if bound_item.get("managed_by_portfolio", False) else 0,
+                        account_name,
+                        bound_item.get("asset_id"),
+                        bound_item.get("portfolio_stock_id"),
+                        bound_item.get("origin_analysis_id"),
+                        bound_item.get("current_price"),
+                        bound_item.get("last_checked"),
+                        bound_item.get("last_status"),
+                        bound_item.get("last_message"),
+                        json.dumps(config, ensure_ascii=False),
+                    ),
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    item_data["symbol"],
-                    item_data.get("name") or item_data["symbol"],
-                    item_data["monitor_type"],
-                    item_data.get("source", "manual"),
-                    1 if item_data.get("enabled", True) else 0,
-                    self._normalize_interval_minutes(item_data.get("interval_minutes", 30)),
-                    1 if item_data.get("trading_hours_only", True) else 0,
-                    1 if item_data.get("notification_enabled", True) else 0,
-                    1 if item_data.get("managed_by_portfolio", False) else 0,
-                    account_name,
-                    item_data.get("asset_id"),
-                    item_data.get("portfolio_stock_id"),
-                    item_data.get("origin_analysis_id"),
-                    item_data.get("current_price"),
-                    item_data.get("last_checked"),
-                    item_data.get("last_status"),
-                    item_data.get("last_message"),
-                    json.dumps(config, ensure_ascii=False),
-                ),
-            )
-            item_id = int(cursor.lastrowid)
-            conn.commit()
-        except sqlite3.IntegrityError as exc:
-            conn.rollback()
-            integrity_error = exc
-        finally:
-            conn.close()
+                item_id = int(cursor.lastrowid)
+                conn.commit()
+            except sqlite3.IntegrityError as exc:
+                conn.rollback()
+                integrity_error = exc
+            finally:
+                conn.close()
 
-        if integrity_error is None:
-            return int(item_id)
+            if integrity_error is None:
+                return int(item_id)
 
-        if "UNIQUE constraint failed" not in str(integrity_error):
+            if "UNIQUE constraint failed" not in str(integrity_error):
+                raise integrity_error
+
+            recovered_id = self._recover_from_integrity_conflict(bound_item)
+            if recovered_id is not None:
+                return recovered_id
             raise integrity_error
 
-        recovered_id = self._recover_from_integrity_conflict(item_data)
-        if recovered_id is not None:
-            return recovered_id
-        raise integrity_error
+        return run_with_monitoring_write_lock(_create)
 
     def update_item(self, item_id: int, updates: Dict) -> bool:
         if not updates:
@@ -813,18 +814,21 @@ class MonitoringRepository:
 
         fields.append("updated_at = CURRENT_TIMESTAMP")
         values.append(item_id)
-        conn = self._connect()
-        try:
-            cursor = conn.cursor()
-            cursor.execute(
-                f"UPDATE monitoring_items SET {', '.join(fields)} WHERE id = ?",
-                tuple(values),
-            )
-            changed = cursor.rowcount > 0
-            conn.commit()
-            return changed
-        finally:
-            conn.close()
+        def _update() -> bool:
+            conn = self._connect()
+            try:
+                cursor = conn.cursor()
+                cursor.execute(
+                    f"UPDATE monitoring_items SET {', '.join(fields)} WHERE id = ?",
+                    tuple(values),
+                )
+                changed = cursor.rowcount > 0
+                conn.commit()
+                return changed
+            finally:
+                conn.close()
+
+        return run_with_monitoring_write_lock(_update)
 
     def get_item(self, item_id: int) -> Optional[Dict]:
         conn = self._connect()
@@ -942,17 +946,20 @@ class MonitoringRepository:
         return int(existing["id"])
 
     def delete_item(self, item_id: int) -> bool:
-        conn = self._connect()
-        try:
-            cursor = conn.cursor()
-            cursor.execute("DELETE FROM monitoring_price_history WHERE monitoring_item_id = ?", (item_id,))
-            cursor.execute("DELETE FROM monitoring_events WHERE monitoring_item_id = ?", (item_id,))
-            cursor.execute("DELETE FROM monitoring_items WHERE id = ?", (item_id,))
-            deleted = cursor.rowcount > 0
-            conn.commit()
-            return deleted
-        finally:
-            conn.close()
+        def _delete() -> bool:
+            conn = self._connect()
+            try:
+                cursor = conn.cursor()
+                cursor.execute("DELETE FROM monitoring_price_history WHERE monitoring_item_id = ?", (item_id,))
+                cursor.execute("DELETE FROM monitoring_events WHERE monitoring_item_id = ?", (item_id,))
+                cursor.execute("DELETE FROM monitoring_items WHERE id = ?", (item_id,))
+                deleted = cursor.rowcount > 0
+                conn.commit()
+                return deleted
+            finally:
+                conn.close()
+
+        return run_with_monitoring_write_lock(_delete)
 
     def delete_by_symbol(
         self,
@@ -988,35 +995,38 @@ class MonitoringRepository:
         last_status: Optional[str] = None,
         last_message: Optional[str] = None,
     ) -> bool:
-        item = self.get_item(item_id)
-        if not item:
-            return False
+        def _update_runtime() -> bool:
+            item = self.get_item(item_id)
+            if not item:
+                return False
 
-        effective_checked = last_checked or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        updated = self.update_item(
-            item_id,
-            {
-                "current_price": current_price if current_price is not None else item.get("current_price"),
-                "last_checked": effective_checked,
-                "last_status": last_status if last_status is not None else item.get("last_status"),
-                "last_message": last_message if last_message is not None else item.get("last_message"),
-            },
-        )
-        if updated and current_price is not None:
-            conn = self._connect()
-            try:
-                cursor = conn.cursor()
-                cursor.execute(
-                    """
-                    INSERT INTO monitoring_price_history (monitoring_item_id, price)
-                    VALUES (?, ?)
-                    """,
-                    (item_id, current_price),
-                )
-                conn.commit()
-            finally:
-                conn.close()
-        return updated
+            effective_checked = last_checked or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            updated = self.update_item(
+                item_id,
+                {
+                    "current_price": current_price if current_price is not None else item.get("current_price"),
+                    "last_checked": effective_checked,
+                    "last_status": last_status if last_status is not None else item.get("last_status"),
+                    "last_message": last_message if last_message is not None else item.get("last_message"),
+                },
+            )
+            if updated and current_price is not None:
+                conn = self._connect()
+                try:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        """
+                        INSERT INTO monitoring_price_history (monitoring_item_id, price)
+                        VALUES (?, ?)
+                        """,
+                        (item_id, current_price),
+                    )
+                    conn.commit()
+                finally:
+                    conn.close()
+            return updated
+
+        return run_with_monitoring_write_lock(_update_runtime)
 
     def get_due_items(self, now: Optional[datetime] = None, service_running: bool = True) -> List[Dict]:
         if not service_running:
@@ -1050,43 +1060,46 @@ class MonitoringRepository:
         details: Optional[Dict] = None,
         created_at: Optional[str] = None,
     ) -> int:
-        item = self.get_item(item_id) if item_id else None
-        conn = self._connect()
-        try:
-            cursor = conn.cursor()
-            cursor.execute(
-                """
-                INSERT INTO monitoring_events (
-                    monitoring_item_id, symbol, name, monitor_type, event_type,
-                    message, details_json, notification_pending, sent, created_at
+        def _record() -> int:
+            item = self.get_item(item_id) if item_id else None
+            conn = self._connect()
+            try:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    INSERT INTO monitoring_events (
+                        monitoring_item_id, symbol, name, monitor_type, event_type,
+                        message, details_json, notification_pending, sent, created_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        item_id,
+                        item.get("symbol") if item else "",
+                        item.get("name") if item else None,
+                        item.get("monitor_type") if item else None,
+                        event_type,
+                        message,
+                        json.dumps(details or {}, ensure_ascii=False),
+                        1 if notification_pending else 0,
+                        1 if sent else 0,
+                        created_at or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    ),
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    item_id,
-                    item.get("symbol") if item else "",
-                    item.get("name") if item else None,
-                    item.get("monitor_type") if item else None,
-                    event_type,
-                    message,
-                    json.dumps(details or {}, ensure_ascii=False),
-                    1 if notification_pending else 0,
-                    1 if sent else 0,
-                    created_at or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                ),
-            )
-            event_id = int(cursor.lastrowid)
-            conn.commit()
-            return event_id
-        finally:
-            conn.close()
+                event_id = int(cursor.lastrowid)
+                conn.commit()
+                return event_id
+            finally:
+                conn.close()
+
+        return run_with_monitoring_write_lock(_record)
 
     def get_pending_notifications(self) -> List[Dict]:
         conn = self._connect()
         cursor = conn.cursor()
         cursor.execute(
             """
-            SELECT id, monitoring_item_id, symbol, name, event_type, message, created_at
+            SELECT id, monitoring_item_id, symbol, name, event_type, message, details_json, created_at
             FROM monitoring_events
             WHERE notification_pending = 1 AND sent = 0
             ORDER BY datetime(created_at) ASC, id ASC
@@ -1094,18 +1107,23 @@ class MonitoringRepository:
         )
         rows = cursor.fetchall()
         conn.close()
-        return [
-            {
-                "id": row["id"],
-                "stock_id": row["monitoring_item_id"],
-                "symbol": row["symbol"],
-                "name": row["name"] or row["symbol"],
-                "type": row["event_type"],
-                "message": row["message"],
-                "triggered_at": row["created_at"],
-            }
-            for row in rows
-        ]
+        notifications: List[Dict] = []
+        for row in rows:
+            details = self._safe_json_loads(row["details_json"], {})
+            payload = details if isinstance(details, dict) else {}
+            payload.update(
+                {
+                    "id": row["id"],
+                    "stock_id": row["monitoring_item_id"],
+                    "symbol": row["symbol"],
+                    "name": row["name"] or row["symbol"],
+                    "type": row["event_type"],
+                    "message": row["message"],
+                    "triggered_at": row["created_at"],
+                }
+            )
+            notifications.append(payload)
+        return notifications
 
     def get_recent_events(self, limit: int = 20) -> List[Dict]:
         conn = self._connect()
@@ -1128,7 +1146,7 @@ class MonitoringRepository:
         cursor = conn.cursor()
         cursor.execute(
             """
-            SELECT id, monitoring_item_id, symbol, name, event_type, message, created_at, sent
+            SELECT id, monitoring_item_id, symbol, name, event_type, message, details_json, created_at, sent
             FROM monitoring_events
             WHERE notification_pending = 1
             ORDER BY datetime(created_at) DESC, id DESC
@@ -1138,50 +1156,64 @@ class MonitoringRepository:
         )
         rows = cursor.fetchall()
         conn.close()
-        return [
-            {
-                "id": row["id"],
-                "stock_id": row["monitoring_item_id"],
-                "symbol": row["symbol"],
-                "name": row["name"] or row["symbol"],
-                "type": row["event_type"],
-                "message": row["message"],
-                "triggered_at": row["created_at"],
-                "sent": bool(row["sent"]),
-            }
-            for row in rows
-        ]
+        notifications: List[Dict] = []
+        for row in rows:
+            details = self._safe_json_loads(row["details_json"], {})
+            payload = details if isinstance(details, dict) else {}
+            payload.update(
+                {
+                    "id": row["id"],
+                    "stock_id": row["monitoring_item_id"],
+                    "symbol": row["symbol"],
+                    "name": row["name"] or row["symbol"],
+                    "type": row["event_type"],
+                    "message": row["message"],
+                    "triggered_at": row["created_at"],
+                    "sent": bool(row["sent"]),
+                }
+            )
+            notifications.append(payload)
+        return notifications
 
     def mark_notification_sent(self, event_id: int) -> None:
-        conn = self._connect()
-        try:
-            cursor = conn.cursor()
-            cursor.execute("UPDATE monitoring_events SET sent = 1 WHERE id = ?", (event_id,))
-            conn.commit()
-        finally:
-            conn.close()
+        def _mark() -> None:
+            conn = self._connect()
+            try:
+                cursor = conn.cursor()
+                cursor.execute("UPDATE monitoring_events SET sent = 1 WHERE id = ?", (event_id,))
+                conn.commit()
+            finally:
+                conn.close()
+
+        run_with_monitoring_write_lock(_mark)
 
     def mark_all_notifications_sent(self) -> int:
-        conn = self._connect()
-        try:
-            cursor = conn.cursor()
-            cursor.execute("UPDATE monitoring_events SET sent = 1 WHERE notification_pending = 1 AND sent = 0")
-            changed = cursor.rowcount
-            conn.commit()
-            return changed
-        finally:
-            conn.close()
+        def _mark_all() -> int:
+            conn = self._connect()
+            try:
+                cursor = conn.cursor()
+                cursor.execute("UPDATE monitoring_events SET sent = 1 WHERE notification_pending = 1 AND sent = 0")
+                changed = cursor.rowcount
+                conn.commit()
+                return changed
+            finally:
+                conn.close()
+
+        return run_with_monitoring_write_lock(_mark_all)
 
     def clear_all_notifications(self) -> int:
-        conn = self._connect()
-        try:
-            cursor = conn.cursor()
-            cursor.execute("DELETE FROM monitoring_events WHERE notification_pending = 1")
-            changed = cursor.rowcount
-            conn.commit()
-            return changed
-        finally:
-            conn.close()
+        def _clear() -> int:
+            conn = self._connect()
+            try:
+                cursor = conn.cursor()
+                cursor.execute("DELETE FROM monitoring_events WHERE notification_pending = 1")
+                changed = cursor.rowcount
+                conn.commit()
+                return changed
+            finally:
+                conn.close()
+
+        return run_with_monitoring_write_lock(_clear)
 
     def has_recent_notification(self, item_id: int, event_type: str, minutes: int = 60) -> bool:
         conn = self._connect()

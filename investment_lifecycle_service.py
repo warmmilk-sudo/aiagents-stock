@@ -14,8 +14,8 @@ from portfolio_db import PortfolioDB, portfolio_db
 class InvestmentLifecycleService:
     """Coordinates canonical positions, strategy projections, and monitor write-back."""
 
-    DEFAULT_AI_INTERVAL_SECONDS = 300
-    DEFAULT_ALERT_INTERVAL_MINUTES = 60
+    DEFAULT_AI_INTERVAL_SECONDS = 3600
+    DEFAULT_ALERT_INTERVAL_MINUTES = 3
 
     def __init__(
         self,

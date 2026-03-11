@@ -1166,6 +1166,8 @@ def render_ai_monitor_tasks_panel(show_header: bool = True, title: str = "AI监�
         _render_manual_ai_analysis_live_fragment()
 
     db = st.session_state[SMART_MONITOR_DB_KEY]
+    monitor_service.ensure_started()
+    monitor_service.ensure_stopped_if_idle()
     service_status = "运行中" if monitor_service.running else "已停止"
     st.caption(f"监测服务状态: {service_status}。启用中的任务会由统一监测服务按分钟调度执行。")
 
@@ -1175,7 +1177,7 @@ def render_ai_monitor_tasks_panel(show_header: bool = True, title: str = "AI监�
         st.session_state["ai_task_form_task_name"] = prefill.get("task_name") or f"{prefill.get('stock_name') or prefill.get('symbol')}盯盘"
         st.session_state["ai_task_form_stock_code"] = prefill.get("symbol") or ""
         st.session_state["ai_task_form_stock_name"] = prefill.get("stock_name") or ""
-        st.session_state["ai_task_form_interval_minutes"] = int(prefill.get("interval_minutes") or 5)
+        st.session_state["ai_task_form_interval_minutes"] = int(prefill.get("interval_minutes") or 60)
         st.session_state["ai_task_form_trading_hours_only"] = bool(prefill.get("trading_hours_only", True))
         st.session_state["ai_task_form_position_size_pct"] = int(prefill.get("position_size_pct") or 20)
         st.session_state["ai_task_form_stop_loss_pct"] = int(prefill.get("stop_loss_pct") or 5)
@@ -1210,7 +1212,7 @@ def render_ai_monitor_tasks_panel(show_header: bool = True, title: str = "AI监�
                 task_name = st.text_input("任务名称", placeholder="例如: 茅台 AI 监控", key="ai_task_form_task_name")
                 stock_code = st.text_input("股票代码", placeholder="例如: 600519", key="ai_task_form_stock_code")
                 stock_name = st.text_input("股票名称", placeholder="可选", key="ai_task_form_stock_name")
-                interval_minutes = st.slider("检查间隔(分钟)", 1, 240, 5, key="ai_task_form_interval_minutes")
+                interval_minutes = st.slider("检查间隔(分钟)", 1, 240, 60, key="ai_task_form_interval_minutes")
                 st.caption("资产状态与持仓信息由 `assets` 主表实时投影，不在此页编辑。")
 
             with col2:
@@ -1247,7 +1249,8 @@ def render_ai_monitor_tasks_panel(show_header: bool = True, title: str = "AI监�
                 st.session_state["ai_task_form_task_name"] = ""
                 st.session_state["ai_task_form_stock_code"] = ""
                 st.session_state["ai_task_form_stock_name"] = ""
-                st.session_state["ai_task_form_interval_minutes"] = 5
+                st.session_state["ai_task_form_interval_minutes"] = 60
+                monitor_service.ensure_started()
                 st.session_state["ai_task_form_trading_hours_only"] = True
                 st.session_state["ai_task_form_position_size_pct"] = 20
                 st.session_state["ai_task_form_stop_loss_pct"] = 5
@@ -1283,6 +1286,7 @@ def render_ai_monitor_tasks_panel(show_header: bool = True, title: str = "AI监�
             disabled=disabled_count == 0,
         ):
             changed_count = db.set_all_monitor_tasks_enabled(True)
+            monitor_service.ensure_started()
             st.success(f"已启用 {changed_count} 个任务。")
             st.rerun()
     with disable_all_col:
@@ -1293,6 +1297,7 @@ def render_ai_monitor_tasks_panel(show_header: bool = True, title: str = "AI监�
             disabled=enabled_count == 0,
         ):
             changed_count = db.set_all_monitor_tasks_enabled(False)
+            monitor_service.ensure_stopped_if_idle()
             st.success(f"已停用 {changed_count} 个任务。")
             st.rerun()
 
@@ -1350,6 +1355,10 @@ def render_ai_monitor_tasks_panel(show_header: bool = True, title: str = "AI监�
                             'portfolio_stock_id': task.get('portfolio_stock_id'),
                         },
                     )
+                    if task.get('enabled'):
+                        monitor_service.ensure_stopped_if_idle()
+                    else:
+                        monitor_service.ensure_started()
                     st.success(f"任务已{toggle_label}。")
                     st.rerun()
             with action_col3:

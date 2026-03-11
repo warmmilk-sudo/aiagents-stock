@@ -88,6 +88,8 @@ def display_monitor_status():
 
 def display_add_stock_section():
     """显示添加股票监测区域"""
+    monitor_service.ensure_started()
+    monitor_service.ensure_stopped_if_idle()
 
     prefill = st.session_state.pop(INVESTMENT_PRICE_ALERT_PREFILL_KEY, None)
     if prefill:
@@ -175,7 +177,7 @@ def display_add_stock_section():
             
             # 监测参数
             st.markdown("**⏰ 监测参数**")
-            check_interval = st.slider("监测间隔(分钟)", 5, 120, 30)
+            check_interval = st.slider("监测间隔(分钟)", 3, 120, 3)
             notification_enabled = st.checkbox("启用通知", value=True)
             
             # 投资评级
@@ -224,6 +226,7 @@ def display_add_stock_section():
                     st.balloons()
                     
                     # 立即更新一次价格
+                    monitor_service.ensure_started()
                     monitor_service.manual_update_stock(stock_id)
                     
                     # 清空表单
@@ -412,7 +415,7 @@ def _legacy_display_edit_dialog(stock_id: int):
         
         with col2:
             st.subheader("⚙️ 监测设置")
-            check_interval = st.slider("监测间隔(分钟)", 5, 120, stock['check_interval'])
+            check_interval = st.slider("监测间隔(分钟)", 3, 120, stock['check_interval'])
             rating = st.selectbox("投资评级", ["买入", "持有", "卖出"], 
                                  index=["买入", "持有", "卖出"].index(stock['rating']) if stock['rating'] in ["买入", "持有", "卖出"] else 0)
             notification_enabled = st.checkbox("启用通知", value=stock['notification_enabled'])
@@ -804,6 +807,8 @@ def _show_monitor_jump_success():
 def display_price_alert_workspace():
     """价格预警工作台，供 AI 盯盘页复用。"""
     st.header("价格预警")
+    monitor_service.ensure_started()
+    monitor_service.ensure_stopped_if_idle()
     _show_monitor_jump_success()
     display_add_stock_section()
     display_monitored_stocks()
@@ -941,7 +946,7 @@ def display_edit_dialog(stock_id: int):
                 take_profit = st.number_input("止盈价", value=float(stock['take_profit'] or 0), step=0.01, format="%.2f")
                 stop_loss = st.number_input("止损价", value=float(stock['stop_loss'] or 0), step=0.01, format="%.2f")
             with col2:
-                check_interval = st.slider("监测间隔(分钟)", 5, 240, int(stock['check_interval']))
+                check_interval = st.slider("监测间隔(分钟)", 3, 240, int(stock['check_interval']))
                 rating = st.selectbox("投资评级", ["买入", "持有", "卖出"], index=["买入", "持有", "卖出"].index(stock['rating']) if stock['rating'] in ["买入", "持有", "卖出"] else 0)
                 notification_enabled = st.checkbox("启用通知", value=stock['notification_enabled'])
 
@@ -959,6 +964,7 @@ def display_edit_dialog(stock_id: int):
                         check_interval=check_interval,
                         notification_enabled=notification_enabled,
                     )
+                    monitor_service.ensure_started()
                     st.success("价格预警已更新。")
                     st.session_state.pop(MONITOR_EDITING_STOCK_ID_KEY, None)
                     st.rerun()
@@ -994,6 +1000,7 @@ def display_delete_confirm_dialog(stock_id: int):
     with col1:
         if st.button("确认删除", type="primary", key=f"confirm_delete_price_alert_{stock_id}", width='stretch'):
             monitor_db.remove_monitored_stock(stock_id)
+            monitor_service.ensure_stopped_if_idle()
             st.success("价格预警已删除。")
             st.session_state.pop(MONITOR_DELETING_STOCK_ID_KEY, None)
             st.rerun()

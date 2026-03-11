@@ -5,6 +5,7 @@
 
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from typing import Dict, List, Optional
 from datetime import datetime
 import threading
@@ -22,6 +23,9 @@ from internal_events import event_bus, Events
 
 class SmartMonitorEngine:
     """智能盯盘引擎"""
+
+    DATA_FETCH_TIMEOUT_SECONDS = 10
+    AI_DECISION_TIMEOUT_SECONDS = 25
     
     def __init__(self, deepseek_api_key: str = None, model: str = None,
                  lightweight_model: str = None, reasoning_model: str = None,
@@ -104,6 +108,155 @@ class SmartMonitorEngine:
                 "status": (asset or {}).get("status"),
             }
         return account_info
+
+    @staticmethod
+    def _run_with_timeout(func, timeout_seconds: int, *args, **kwargs):
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(func, *args, **kwargs)
+            try:
+                return future.result(timeout=timeout_seconds)
+            except FutureTimeoutError as exc:
+                raise TimeoutError(f"operation_timed_out_after_{timeout_seconds}s") from exc
+
+    @staticmethod
+    def _map_action_to_rating(action: str, fallback: str = "持有") -> str:
+        normalized = str(action or "").upper()
+        if normalized == "BUY":
+            return "买入"
+        if normalized == "SELL":
+            return "卖出"
+        return fallback or "持有"
+
+    @staticmethod
+    def _normalize_monitor_levels(decision: Dict) -> Optional[Dict]:
+        raw_levels = decision.get("monitor_levels")
+        if not isinstance(raw_levels, dict):
+            return None
+        normalized: Dict[str, float] = {}
+        for key in ("entry_min", "entry_max", "take_profit", "stop_loss"):
+            value = raw_levels.get(key)
+            if value in (None, ""):
+                return None
+            try:
+                normalized[key] = float(value)
+            except (TypeError, ValueError):
+                return None
+        return normalized
+
+    def _find_ai_task_item(
+        self,
+        stock_code: str,
+        account_name: str,
+        asset_id: Optional[int],
+        portfolio_stock_id: Optional[int],
+    ) -> Optional[Dict]:
+        return self.db.monitoring_repository.get_item_by_symbol(
+            stock_code,
+            monitor_type='ai_task',
+            account_name=account_name,
+            asset_id=asset_id,
+            portfolio_stock_id=portfolio_stock_id,
+        )
+
+    def _sync_runtime_thresholds(
+        self,
+        *,
+        stock_code: str,
+        stock_name: str,
+        decision: Dict,
+        decision_id: int,
+        account_name: str,
+        asset_id: Optional[int],
+        portfolio_stock_id: Optional[int],
+        strategy_context: Optional[Dict],
+    ) -> bool:
+        from monitor_db import monitor_db as realtime_monitor_db
+
+        task_item = self._find_ai_task_item(stock_code, account_name, asset_id, portfolio_stock_id)
+        monitor_levels = self._normalize_monitor_levels(decision)
+        if not monitor_levels:
+            if task_item:
+                self.db.monitoring_repository.record_event(
+                    item_id=task_item["id"],
+                    event_type="threshold_sync_skipped",
+                    message="AI 未返回完整 monitor_levels，跳过实时预警阈值回写",
+                    notification_pending=False,
+                    sent=True,
+                    details={"decision_id": decision_id},
+                )
+            return False
+
+        asset = self.db.asset_repository.get_asset(asset_id) if asset_id else None
+        managed_by_portfolio = bool(asset and asset.get("status") == STATUS_PORTFOLIO)
+        inherited_interval = 3
+        inherited_notification = True
+        inherited_trading_hours = True
+
+        existing_alert = realtime_monitor_db.get_monitor_by_code(
+            stock_code,
+            managed_only=True if managed_by_portfolio else None,
+            account_name=account_name,
+            asset_id=asset_id,
+            portfolio_stock_id=portfolio_stock_id,
+        )
+        if existing_alert:
+            inherited_interval = int(existing_alert.get("check_interval") or inherited_interval)
+            inherited_notification = bool(existing_alert.get("notification_enabled", inherited_notification))
+            inherited_trading_hours = bool(existing_alert.get("trading_hours_only", inherited_trading_hours))
+            updated = realtime_monitor_db.apply_runtime_thresholds(
+                existing_alert["id"],
+                rating=self._map_action_to_rating(decision.get("action"), fallback=(strategy_context or {}).get("rating") or "持有"),
+                monitor_levels=monitor_levels,
+                origin_decision_id=decision_id,
+            )
+            if task_item:
+                self.db.monitoring_repository.record_event(
+                    item_id=task_item["id"],
+                    event_type="threshold_sync",
+                    message="已更新绑定价格预警的运行时阈值",
+                    notification_pending=False,
+                    sent=True,
+                    details={"decision_id": decision_id, "price_alert_id": existing_alert["id"]},
+                )
+            return updated
+
+        if task_item:
+            inherited_interval = 3
+            inherited_notification = bool(task_item.get("notification_enabled", inherited_notification))
+            inherited_trading_hours = bool(task_item.get("trading_hours_only", inherited_trading_hours))
+
+        price_alert_id = realtime_monitor_db.add_monitored_stock(
+            symbol=stock_code,
+            name=stock_name or stock_code,
+            rating=self._map_action_to_rating(decision.get("action"), fallback=(strategy_context or {}).get("rating") or "持有"),
+            entry_range={"min": monitor_levels["entry_min"], "max": monitor_levels["entry_max"]},
+            take_profit=monitor_levels["take_profit"],
+            stop_loss=monitor_levels["stop_loss"],
+            check_interval=inherited_interval,
+            notification_enabled=inherited_notification,
+            trading_hours_only=inherited_trading_hours,
+            managed_by_portfolio=managed_by_portfolio,
+            account_name=account_name,
+            asset_id=asset_id,
+            portfolio_stock_id=portfolio_stock_id,
+            origin_analysis_id=(strategy_context or {}).get("origin_analysis_id"),
+        )
+        updated = realtime_monitor_db.apply_runtime_thresholds(
+            price_alert_id,
+            rating=self._map_action_to_rating(decision.get("action"), fallback=(strategy_context or {}).get("rating") or "持有"),
+            monitor_levels=monitor_levels,
+            origin_decision_id=decision_id,
+        )
+        if task_item:
+            self.db.monitoring_repository.record_event(
+                item_id=task_item["id"],
+                event_type="threshold_sync",
+                message="已创建并写入绑定价格预警的运行时阈值",
+                notification_pending=False,
+                sent=True,
+                details={"decision_id": decision_id, "price_alert_id": price_alert_id},
+            )
+        return updated
     
     def analyze_stock(self, stock_code: str, notify: bool = True, has_position: bool = False,
                       position_cost: float = 0, position_quantity: int = 0,
@@ -144,7 +297,11 @@ class SmartMonitorEngine:
                 }
             
             # 2. 获取市场数据
-            market_data = self.data_fetcher.get_comprehensive_data(stock_code)
+            market_data = self._run_with_timeout(
+                self.data_fetcher.get_comprehensive_data,
+                self.DATA_FETCH_TIMEOUT_SECONDS,
+                stock_code,
+            )
             if not market_data:
                 return {
                     'success': False,
@@ -189,7 +346,9 @@ class SmartMonitorEngine:
             )
 
             # 5. 调用DeepSeek AI决策
-            ai_result = self.deepseek.analyze_stock_and_decide(
+            ai_result = self._run_with_timeout(
+                self.deepseek.analyze_stock_and_decide,
+                self.AI_DECISION_TIMEOUT_SECONDS,
                 stock_code=stock_code,
                 market_data=market_data,
                 account_info=account_info,
@@ -232,11 +391,23 @@ class SmartMonitorEngine:
                 'take_profit_pct': decision.get('take_profit_pct'),
                 'risk_level': decision.get('risk_level'),
                 'key_price_levels': decision.get('key_price_levels', {}),
+                'monitor_levels': decision.get('monitor_levels', {}),
                 'market_data': market_data,
                 'account_info': account_info,
                 'execution_mode': 'manual_only',
                 'action_status': 'pending' if str(decision.get('action', '')).upper() in {'BUY', 'SELL'} else 'suggested',
             })
+
+            self._sync_runtime_thresholds(
+                stock_code=stock_code,
+                stock_name=market_data.get('name') or stock_code,
+                decision=decision,
+                decision_id=decision_id,
+                account_name=account_name,
+                asset_id=asset_id,
+                portfolio_stock_id=portfolio_stock_id,
+                strategy_context=strategy_context,
+            )
 
             # 7. 手工执行模式下只生成待处理动作
             execution_result = None
@@ -429,36 +600,25 @@ class SmartMonitorEngine:
                 'trading_session': session_info.get('session', '未知'),
             }
 
-            success = self.notification.send_notification(notification_data)
-            if success:
-                self.logger.info(f"[{stock_code}] {action_text}通知已发送")
-            else:
-                self.logger.warning(f"[{stock_code}] {action_text}通知发送失败")
-
             self.db.save_notification({
                 'stock_code': stock_code,
                 'notify_type': 'decision',
                 'subject': f"智能盯盘 - {message}",
                 'content': content,
-                'status': 'sent' if success else 'failed',
+                'status': 'pending',
             })
 
-            task_item = self.db.monitoring_repository.get_item_by_symbol(
-                stock_code,
-                monitor_type='ai_task',
-                account_name=account_name,
-                asset_id=asset_id,
-                portfolio_stock_id=portfolio_stock_id,
-            )
+            task_item = self._find_ai_task_item(stock_code, account_name, asset_id, portfolio_stock_id)
             if task_item:
                 self.db.monitoring_repository.record_event(
                     item_id=task_item['id'],
                     event_type=action.lower(),
                     message=message,
-                    details=content,
-                    notification_pending=False,
-                    sent=success,
+                    details=notification_data,
+                    notification_pending=True,
+                    sent=False,
                 )
+                self.logger.info(f"[{stock_code}] {action_text}通知已入队")
         except Exception as exc:
             self.logger.error(f"[{stock_code}] 发送通知失败: {exc}")
 
@@ -476,69 +636,18 @@ class SmartMonitorEngine:
         portfolio_stock_id: Optional[int] = None,
         strategy_context: Optional[Dict] = None,
     ):
-        if not hasattr(self, 'monitoring_contexts'):
-            self.monitoring_contexts = {}
-        self.monitoring_stocks.add(stock_code)
-        self.monitoring_contexts[stock_code] = {
-            'check_interval': check_interval,
-            'notify': notify,
-            'has_position': has_position,
-            'position_cost': position_cost,
-            'position_quantity': position_quantity,
-            'trading_hours_only': trading_hours_only,
-            'account_name': account_name,
-            'asset_id': asset_id,
-            'portfolio_stock_id': portfolio_stock_id,
-            'strategy_context': strategy_context or {},
-        }
         self.logger.info(
-            f"[{stock_code}] 启动AI监控: interval={check_interval}s "
-            f"trading_hours_only={trading_hours_only}"
+            "[%s] start_monitor 已废弃，AI 执行统一由 MonitoringOrchestrator 调度",
+            stock_code,
         )
 
     def stop_monitor(self, stock_code: str):
-        self.monitoring_stocks.discard(stock_code)
-        if hasattr(self, 'monitoring_contexts'):
-            self.monitoring_contexts.pop(stock_code, None)
-        self.logger.info(f"[{stock_code}] 停止AI监控")
+        self.logger.info("[%s] stop_monitor 已废弃，统一调度器不再使用旧事件总线路径", stock_code)
 
     def _on_radar_event(self, **kwargs):
         stock_code = kwargs.get('stock_code')
-        if not stock_code or stock_code not in self.monitoring_stocks:
-            return
-
-        context = {}
-        if hasattr(self, 'monitoring_contexts'):
-            context = dict(self.monitoring_contexts.get(stock_code, {}))
-
-        task = self.db.get_monitor_task_by_code(stock_code)
-        if task:
-            context.setdefault('notify', True)
-            context.setdefault('trading_hours_only', bool(task.get('trading_hours_only', 1)))
-            context.setdefault('account_name', task.get('account_name') or DEFAULT_ACCOUNT_NAME)
-            context.setdefault('asset_id', task.get('asset_id'))
-            context.setdefault('portfolio_stock_id', task.get('portfolio_stock_id'))
-            context.setdefault('strategy_context', task.get('strategy_context') or {})
-
-        result = self.analyze_stock(
-            stock_code=stock_code,
-            notify=bool(context.get('notify', True)),
-            has_position=bool(context.get('has_position', False)),
-            position_cost=float(context.get('position_cost', 0) or 0),
-            position_quantity=int(context.get('position_quantity', 0) or 0),
-            trading_hours_only=bool(context.get('trading_hours_only', True)),
-            account_name=context.get('account_name') or DEFAULT_ACCOUNT_NAME,
-            asset_id=context.get('asset_id'),
-            portfolio_stock_id=context.get('portfolio_stock_id'),
-            strategy_context=context.get('strategy_context') or {},
-        )
-
-        if result.get('skipped'):
-            self.logger.info(f"[{stock_code}] 雷达事件触发后跳过执行: {result.get('error')}")
-        elif result.get('success'):
-            self.logger.info(f"[{stock_code}] 雷达事件分析完成: {result['decision']['action']}")
-        else:
-            self.logger.error(f"[{stock_code}] 雷达事件分析失败: {result.get('error')}")
+        if stock_code:
+            self.logger.debug("[%s] 忽略旧雷达事件回调，统一调度器已接管执行", stock_code)
 
 
 if __name__ == '__main__':

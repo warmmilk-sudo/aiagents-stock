@@ -1,11 +1,18 @@
 import os
 import sqlite3
-from typing import Optional
+import threading
+from typing import Callable, Optional, TypeVar
 
 
 CANONICAL_INVESTMENT_DB = "investment.db"
 DEFAULT_ACCOUNT_NAME = "默认账户"
 METADATA_TABLE = "investment_metadata"
+SQLITE_TIMEOUT_SECONDS = 30
+SQLITE_BUSY_TIMEOUT_MILLISECONDS = 30000
+_T = TypeVar("_T")
+
+# Monitoring-related writes are serialized in-process to reduce SQLite lock contention.
+MONITORING_WRITE_LOCK = threading.RLock()
 
 
 def resolve_investment_db_path(seed_db_path: Optional[str] = None) -> str:
@@ -30,11 +37,27 @@ def ensure_db_directory(db_path: str) -> None:
         os.makedirs(directory, exist_ok=True)
 
 
+def configure_sqlite_connection(conn: sqlite3.Connection) -> sqlite3.Connection:
+    conn.row_factory = sqlite3.Row
+    conn.execute(f"PRAGMA busy_timeout = {SQLITE_BUSY_TIMEOUT_MILLISECONDS}")
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA synchronous = NORMAL")
+    try:
+        conn.execute("PRAGMA journal_mode = WAL")
+    except sqlite3.OperationalError:
+        pass
+    return conn
+
+
 def connect_sqlite(db_path: str) -> sqlite3.Connection:
     ensure_db_directory(db_path)
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    return conn
+    conn = sqlite3.connect(db_path, timeout=SQLITE_TIMEOUT_SECONDS)
+    return configure_sqlite_connection(conn)
+
+
+def run_with_monitoring_write_lock(fn: Callable[..., _T], *args, **kwargs) -> _T:
+    with MONITORING_WRITE_LOCK:
+        return fn(*args, **kwargs)
 
 
 def ensure_metadata_table(conn: sqlite3.Connection) -> None:

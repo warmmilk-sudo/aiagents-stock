@@ -24,8 +24,8 @@ from smart_monitor_db import SmartMonitorDB
 class PortfolioManager:
     """持仓管理器类"""
 
-    DEFAULT_SMART_MONITOR_CHECK_INTERVAL = 300
-    DEFAULT_REALTIME_MONITOR_CHECK_INTERVAL = 60
+    DEFAULT_SMART_MONITOR_CHECK_INTERVAL = 3600
+    DEFAULT_REALTIME_MONITOR_CHECK_INTERVAL = 3
     DEFAULT_RISK_FREE_RATE = 0.015
     AGGREGATE_ACCOUNT_NAME = "全部账户"
     DEFAULT_ANALYSIS_AGENTS = ["technical", "fundamental", "fund_flow", "risk"]

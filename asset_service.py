@@ -18,8 +18,8 @@ from monitoring_repository import MonitoringRepository
 class AssetService:
     """Lifecycle orchestration for research, watchlist, and portfolio assets."""
 
-    DEFAULT_AI_INTERVAL_MINUTES = 5
-    DEFAULT_ALERT_INTERVAL_MINUTES = 60
+    DEFAULT_AI_INTERVAL_MINUTES = 60
+    DEFAULT_ALERT_INTERVAL_MINUTES = 3
 
     def __init__(
         self,
@@ -38,6 +38,38 @@ class AssetService:
             symbol=asset.get("symbol"),
             account_name=asset.get("account_name") or DEFAULT_ACCOUNT_NAME,
         )
+
+    @staticmethod
+    def _normalize_runtime_thresholds(config: Optional[Dict]) -> Optional[Dict]:
+        if not isinstance(config, dict):
+            return None
+        runtime_thresholds = config.get("runtime_thresholds")
+        if not isinstance(runtime_thresholds, dict):
+            return None
+        keys = ("entry_min", "entry_max", "take_profit", "stop_loss")
+        normalized: Dict[str, float] = {}
+        for key in keys:
+            value = runtime_thresholds.get(key)
+            if value in (None, ""):
+                return None
+            try:
+                normalized[key] = float(value)
+            except (TypeError, ValueError):
+                return None
+        return normalized
+
+    @staticmethod
+    def _should_preserve_runtime_thresholds(existing_item: Optional[Dict], strategy_context: Optional[Dict]) -> bool:
+        if not existing_item:
+            return False
+        existing_config = existing_item.get("config") or {}
+        if AssetService._normalize_runtime_thresholds(existing_config) is None:
+            return False
+        existing_origin = existing_item.get("origin_analysis_id")
+        next_origin = (strategy_context or {}).get("origin_analysis_id")
+        if existing_origin is None or next_origin is None:
+            return True
+        return int(existing_origin) == int(next_origin)
 
     def _build_ai_task_payload(self, asset: Dict, existing_item: Optional[Dict] = None) -> Dict:
         existing_item = existing_item or {}
@@ -78,6 +110,21 @@ class AssetService:
         existing_item = existing_item or {}
         existing_config = existing_item.get("config") or {}
         status = asset.get("status")
+        config = {
+            "rating": strategy_context.get("rating") or "持有",
+            "entry_range": {"min": float(entry_min), "max": float(entry_max)},
+            "take_profit": float(take_profit),
+            "stop_loss": float(stop_loss),
+            "strategy_context": strategy_context,
+            "threshold_source": "strategy_context",
+            "threshold_updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "runtime_thresholds": None,
+            "origin_decision_id": None,
+        }
+        if self._should_preserve_runtime_thresholds(existing_item, strategy_context):
+            for key in ("runtime_thresholds", "origin_decision_id", "threshold_source", "threshold_updated_at"):
+                if key in existing_config:
+                    config[key] = existing_config[key]
         return {
             "symbol": asset["symbol"],
             "name": asset.get("name") or asset["symbol"],
@@ -92,12 +139,7 @@ class AssetService:
             "asset_id": asset["id"],
             "portfolio_stock_id": asset["id"] if status == STATUS_PORTFOLIO else None,
             "origin_analysis_id": strategy_context.get("origin_analysis_id") or asset.get("origin_analysis_id"),
-            "config": {
-                "rating": strategy_context.get("rating") or "持有",
-                "entry_range": {"min": float(entry_min), "max": float(entry_max)},
-                "take_profit": float(take_profit),
-                "stop_loss": float(stop_loss),
-            },
+            "config": config,
         }
 
     def sync_managed_monitors(self, asset_id: int) -> Dict[str, int]:

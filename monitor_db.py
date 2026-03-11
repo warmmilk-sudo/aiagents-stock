@@ -1,6 +1,7 @@
-import json
+from datetime import datetime
 from typing import Dict, List, Optional
 
+from analysis_repository import AnalysisRepository
 from monitoring_repository import MonitoringRepository, resolve_monitoring_db_path
 
 
@@ -9,7 +10,9 @@ class StockMonitorDatabase:
 
     def __init__(self, db_path: str = "stock_monitor.db"):
         self.db_path = db_path
-        self.repository = MonitoringRepository(resolve_monitoring_db_path(db_path))
+        canonical_db = resolve_monitoring_db_path(db_path)
+        self.repository = MonitoringRepository(canonical_db)
+        self.analysis_repository = AnalysisRepository(canonical_db, legacy_analysis_db_path=canonical_db)
         self.repository.migrate_legacy_stock_db(db_path)
 
     @staticmethod
@@ -18,25 +21,116 @@ class StockMonitorDatabase:
         entry_range: Optional[Dict],
         take_profit: Optional[float],
         stop_loss: Optional[float],
+        *,
+        runtime_thresholds: Optional[Dict] = None,
+        threshold_source: Optional[str] = None,
+        threshold_updated_at: Optional[str] = None,
+        origin_decision_id: Optional[int] = None,
+        strategy_context: Optional[Dict] = None,
     ) -> Dict:
-        return {
+        config = {
             "rating": rating,
             "entry_range": entry_range or {},
             "take_profit": take_profit,
             "stop_loss": stop_loss,
         }
+        if runtime_thresholds:
+            config["runtime_thresholds"] = runtime_thresholds
+        if threshold_source:
+            config["threshold_source"] = threshold_source
+        if threshold_updated_at:
+            config["threshold_updated_at"] = threshold_updated_at
+        if origin_decision_id is not None:
+            config["origin_decision_id"] = origin_decision_id
+        if strategy_context:
+            config["strategy_context"] = strategy_context
+        return config
 
     @staticmethod
-    def _item_to_stock(item: Dict) -> Dict:
+    def _to_float(value) -> Optional[float]:
+        if value in (None, ""):
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    @classmethod
+    def _normalize_monitor_levels(cls, payload: Optional[Dict]) -> Optional[Dict]:
+        if not isinstance(payload, dict):
+            return None
+        levels = {
+            "entry_min": cls._to_float(payload.get("entry_min")),
+            "entry_max": cls._to_float(payload.get("entry_max")),
+            "take_profit": cls._to_float(payload.get("take_profit")),
+            "stop_loss": cls._to_float(payload.get("stop_loss")),
+        }
+        if not all(value is not None for value in levels.values()):
+            return None
+        return levels
+
+    def _resolve_strategy_context(self, item: Dict, config: Dict) -> Dict:
+        strategy_context = self.analysis_repository.get_latest_strategy_context(
+            asset_id=item.get("asset_id"),
+            portfolio_stock_id=item.get("portfolio_stock_id"),
+            symbol=item.get("symbol"),
+            account_name=item.get("account_name"),
+        )
+        if strategy_context:
+            return strategy_context
+        raw_context = config.get("strategy_context") or {}
+        return raw_context if isinstance(raw_context, dict) else {}
+
+    def _resolve_effective_levels(self, item: Dict, config: Dict) -> Dict:
+        runtime_levels = self._normalize_monitor_levels(config.get("runtime_thresholds"))
+        strategy_context = self._resolve_strategy_context(item, config)
+        strategy_levels = self._normalize_monitor_levels(
+            {
+                "entry_min": strategy_context.get("entry_min"),
+                "entry_max": strategy_context.get("entry_max"),
+                "take_profit": strategy_context.get("take_profit"),
+                "stop_loss": strategy_context.get("stop_loss"),
+            }
+        )
+        static_levels = self._normalize_monitor_levels(
+            {
+                "entry_min": (config.get("entry_range") or {}).get("min"),
+                "entry_max": (config.get("entry_range") or {}).get("max"),
+                "take_profit": config.get("take_profit"),
+                "stop_loss": config.get("stop_loss"),
+            }
+        )
+        if runtime_levels:
+            return {"levels": runtime_levels, "threshold_source": config.get("threshold_source") or "ai_runtime"}
+        if strategy_levels:
+            return {"levels": strategy_levels, "threshold_source": "strategy_context"}
+        if static_levels:
+            return {"levels": static_levels, "threshold_source": config.get("threshold_source") or "manual"}
+        return {
+            "levels": {
+                "entry_min": None,
+                "entry_max": None,
+                "take_profit": None,
+                "stop_loss": None,
+            },
+            "threshold_source": config.get("threshold_source") or "manual",
+        }
+
+    def _item_to_stock(self, item: Dict) -> Dict:
         config = item.get("config") or {}
+        effective = self._resolve_effective_levels(item, config)
+        levels = effective["levels"]
         return {
             "id": item["id"],
             "symbol": item["symbol"],
             "name": item.get("name") or item["symbol"],
             "rating": config.get("rating", "持有"),
-            "entry_range": config.get("entry_range") or {},
-            "take_profit": config.get("take_profit"),
-            "stop_loss": config.get("stop_loss"),
+            "entry_range": {
+                "min": levels.get("entry_min"),
+                "max": levels.get("entry_max"),
+            } if levels.get("entry_min") is not None and levels.get("entry_max") is not None else {},
+            "take_profit": levels.get("take_profit"),
+            "stop_loss": levels.get("stop_loss"),
             "current_price": item.get("current_price"),
             "last_checked": item.get("last_checked"),
             "check_interval": item.get("interval_minutes", 30),
@@ -47,6 +141,11 @@ class StockMonitorDatabase:
             "asset_id": item.get("asset_id"),
             "portfolio_stock_id": item.get("portfolio_stock_id"),
             "origin_analysis_id": item.get("origin_analysis_id"),
+            "threshold_source": effective.get("threshold_source"),
+            "threshold_updated_at": config.get("threshold_updated_at"),
+            "origin_decision_id": config.get("origin_decision_id"),
+            "runtime_thresholds": config.get("runtime_thresholds") or {},
+            "strategy_context": self._resolve_strategy_context(item, config),
             "created_at": item.get("created_at"),
             "updated_at": item.get("updated_at"),
         }
@@ -87,6 +186,8 @@ class StockMonitorDatabase:
                 entry_range,
                 take_profit,
                 stop_loss,
+                threshold_source="manual",
+                threshold_updated_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             ),
         }
         if managed_by_portfolio:
@@ -161,6 +262,8 @@ class StockMonitorDatabase:
                 entry_range,
                 take_profit,
                 stop_loss,
+                threshold_source="manual",
+                threshold_updated_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             ),
         }
         if trading_hours_only is not None:
@@ -196,6 +299,39 @@ class StockMonitorDatabase:
             portfolio_stock_id=portfolio_stock_id,
         )
         return self._item_to_stock(item) if item else None
+
+    def apply_runtime_thresholds(
+        self,
+        stock_id: int,
+        *,
+        rating: str,
+        monitor_levels: Dict,
+        origin_decision_id: int,
+    ) -> bool:
+        item = self.repository.get_item(stock_id)
+        if not item or item.get("monitor_type") != "price_alert":
+            return False
+        normalized_levels = self._normalize_monitor_levels(monitor_levels)
+        if not normalized_levels:
+            return False
+        config = dict(item.get("config") or {})
+        config.update(
+            self._build_config(
+                rating,
+                {
+                    "min": normalized_levels["entry_min"],
+                    "max": normalized_levels["entry_max"],
+                },
+                normalized_levels["take_profit"],
+                normalized_levels["stop_loss"],
+                runtime_thresholds=normalized_levels,
+                threshold_source="ai_runtime",
+                threshold_updated_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                origin_decision_id=origin_decision_id,
+                strategy_context=config.get("strategy_context") if isinstance(config.get("strategy_context"), dict) else None,
+            )
+        )
+        return self.repository.update_item(stock_id, {"config": config})
 
     def remove_monitor_by_code(
         self,

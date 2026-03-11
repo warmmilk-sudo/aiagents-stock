@@ -191,7 +191,7 @@ class SmartMonitorDeepSeek:
                 f"{self.base_url}/chat/completions",
                 headers=self.headers,
                 json=payload,
-                timeout=60
+                timeout=25
             )
             response.raise_for_status()
             return response.json()
@@ -351,8 +351,19 @@ class SmartMonitorDeepSeek:
         "support": 支撑位价格,
         "resistance": 阻力位价格,
         "stop_loss": 止损位价格
+    },
+    "monitor_levels": {
+        "entry_min": 进场区间下沿价格,
+        "entry_max": 进场区间上沿价格,
+        "take_profit": 止盈价位,
+        "stop_loss": 止损价位
     }
 }
+
+要求：
+- `monitor_levels` 必须输出 4 个明确价格，不要省略。
+- 如果沿用战略基线，也要把具体价格完整写入 `monitor_levels`。
+- `key_price_levels` 用于解释，`monitor_levels` 用于系统实时预警回写。
 
 **reasoning 示例**：
 "茅台当前价格1650元，日线级别呈多头排列（MA5 1645 > MA20 1620 > MA60 1580），
@@ -578,6 +589,10 @@ KDJ:
             decision.setdefault('stop_loss_pct', 5.0)
             decision.setdefault('take_profit_pct', 10.0)
             decision.setdefault('risk_level', 'medium')
+            decision.setdefault('key_price_levels', {})
+            monitor_levels = self._normalize_monitor_levels(decision)
+            if monitor_levels:
+                decision['monitor_levels'] = monitor_levels
             
             return decision
             
@@ -591,8 +606,37 @@ KDJ:
                 'position_size_pct': 0,
                 'stop_loss_pct': 5.0,
                 'take_profit_pct': 10.0,
-                'risk_level': 'high'
+                'risk_level': 'high',
+                'key_price_levels': {},
             }
+
+    @staticmethod
+    def _normalize_monitor_levels(decision: Dict) -> Optional[Dict]:
+        raw_levels = decision.get("monitor_levels")
+        if isinstance(raw_levels, dict):
+            candidates = raw_levels
+        else:
+            candidates = {
+                "entry_min": decision.get("entry_min"),
+                "entry_max": decision.get("entry_max"),
+                "take_profit": decision.get("take_profit"),
+                "stop_loss": decision.get("stop_loss"),
+            }
+            entry_range = decision.get("entry_range")
+            if isinstance(entry_range, dict):
+                candidates["entry_min"] = candidates.get("entry_min") or entry_range.get("min")
+                candidates["entry_max"] = candidates.get("entry_max") or entry_range.get("max")
+
+        normalized: Dict[str, float] = {}
+        for key in ("entry_min", "entry_max", "take_profit", "stop_loss"):
+            value = candidates.get(key)
+            if value in (None, ""):
+                return None
+            try:
+                normalized[key] = float(value)
+            except (TypeError, ValueError):
+                return None
+        return normalized
 
     def _enforce_action_policy(self, decision: Dict, has_position: bool) -> Dict:
         allowed_actions = {"SELL", "HOLD"} if has_position else {"BUY", "HOLD"}

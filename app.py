@@ -1281,7 +1281,7 @@ def _apply_ai_task_prefill(action_payload: Dict[str, Any]) -> None:
         "symbol": action_payload.get("symbol"),
         "stock_name": action_payload.get("stock_name"),
         "task_name": f"{action_payload.get('stock_name') or action_payload.get('symbol')}盯盘",
-        "interval_minutes": 5,
+        "interval_minutes": 60,
         "trading_hours_only": True,
         "position_size_pct": 20,
         "stop_loss_pct": 5,

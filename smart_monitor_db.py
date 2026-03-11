@@ -8,7 +8,14 @@ from typing import Dict, List, Optional
 from analysis_repository import AnalysisRepository
 from asset_repository import STATUS_PORTFOLIO, STATUS_WATCHLIST, AssetRepository
 from asset_service import AssetService, asset_service
-from investment_db_utils import DEFAULT_ACCOUNT_NAME, get_metadata, resolve_investment_db_path, set_metadata
+from investment_db_utils import (
+    DEFAULT_ACCOUNT_NAME,
+    connect_sqlite,
+    get_metadata,
+    resolve_investment_db_path,
+    run_with_monitoring_write_lock,
+    set_metadata,
+)
 from monitoring_repository import MonitoringRepository
 from portfolio_db import PortfolioDB
 
@@ -23,7 +30,7 @@ class SmartMonitorDB:
         self.logger = logging.getLogger(__name__)
         self.monitoring_repository = MonitoringRepository(self.db_file)
         self.portfolio_db = PortfolioDB(self.db_file)
-        self.analysis_repository = AnalysisRepository(self.db_file, legacy_analysis_db_path="")
+        self.analysis_repository = AnalysisRepository(self.db_file, legacy_analysis_db_path=self.db_file)
         self.asset_repository = AssetRepository(self.db_file)
         self.asset_service = AssetService(
             asset_store=self.asset_repository,
@@ -46,9 +53,7 @@ class SmartMonitorDB:
         self._repair_ai_decision_history()
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_file)
-        conn.row_factory = sqlite3.Row
-        return conn
+        return connect_sqlite(self.db_file)
 
     def _init_database(self):
         conn = self._connect()
@@ -708,14 +713,17 @@ class SmartMonitorDB:
         )
 
     def save_ai_decision(self, decision_data: Dict) -> int:
-        conn = self._connect()
-        cursor = conn.cursor()
-        try:
-            record_id = self._insert_ai_decision(cursor, decision_data, default_account=True)
-            conn.commit()
-            return record_id
-        finally:
-            conn.close()
+        def _save() -> int:
+            conn = self._connect()
+            cursor = conn.cursor()
+            try:
+                record_id = self._insert_ai_decision(cursor, decision_data, default_account=True)
+                conn.commit()
+                return record_id
+            finally:
+                conn.close()
+
+        return run_with_monitoring_write_lock(_save)
 
     def get_ai_decisions(self, stock_code: str = None, limit: int = 100) -> List[Dict]:
         conn = self._connect()
@@ -751,18 +759,21 @@ class SmartMonitorDB:
         return decisions
 
     def update_decision_execution(self, decision_id: int, executed: bool, result: str):
-        conn = self._connect()
-        cursor = conn.cursor()
-        cursor.execute(
-            """
-            UPDATE ai_decisions
-            SET executed = ?, execution_result = ?, action_status = ?
-            WHERE id = ?
-            """,
-            (1 if executed else 0, result, "accepted" if executed else "suggested", decision_id),
-        )
-        conn.commit()
-        conn.close()
+        def _update() -> None:
+            conn = self._connect()
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                UPDATE ai_decisions
+                SET executed = ?, execution_result = ?, action_status = ?
+                WHERE id = ?
+                """,
+                (1 if executed else 0, result, "accepted" if executed else "suggested", decision_id),
+            )
+            conn.commit()
+            conn.close()
+
+        run_with_monitoring_write_lock(_update)
 
     def save_trade_record(self, trade_data: Dict) -> int:
         result = self.asset_service.record_manual_trade(
@@ -889,41 +900,47 @@ class SmartMonitorDB:
         )
 
     def save_notification(self, notify_data: Dict) -> int:
-        conn = self._connect()
-        cursor = conn.cursor()
-        cursor.execute(
-            """
-            INSERT INTO notifications
-            (stock_code, notify_type, notify_target, subject, content, status)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (
-                notify_data.get("stock_code"),
-                notify_data.get("notify_type"),
-                notify_data.get("notify_target"),
-                notify_data.get("subject"),
-                notify_data.get("content"),
-                notify_data.get("status", "pending"),
-            ),
-        )
-        notify_id = int(cursor.lastrowid)
-        conn.commit()
-        conn.close()
-        return notify_id
+        def _save() -> int:
+            conn = self._connect()
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO notifications
+                (stock_code, notify_type, notify_target, subject, content, status)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    notify_data.get("stock_code"),
+                    notify_data.get("notify_type"),
+                    notify_data.get("notify_target"),
+                    notify_data.get("subject"),
+                    notify_data.get("content"),
+                    notify_data.get("status", "pending"),
+                ),
+            )
+            notify_id = int(cursor.lastrowid)
+            conn.commit()
+            conn.close()
+            return notify_id
+
+        return run_with_monitoring_write_lock(_save)
 
     def update_notification_status(self, notify_id: int, status: str, error_msg: str = None):
-        conn = self._connect()
-        cursor = conn.cursor()
-        cursor.execute(
-            """
-            UPDATE notifications
-            SET status = ?, error_msg = ?, sent_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-            """,
-            (status, error_msg, notify_id),
-        )
-        conn.commit()
-        conn.close()
+        def _update() -> None:
+            conn = self._connect()
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                UPDATE notifications
+                SET status = ?, error_msg = ?, sent_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (status, error_msg, notify_id),
+            )
+            conn.commit()
+            conn.close()
+
+        run_with_monitoring_write_lock(_update)
 
     def create_pending_action(self, *, asset_id: int, action_type: str, origin_decision_id: Optional[int] = None, payload: Optional[Dict] = None) -> int:
         return self.asset_repository.create_pending_action(

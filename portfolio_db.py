@@ -166,6 +166,14 @@ class PortfolioDB:
                 legacy_cursor.execute("SELECT * FROM portfolio_trade_history ORDER BY id ASC")
                 for row in legacy_cursor.fetchall():
                     trade = dict(row)
+                    portfolio_stock_id = trade.get("portfolio_stock_id")
+                    if portfolio_stock_id is not None:
+                        cursor.execute(
+                            "SELECT 1 FROM portfolio_stocks WHERE id = ? LIMIT 1",
+                            (portfolio_stock_id,),
+                        )
+                        if cursor.fetchone() is None:
+                            continue
                     cursor.execute(
                         """
                         INSERT OR IGNORE INTO portfolio_trade_history (
@@ -176,7 +184,7 @@ class PortfolioDB:
                         """,
                         (
                             trade.get("id"),
-                            trade.get("portfolio_stock_id"),
+                            portfolio_stock_id,
                             trade.get("trade_date"),
                             trade.get("trade_type"),
                             trade.get("price"),

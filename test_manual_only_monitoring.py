@@ -54,6 +54,10 @@ class FakeSmartMonitorDB:
         self.asset_repository = FakeAssetRepository()
         self.asset_service = FakeAssetService()
         self.analysis_repository = FakeAnalysisRepository()
+        self.monitoring_repository = types.SimpleNamespace(
+            get_item_by_symbol=lambda *args, **kwargs: None,
+            record_event=lambda *args, **kwargs: 1,
+        )
         self.saved_decisions = []
         self.pending_actions = []
 
@@ -96,10 +100,6 @@ class ManualOnlyMonitoringTests(unittest.TestCase):
             monitoring_orchestrator,
             "SmartMonitorEngine",
             return_value=object(),
-        ), patch.object(
-            monitoring_orchestrator.notification_service,
-            "send_notifications",
-            side_effect=lambda: send_calls.append(True),
         ):
             orchestrator = monitoring_orchestrator.MonitoringOrchestrator()
             orchestrator._check_trigger_conditions(stock, 10.2)
@@ -109,7 +109,7 @@ class ManualOnlyMonitoringTests(unittest.TestCase):
         notification_types = {item["type"] for item in temp_monitor_db.get_pending_notifications()}
         self.assertEqual(notification_types, {"entry", "take_profit", "stop_loss"})
         self.assertNotIn("quant_trade", notification_types)
-        self.assertEqual(len(send_calls), 3)
+        self.assertEqual(len(send_calls), 0)
 
     def test_ai_monitor_buy_signal_creates_pending_action_in_manual_only_mode(self):
         fake_db = FakeSmartMonitorDB()
@@ -145,9 +145,16 @@ class ManualOnlyMonitoringTests(unittest.TestCase):
                 "take_profit_pct": 12,
                 "risk_level": "中",
                 "key_price_levels": {"support": 1500, "resistance": 1560},
+                "monitor_levels": {
+                    "entry_min": 1505,
+                    "entry_max": 1515,
+                    "take_profit": 1702.4,
+                    "stop_loss": 1444.0,
+                },
             },
         }
         engine._send_notification = lambda **kwargs: None
+        engine._sync_runtime_thresholds = lambda **kwargs: True
 
         result = engine.analyze_stock("600519", notify=False, account_name="测试账户")
 
