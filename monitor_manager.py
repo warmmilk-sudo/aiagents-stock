@@ -895,7 +895,6 @@ def display_monitor_manager():
     """监测服务页，只承担运维与状态展示。"""
     st.header("监测服务")
     display_monitor_status()
-    display_monitoring_registry()
     display_recent_monitor_events()
     display_notification_management()
 

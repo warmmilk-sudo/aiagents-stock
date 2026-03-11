@@ -33,6 +33,11 @@ from ui_analysis_task_utils import (
 
 SECTOR_STRATEGY_TASK_TYPE = "sector_strategy_analysis"
 SECTOR_STRATEGY_TASK_DONE_KEY = "sector_strategy_analysis_last_handled_task"
+SECTOR_HEAT_STYLES = {
+    "最热": {"color": "#f59e0b", "icon": "🔥"},
+    "升温": {"color": "#d14b57", "icon": "↑"},
+    "降温": {"color": "#2f8f62", "icon": "↓"},
+}
 
 
 @st.fragment(run_every=1.0)
@@ -89,6 +94,21 @@ def _run_sector_strategy_analysis_task(
         "data_summary": _extract_sector_data_summary(data),
         "message": "智策分析完成。",
     }
+
+
+def _render_heat_metric(rank: int, sector: str, score, trend_label: str) -> None:
+    style = SECTOR_HEAT_STYLES.get(trend_label, {"color": NON_MARKET_PALETTE["gray"], "icon": "•"})
+    st.metric(
+        f"{rank}. {sector or 'N/A'}",
+        f"{score or 0}分",
+        f"{style['icon']} {trend_label}",
+        delta_color="off",
+    )
+    st.markdown(
+        f"<div style='margin-top:-0.5rem; margin-bottom:0.85rem; color:{style['color']}; font-size:0.92rem; font-weight:600;'>"
+        f"{style['icon']} {trend_label}</div>",
+        unsafe_allow_html=True,
+    )
 
 
 def _sync_sector_strategy_finished_task() -> None:
@@ -683,30 +703,33 @@ def display_predictions(predictions):
         st.markdown("#### 最热板块")
         hottest = heat.get("hottest", [])
         for idx, item in enumerate(hottest, 1):
-            st.metric(
-                f"{idx}. {item.get('sector', 'N/A')}",
-                f"{item.get('score', 0)}分",
-                f"{item.get('trend', 'N/A')}"
+            _render_heat_metric(
+                idx,
+                item.get('sector', 'N/A'),
+                item.get('score', 0),
+                "最热",
             )
     
     with col2:
         st.markdown("#### 升温板块")
         heating = heat.get("heating", [])
         for idx, item in enumerate(heating, 1):
-            st.metric(
-                f"{idx}. {item.get('sector', 'N/A')}",
-                f"{item.get('score', 0)}分",
-                "升温"
+            _render_heat_metric(
+                idx,
+                item.get('sector', 'N/A'),
+                item.get('score', 0),
+                "升温",
             )
     
     with col3:
         st.markdown("#### 降温板块")
         cooling = heat.get("cooling", [])
         for idx, item in enumerate(cooling, 1):
-            st.metric(
-                f"{idx}. {item.get('sector', 'N/A')}",
-                f"{item.get('score', 0)}分",
-                "降温"
+            _render_heat_metric(
+                idx,
+                item.get('sector', 'N/A'),
+                item.get('score', 0),
+                "降温",
             )
     
     st.markdown("---")
@@ -844,8 +867,9 @@ def display_visualizations(predictions, key_prefix="sector_main"):
     heat = predictions.get("heat", {})
     hottest = heat.get("hottest", [])
     heating = heat.get("heating", [])
-    
-    if hottest or heating:
+    cooling = heat.get("cooling", [])
+
+    if hottest or heating or cooling:
         sectors = []
         scores = []
         trends = []
@@ -859,15 +883,24 @@ def display_visualizations(predictions, key_prefix="sector_main"):
             sectors.append(item.get('sector', 'N/A'))
             scores.append(item.get('score', 0))
             trends.append('升温')
+
+        for item in cooling:
+            sectors.append(item.get('sector', 'N/A'))
+            scores.append(item.get('score', 0))
+            trends.append('降温')
         
         df = pd.DataFrame({
             '板块': sectors,
             '热度': scores,
             '趋势': trends
         })
-        
+
         fig = px.scatter(df, x='板块', y='热度', size='热度', color='趋势',
-                        color_discrete_map={'最热': NON_MARKET_PALETTE['secondary'], '升温': NON_MARKET_PALETTE['indigo']},
+                        color_discrete_map={
+                            '最热': SECTOR_HEAT_STYLES['最热']['color'],
+                            '升温': SECTOR_HEAT_STYLES['升温']['color'],
+                            '降温': SECTOR_HEAT_STYLES['降温']['color'],
+                        },
                         title='板块热度分布图')
         
         fig.update_layout(height=400)

@@ -65,7 +65,7 @@ def _legacy_smart_monitor_ui(lightweight_model=None, reasoning_model=None):
         4. 如需更快行情可配置 TDX 数据源（可选）
         
         **第二步：开始使用**
-        - **实时分析**：输入股票代码，AI即时分析并给出交易建议
+        - **盯盘列表**：管理 AI 盯盘任务，手工触发分析并处理信号
         - **监控任务**：添加股票到监控列表，定时生成提醒和待处理动作
         - **持仓管理**：查看资产账本中的持仓，并结合 AI 信号手工登记交易
         
@@ -75,7 +75,6 @@ def _legacy_smart_monitor_ui(lightweight_model=None, reasoning_model=None):
         
         | 功能 | 说明 |
         |------|------|
-        | **实时分析** | 输入股票代码，AI分析市场数据并给出买入/卖出/持有建议 |
         | **监控任务** | 定时自动分析目标股票，生成提醒和待处理动作 |
         | **持仓管理** | 基于资产账本记录持仓成本，AI决策会考虑当前持仓情况 |
         | **历史记录** | 查看所有AI决策历史、交易记录和通知记录 |
@@ -192,31 +191,26 @@ def _legacy_smart_monitor_ui(lightweight_model=None, reasoning_model=None):
     
     # 创建标签页
     tabs = st.tabs([
-        "实时分析", 
         "监控任务", 
         "持仓管理", 
         "历史记录",
         "系统设置"
     ])
     
-    # 标签页1: 实时分析
+    # 标签页1: 监控任务
     with tabs[0]:
-        render_realtime_analysis()
-    
-    # 标签页2: 监控任务
-    with tabs[1]:
         render_monitor_tasks()
     
-    # 标签页3: 持仓管理
-    with tabs[2]:
+    # 标签页2: 持仓管理
+    with tabs[1]:
         render_position_management()
     
-    # 标签页4: 历史记录
-    with tabs[3]:
+    # 标签页3: 历史记录
+    with tabs[2]:
         render_history()
     
-    # 标签页5: 系统设置
-    with tabs[4]:
+    # 标签页4: 系统设置
+    with tabs[3]:
         render_settings()
 
 
@@ -707,7 +701,9 @@ def render_position_management():
             with st.spinner("分析中..."):
                 result = engine.analyze_stock(stock_code, notify=False)
                 if result['success']:
-                    st.success("分析完成，查看'实时分析'标签页")
+                    display_analysis_result(result)
+                else:
+                    st.error(f"分析失败: {result.get('error')}")
     
     with col2:
         if st.button("交易提示", type="primary"):
@@ -1418,13 +1414,13 @@ def smart_monitor_ui(lightweight_model=None, reasoning_model=None):
     view_key_to_label = {
         "watchlist": "盯盘列表",
         "ai_task": "盯盘列表",
-        "realtime": "实时分析",
+        "realtime": "盯盘列表",
         "price_alert": "价格预警",
         "decision_events": "决策事件",
         "history": "决策事件",
         "settings": "系统设置",
     }
-    labels = ["盯盘列表", "实时分析", "价格预警", "决策事件", "系统设置"]
+    labels = ["盯盘列表", "价格预警", "决策事件", "系统设置"]
     current_label = view_key_to_label.get(desired_view, "盯盘列表")
     selected_label = st.radio(
         "智能盯盘视图",
@@ -1436,7 +1432,6 @@ def smart_monitor_ui(lightweight_model=None, reasoning_model=None):
     )
     label_to_key = {
         "盯盘列表": "watchlist",
-        "实时分析": "realtime",
         "价格预警": "price_alert",
         "决策事件": "decision_events",
         "系统设置": "settings",
@@ -1446,10 +1441,6 @@ def smart_monitor_ui(lightweight_model=None, reasoning_model=None):
 
     if selected_view == "watchlist":
         render_ai_monitor_tasks_panel(title="盯盘列表")
-        return
-
-    if selected_view == "realtime":
-        render_realtime_analysis(show_header=False, title="实时分析")
         return
 
     if selected_view == "price_alert":

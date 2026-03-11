@@ -137,7 +137,7 @@ def collapse_sidebar():
 st.markdown("""
 <style>
     :root {
-        --font-size-body: 0.95rem;
+        --font-size-body: 0.98rem;
         --font-size-caption: 0.82rem;
         --font-size-h1: 1.95rem;
         --font-size-h2: 1.6rem;
@@ -167,7 +167,7 @@ st.markdown("""
 
     /* 全局极简风格 */
     html, body, [data-testid="stAppViewContainer"] {
-        font-size: 15px;
+        font-size: 15.5px;
         width: 100%;
         max-width: 100%;
         -webkit-text-size-adjust: 100%;
@@ -928,7 +928,7 @@ st.markdown("""
             --font-size-h2: 1.42rem;
             --font-size-h3: 1.1rem;
             --font-size-h4: 0.98rem;
-            --font-size-body: 0.92rem;
+            --font-size-body: 0.95rem;
             --font-size-caption: 0.8rem;
         }
         [data-testid="stSidebar"] {
@@ -1003,7 +1003,7 @@ st.markdown("""
         .stMultiSelect [data-baseweb="select"] > div,
         [data-baseweb="input"] input,
         [data-baseweb="textarea"] textarea {
-            font-size: 16px !important;
+            font-size: 16.5px !important;
             line-height: 1.35 !important;
         }
         .stTextArea textarea {
