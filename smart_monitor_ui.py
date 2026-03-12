@@ -49,8 +49,8 @@ from ui_shared import (
 # 加载环境变量
 load_dotenv()
 
-SMART_MONITOR_MANUAL_ANALYSIS_TASK_TYPE = "smart_monitor_manual_analysis"
-SMART_MONITOR_MANUAL_ANALYSIS_DONE_KEY = "smart_monitor_manual_analysis_last_handled"
+SMART_MONITOR_INTRADAY_ANALYSIS_TASK_TYPE = "smart_monitor_intraday_analysis"
+SMART_MONITOR_INTRADAY_ANALYSIS_DONE_KEY = "smart_monitor_intraday_analysis_last_handled"
 
 
 def _coerce_interval_setting(raw_value, default: int, minimum: int, maximum: int) -> int:
@@ -1124,6 +1124,72 @@ def _resolve_price_alert_levels(alert_item: Optional[Dict]) -> Optional[Dict[str
     return None
 
 
+def _resolve_strategy_baseline_levels(task: Dict) -> Optional[Dict[str, object]]:
+    strategy_context = task.get("strategy_context") or {}
+    if not isinstance(strategy_context, dict):
+        return None
+    levels = {
+        "entry_min": strategy_context.get("entry_min"),
+        "entry_max": strategy_context.get("entry_max"),
+        "take_profit": strategy_context.get("take_profit"),
+        "stop_loss": strategy_context.get("stop_loss"),
+    }
+    if any(levels[key] in (None, "") for key in levels):
+        return None
+    levels["source"] = "analysis_report"
+    levels["analysis_scope"] = strategy_context.get("analysis_scope")
+    levels["analysis_date"] = strategy_context.get("analysis_date")
+    return levels
+
+
+def _normalize_threshold_value(value: object) -> object:
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return str(value).strip()
+
+
+def _threshold_levels_match(first: Optional[Dict[str, object]], second: Optional[Dict[str, object]]) -> bool:
+    if not first or not second:
+        return False
+    for key in ("entry_min", "entry_max", "take_profit", "stop_loss"):
+        if _normalize_threshold_value(first.get(key)) != _normalize_threshold_value(second.get(key)):
+            return False
+    return True
+
+
+def _format_threshold_line(label: str, levels: Dict[str, object]) -> str:
+    return (
+        f"{label}: 进场 {levels.get('entry_min') or '-'} - {levels.get('entry_max') or '-'} | "
+        f"止盈 {levels.get('take_profit') or '-'} | 止损 {levels.get('stop_loss') or '-'}"
+    )
+
+
+def _build_watchlist_threshold_lines(
+    task: Dict,
+    alert_item: Optional[Dict],
+) -> tuple[Optional[str], Optional[str]]:
+    baseline_levels = _resolve_strategy_baseline_levels(task)
+    runtime_levels = _resolve_price_alert_levels(alert_item)
+
+    if baseline_levels:
+        primary_line = _format_threshold_line("预警线(分析基线)", baseline_levels)
+        secondary_line = None
+        runtime_source = str((runtime_levels or {}).get("source") or "").strip().lower()
+        if runtime_levels and runtime_source == "ai_runtime" and not _threshold_levels_match(
+            baseline_levels,
+            runtime_levels,
+        ):
+            secondary_line = _format_threshold_line("运行时阈值(盘中分析)", runtime_levels)
+        return primary_line, secondary_line
+
+    if runtime_levels:
+        return _format_threshold_line("预警线(运行时)", runtime_levels), None
+    return None, None
+
+
 def _get_latest_ai_decision_for_task(db: SmartMonitorDB, task: Dict) -> Optional[Dict]:
     stock_code = task.get("stock_code")
     if not stock_code:
@@ -1585,7 +1651,7 @@ def _render_pending_action_trade_form(
             st.rerun()
 
 
-def _start_manual_ai_analysis_task(task: Dict) -> None:
+def _start_intraday_analysis_task(task: Dict) -> None:
     task_id = task.get("id")
     stock_code = task.get("stock_code") or "UNKNOWN"
     stock_name = task.get("stock_name") or stock_code
@@ -1598,19 +1664,19 @@ def _start_manual_ai_analysis_task(task: Dict) -> None:
             total=1,
             step_code=stock_code,
             step_status="analyzing",
-            message=f"正在执行 {stock_code} 的手工 AI 分析",
+            message=f"正在执行 {stock_code} 的盘中分析",
         )
         from monitor_service import monitor_service
 
         success = monitor_service.manual_update_stock(int(task_id))
         if not success:
-            raise RuntimeError(f"{stock_code} AI 分析执行失败")
+            raise RuntimeError(f"{stock_code} 盘中分析执行失败")
         report_progress(
             current=1,
             total=1,
             step_code=stock_code,
             step_status="success",
-            message=f"{stock_code} AI 分析已完成",
+            message=f"{stock_code} 盘中分析已完成",
         )
         return {
             "monitor_item_id": int(task_id),
@@ -1619,8 +1685,8 @@ def _start_manual_ai_analysis_task(task: Dict) -> None:
         }
 
     start_ui_analysis_task(
-        task_type=SMART_MONITOR_MANUAL_ANALYSIS_TASK_TYPE,
-        label=f"{stock_name} 手工 AI 分析",
+        task_type=SMART_MONITOR_INTRADAY_ANALYSIS_TASK_TYPE,
+        label=f"{stock_name} 盘中分析",
         runner=runner,
         metadata={
             "monitor_item_id": int(task_id),
@@ -1630,28 +1696,28 @@ def _start_manual_ai_analysis_task(task: Dict) -> None:
     )
 
 
-def _consume_finished_manual_ai_analysis_task() -> None:
+def _consume_finished_intraday_analysis_task() -> None:
     finished_task = consume_finished_ui_analysis_task(
-        SMART_MONITOR_MANUAL_ANALYSIS_TASK_TYPE,
-        SMART_MONITOR_MANUAL_ANALYSIS_DONE_KEY,
+        SMART_MONITOR_INTRADAY_ANALYSIS_TASK_TYPE,
+        SMART_MONITOR_INTRADAY_ANALYSIS_DONE_KEY,
     )
     if not finished_task:
         return
     if finished_task.get("status") != "success":
-        st.error(f"手工 AI 分析失败：{finished_task.get('error', '未知错误')}")
+        st.error(f"盘中分析失败：{finished_task.get('error', '未知错误')}")
         return
 
     result = finished_task.get("result") or {}
     stock_code = result.get("stock_code") or "目标股票"
-    st.success(f"{stock_code} 的手工 AI 分析已完成。")
+    st.success(f"{stock_code} 的盘中分析已完成。")
 
 
 @st.fragment(run_every=2.0)
-def _render_manual_ai_analysis_live_fragment():
+def _render_intraday_analysis_live_fragment():
     render_ui_analysis_task_live_card(
-        task_type=SMART_MONITOR_MANUAL_ANALYSIS_TASK_TYPE,
-        title="手工 AI 分析任务状态",
-        state_prefix="smart_monitor_manual_analysis_live",
+        task_type=SMART_MONITOR_INTRADAY_ANALYSIS_TASK_TYPE,
+        title="盘中分析任务状态",
+        state_prefix="smart_monitor_intraday_analysis_live",
     )
 
 
@@ -1663,9 +1729,9 @@ def render_ai_monitor_tasks_panel(show_header: bool = True, title: str = "AI监�
     else:
         st.markdown(f"#### {title}")
 
-    _consume_finished_manual_ai_analysis_task()
-    if get_active_ui_analysis_task(SMART_MONITOR_MANUAL_ANALYSIS_TASK_TYPE):
-        _render_manual_ai_analysis_live_fragment()
+    _consume_finished_intraday_analysis_task()
+    if get_active_ui_analysis_task(SMART_MONITOR_INTRADAY_ANALYSIS_TASK_TYPE):
+        _render_intraday_analysis_live_fragment()
 
     db = st.session_state[SMART_MONITOR_DB_KEY]
     monitor_service.ensure_started()
@@ -1756,63 +1822,51 @@ def render_ai_monitor_tasks_panel(show_header: bool = True, title: str = "AI监�
     enabled_count = sum(1 for task in tasks if task.get('enabled'))
     disabled_count = len(tasks) - enabled_count
     run_button_label, run_button_disabled, run_button_help = get_ui_analysis_button_state(
-        SMART_MONITOR_MANUAL_ANALYSIS_TASK_TYPE,
-        "立即分析",
+        SMART_MONITOR_INTRADAY_ANALYSIS_TASK_TYPE,
+        "立即盘中分析",
     )
 
-    summary_col, enable_all_col, disable_all_col = st.columns([2.6, 1, 1])
+    summary_col, bulk_toggle_col = st.columns([3.2, 1.4])
     with summary_col:
         st.caption(f"共 {len(tasks)} 个任务，已启用 {enabled_count} 个，已停用 {disabled_count} 个。")
-    with enable_all_col:
-        if st.button(
-            "一键启用全部",
-            key="enable_all_ai_tasks",
-            width='stretch',
-            disabled=disabled_count == 0,
-        ):
-            changed_count = db.set_all_monitor_tasks_enabled(True)
-            monitor_service.ensure_started()
-            st.success(f"已启用 {changed_count} 个标的的盯盘任务，实时预警同步生效。")
-            st.rerun()
-    with disable_all_col:
-        if st.button(
-            "一键停用全部",
-            key="disable_all_ai_tasks",
-            width='stretch',
-            disabled=enabled_count == 0,
-        ):
-            changed_count = db.set_all_monitor_tasks_enabled(False)
-            monitor_service.ensure_stopped_if_idle()
-            st.success(f"已停用 {changed_count} 个标的的盯盘任务，实时预警同步停用。")
+        if enabled_count not in {0, len(tasks)}:
+            st.caption("当前为部分启用状态，总开关切换后会统一收敛为全开或全关。")
+    with bulk_toggle_col:
+        bulk_toggle_key = "smart_monitor_all_ai_tasks_toggle"
+        bulk_enabled = st.toggle(
+            "全部启用",
+            value=disabled_count == 0,
+            key=bulk_toggle_key,
+            help="打开后启用全部盯盘任务，关闭后停用全部盯盘任务。",
+        )
+        if bulk_enabled != (disabled_count == 0):
+            changed_count = db.set_all_monitor_tasks_enabled(bulk_enabled)
+            for task in tasks:
+                st.session_state.pop(f"smart_monitor_task_enabled_toggle_{task['id']}", None)
+            st.session_state.pop(bulk_toggle_key, None)
+            if bulk_enabled:
+                monitor_service.ensure_started()
+                st.success(f"已启用 {changed_count} 个标的的盯盘任务，实时预警同步生效。")
+            else:
+                monitor_service.ensure_stopped_if_idle()
+                st.success(f"已停用 {changed_count} 个标的的盯盘任务，实时预警同步停用。")
             st.rerun()
 
     for task in tasks:
         alert_item = _get_task_price_alert_item(db, task)
-        alert_levels = _resolve_price_alert_levels(alert_item)
+        threshold_line, runtime_threshold_line = _build_watchlist_threshold_lines(task, alert_item)
         latest_decision = _get_latest_ai_decision_for_task(db, task)
         pending_actions = _get_pending_actions_for_task(db, task)
 
         with st.container():
             st.markdown(f"**{task['stock_code']}** {task.get('stock_name') or task['stock_code']}")
 
-            strategy_context = task.get("strategy_context") or {}
-
-            threshold_line = None
-            if alert_levels:
-                threshold_line = (
-                    f"预警线: 进场 {alert_levels.get('entry_min') or '-'} - {alert_levels.get('entry_max') or '-'} | "
-                    f"止盈 {alert_levels.get('take_profit') or '-'} | 止损 {alert_levels.get('stop_loss') or '-'}"
-                )
-            elif strategy_context:
-                threshold_line = (
-                    f"预警线: 进场 {strategy_context.get('entry_min') or '-'} - {strategy_context.get('entry_max') or '-'} | "
-                    f"止盈 {strategy_context.get('take_profit') or '-'} | 止损 {strategy_context.get('stop_loss') or '-'}"
-                )
-
             if threshold_line:
                 st.caption(threshold_line)
             else:
                 st.caption("预警线: 尚未形成")
+            if runtime_threshold_line:
+                st.caption(runtime_threshold_line)
 
             if alert_item:
                 alert_meta = []
@@ -1821,14 +1875,12 @@ def render_ai_monitor_tasks_panel(show_header: bool = True, title: str = "AI监�
                     alert_meta.append(f"最新价 {current_price}")
                 if alert_item.get("last_checked"):
                     alert_meta.append(f"最近检查 {alert_item.get('last_checked')}")
-                if alert_levels and alert_levels.get("source"):
-                    alert_meta.append(f"阈值来源 {alert_levels.get('source')}")
                 if alert_meta:
                     st.caption(" | ".join(alert_meta))
 
             if latest_decision:
                 decision_label = _format_latest_decision_label(latest_decision)
-                with st.expander(f"最新AI决策: {decision_label}", expanded=False):
+                with st.expander(f"最新盘中分析决策: {decision_label}", expanded=False):
                     decision_col1, decision_col2, decision_col3 = st.columns(3)
                     with decision_col1:
                         st.caption(f"交易时段: {latest_decision.get('trading_session') or '-'}")
@@ -1838,7 +1890,7 @@ def render_ai_monitor_tasks_panel(show_header: bool = True, title: str = "AI监�
                         st.caption(f"建议仓位: {latest_decision.get('position_size_pct') or '-'}%")
                     _render_full_decision_reasoning(latest_decision.get("reasoning"))
             else:
-                st.caption("尚无最新 AI 决策，可先执行一次“立即分析”。")
+                st.caption("尚无最新盘中分析决策，可先执行一次“立即盘中分析”。")
 
             action_columns = st.columns(3 if not task.get('managed_by_portfolio') else 2)
             action_col1, action_col2 = action_columns[:2]
@@ -1851,20 +1903,30 @@ def render_ai_monitor_tasks_panel(show_header: bool = True, title: str = "AI监�
                     help=run_button_help,
                 ):
                     try:
-                        _start_manual_ai_analysis_task(task)
-                        st.success("已提交手工 AI 分析任务。")
+                        _start_intraday_analysis_task(task)
+                        st.success("已提交盘中分析任务。")
                         st.rerun()
                     except RuntimeError as exc:
                         st.error(str(exc))
             with action_col2:
-                toggle_label = "停用" if task.get('enabled') else "启用"
-                if st.button(toggle_label, key=f"toggle_ai_task_{task['id']}", width='stretch'):
-                    db.set_monitor_task_enabled(int(task["id"]), not task.get("enabled"))
-                    if task.get('enabled'):
-                        monitor_service.ensure_stopped_if_idle()
-                    else:
+                item_toggle_key = f"smart_monitor_task_enabled_toggle_{task['id']}"
+                task_enabled = bool(task.get("enabled"))
+                toggled_enabled = st.toggle(
+                    "启用",
+                    value=task_enabled,
+                    key=item_toggle_key,
+                    help="打开后启用该股票盯盘，关闭后同步停用绑定价格预警。",
+                )
+                if toggled_enabled != task_enabled:
+                    db.set_monitor_task_enabled(int(task["id"]), toggled_enabled)
+                    st.session_state.pop("smart_monitor_all_ai_tasks_toggle", None)
+                    st.session_state.pop(item_toggle_key, None)
+                    if toggled_enabled:
                         monitor_service.ensure_started()
-                    st.success(f"{task['stock_code']} 的盯盘任务已{toggle_label}，实时预警同步更新。")
+                    else:
+                        monitor_service.ensure_stopped_if_idle()
+                    state_text = "启用" if toggled_enabled else "停用"
+                    st.success(f"{task['stock_code']} 的盯盘任务已{state_text}，实时预警同步更新。")
                     st.rerun()
             if not task.get('managed_by_portfolio'):
                 action_col3 = action_columns[2]

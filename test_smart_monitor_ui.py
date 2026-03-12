@@ -33,6 +33,8 @@ class _DummyStreamlit(types.ModuleType):
             return lambda labels, *args, **kwargs: [_DummyContext() for _ in labels]
         if name in {"button", "checkbox", "form_submit_button"}:
             return lambda *args, **kwargs: False
+        if name == "toggle":
+            return lambda *args, **kwargs: False
         if name in {"selectbox", "radio", "text_input", "text_area", "date_input"}:
             return lambda *args, **kwargs: ""
         if name in {"number_input", "slider"}:
@@ -143,6 +145,52 @@ class SmartMonitorUIHistorySplitTests(unittest.TestCase):
             smart_monitor_ui._format_monitor_event_message(event),
             "原因：价格 53.08 进入进场区间 [51.2-55.0]",
         )
+
+    def test_build_watchlist_threshold_lines_prefers_analysis_baseline(self):
+        task = {
+            "strategy_context": {
+                "entry_min": 10.1,
+                "entry_max": 10.6,
+                "take_profit": 11.3,
+                "stop_loss": 9.7,
+                "analysis_scope": "portfolio",
+            }
+        }
+        alert_item = {
+            "config": {
+                "runtime_thresholds": {
+                    "entry_min": 10.2,
+                    "entry_max": 10.7,
+                    "take_profit": 11.5,
+                    "stop_loss": 9.6,
+                },
+                "threshold_source": "ai_runtime",
+            }
+        }
+
+        primary_line, secondary_line = smart_monitor_ui._build_watchlist_threshold_lines(task, alert_item)
+
+        self.assertEqual(primary_line, "预警线(分析基线): 进场 10.1 - 10.6 | 止盈 11.3 | 止损 9.7")
+        self.assertEqual(secondary_line, "运行时阈值(盘中分析): 进场 10.2 - 10.7 | 止盈 11.5 | 止损 9.6")
+
+    def test_build_watchlist_threshold_lines_falls_back_to_runtime_levels(self):
+        task = {"strategy_context": {}}
+        alert_item = {
+            "config": {
+                "runtime_thresholds": {
+                    "entry_min": 51.2,
+                    "entry_max": 55.0,
+                    "take_profit": 59.0,
+                    "stop_loss": 48.5,
+                },
+                "threshold_source": "ai_runtime",
+            }
+        }
+
+        primary_line, secondary_line = smart_monitor_ui._build_watchlist_threshold_lines(task, alert_item)
+
+        self.assertEqual(primary_line, "预警线(运行时): 进场 51.2 - 55.0 | 止盈 59.0 | 止损 48.5")
+        self.assertIsNone(secondary_line)
 
 
 if __name__ == "__main__":
