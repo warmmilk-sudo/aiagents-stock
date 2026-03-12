@@ -86,6 +86,14 @@ class MonitoringOrchestrator:
     def has_enabled_items(self) -> bool:
         return bool(self.repository.list_items(enabled_only=True))
 
+    def _get_scheduler(self):
+        try:
+            from monitor_scheduler import get_scheduler
+
+            return get_scheduler()
+        except Exception:
+            return None
+
     def start(self):
         if self.running:
             return
@@ -94,9 +102,24 @@ class MonitoringOrchestrator:
         self.thread.start()
         self.logger.info("监测服务已启动")
 
-    def ensure_started(self):
-        if self.has_enabled_items():
-            self.start()
+    def ensure_started(self, ignore_schedule: bool = False):
+        if not self.has_enabled_items():
+            return
+
+        scheduler = None if ignore_schedule else self._get_scheduler()
+        if scheduler is not None and bool(getattr(scheduler, "config", {}).get("enabled", False)):
+            try:
+                if scheduler.is_trading_time():
+                    self.start()
+                else:
+                    if self.running and bool(getattr(scheduler, "config", {}).get("auto_stop", True)):
+                        self.stop()
+                    self.logger.info("交易时段调度已启用，当前非交易时段，保持监测服务停止")
+                return
+            except Exception:
+                self.logger.exception("读取交易时段调度状态失败，回退到常规启动逻辑")
+
+        self.start()
 
     def stop(self):
         if not self.running:
@@ -161,14 +184,14 @@ class MonitoringOrchestrator:
         item = self.repository.get_item(item_id)
         if not item:
             return False
-        self.ensure_started()
+        self.ensure_started(ignore_schedule=True)
         return self._run_coroutine_sync(self._dispatch_item_async(item, force=True), timeout=self.AI_TASK_TIMEOUT_SECONDS)
 
     def manual_update_stock(self, stock_id: int) -> bool:
         return self.manual_update_item(stock_id)
 
     def run_once(self):
-        self.ensure_started()
+        self.ensure_started(ignore_schedule=True)
         if not self.running:
             return
         self._run_coroutine_sync(self._run_tick(), timeout=self.PRICE_FETCH_TIMEOUT_SECONDS + self.AI_TASK_TIMEOUT_SECONDS)
@@ -473,9 +496,7 @@ class MonitoringOrchestrator:
 
     def _is_trading_time(self) -> bool:
         try:
-            from monitor_scheduler import get_scheduler
-
-            scheduler = get_scheduler()
+            scheduler = self._get_scheduler()
             if scheduler is None:
                 return True
             return scheduler.is_trading_time()

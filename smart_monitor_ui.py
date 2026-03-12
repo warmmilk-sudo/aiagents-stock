@@ -1143,6 +1143,8 @@ def _render_task_kline_and_decisions(task: Dict, db: SmartMonitorDB, engine):
 
 
 def _ensure_smart_monitor_runtime(lightweight_model=None, reasoning_model=None):
+    monitor_service.ensure_scheduler_state()
+
     if lightweight_model is None:
         lightweight_model = st.session_state.get('selected_lightweight_model', config.LIGHTWEIGHT_MODEL_NAME)
     if reasoning_model is None:

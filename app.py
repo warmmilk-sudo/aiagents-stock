@@ -67,6 +67,8 @@ from ui_state_keys import (
     SMART_MONITOR_ACTIVE_TAB_KEY,
 )
 
+monitor_service.ensure_scheduler_state()
+
 # 页面配置（支持导航点击后单次强制收起侧边栏）
 collapse_once = bool(st.session_state.get("force_sidebar_collapse", False))
 st.set_page_config(

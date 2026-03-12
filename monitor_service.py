@@ -22,10 +22,31 @@ class StockMonitorService:
         self.orchestrator.stop()
 
     def ensure_started(self):
+        self.ensure_scheduler_state()
         self.orchestrator.ensure_started()
 
     def ensure_stopped_if_idle(self):
+        self.ensure_scheduler_state()
         self.orchestrator.ensure_stopped_if_idle()
+
+    def ensure_scheduler_state(self):
+        scheduler = self.get_scheduler()
+        if scheduler is None:
+            return None
+
+        enabled = bool(scheduler.config.get("enabled", False))
+        if enabled:
+            if (
+                self.running
+                and bool(scheduler.config.get("auto_stop", True))
+                and not scheduler.is_trading_time()
+            ):
+                self.orchestrator.stop()
+            if not scheduler.running:
+                scheduler.start_scheduler()
+        elif scheduler.running:
+            scheduler.stop_scheduler()
+        return scheduler
 
     def manual_update_stock(self, stock_id: int):
         return self.orchestrator.manual_update_stock(stock_id)

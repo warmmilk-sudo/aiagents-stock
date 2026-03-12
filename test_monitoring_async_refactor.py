@@ -443,6 +443,67 @@ class MonitoringOrchestratorAsyncTests(unittest.IsolatedAsyncioTestCase):
             },
         )
 
+    def test_ensure_started_respects_enabled_scheduler_outside_trading_window(self):
+        repo = _FakeRepository(
+            [
+                {"id": 1, "symbol": "600519", "name": "贵州茅台", "monitor_type": "ai_task", "enabled": 1},
+            ]
+        )
+        fake_monitor_db = _FakeMonitorDB(repo, {})
+        fake_scheduler = types.SimpleNamespace(
+            config={"enabled": True, "auto_stop": True},
+            is_trading_time=lambda: False,
+        )
+
+        with patch.object(monitoring_orchestrator, "monitor_db", fake_monitor_db), patch.object(
+            monitoring_orchestrator,
+            "SmartMonitorEngine",
+            return_value=object(),
+        ), patch.object(monitoring_orchestrator, "TDX_AVAILABLE", False):
+            orchestrator = monitoring_orchestrator.MonitoringOrchestrator()
+
+        start_calls = []
+        orchestrator.start = lambda: start_calls.append(True)
+        orchestrator._get_scheduler = lambda: fake_scheduler
+
+        orchestrator.ensure_started()
+
+        self.assertEqual(start_calls, [])
+        self.assertFalse(orchestrator.running)
+
+    def test_ensure_started_can_ignore_scheduler_for_manual_run(self):
+        repo = _FakeRepository(
+            [
+                {"id": 1, "symbol": "600519", "name": "贵州茅台", "monitor_type": "ai_task", "enabled": 1},
+            ]
+        )
+        fake_monitor_db = _FakeMonitorDB(repo, {})
+        fake_scheduler = types.SimpleNamespace(
+            config={"enabled": True, "auto_stop": True},
+            is_trading_time=lambda: False,
+        )
+
+        with patch.object(monitoring_orchestrator, "monitor_db", fake_monitor_db), patch.object(
+            monitoring_orchestrator,
+            "SmartMonitorEngine",
+            return_value=object(),
+        ), patch.object(monitoring_orchestrator, "TDX_AVAILABLE", False):
+            orchestrator = monitoring_orchestrator.MonitoringOrchestrator()
+
+        start_calls = []
+
+        def _fake_start():
+            start_calls.append(True)
+            orchestrator.running = True
+
+        orchestrator.start = _fake_start
+        orchestrator._get_scheduler = lambda: fake_scheduler
+
+        orchestrator.ensure_started(ignore_schedule=True)
+
+        self.assertEqual(len(start_calls), 1)
+        self.assertTrue(orchestrator.running)
+
 
 class MonitoringWriteSerializationTests(unittest.TestCase):
     def setUp(self):
