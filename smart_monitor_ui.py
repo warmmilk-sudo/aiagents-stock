@@ -946,15 +946,36 @@ def render_settings(show_header: bool = True, title: str = "系统设置"):
         minimum=1,
         maximum=30,
     )
+    monitor_tasks = db.get_monitor_tasks(enabled_only=False) if db is not None else []
+    price_alert_items = (
+        db.monitoring_repository.list_items(monitor_type="price_alert") if db is not None else []
+    )
+    aligned_task_count = sum(
+        1 for task in monitor_tasks if int(task.get("check_interval") or 0) == current_ai_interval * 60
+    )
+    aligned_alert_count = sum(
+        1
+        for item in price_alert_items
+        if int(item.get("interval_minutes") or 0) == current_alert_interval
+    )
+
+    st.caption(
+        "实际调度规则：后台每 5 秒扫描一次到期任务，是否执行取决于“最近检查时间 + 任务间隔”是否已到。"
+    )
+    st.caption(
+        f"当前有 {len(monitor_tasks)} 个盘中分析任务，其中 {aligned_task_count} 个使用默认间隔 "
+        f"{current_ai_interval} 分钟；{len(price_alert_items)} 个价格预警中有 {aligned_alert_count} 个使用默认间隔 "
+        f"{current_alert_interval} 分钟。"
+    )
 
     with st.form("smart_monitor_settings_form", clear_on_submit=False):
         ai_interval_minutes = st.slider(
-            "轻 AI 分析默认间隔(分钟)",
+            "盘中分析默认间隔(分钟)",
             1,
             240,
             current_ai_interval,
             key="smart_monitor_settings_ai_interval",
-            help="用于新建 AI 盯盘任务，以及持仓/盯盘自动托管时的默认值。",
+            help="用于新建盘中分析任务，以及持仓/盯盘自动托管时的默认值。",
         )
         alert_interval_minutes = st.slider(
             "价格预警默认间隔(分钟)",
@@ -970,7 +991,7 @@ def render_settings(show_header: bool = True, title: str = "系统设置"):
             50,
             current_position_size_pct,
             key="smart_monitor_settings_position_size_pct",
-            help="用于新建 AI 盯盘任务的默认仓位建议。",
+            help="用于新建盘中分析任务的默认仓位建议。",
         )
         stop_loss_pct = st.slider(
             "默认止损百分比",
@@ -978,7 +999,7 @@ def render_settings(show_header: bool = True, title: str = "系统设置"):
             20,
             current_stop_loss_pct,
             key="smart_monitor_settings_stop_loss_pct",
-            help="用于新建 AI 盯盘任务的默认止损建议。",
+            help="用于新建盘中分析任务的默认止损建议。",
         )
         take_profit_pct = st.slider(
             "默认止盈百分比",
@@ -986,10 +1007,10 @@ def render_settings(show_header: bool = True, title: str = "系统设置"):
             30,
             current_take_profit_pct,
             key="smart_monitor_settings_take_profit_pct",
-            help="用于新建 AI 盯盘任务的默认止盈建议。",
+            help="用于新建盘中分析任务的默认止盈建议。",
         )
         apply_existing = st.checkbox(
-            "同时同步当前已有的 AI 盯盘与价格预警",
+            "同时同步当前已有的盘中分析任务与价格预警",
             value=True,
             help="关闭后仅影响后续新建任务和自动托管投影。",
         )
@@ -1016,7 +1037,10 @@ def render_settings(show_header: bool = True, title: str = "系统设置"):
                 )
             st.success("智能盯盘设置已保存。")
             if apply_existing and db is not None:
-                st.caption(f"已同步 {ai_updated} 个 AI 任务间隔、{task_defaults_updated} 个 AI 任务参数、{alert_updated} 个价格预警。")
+                st.caption(
+                    f"已同步 {ai_updated} 个盘中分析任务间隔、{task_defaults_updated} 个盘中分析任务参数、"
+                    f"{alert_updated} 个价格预警。"
+                )
             st.rerun()
         else:
             st.error("保存智能盯盘设置失败。")
