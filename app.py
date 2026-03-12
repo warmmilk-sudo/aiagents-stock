@@ -36,6 +36,7 @@ from main_force_ui import display_main_force_selector
 from sector_strategy_ui import display_sector_strategy
 from longhubang_ui import display_longhubang
 from smart_monitor_ui import smart_monitor_ui
+from smart_monitor_db import SmartMonitorDB
 from portfolio_ui import (
     display_portfolio_manager,
     render_portfolio_analysis_live_status_fragment,
@@ -1207,6 +1208,30 @@ NAV_VIEW_KEYS = [
     "show_config",
 ]
 
+DEFAULT_VIEW_KEY = "show_deep_analysis"
+VIEW_QUERY_PARAM = "view"
+VIEW_QUERY_TO_STATE = {
+    "deep_analysis": "show_deep_analysis",
+    "analysis_history": "show_analysis_history",
+    "smart_monitor": "show_smart_monitor",
+    "portfolio": "show_portfolio",
+    "main_force": "show_main_force",
+    "low_price_bull": "show_low_price_bull",
+    "small_cap": "show_small_cap",
+    "profit_growth": "show_profit_growth",
+    "value_stock": "show_value_stock",
+    "sector_strategy": "show_sector_strategy",
+    "longhubang": "show_longhubang",
+    "news_flow": "show_news_flow",
+    "macro_cycle": "show_macro_cycle",
+    "config": "show_config",
+}
+VIEW_STATE_TO_QUERY = {value: key for key, value in VIEW_QUERY_TO_STATE.items()}
+VIEW_STATE_ALIASES = {
+    "show_monitor_service": "show_smart_monitor",
+    "show_monitor": "show_smart_monitor",
+}
+
 VIEW_TITLES = {
     "show_deep_analysis": "投资管理-深度分析",
     "show_analysis_history": "投资管理-分析历史",
@@ -1240,13 +1265,49 @@ def get_current_view_title() -> str:
     return "投资管理-深度分析"
 
 
-def activate_view(view_key: Optional[str] = None) -> None:
-    """Activate one main view and clear the others."""
+def get_current_view_key() -> str:
+    """Return the currently active canonical view key."""
     for key in NAV_VIEW_KEYS:
-        if key == view_key:
+        if st.session_state.get(key):
+            return VIEW_STATE_ALIASES.get(key, key)
+    return DEFAULT_VIEW_KEY
+
+
+def _apply_view_state(view_key: Optional[str]) -> str:
+    """Apply one main view in session_state without triggering rerun."""
+    canonical_key = VIEW_STATE_ALIASES.get(str(view_key or "").strip(), str(view_key or "").strip()) or DEFAULT_VIEW_KEY
+    if canonical_key not in NAV_VIEW_KEYS:
+        canonical_key = DEFAULT_VIEW_KEY
+    for key in NAV_VIEW_KEYS:
+        if key == canonical_key:
             st.session_state[key] = True
         else:
             st.session_state.pop(key, None)
+    return canonical_key
+
+
+def sync_view_state_from_query() -> None:
+    """Restore active view from query params and keep query params in sync."""
+    requested_slug = _get_query_param(VIEW_QUERY_PARAM).strip().lower()
+    requested_view = VIEW_QUERY_TO_STATE.get(requested_slug)
+    current_view = get_current_view_key()
+
+    if requested_view:
+        if current_view != requested_view:
+            current_view = _apply_view_state(requested_view)
+    elif not any(st.session_state.get(key) for key in NAV_VIEW_KEYS):
+        current_view = _apply_view_state(DEFAULT_VIEW_KEY)
+
+    canonical_view = get_current_view_key()
+    target_slug = VIEW_STATE_TO_QUERY.get(canonical_view, VIEW_STATE_TO_QUERY[DEFAULT_VIEW_KEY])
+    if requested_slug != target_slug:
+        _set_query_param(VIEW_QUERY_PARAM, target_slug)
+
+
+def activate_view(view_key: Optional[str] = None) -> None:
+    """Activate one main view and clear the others."""
+    canonical_key = _apply_view_state(view_key)
+    _set_query_param(VIEW_QUERY_PARAM, VIEW_STATE_TO_QUERY.get(canonical_key, VIEW_STATE_TO_QUERY[DEFAULT_VIEW_KEY]))
     st.session_state["force_sidebar_collapse"] = True
     st.rerun()
 
@@ -1694,6 +1755,7 @@ def _render_home_analysis_task_fragment():
 
 
 def main():
+    sync_view_state_from_query()
     if st.session_state.get("authenticated", False):
         _render_admin_auth_bridge(
             token=st.session_state.get("admin_auth_token") or _get_query_param(ADMIN_AUTH_QUERY_PARAM)
@@ -1727,6 +1789,22 @@ def main():
             if st.button("分析历史", width='stretch', key="nav_analysis_history", help="统一查看深度分析与持仓分析历史"):
                 activate_view("show_analysis_history")
 
+        # 策略分析
+        with st.expander("策略分析", expanded=True):
+            st.markdown("**AI驱动的板块和龙虎榜策略**")
+
+            if st.button("智策板块", width='stretch', key="nav_sector_strategy", help="AI板块策略分析"):
+                activate_view("show_sector_strategy")
+
+            if st.button("智瞰龙虎", width='stretch', key="nav_longhubang", help="龙虎榜深度分析"):
+                activate_view("show_longhubang")
+            
+            if st.button("新闻流量", width='stretch', key="nav_news_flow", help="新闻流量监测与短线指导"):
+                activate_view("show_news_flow")
+
+            if st.button("宏观周期", width='stretch', key="nav_macro_cycle", help="康波周期 × 美林投资时钟 × 政策分析"):
+                activate_view("show_macro_cycle")
+
         # 选股板块
         with st.expander("选股板块", expanded=True):
             st.markdown("**根据不同策略筛选优质股票**")
@@ -1745,22 +1823,6 @@ def main():
 
             if st.button("低估值策略", width='stretch', key="nav_value_stock", help="低PE+低PB+高股息+低负债 价值投资筛选"):
                 activate_view("show_value_stock")
-
-        # 策略分析
-        with st.expander("策略分析", expanded=True):
-            st.markdown("**AI驱动的板块和龙虎榜策略**")
-
-            if st.button("智策板块", width='stretch', key="nav_sector_strategy", help="AI板块策略分析"):
-                activate_view("show_sector_strategy")
-
-            if st.button("智瞰龙虎", width='stretch', key="nav_longhubang", help="龙虎榜深度分析"):
-                activate_view("show_longhubang")
-            
-            if st.button("新闻流量", width='stretch', key="nav_news_flow", help="新闻流量监测与短线指导"):
-                activate_view("show_news_flow")
-
-            if st.button("宏观周期", width='stretch', key="nav_macro_cycle", help="康波周期 × 美林投资时钟 × 政策分析"):
-                activate_view("show_macro_cycle")
 
         st.markdown("---")
 
@@ -1809,19 +1871,35 @@ def main():
         # 系统状态面板
         st.markdown("### 系统状态")
 
-        monitor_status = "运行中" if monitor_service.running else "已停止"
-        st.markdown(f"**监测服务**: {monitor_status}")
+        scheduler = monitor_service.get_scheduler()
+        scheduler_enabled = bool(scheduler and scheduler.config.get("enabled", False))
+        scheduler_running = bool(scheduler and scheduler.running)
+        is_trading_time = bool(scheduler and scheduler.is_trading_time()) if scheduler else False
+
+        if monitor_service.running:
+            watch_service_status = "运行中"
+        elif scheduler_enabled and scheduler_running and not is_trading_time:
+            watch_service_status = "等待交易时段"
+        elif scheduler_enabled:
+            watch_service_status = "调度已启用"
+        else:
+            watch_service_status = "已停止"
+
+        st.markdown(f"**盯盘服务状态**: {watch_service_status}")
+        st.markdown(f"**交易时段调度**: {'已启用' if scheduler_enabled else '未启用'}")
 
         try:
-            from monitor_db import monitor_db
-            stocks = monitor_db.get_monitored_stocks()
-            notifications = monitor_db.get_pending_notifications()
-            record_count = analysis_history_service.count_records()
+            if SMART_MONITOR_DB_KEY not in st.session_state:
+                st.session_state[SMART_MONITOR_DB_KEY] = SmartMonitorDB()
+            smart_monitor_db = st.session_state[SMART_MONITOR_DB_KEY]
+            monitor_tasks = smart_monitor_db.get_monitor_tasks(enabled_only=False)
+            enabled_tasks = sum(1 for task in monitor_tasks if task.get("enabled"))
+            service_status = monitor_service.get_status()
 
-            st.markdown(f"**分析记录**: {record_count}条")
-            st.markdown(f"**监测股票**: {len(stocks)}只")
-            st.markdown(f"**待处理**: {len(notifications)}条")
-        except:
+            st.markdown(f"**盯盘任务**: {len(monitor_tasks)}个")
+            st.markdown(f"**已启用任务**: {enabled_tasks}个")
+            st.markdown(f"**待通知**: {int(service_status.get('pending_notifications') or 0)}条")
+        except Exception:
             pass
 
         st.markdown("---")

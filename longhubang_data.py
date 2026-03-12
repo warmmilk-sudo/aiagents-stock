@@ -26,6 +26,8 @@ class LonghubangDataFetcher:
         # self.base_url = "https://api-lhb.zhongdu.net"
         self.base_url = "http://lhb-api.ws4.cn/v1"
        # self.base_url = "https://www.stockapi.com.cn/v1"
+        self.source_label = "lhb-api.ws4.cn 龙虎榜接口（/v1/youzi/all）"
+        self.update_hint = "交易日 17:30 后通常可获取当天数据"
         self.api_key = api_key
         self.max_retries = 3  # 最大重试次数
         self.retry_delay = 2  # 重试延迟（秒）

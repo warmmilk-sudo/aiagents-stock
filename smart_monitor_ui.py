@@ -46,6 +46,7 @@ from ui_shared import (
     get_market_color,
     render_a_share_change_metric,
 )
+from time_utils import format_display_timestamp, local_now, parse_display_timestamp
 
 
 # 加载环境变量
@@ -236,6 +237,62 @@ def _handle_task_enable_toggle(db: SmartMonitorDB, task: Dict, monitor_service) 
         monitor_service.ensure_stopped_if_idle()
     state_text = "启用" if target_enabled else "停用"
     _queue_smart_monitor_feedback("success", f"{task.get('stock_code') or task_id} 的盯盘任务已{state_text}，实时预警同步更新。")
+
+
+def _handle_bulk_task_enable_toggle(db: SmartMonitorDB, tasks: List[Dict], monitor_service) -> None:
+    bulk_toggle_key = "smart_monitor_all_ai_tasks_toggle"
+    if not tasks:
+        return
+    current_all_enabled = all(bool(task.get("enabled")) for task in tasks)
+    target_enabled = bool(st.session_state.get(bulk_toggle_key))
+    if target_enabled == current_all_enabled:
+        return
+    changed_count = db.set_all_monitor_tasks_enabled(target_enabled)
+    for task in tasks:
+        st.session_state[f"smart_monitor_task_enabled_toggle_{task['id']}"] = target_enabled
+    st.session_state[bulk_toggle_key] = target_enabled
+    _pin_smart_monitor_watchlist_view()
+    if target_enabled:
+        monitor_service.ensure_started()
+        _queue_smart_monitor_feedback("success", f"已启用 {changed_count} 个盯盘任务，绑定的实时预警同步生效。")
+    else:
+        monitor_service.ensure_stopped_if_idle()
+        _queue_smart_monitor_feedback("success", f"已停用 {changed_count} 个盯盘任务，绑定的实时预警同步停用。")
+
+
+def _handle_task_enable_toggle(db: SmartMonitorDB, task: Dict, monitor_service) -> None:
+    task_id = int(task.get("id") or 0)
+    if task_id <= 0:
+        return
+    item_toggle_key = f"smart_monitor_task_enabled_toggle_{task_id}"
+    current_enabled = bool(task.get("enabled"))
+    target_enabled = bool(st.session_state.get(item_toggle_key))
+    if target_enabled == current_enabled:
+        return
+    db.set_monitor_task_enabled(task_id, target_enabled)
+    st.session_state[item_toggle_key] = target_enabled
+    refreshed_tasks = db.get_monitor_tasks(enabled_only=False)
+    st.session_state["smart_monitor_all_ai_tasks_toggle"] = bool(refreshed_tasks) and all(
+        bool(item.get("enabled")) for item in refreshed_tasks
+    )
+    _pin_smart_monitor_watchlist_view()
+    if target_enabled:
+        monitor_service.ensure_started()
+    else:
+        monitor_service.ensure_stopped_if_idle()
+    state_text = "启用" if target_enabled else "停用"
+    _queue_smart_monitor_feedback("success", f"{task.get('stock_code') or task_id} 的盯盘任务已{state_text}，实时预警同步完成。")
+
+
+def _sync_watchlist_toggle_session_state(tasks: List[Dict]) -> None:
+    st.session_state["smart_monitor_all_ai_tasks_toggle"] = bool(tasks) and all(
+        bool(task.get("enabled")) for task in tasks
+    )
+    for task in tasks:
+        task_id = task.get("id")
+        if task_id in (None, ""):
+            continue
+        st.session_state[f"smart_monitor_task_enabled_toggle_{task_id}"] = bool(task.get("enabled"))
 
 
 def _legacy_smart_monitor_ui(lightweight_model=None, reasoning_model=None):
@@ -915,25 +972,31 @@ def render_history(show_header: bool = True, title: str = "历史记录"):
 
     recent_notifications = db.monitoring_repository.get_all_recent_notifications(limit=200)
     latest_notifications = _select_latest_notification_events(recent_notifications)
+    latest_notifications = [
+        item
+        for item in latest_notifications
+        if _is_today_local_timestamp(item.get("created_at") or item.get("triggered_at"))
+    ]
     unread_count = sum(1 for item in latest_notifications if not item.get("is_read"))
+
+    decisions = [
+        decision
+        for decision in db.get_ai_decisions(limit=100)
+        if _is_today_local_timestamp(decision.get("decision_time"))
+    ]
+
     st.caption(
-        f"监测通知按股票仅保留最新一条，当前共 {len(latest_notifications)} 条，未读 {unread_count} 条。"
+        f"决策事件页仅展示今日盘中决策与今日监测通知；更早记录已归档。当前盘中决策 {len(decisions)} 条，监测通知 {len(latest_notifications)} 条，未读 {unread_count} 条。"
     )
 
-    events = db.monitoring_repository.get_recent_events(limit=60)
-    decisions = db.get_ai_decisions(limit=30)
-    ai_events, monitor_events = _split_history_events(events)
-
-    decision_tab, event_tab = st.tabs(["最新AI决策", "监测通知"])
+    decision_tab, event_tab = st.tabs(["盘中决策", "监测通知"])
 
     with decision_tab:
-        if not decisions and not ai_events:
-            st.info("暂无 AI 决策。")
+        if not decisions:
+            st.info("暂无盘中决策。")
         else:
             for decision in decisions:
                 _render_ai_decision_notice(decision)
-            for event in ai_events:
-                _render_monitor_event_notice(event)
 
     with event_tab:
         if not latest_notifications:
@@ -984,6 +1047,13 @@ def _select_latest_notification_events(events: List[Dict]) -> List[Dict]:
         seen_keys.add(identity)
         latest_events.append(event)
     return latest_events
+
+
+def _is_today_local_timestamp(value: object, *, assume_utc: bool = False) -> bool:
+    parsed = parse_display_timestamp(value, assume_utc=assume_utc)
+    if parsed is None:
+        return False
+    return parsed.date() == local_now().date()
 
 
 def _mark_monitor_notification_read(db: SmartMonitorDB, event_id: int) -> None:
@@ -1279,7 +1349,7 @@ def _format_threshold_line(label: str, levels: Dict[str, object]) -> str:
     )
 
 
-def _build_watchlist_threshold_lines(
+def _build_watchlist_threshold_lines_legacy(
     task: Dict,
     alert_item: Optional[Dict],
 ) -> tuple[Optional[str], Optional[str]]:
@@ -1287,18 +1357,82 @@ def _build_watchlist_threshold_lines(
     runtime_levels = _resolve_price_alert_levels(alert_item)
 
     if baseline_levels:
-        primary_line = _format_threshold_line("预警线(分析基线)", baseline_levels)
+        primary_line = _format_threshold_line("分析基线", baseline_levels)
         secondary_line = None
         runtime_source = str((runtime_levels or {}).get("source") or "").strip().lower()
         if runtime_levels and runtime_source == "ai_runtime" and not _threshold_levels_match(
             baseline_levels,
             runtime_levels,
         ):
-            secondary_line = _format_threshold_line("运行时阈值(盘中分析)", runtime_levels)
+            secondary_line = _format_threshold_line("盘中分析", runtime_levels)
         return primary_line, secondary_line
 
     if runtime_levels:
-        return _format_threshold_line("预警线(运行时)", runtime_levels), None
+        return _format_threshold_line("盘中分析", runtime_levels), None
+    return None, None
+
+
+def _resolve_latest_intraday_levels(
+    latest_decision: Optional[Dict],
+    alert_item: Optional[Dict],
+) -> Optional[Dict[str, object]]:
+    monitor_levels = (latest_decision or {}).get("monitor_levels")
+    if isinstance(monitor_levels, dict) and all(
+        monitor_levels.get(key) not in (None, "")
+        for key in ("entry_min", "entry_max", "take_profit", "stop_loss")
+    ):
+        return {
+            "entry_min": monitor_levels.get("entry_min"),
+            "entry_max": monitor_levels.get("entry_max"),
+            "take_profit": monitor_levels.get("take_profit"),
+            "stop_loss": monitor_levels.get("stop_loss"),
+            "source": "intraday_decision",
+            "decision_time": latest_decision.get("decision_time"),
+        }
+    return _resolve_price_alert_levels(alert_item)
+
+
+def _build_watchlist_threshold_lines_legacy_v2(
+    task: Dict,
+    alert_item: Optional[Dict],
+    latest_decision: Optional[Dict] = None,
+) -> tuple[Optional[str], Optional[str]]:
+    baseline_levels = _resolve_strategy_baseline_levels(task)
+    intraday_levels = _resolve_latest_intraday_levels(latest_decision, alert_item)
+
+    if baseline_levels:
+        primary_line = _format_threshold_line("分析基线", baseline_levels)
+        secondary_line = (
+            _format_threshold_line("盘中分析", intraday_levels)
+            if intraday_levels
+            else None
+        )
+        return primary_line, secondary_line
+
+    if intraday_levels:
+        return _format_threshold_line("盘中分析", intraday_levels), None
+    return None, None
+
+
+def _build_watchlist_threshold_lines(
+    task: Dict,
+    alert_item: Optional[Dict],
+    latest_decision: Optional[Dict] = None,
+) -> tuple[Optional[str], Optional[str]]:
+    baseline_levels = _resolve_strategy_baseline_levels(task)
+    intraday_levels = _resolve_latest_intraday_levels(latest_decision, alert_item)
+
+    if baseline_levels:
+        primary_line = _format_threshold_line("分析基线", baseline_levels)
+        secondary_line = (
+            _format_threshold_line("盘中分析", intraday_levels)
+            if intraday_levels
+            else None
+        )
+        return primary_line, secondary_line
+
+    if intraday_levels:
+        return _format_threshold_line("盘中分析", intraday_levels), None
     return None, None
 
 
@@ -1569,7 +1703,8 @@ def _render_monitor_event_notice(
     raw_event_type = event.get("event_type") or event.get("type")
     background, foreground = _get_event_notice_style(raw_event_type)
     event_type = html.escape(str(raw_event_type or "-").upper())
-    created_at = html.escape(str(event.get("created_at") or event.get("triggered_at") or "-"))
+    raw_created_at = str(event.get("created_at") or event.get("triggered_at") or "-")
+    created_at = html.escape(format_display_timestamp(raw_created_at, fallback=raw_created_at))
     symbol = html.escape(_format_symbol_with_name(event.get("symbol"), event.get("name")))
     message = html.escape(_format_monitor_event_message(event))
     is_read = bool(event.get("is_read"))
@@ -1629,7 +1764,8 @@ def _render_ai_decision_notice(decision: Dict) -> None:
     except (TypeError, ValueError):
         confidence_text = "0%"
     trading_session = html.escape(str(decision.get("trading_session") or "-"))
-    decision_time = html.escape(str(decision.get("decision_time") or "-"))
+    raw_decision_time = str(decision.get("decision_time") or "-")
+    decision_time = html.escape(format_display_timestamp(raw_decision_time, fallback=raw_decision_time))
     reasoning_brief = html.escape(_format_decision_reasoning_brief(decision.get("reasoning")))
     risk_level = html.escape(str(decision.get("risk_level") or "-"))
     reasoning_html = (
@@ -2014,6 +2150,7 @@ def render_ai_monitor_tasks_panel(show_header: bool = True, title: str = "AI监�
     if not tasks:
         st.info("暂无 AI 监控任务。")
         return
+    _sync_watchlist_toggle_session_state(tasks)
 
     st.markdown("### 任务列表")
     enabled_count = sum(1 for task in tasks if task.get('enabled'))
@@ -2060,8 +2197,12 @@ def render_ai_monitor_tasks_panel(show_header: bool = True, title: str = "AI监�
 
     for task in tasks:
         alert_item = _get_task_price_alert_item(db, task)
-        threshold_line, runtime_threshold_line = _build_watchlist_threshold_lines(task, alert_item)
         latest_decision = _get_latest_ai_decision_for_task(db, task)
+        threshold_line, runtime_threshold_line = _build_watchlist_threshold_lines(
+            task,
+            alert_item,
+            latest_decision,
+        )
         pending_actions = _get_pending_actions_for_task(db, task)
 
         with st.container():
@@ -2080,7 +2221,11 @@ def render_ai_monitor_tasks_panel(show_header: bool = True, title: str = "AI监�
                 if current_price not in (None, ""):
                     alert_meta.append(f"最新价 {current_price}")
                 if alert_item.get("last_checked"):
-                    alert_meta.append(f"最近检查 {alert_item.get('last_checked')}")
+                    checked_at = format_display_timestamp(
+                        alert_item.get("last_checked"),
+                        fallback=str(alert_item.get("last_checked")),
+                    )
+                    alert_meta.append(f"最近检查 {checked_at}")
                 if alert_meta:
                     st.caption(" | ".join(alert_meta))
 

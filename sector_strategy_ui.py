@@ -29,6 +29,7 @@ from ui_analysis_task_utils import (
     render_ui_analysis_task_live_card,
     start_ui_analysis_task,
 )
+from time_utils import format_display_timestamp, local_now_str
 
 
 SECTOR_STRATEGY_TASK_TYPE = "sector_strategy_analysis"
@@ -38,6 +39,16 @@ SECTOR_HEAT_STYLES = {
     "升温": {"color": "#d14b57", "icon": "↑"},
     "降温": {"color": "#2f8f62", "icon": "↓"},
 }
+
+
+def _resolve_report_display_time(payload: dict) -> str:
+    analysis_date = payload.get("analysis_date") if isinstance(payload, dict) else ""
+    created_at = payload.get("created_at") if isinstance(payload, dict) else ""
+    if analysis_date:
+        return format_display_timestamp(analysis_date, fallback=str(analysis_date))
+    if created_at:
+        return format_display_timestamp(created_at, fallback=str(created_at), assume_utc=True)
+    return ""
 
 
 @st.fragment(run_every=1.0)
@@ -109,6 +120,45 @@ def _render_heat_metric(rank: int, sector: str, score, trend_label: str) -> None
         f"{style['icon']} {trend_label}</div>",
         unsafe_allow_html=True,
     )
+
+
+def _render_heat_rank_group(title: str, items: list[dict], trend_label: str) -> None:
+    style = SECTOR_HEAT_STYLES.get(trend_label, {"color": NON_MARKET_PALETTE["gray"]})
+    st.markdown(f"#### {title}")
+    if not items:
+        st.caption("暂无数据")
+        return
+
+    for rank, item in enumerate(items, 1):
+        sector = item.get("sector", "N/A")
+        score = item.get("score", 0)
+        sustainability = item.get("sustainability", "N/A")
+        st.markdown(
+            f"""
+            <div style="
+                padding:0.8rem 0.9rem;
+                margin:0 0 0.55rem 0;
+                border-radius:0.85rem;
+                border:1px solid rgba(148,163,184,0.18);
+                background:rgba(15,23,42,0.28);
+                display:flex;
+                justify-content:space-between;
+                align-items:flex-start;
+                gap:0.9rem;
+            ">
+                <div style="min-width:0;">
+                    <div style="font-size:0.78rem; opacity:0.68;">#{rank}</div>
+                    <div style="font-size:1rem; font-weight:700; margin-top:0.18rem;">{sector}</div>
+                    <div style="font-size:0.82rem; opacity:0.72; margin-top:0.2rem;">持续性: {sustainability}</div>
+                </div>
+                <div style="text-align:right; white-space:nowrap;">
+                    <div style="font-size:1.08rem; font-weight:700; color:{style['color']};">{score}</div>
+                    <div style="font-size:0.78rem; opacity:0.7;">热度分</div>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
 
 def _sync_sector_strategy_finished_task() -> None:
@@ -376,10 +426,17 @@ def display_history_tab():
         for _, report in reports.iterrows():
             report_id = report['id'] if 'id' in report else None
             created_at = report['created_at'] if 'created_at' in report else ''
+            analysis_date = report['analysis_date'] if 'analysis_date' in report else ''
             data_date_range = report['data_date_range'] if 'data_date_range' in report else ''
-            expander_label = created_at or data_date_range or "未知时间"
+            display_time = _resolve_report_display_time(
+                {
+                    "analysis_date": analysis_date,
+                    "created_at": created_at,
+                }
+            )
+            expander_label = display_time or data_date_range or "未知时间"
             with st.expander(expander_label, expanded=False):
-                st.caption(f"生成时间: {created_at} | 数据区间: {data_date_range}")
+                st.caption(f"生成时间: {display_time or '-'} | 数据区间: {data_date_range}")
 
                 detail = engine.get_report_detail(report_id)
                 if not detail or not isinstance(detail.get('analysis_content_parsed'), dict):
@@ -520,9 +577,9 @@ def display_data_summary(data):
 def display_saved_report_summary(saved_report: dict):
     """在主页面显示保存的报告摘要（标题、时间、关键指标）"""
     st.subheader("报告摘要")
-    created_at = saved_report.get('created_at', '')
+    display_time = _resolve_report_display_time(saved_report)
     data_date_range = saved_report.get('data_date_range', '')
-    st.caption(f"生成时间: {created_at} | 数据区间: {data_date_range}")
+    st.caption(f"生成时间: {display_time or '-'} | 数据区间: {data_date_range}")
     _render_sector_summary(_extract_sector_strategy_summary(saved_report))
 
 
@@ -530,7 +587,7 @@ def display_analysis_results(
     result,
     show_export=True,
     key_prefix="sector_main",
-    include_visualizations: bool = True,
+    include_visualizations: bool = False,
 ):
     """显示分析结果"""
     
@@ -553,14 +610,11 @@ def display_analysis_results(
     st.markdown("---")
     
     # 创建标签页
-    tab_labels = [
+    tabs = st.tabs([
         "核心预测",
         "智能体分析",
         "综合研判",
-    ]
-    if include_visualizations:
-        tab_labels.append("数据可视化")
-    tabs = st.tabs(tab_labels)
+    ])
 
     with tabs[0]:
         display_predictions(result.get("final_predictions", {}))
@@ -570,10 +624,6 @@ def display_analysis_results(
 
     with tabs[2]:
         display_comprehensive_report(result.get("comprehensive_report", ""))
-
-    if include_visualizations:
-        with tabs[3]:
-            display_visualizations(result.get("final_predictions", {}), key_prefix=key_prefix)
 
 def display_predictions(predictions):
     """显示核心预测"""
@@ -696,41 +746,9 @@ def display_predictions(predictions):
     st.markdown("### 板块热度排行")
     
     heat = predictions.get("heat", {})
-    
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.markdown("#### 最热板块")
-        hottest = heat.get("hottest", [])
-        for idx, item in enumerate(hottest, 1):
-            _render_heat_metric(
-                idx,
-                item.get('sector', 'N/A'),
-                item.get('score', 0),
-                "最热",
-            )
-    
-    with col2:
-        st.markdown("#### 升温板块")
-        heating = heat.get("heating", [])
-        for idx, item in enumerate(heating, 1):
-            _render_heat_metric(
-                idx,
-                item.get('sector', 'N/A'),
-                item.get('score', 0),
-                "升温",
-            )
-    
-    with col3:
-        st.markdown("#### 降温板块")
-        cooling = heat.get("cooling", [])
-        for idx, item in enumerate(cooling, 1):
-            _render_heat_metric(
-                idx,
-                item.get('sector', 'N/A'),
-                item.get('score', 0),
-                "降温",
-            )
+    _render_heat_rank_group("最热板块", heat.get("hottest", []), "最热")
+    _render_heat_rank_group("升温板块", heat.get("heating", []), "升温")
+    _render_heat_rank_group("降温板块", heat.get("cooling", []), "降温")
     
     st.markdown("---")
     
@@ -989,7 +1007,7 @@ def generate_sector_markdown_report(result_data: dict) -> str:
     """生成智策分析Markdown报告"""
     
     # 获取当前时间
-    current_time = datetime.now().strftime("%Y年%m月%d日 %H:%M:%S")
+    current_time = format_display_timestamp(local_now_str(), fmt="%Y年%m月%d日 %H:%M:%S")
     
     # 标题页
     markdown_content = f"""# 智策板块策略分析报告

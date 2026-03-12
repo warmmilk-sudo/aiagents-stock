@@ -1,9 +1,24 @@
 import os
+import time as time_module
 
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    def load_dotenv(*args, **kwargs):
+        return False
 
 
 load_dotenv(override=True)
+
+
+_configured_timezone = (os.getenv("TZ") or "").strip()
+if _configured_timezone:
+    os.environ["TZ"] = _configured_timezone
+    if hasattr(time_module, "tzset"):
+        try:
+            time_module.tzset()
+        except Exception:
+            pass
 
 
 def _safe_str_env(key: str, default: str = "") -> str:

@@ -55,9 +55,15 @@ class StockMonitorService:
         return self.orchestrator.get_stocks_needing_update()
 
     def get_scheduler(self):
-        from monitor_scheduler import get_scheduler
+        try:
+            from monitor_scheduler import get_scheduler
+        except Exception:
+            return None
 
-        return get_scheduler(self)
+        try:
+            return get_scheduler(self)
+        except Exception:
+            return None
 
     def get_status(self):
         return self.orchestrator.get_status()

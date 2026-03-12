@@ -9,9 +9,11 @@ from datetime import datetime, timedelta
 from types import SimpleNamespace
 import config
 from main_force_analysis import MainForceAnalyzer
+from main_force_batch_view import render_batch_results
 from main_force_pdf_generator import display_report_download_section
 from main_force_history_ui import display_batch_history
 import pandas as pd
+from time_utils import local_now_str
 from ui_shared import get_dataframe_height
 from ui_analysis_task_utils import (
     consume_finished_ui_analysis_task,
@@ -914,6 +916,7 @@ def run_main_force_batch_analysis(lightweight_model=None, reasoning_model=None):
             "failed": failed_count,
             "elapsed_time": elapsed_time,
             "analysis_mode": analysis_mode,
+            "analysis_date": local_now_str(),
             "saved_to_history": save_success,
             "save_error": save_error
         }
@@ -926,195 +929,5 @@ def run_main_force_batch_analysis(lightweight_model=None, reasoning_model=None):
 
 def display_main_force_batch_results(batch_results):
     """显示主力选股批量分析结果"""
-    import re
-
-    results = batch_results['results']
-    total = batch_results['total']
-    success = batch_results['success']
-    failed = batch_results['failed']
-    elapsed_time = batch_results['elapsed_time']
-    saved_to_history = batch_results.get('saved_to_history', False)
-    save_error = batch_results.get('save_error')
-
-    st.markdown("## 批量分析结果")
-
-    # 显示保存状态
-    if saved_to_history:
-        st.success("分析结果已自动保存到历史记录，可点击右上角“批量分析历史”查看。")
-    elif save_error:
-        st.warning(f"历史记录保存失败: {save_error}，但结果仍可查看。")
-
-    st.markdown("---")
-
-    # 统计信息
-    col1, col2, col3, col4 = st.columns(4)
-
-    with col1:
-        st.metric("总计分析", f"{total} 只")
-
-    with col2:
-        st.metric("成功分析", f"{success} 只", delta=f"{success/total*100:.1f}%")
-
-    with col3:
-        st.metric("失败分析", f"{failed} 只")
-
-    with col4:
-        st.metric("总耗时", f"{elapsed_time/60:.1f} 分钟")
-
-    st.markdown("---")
-
-    # 成功分析的股票
-    successful_results = [r for r in results if r['success']]
-
-    if successful_results:
-        st.markdown(f"### 成功分析的股票 ({len(successful_results)}只)")
-
-        # 创建DataFrame展示
-        display_data = []
-        for result in successful_results:
-            stock_info = result.get('stock_info', {})
-            final_decision = result.get('final_decision', {})
-
-            rating = final_decision.get('rating', '未知')
-
-            display_data.append({
-                '股票代码': stock_info.get('symbol', ''),
-                '股票名称': stock_info.get('name', ''),
-                '评级': rating,
-                '信心度': final_decision.get('confidence_level', 'N/A'),
-                '进场区间': final_decision.get('entry_range', 'N/A'),
-                '止盈位': final_decision.get('take_profit', 'N/A'),
-                '止损位': final_decision.get('stop_loss', 'N/A'),
-                '目标价': final_decision.get('target_price', 'N/A')
-            })
-
-        df_display = pd.DataFrame(display_data)
-
-        # 类型统一，避免Arrow序列化错误
-        numeric_cols = ['信心度', '止盈位', '止损位', '目标价']
-        for col in numeric_cols:
-            if col in df_display.columns:
-                df_display[col] = pd.to_numeric(df_display[col], errors='coerce')
-
-        text_cols = ['股票代码', '股票名称', '评级', '进场区间']
-        for col in text_cols:
-            if col in df_display.columns:
-                df_display[col] = df_display[col].astype(str)
-
-        st.dataframe(
-            df_display,
-            width='content',
-            height=get_dataframe_height(len(df_display), max_rows=40),
-        )
-
-        # 详细分析结果（可展开）
-        st.markdown("---")
-        st.markdown("### 详细分析报告")
-
-        for result in successful_results:
-            stock_info = result.get('stock_info', {})
-            final_decision = result.get('final_decision', {})
-
-            symbol = stock_info.get('symbol', '')
-            name = stock_info.get('name', '')
-            rating = final_decision.get('rating', '未知')
-            with st.expander(f"{symbol} - {name} | {rating}"):
-                # 关键信息
-                col1, col2, col3 = st.columns(3)
-
-                with col1:
-                    st.metric("信心度", final_decision.get('confidence_level', 'N/A'))
-
-                with col2:
-                    st.metric("进场区间", final_decision.get('entry_range', 'N/A'))
-
-                with col3:
-                    st.metric("目标价", final_decision.get('target_price', 'N/A'))
-
-                # 止盈止损
-                col1, col2 = st.columns(2)
-
-                with col1:
-                    st.metric("止盈位", final_decision.get('take_profit', 'N/A'))
-
-                with col2:
-                    st.metric("止损位", final_decision.get('stop_loss', 'N/A'))
-
-                # 投资建议
-                st.markdown("#### 投资建议")
-                advice = final_decision.get('operation_advice', final_decision.get('advice', '暂无建议'))
-                st.info(advice)
-
-                # 加入价格预警按钮
-                if st.button("加入价格预警", key=f"monitor_{symbol}"):
-                    # 解析进场区间
-                    entry_range = final_decision.get('entry_range', '')
-                    entry_min, entry_max = None, None
-                    if entry_range and isinstance(entry_range, str) and "-" in entry_range:
-                        try:
-                            parts = entry_range.split("-")
-                            entry_min = float(parts[0].strip())
-                            entry_max = float(parts[1].strip())
-                        except:
-                            pass
-
-                    # 解析止盈止损
-                    take_profit_str = final_decision.get('take_profit', '')
-                    take_profit = None
-                    if take_profit_str:
-                        try:
-                            numbers = re.findall(r'\d+\.?\d*', str(take_profit_str))
-                            if numbers:
-                                take_profit = float(numbers[0])
-                        except:
-                            pass
-
-                    stop_loss_str = final_decision.get('stop_loss', '')
-                    stop_loss = None
-                    if stop_loss_str:
-                        try:
-                            numbers = re.findall(r'\d+\.?\d*', str(stop_loss_str))
-                            if numbers:
-                                stop_loss = float(numbers[0])
-                        except:
-                            pass
-
-                    # 调用统一价格预警服务
-                    from price_alert_service import create_price_alert, jump_to_price_alert_workspace
-
-                    try:
-                        # 准备进场区间数据
-                        entry_range_dict = {}
-                        if entry_min and entry_max:
-                            entry_range_dict = {"min": entry_min, "max": entry_max}
-
-                        create_price_alert(
-                            symbol=symbol,
-                            name=name,
-                            rating=rating,
-                            entry_range=entry_range_dict if entry_range_dict else None,
-                            take_profit=take_profit,
-                            stop_loss=stop_loss,
-                        )
-                        jump_to_price_alert_workspace(symbol)
-                        st.success(f"{symbol} - {name} 已加入价格预警。")
-                    except Exception as e:
-                        st.error(f"添加失败: {str(e)}")
-
-    # 失败的股票
-    failed_results = [r for r in results if not r['success']]
-
-    if failed_results:
-        st.markdown("---")
-        st.markdown(f"### 分析失败的股票 ({len(failed_results)}只)")
-
-        failed_data = []
-        for result in failed_results:
-            failed_data.append({
-                '股票代码': result.get('symbol', ''),
-                '失败原因': result.get('error', '未知错误')
-            })
-
-        df_failed = pd.DataFrame(failed_data)
-        st.dataframe(df_failed, width='content')
+    render_batch_results(batch_results, key_prefix="main_force_current")
 

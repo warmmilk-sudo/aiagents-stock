@@ -19,7 +19,37 @@ import time
 from datetime import date, datetime, time as dtime, timedelta
 from typing import Dict, List, Optional
 
-import schedule
+try:
+    import schedule
+except ImportError:
+    class _FallbackScheduleJob:
+        @property
+        def day(self):
+            return self
+
+        def at(self, *args, **kwargs):
+            return self
+
+        def do(self, *args, **kwargs):
+            return self
+
+        def tag(self, *args, **kwargs):
+            return self
+
+    class _FallbackScheduleModule:
+        @staticmethod
+        def every(*args, **kwargs):
+            return _FallbackScheduleJob()
+
+        @staticmethod
+        def clear(*args, **kwargs):
+            return None
+
+        @staticmethod
+        def run_pending():
+            return None
+
+    schedule = _FallbackScheduleModule()
 
 
 logger = logging.getLogger(__name__)

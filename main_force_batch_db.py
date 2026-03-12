@@ -10,6 +10,8 @@ from datetime import datetime
 from typing import List, Dict, Optional, Tuple
 import pandas as pd
 
+from time_utils import local_now_str
+
 class MainForceBatchDatabase:
     """主力选股批量分析历史数据库管理类"""
     
@@ -127,7 +129,7 @@ class MainForceBatchDatabase:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
-        analysis_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        analysis_date = local_now_str()
         
         # 清理结果数据，确保可以JSON序列化
         cleaned_results = self._clean_results_for_json(results)

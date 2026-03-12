@@ -9,6 +9,8 @@ import json
 import pandas as pd
 import logging
 
+from time_utils import local_now_str
+
 
 class SectorStrategyDatabase:
     """智策板块数据库管理类"""
@@ -393,7 +395,7 @@ class SectorStrategyDatabase:
          summary, confidence_score, risk_level, investment_horizon, market_outlook)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
-            datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            local_now_str(),
             data_date_range,
             analysis_content,
             self._to_json(recommended_sectors),

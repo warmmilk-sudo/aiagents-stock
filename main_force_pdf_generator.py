@@ -1,15 +1,129 @@
 import os
 import base64
 import re
+import tempfile
 from datetime import datetime
 import streamlit as st
 import pandas as pd
+from reportlab.lib import colors
+from reportlab.lib.enums import TA_CENTER
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+from reportlab.lib.units import inch
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
+
+from time_utils import local_now_str
+
+
+class MainForcePDFGenerator:
+    """主力选股 PDF 报告生成器。"""
+
+    def __init__(self):
+        self.chinese_font = "Helvetica"
+        self._setup_fonts()
+
+    def _setup_fonts(self):
+        for font_path in (
+            "C:/Windows/Fonts/msyh.ttc",
+            "C:/Windows/Fonts/simsun.ttc",
+            "C:/Windows/Fonts/simhei.ttf",
+        ):
+            if not os.path.exists(font_path):
+                continue
+            try:
+                pdfmetrics.registerFont(TTFont("MainForceChineseFont", font_path))
+                self.chinese_font = "MainForceChineseFont"
+                return
+            except Exception:
+                continue
+
+    @staticmethod
+    def _clean_markdown_line(text: str) -> str:
+        cleaned = str(text or "").strip()
+        if not cleaned:
+            return ""
+        if re.fullmatch(r"[\|\-\s:]+", cleaned):
+            return ""
+        cleaned = re.sub(r"\*\*(.*?)\*\*", r"\1", cleaned)
+        cleaned = re.sub(r"\*(.*?)\*", r"\1", cleaned)
+        cleaned = re.sub(r"\[(.*?)\]\((.*?)\)", r"\1", cleaned)
+        cleaned = cleaned.replace("`", "")
+        if "|" in cleaned:
+            cells = [cell.strip() for cell in cleaned.strip("|").split("|") if cell.strip()]
+            cleaned = "  |  ".join(cells)
+        return cleaned.strip()
+
+    def generate_pdf(self, analyzer, result, output_path: str | None = None) -> str:
+        markdown_content = generate_main_force_markdown_report(analyzer, result)
+        if output_path is None:
+            timestamp = local_now_str("%Y%m%d_%H%M%S")
+            output_path = os.path.join(tempfile.gettempdir(), f"主力选股分析报告_{timestamp}.pdf")
+
+        doc = SimpleDocTemplate(
+            output_path,
+            pagesize=A4,
+            rightMargin=0.5 * inch,
+            leftMargin=0.5 * inch,
+            topMargin=0.5 * inch,
+            bottomMargin=0.5 * inch,
+        )
+        styles = getSampleStyleSheet()
+        title_style = ParagraphStyle(
+            "MainForceTitle",
+            parent=styles["Title"],
+            fontName=self.chinese_font,
+            fontSize=18,
+            leading=24,
+            alignment=TA_CENTER,
+            textColor=colors.HexColor("#0f172a"),
+            spaceAfter=10,
+        )
+        heading_style = ParagraphStyle(
+            "MainForceHeading",
+            parent=styles["Heading2"],
+            fontName=self.chinese_font,
+            fontSize=13,
+            leading=18,
+            textColor=colors.HexColor("#1d4ed8"),
+            spaceBefore=8,
+            spaceAfter=6,
+        )
+        body_style = ParagraphStyle(
+            "MainForceBody",
+            parent=styles["BodyText"],
+            fontName=self.chinese_font,
+            fontSize=9.5,
+            leading=14,
+            textColor=colors.HexColor("#111827"),
+            spaceAfter=4,
+        )
+
+        story = [
+            Paragraph("主力选股分析报告", title_style),
+            Spacer(1, 0.12 * inch),
+        ]
+        for raw_line in markdown_content.splitlines():
+            line = self._clean_markdown_line(raw_line)
+            if not line:
+                continue
+            if raw_line.startswith("# "):
+                story.append(Paragraph(line, title_style))
+            elif raw_line.startswith("## ") or raw_line.startswith("### "):
+                story.append(Paragraph(line, heading_style))
+            else:
+                story.append(Paragraph(line, body_style))
+            story.append(Spacer(1, 0.04 * inch))
+
+        doc.build(story)
+        return output_path
 
 def generate_main_force_markdown_report(analyzer, result):
     """生成主力选股Markdown格式的分析报告"""
     
     # 获取当前时间
-    current_time = datetime.now().strftime("%Y年%m月%d日 %H:%M:%S")
+    current_time = local_now_str("%Y年%m月%d日 %H:%M:%S")
     
     # 获取分析参数
     params = result.get('params', {})
@@ -377,6 +491,91 @@ def create_html_download_link(content, filename, link_text):
 
 
 def display_report_download_section(analyzer, result):
+    """显示主力选股导出报告区域。"""
+
+    st.markdown("---")
+    st.subheader("导出报告")
+
+    export_ts = local_now_str("%Y%m%d_%H%M%S")
+    col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
+
+    with col1:
+        st.write("可将主力选股分析导出为 PDF 或 Markdown 报告，候选股票列表可单独导出为 CSV。")
+
+    with col2:
+        if st.button("生成PDF报告", type="primary", width='content', key="main_force_pdf_gen"):
+            with st.spinner("正在生成PDF报告..."):
+                try:
+                    generator = MainForcePDFGenerator()
+                    pdf_path = generator.generate_pdf(analyzer, result)
+                    with open(pdf_path, "rb") as file_obj:
+                        pdf_bytes = file_obj.read()
+
+                    st.session_state["main_force_pdf_data"] = pdf_bytes
+                    st.session_state["main_force_pdf_filename"] = f"主力选股报告_{export_ts}.pdf"
+
+                    try:
+                        os.remove(pdf_path)
+                    except OSError:
+                        pass
+
+                    st.success("PDF报告生成成功。")
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"PDF生成失败: {exc}")
+
+    with col3:
+        if st.button("生成Markdown", type="secondary", width='content', key="main_force_md_gen"):
+            with st.spinner("正在生成Markdown报告..."):
+                try:
+                    markdown_content = generate_main_force_markdown_report(analyzer, result)
+                    st.session_state["main_force_md_data"] = markdown_content
+                    st.session_state["main_force_md_filename"] = f"主力选股报告_{export_ts}.md"
+                    st.success("Markdown报告生成成功。")
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"Markdown生成失败: {exc}")
+
+    with col4:
+        if "main_force_pdf_data" in st.session_state:
+            st.download_button(
+                label="下载PDF",
+                data=st.session_state["main_force_pdf_data"],
+                file_name=st.session_state["main_force_pdf_filename"],
+                mime="application/pdf",
+                width='content',
+                key="main_force_pdf_dl",
+            )
+
+        if "main_force_md_data" in st.session_state:
+            st.download_button(
+                label="下载Markdown",
+                data=st.session_state["main_force_md_data"],
+                file_name=st.session_state["main_force_md_filename"],
+                mime="text/markdown",
+                width='content',
+                key="main_force_md_dl",
+            )
+
+    if analyzer and analyzer.raw_stocks is not None and not analyzer.raw_stocks.empty:
+        st.markdown("---")
+        st.markdown("#### 候选股票数据")
+
+        df = analyzer.raw_stocks.copy()
+        csv = df.to_csv(index=False, encoding='utf-8-sig')
+        csv_filename = f"主力选股候选列表_{export_ts}.csv"
+
+        st.download_button(
+            label="下载候选股票CSV",
+            data=csv,
+            file_name=csv_filename,
+            mime="text/csv",
+            width='content',
+            key="main_force_csv_dl",
+        )
+
+
+def _display_report_download_section_legacy(analyzer, result):
     """显示报告下载区域"""
     
     st.markdown("---")
