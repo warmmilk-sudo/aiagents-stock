@@ -30,19 +30,35 @@ class SmartMonitorDataFetcher:
         if use_tdx is None:
             from config import TDX_CONFIG
             use_tdx = TDX_CONFIG.get('enabled', False)
-        
-        if tdx_base_url is None:
-            from config import TDX_CONFIG
-            tdx_base_url = TDX_CONFIG.get('base_url', 'http://192.168.1.222:8181')
-        
+
+        tdx_timeout_seconds = 10
+        try:
+            from config import TDX_CONFIG, TDX_TIMEOUT_SECONDS
+            if tdx_base_url is None:
+                tdx_base_url = TDX_CONFIG.get('base_url', '')
+            tdx_timeout_seconds = int(TDX_TIMEOUT_SECONDS or tdx_timeout_seconds)
+        except Exception:
+            if tdx_base_url is None:
+                tdx_base_url = ''
+
         self.use_tdx = use_tdx
         self.tdx_fetcher = None
         
         if self.use_tdx:
             try:
+                if not str(tdx_base_url or '').strip():
+                    raise ValueError("TDX_BASE_URL 未配置")
                 from smart_monitor_tdx_data import SmartMonitorTDXDataFetcher
-                self.tdx_fetcher = SmartMonitorTDXDataFetcher(base_url=tdx_base_url)
-                self.logger.info(f"TDX数据源已启用: {tdx_base_url}")
+                candidate_fetcher = SmartMonitorTDXDataFetcher(
+                    base_url=tdx_base_url,
+                    timeout_seconds=max(5, tdx_timeout_seconds),
+                )
+                if getattr(candidate_fetcher, 'available', True):
+                    self.tdx_fetcher = candidate_fetcher
+                    self.logger.info(f"TDX数据源已启用: {tdx_base_url}")
+                else:
+                    self.logger.warning(f"TDX数据源不可达: {tdx_base_url}，将使用AKShare")
+                    self.use_tdx = False
             except Exception as e:
                 self.logger.warning(f"TDX数据源初始化失败: {e}，将使用AKShare")
                 self.use_tdx = False

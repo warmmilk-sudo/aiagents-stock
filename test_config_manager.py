@@ -66,6 +66,32 @@ class ConfigManagerEnvFormatTests(unittest.TestCase):
             self.assertEqual(values["LIGHTWEIGHT_MODEL_NAME"], "qwen-plus")
             self.assertEqual(values["REASONING_MODEL_NAME"], "qwen-max")
 
+    def test_read_env_uses_blank_tdx_url_default(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            env_path = Path(temp_dir) / ".env"
+            manager = ConfigManager(str(env_path))
+
+            values = manager.read_env()
+
+            self.assertEqual(values["TDX_BASE_URL"], "")
+            self.assertEqual(values["TDX_TIMEOUT_SECONDS"], "10")
+
+    def test_validate_config_requires_tdx_url_when_enabled(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            env_path = Path(temp_dir) / ".env"
+            manager = ConfigManager(str(env_path))
+
+            is_valid, message = manager.validate_config(
+                {
+                    "DEEPSEEK_API_KEY": "x" * 20,
+                    "TDX_ENABLED": "true",
+                    "TDX_BASE_URL": "",
+                }
+            )
+
+            self.assertFalse(is_valid)
+            self.assertIn("TDX API 地址不能为空", message)
+
 
 if __name__ == "__main__":
     unittest.main()

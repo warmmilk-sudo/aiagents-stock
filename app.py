@@ -10,6 +10,7 @@ import time
 import base64
 import os
 from typing import Any, Dict, Optional
+from urllib.parse import urlparse
 import config
 import streamlit.components.v1 as components
 from analysis_history_service import analysis_history_service
@@ -3536,6 +3537,13 @@ def display_config_manager():
 
         st.markdown("---")
         st.markdown("### TDX 数据源配置（推荐）")
+
+        def _is_loopback_tdx_url(value: str) -> bool:
+            try:
+                hostname = (urlparse((value or "").strip()).hostname or "").lower()
+            except ValueError:
+                return False
+            return hostname in {"127.0.0.1", "localhost", "::1"}
         
         # 启用开关
         tdx_enabled_info = config_info["TDX_ENABLED"]
@@ -3550,20 +3558,37 @@ def display_config_manager():
         
         # 接口地址
         tdx_url_info = config_info["TDX_BASE_URL"]
-        current_tdx_url = st.session_state.temp_config.get("TDX_BASE_URL", "http://127.0.0.1:8181")
+        current_tdx_url = st.session_state.temp_config.get("TDX_BASE_URL", "")
         
         new_tdx_url = st.text_input(
             f"{tdx_url_info['description']}",
             value=current_tdx_url,
             disabled=not new_tdx_enabled,
+            placeholder="例如：http://127.0.0.1:8181 或 http://192.168.1.222:8181",
+            help="只有 TDX 服务和当前应用部署在同一台机器上时，才应使用 127.0.0.1 / localhost",
             key="input_tdx_base_url"
         )
-        st.session_state.temp_config["TDX_BASE_URL"] = new_tdx_url
+        st.session_state.temp_config["TDX_BASE_URL"] = new_tdx_url.strip()
 
+        tdx_timeout_info = config_info.get(
+            "TDX_TIMEOUT_SECONDS",
+            {"description": "TDX 请求超时（秒）", "value": "10"},
+        )
+        current_tdx_timeout = st.session_state.temp_config.get("TDX_TIMEOUT_SECONDS", "10")
+        new_tdx_timeout = st.text_input(
+            f"{tdx_timeout_info['description']}",
+            value=current_tdx_timeout,
+            disabled=not new_tdx_enabled,
+            help="跨机器访问 TDX 时不要再硬压到 3 秒，建议保留 10 秒左右",
+            key="input_tdx_timeout_seconds"
+        )
+        st.session_state.temp_config["TDX_TIMEOUT_SECONDS"] = new_tdx_timeout.strip()
 
-
-
-
+        if new_tdx_enabled:
+            if not new_tdx_url.strip():
+                st.warning("已启用 TDX，但还没有填写可访问的 TDX API 地址。")
+            elif _is_loopback_tdx_url(new_tdx_url):
+                st.info("当前使用的是本机回环地址。只有 TDX 服务和当前应用在同一台机器上时，这个地址才有效。")
 
     with tab3:
         st.markdown("### 通知配置")

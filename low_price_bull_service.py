@@ -44,10 +44,13 @@ class LowPriceBullService:
             self.holding_days_limit = int(days)
             
             # TDX API配置
-            self.tdx_api_url = os.getenv('TDX_BASE_URL', 'http://127.0.0.1:5000')
+            self.tdx_api_url = (os.getenv('TDX_BASE_URL', '') or '').strip().rstrip('/')
             
             self.logger.info(f"监控配置: 扫描间隔={self.scan_interval}秒, 持股天数限制={self.holding_days_limit}天")
-            self.logger.info(f"TDX API: {self.tdx_api_url}")
+            if self.tdx_api_url:
+                self.logger.info(f"TDX API: {self.tdx_api_url}")
+            else:
+                self.logger.warning("未配置 TDX_BASE_URL，低价擒牛监控将跳过 TDX 数据读取")
             
         except Exception as e:
             self.logger.warning(f"加载配置失败，使用默认值: {e}")
@@ -168,6 +171,10 @@ class LowPriceBullService:
         try:
             import requests
             import pandas as pd
+
+            if not self.tdx_api_url:
+                self.logger.warning(f"{stock_code} 未配置 TDX_BASE_URL，跳过 TDX 数据读取")
+                return None, None, None
             
             # 处理股票代码格式：去掉后缀，保留纯数字代码
             # 例如：002259.SZ -> 002259

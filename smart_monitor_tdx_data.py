@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 class SmartMonitorTDXDataFetcher:
     """TDX数据获取器"""
     
-    def __init__(self, base_url: str = "http://192.168.1.222:8181"):
+    def __init__(self, base_url: str = "", timeout_seconds: int = 10):
         """
         初始化TDX数据获取器
         
@@ -21,11 +21,39 @@ class SmartMonitorTDXDataFetcher:
             base_url: TDX API基础地址
         """
         self.logger = logging.getLogger(__name__)
-        self.base_url = base_url.rstrip('/')
-        self.timeout = 10  # 请求超时时间（秒）
+        self.base_url = (base_url or "").strip().rstrip('/')
+        if not self.base_url:
+            raise ValueError("TDX_BASE_URL 未配置")
+        self.timeout = max(5, int(timeout_seconds or 10))  # 请求超时时间（秒）
         
         self.logger.info(f"TDX数据源初始化成功，接口地址: {self.base_url}")
-        self.check_connection(log_on_success=True)
+        self.available = self.check_connection(log_on_success=True)
+        if not self.available:
+            self.logger.warning(f"TDX初始化完成，但连接探测失败: {self.base_url}")
+
+    def _probe_quote_endpoint(self) -> bool:
+        """部分旧版 TDX 服务没有 /api/health，退化到行情接口探测。"""
+        probe_codes = ("000001", "600000")
+        for stock_code in probe_codes:
+            try:
+                response = requests.get(
+                    f"{self.base_url}/api/quote",
+                    params={"code": stock_code},
+                    timeout=min(self.timeout, 5),
+                )
+                if response.status_code != 200:
+                    continue
+
+                payload = response.json()
+                if isinstance(payload, (dict, list)):
+                    self.logger.info("TDX连通性探测成功，行情接口可访问: %s/api/quote", self.base_url)
+                    return True
+            except requests.exceptions.RequestException:
+                continue
+            except ValueError:
+                continue
+
+        return False
 
     def check_connection(self, log_on_success: bool = False) -> bool:
         """Check whether the configured TDX service is reachable."""
@@ -38,20 +66,17 @@ class SmartMonitorTDXDataFetcher:
                 if log_on_success:
                     self.logger.info(f"TDX连接成功，健康检查通过: {self.base_url}/api/health")
                 return True
-
             self.logger.warning(
-                f"TDX健康检查未通过，HTTP {response.status_code}: {self.base_url}/api/health"
+                f"TDX健康检查未通过，HTTP {response.status_code}: {self.base_url}/api/health，尝试行情接口探测"
             )
-            return False
         except requests.exceptions.Timeout:
-            self.logger.warning(f"TDX健康检查超时: {self.base_url}/api/health")
-            return False
+            self.logger.warning(f"TDX健康检查超时: {self.base_url}/api/health，尝试行情接口探测")
         except requests.exceptions.ConnectionError:
-            self.logger.warning(f"TDX健康检查连接失败: {self.base_url}/api/health")
-            return False
+            self.logger.warning(f"TDX健康检查连接失败: {self.base_url}/api/health，尝试行情接口探测")
         except Exception as e:
-            self.logger.warning(f"TDX健康检查异常: {type(e).__name__}: {e}")
-            return False
+            self.logger.warning(f"TDX健康检查异常: {type(e).__name__}: {e}，尝试行情接口探测")
+
+        return self._probe_quote_endpoint()
     
     def get_realtime_quote(self, stock_code: str) -> Optional[Dict]:
         """

@@ -359,15 +359,89 @@ class MonitoringOrchestratorAsyncTests(unittest.IsolatedAsyncioTestCase):
         repo = _FakeRepository([])
         fake_monitor_db = _FakeMonitorDB(repo, {})
         fake_engine = types.SimpleNamespace(ai_decision_timeout_seconds=70)
+        original_ai_timeout = getattr(monitoring_orchestrator.config, "SMART_MONITOR_AI_TIMEOUT_SECONDS", 70)
 
         with patch.object(monitoring_orchestrator, "monitor_db", fake_monitor_db), patch.object(
             monitoring_orchestrator,
             "SmartMonitorEngine",
             return_value=fake_engine,
         ), patch.object(monitoring_orchestrator, "TDX_AVAILABLE", False):
-            orchestrator = monitoring_orchestrator.MonitoringOrchestrator()
+            monitoring_orchestrator.config.SMART_MONITOR_AI_TIMEOUT_SECONDS = 70
+            try:
+                orchestrator = monitoring_orchestrator.MonitoringOrchestrator()
+            finally:
+                monitoring_orchestrator.config.SMART_MONITOR_AI_TIMEOUT_SECONDS = original_ai_timeout
 
         self.assertEqual(orchestrator.AI_TASK_TIMEOUT_SECONDS, 75)
+
+    def test_orchestrator_disables_tdx_when_probe_failed(self):
+        repo = _FakeRepository([])
+        fake_monitor_db = _FakeMonitorDB(repo, {})
+        fake_tdx_fetcher = types.SimpleNamespace(timeout=10, available=False)
+        original_tdx_config = monitoring_orchestrator.config.TDX_CONFIG
+        original_tdx_timeout = getattr(monitoring_orchestrator.config, "TDX_TIMEOUT_SECONDS", 10)
+
+        with patch.object(monitoring_orchestrator, "monitor_db", fake_monitor_db), patch.object(
+            monitoring_orchestrator,
+            "SmartMonitorEngine",
+            return_value=object(),
+        ), patch.object(monitoring_orchestrator, "TDX_AVAILABLE", True), patch.object(
+            monitoring_orchestrator,
+            "SmartMonitorTDXDataFetcher",
+            return_value=fake_tdx_fetcher,
+        ):
+            monitoring_orchestrator.config.TDX_CONFIG = {
+                "enabled": True,
+                "base_url": "http://127.0.0.1:8181",
+            }
+            monitoring_orchestrator.config.TDX_TIMEOUT_SECONDS = 12
+            try:
+                orchestrator = monitoring_orchestrator.MonitoringOrchestrator()
+            finally:
+                monitoring_orchestrator.config.TDX_CONFIG = original_tdx_config
+                monitoring_orchestrator.config.TDX_TIMEOUT_SECONDS = original_tdx_timeout
+
+        self.assertFalse(orchestrator.use_tdx)
+        self.assertIsNone(orchestrator.tdx_fetcher)
+        self.assertEqual(orchestrator.TDX_FETCH_TIMEOUT_SECONDS, 12)
+
+    def test_orchestrator_uses_configured_tdx_timeout_without_hard_cap(self):
+        repo = _FakeRepository([])
+        fake_monitor_db = _FakeMonitorDB(repo, {})
+        fake_tdx_fetcher = types.SimpleNamespace(timeout=10, available=True)
+        original_tdx_config = monitoring_orchestrator.config.TDX_CONFIG
+        original_tdx_timeout = getattr(monitoring_orchestrator.config, "TDX_TIMEOUT_SECONDS", 10)
+
+        with patch.object(monitoring_orchestrator, "monitor_db", fake_monitor_db), patch.object(
+            monitoring_orchestrator,
+            "SmartMonitorEngine",
+            return_value=object(),
+        ), patch.object(monitoring_orchestrator, "TDX_AVAILABLE", True), patch.object(
+            monitoring_orchestrator,
+            "SmartMonitorTDXDataFetcher",
+            return_value=fake_tdx_fetcher,
+        ) as mocked_fetcher_cls:
+            monitoring_orchestrator.config.TDX_CONFIG = {
+                "enabled": True,
+                "base_url": "http://tdx.example.com:8181",
+            }
+            monitoring_orchestrator.config.TDX_TIMEOUT_SECONDS = 12
+            try:
+                orchestrator = monitoring_orchestrator.MonitoringOrchestrator()
+            finally:
+                monitoring_orchestrator.config.TDX_CONFIG = original_tdx_config
+                monitoring_orchestrator.config.TDX_TIMEOUT_SECONDS = original_tdx_timeout
+
+        self.assertTrue(orchestrator.use_tdx)
+        self.assertEqual(orchestrator.TDX_FETCH_TIMEOUT_SECONDS, 12)
+        self.assertEqual(orchestrator.tdx_fetcher, fake_tdx_fetcher)
+        self.assertEqual(
+            mocked_fetcher_cls.call_args.kwargs,
+            {
+                "base_url": "http://tdx.example.com:8181",
+                "timeout_seconds": 12,
+            },
+        )
 
 
 class MonitoringWriteSerializationTests(unittest.TestCase):

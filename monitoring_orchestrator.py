@@ -27,7 +27,7 @@ class MonitoringOrchestrator:
     AI_CONCURRENCY = 2
     PRICE_ALERT_CONCURRENCY = 4
     PRICE_FETCH_TIMEOUT_SECONDS = 5
-    TDX_FETCH_TIMEOUT_SECONDS = 3
+    TDX_FETCH_TIMEOUT_SECONDS = 10
     AI_TASK_TIMEOUT_SECONDS = 40
     NOTIFICATION_TIMEOUT_SECONDS = 10
 
@@ -38,6 +38,10 @@ class MonitoringOrchestrator:
         self.AI_TASK_TIMEOUT_SECONDS = max(
             int(getattr(self.engine, "ai_decision_timeout_seconds", self.AI_TASK_TIMEOUT_SECONDS) or self.AI_TASK_TIMEOUT_SECONDS) + 5,
             int(getattr(config, "SMART_MONITOR_AI_TIMEOUT_SECONDS", self.AI_TASK_TIMEOUT_SECONDS) or self.AI_TASK_TIMEOUT_SECONDS) + 5,
+        )
+        self.TDX_FETCH_TIMEOUT_SECONDS = max(
+            5,
+            int(getattr(config, "TDX_TIMEOUT_SECONDS", self.TDX_FETCH_TIMEOUT_SECONDS) or self.TDX_FETCH_TIMEOUT_SECONDS),
         )
         self.fetcher = StockDataFetcher()
         self.running = False
@@ -53,17 +57,23 @@ class MonitoringOrchestrator:
 
         self.tdx_fetcher = None
         self.use_tdx = False
-        tdx_enabled = os.getenv("TDX_ENABLED", "false").lower() == "true"
-        tdx_base_url = os.getenv("TDX_BASE_URL", "http://192.168.1.222:8181")
-        if tdx_enabled and TDX_AVAILABLE:
+        tdx_config = getattr(config, "TDX_CONFIG", {}) or {}
+        tdx_enabled = bool(tdx_config.get("enabled", False))
+        tdx_base_url = str(tdx_config.get("base_url") or "").strip()
+        if tdx_enabled and not tdx_base_url:
+            self.logger.warning("TDX 已启用，但未配置 TDX_BASE_URL，已降级使用默认数据源")
+        elif tdx_enabled and TDX_AVAILABLE:
             try:
-                self.tdx_fetcher = SmartMonitorTDXDataFetcher(base_url=tdx_base_url)
-                self.tdx_fetcher.timeout = min(
-                    int(getattr(self.tdx_fetcher, "timeout", self.TDX_FETCH_TIMEOUT_SECONDS) or self.TDX_FETCH_TIMEOUT_SECONDS),
-                    self.TDX_FETCH_TIMEOUT_SECONDS,
+                candidate_fetcher = SmartMonitorTDXDataFetcher(
+                    base_url=tdx_base_url,
+                    timeout_seconds=self.TDX_FETCH_TIMEOUT_SECONDS,
                 )
-                self.use_tdx = True
-                self.logger.info("TDX数据源已启用: %s", tdx_base_url)
+                if getattr(candidate_fetcher, "available", True):
+                    self.tdx_fetcher = candidate_fetcher
+                    self.use_tdx = True
+                    self.logger.info("TDX数据源已启用: %s", tdx_base_url)
+                else:
+                    self.logger.warning("TDX地址不可达，已降级使用默认数据源: %s", tdx_base_url)
             except (OSError, RuntimeError, ValueError, TypeError) as exc:
                 self.logger.warning("TDX数据源初始化失败，将使用默认数据源: %s", exc)
             except Exception:

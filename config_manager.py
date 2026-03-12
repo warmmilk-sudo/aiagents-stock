@@ -156,8 +156,14 @@ class ConfigManager:
                 "type": "boolean",
             },
             "TDX_BASE_URL": {
-                "value": "http://127.0.0.1:8181",
-                "description": "TDX API 地址",
+                "value": "",
+                "description": "TDX API 地址（启用 TDX 时必填）",
+                "required": False,
+                "type": "text",
+            },
+            "TDX_TIMEOUT_SECONDS": {
+                "value": "10",
+                "description": "TDX 请求超时（秒）",
                 "required": False,
                 "type": "text",
             },
@@ -453,6 +459,10 @@ class ConfigManager:
         api_key = config.get("DEEPSEEK_API_KEY", "")
         if api_key and len(api_key) < 20:
             return False, "DeepSeek API Key 格式不正确（长度太短）"
+
+        if str(config.get("TDX_ENABLED", "false")).strip().lower() == "true":
+            if not str(config.get("TDX_BASE_URL", "")).strip():
+                return False, "启用 TDX 数据源时，TDX API 地址不能为空"
 
         return True, "配置验证通过"
 

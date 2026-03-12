@@ -105,8 +105,10 @@ SMART_MONITOR_DEFAULT_TAKE_PROFIT_PCT = max(
     1,
     min(30, _safe_int_env("SMART_MONITOR_DEFAULT_TAKE_PROFIT_PCT", 10)),
 )
+TDX_TIMEOUT_SECONDS = max(5, _safe_int_env("TDX_TIMEOUT_SECONDS", 10))
 
 TDX_CONFIG = {
     "enabled": _safe_str_env("TDX_ENABLED", "false").lower() == "true",
-    "base_url": _safe_str_env("TDX_BASE_URL", "http://127.0.0.1:8181"),
+    "base_url": _safe_str_env("TDX_BASE_URL", ""),
+    "timeout_seconds": TDX_TIMEOUT_SECONDS,
 }

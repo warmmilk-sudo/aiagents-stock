@@ -61,8 +61,11 @@ DATA_PERIOD=1y
 # 项目地址：https://github.com/officejo/tdx-api
 TDX_ENABLED=false
 
-# TDX API服务地址（默认本地运行，可改为局域网IP）
-TDX_BASE_URL=http://127.0.0.1:8181
+# TDX API服务地址（启用后必填；仅同机部署时使用127.0.0.1）
+TDX_BASE_URL=
+
+# TDX 请求超时（秒）
+TDX_TIMEOUT_SECONDS=10
 
 # ========== 邮件通知配置（可选）==========
 # 是否启用邮件通知
