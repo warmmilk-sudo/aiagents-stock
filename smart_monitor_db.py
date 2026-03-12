@@ -962,7 +962,7 @@ class SmartMonitorDB:
         latest_action = str((latest or {}).get("action") or "").upper()
         current_action = str(decision_data.get("action") or "").upper()
         if latest and latest_action and latest_action == current_action:
-            return int(latest["id"]), False
+            return self.save_ai_decision(decision_data), False
         return self.save_ai_decision(decision_data), True
 
     def get_ai_decisions(self, stock_code: str = None, limit: int = 100) -> List[Dict]:

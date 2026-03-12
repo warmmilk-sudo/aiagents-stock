@@ -27,6 +27,7 @@ from ui_analysis_task_utils import (
 )
 from ui_state_keys import (
     INVESTMENT_AI_TASK_PREFILL_KEY,
+    INVESTMENT_WORKSPACE_ACTIVE_TAB_KEY,
     INVESTMENT_PRICE_ALERT_PREFILL_KEY,
     PORTFOLIO_ADD_ACCOUNT_NAME_KEY,
     PORTFOLIO_ADD_ORIGIN_ANALYSIS_ID_KEY,
@@ -51,6 +52,7 @@ load_dotenv()
 
 SMART_MONITOR_INTRADAY_ANALYSIS_TASK_TYPE = "smart_monitor_intraday_analysis"
 SMART_MONITOR_INTRADAY_ANALYSIS_DONE_KEY = "smart_monitor_intraday_analysis_last_handled"
+SMART_MONITOR_ACTION_FEEDBACK_KEY = "smart_monitor_action_feedback"
 
 
 def _coerce_interval_setting(raw_value, default: int, minimum: int, maximum: int) -> int:
@@ -150,6 +152,89 @@ def _apply_default_settings_to_existing_items(
             alert_updated += 1
 
     return ai_updated, alert_updated, task_defaults_updated
+
+
+def _pin_smart_monitor_watchlist_view() -> None:
+    for key in (
+        "show_deep_analysis",
+        "show_analysis_history",
+        "show_monitor_service",
+        "show_monitor",
+        "show_main_force",
+        "show_low_price_bull",
+        "show_small_cap",
+        "show_profit_growth",
+        "show_value_stock",
+        "show_sector_strategy",
+        "show_longhubang",
+        "show_portfolio",
+        "show_news_flow",
+        "show_macro_cycle",
+        "show_config",
+    ):
+        st.session_state.pop(key, None)
+    st.session_state["show_smart_monitor"] = True
+    st.session_state[INVESTMENT_WORKSPACE_ACTIVE_TAB_KEY] = "ai_monitor"
+    st.session_state[SMART_MONITOR_ACTIVE_TAB_KEY] = "watchlist"
+
+
+def _queue_smart_monitor_feedback(level: str, message: str) -> None:
+    st.session_state[SMART_MONITOR_ACTION_FEEDBACK_KEY] = {
+        "level": str(level or "info").strip().lower() or "info",
+        "message": str(message or "").strip(),
+    }
+
+
+def _render_smart_monitor_feedback() -> None:
+    feedback = st.session_state.pop(SMART_MONITOR_ACTION_FEEDBACK_KEY, None)
+    if not isinstance(feedback, dict):
+        return
+    message = str(feedback.get("message") or "").strip()
+    if not message:
+        return
+    level = str(feedback.get("level") or "info").strip().lower()
+    render_fn = getattr(st, level, st.info)
+    render_fn(message)
+
+
+def _handle_bulk_task_enable_toggle(db: SmartMonitorDB, tasks: List[Dict], monitor_service) -> None:
+    bulk_toggle_key = "smart_monitor_all_ai_tasks_toggle"
+    if not tasks:
+        return
+    current_all_enabled = all(bool(task.get("enabled")) for task in tasks)
+    target_enabled = bool(st.session_state.get(bulk_toggle_key))
+    if target_enabled == current_all_enabled:
+        return
+    changed_count = db.set_all_monitor_tasks_enabled(target_enabled)
+    for task in tasks:
+        st.session_state.pop(f"smart_monitor_task_enabled_toggle_{task['id']}", None)
+    _pin_smart_monitor_watchlist_view()
+    if target_enabled:
+        monitor_service.ensure_started()
+        _queue_smart_monitor_feedback("success", f"已启用 {changed_count} 个标的的盯盘任务，实时预警同步生效。")
+    else:
+        monitor_service.ensure_stopped_if_idle()
+        _queue_smart_monitor_feedback("success", f"已停用 {changed_count} 个标的的盯盘任务，实时预警同步停用。")
+
+
+def _handle_task_enable_toggle(db: SmartMonitorDB, task: Dict, monitor_service) -> None:
+    task_id = int(task.get("id") or 0)
+    if task_id <= 0:
+        return
+    item_toggle_key = f"smart_monitor_task_enabled_toggle_{task_id}"
+    current_enabled = bool(task.get("enabled"))
+    target_enabled = bool(st.session_state.get(item_toggle_key))
+    if target_enabled == current_enabled:
+        return
+    db.set_monitor_task_enabled(task_id, target_enabled)
+    st.session_state.pop("smart_monitor_all_ai_tasks_toggle", None)
+    _pin_smart_monitor_watchlist_view()
+    if target_enabled:
+        monitor_service.ensure_started()
+    else:
+        monitor_service.ensure_stopped_if_idle()
+    state_text = "启用" if target_enabled else "停用"
+    _queue_smart_monitor_feedback("success", f"{task.get('stock_code') or task_id} 的盯盘任务已{state_text}，实时预警同步更新。")
 
 
 def _legacy_smart_monitor_ui(lightweight_model=None, reasoning_model=None):
@@ -1680,7 +1765,7 @@ def _start_intraday_analysis_task(task: Dict) -> None:
     stock_code = task.get("stock_code") or "UNKNOWN"
     stock_name = task.get("stock_name") or stock_code
     if not task_id:
-        raise RuntimeError("监控任务缺少有效 ID，无法提交手工分析。")
+        raise RuntimeError("监控任务缺少有效 ID，无法提交盘中分析。")
 
     def runner(_background_task_id, report_progress):
         report_progress(
@@ -1720,6 +1805,73 @@ def _start_intraday_analysis_task(task: Dict) -> None:
     )
 
 
+def _start_bulk_intraday_analysis_task(tasks: List[Dict]) -> None:
+    runnable_tasks = [task for task in tasks if task.get("id")]
+    if not runnable_tasks:
+        raise RuntimeError("当前没有可执行的盯盘任务。")
+
+    stock_codes = [str(task.get("stock_code") or "UNKNOWN") for task in runnable_tasks]
+
+    def runner(_background_task_id, report_progress):
+        from monitor_service import monitor_service
+
+        total = len(runnable_tasks)
+        succeeded_codes: List[str] = []
+        failed_codes: List[str] = []
+
+        for index, task in enumerate(runnable_tasks, start=1):
+            stock_code = str(task.get("stock_code") or "UNKNOWN")
+            report_progress(
+                current=index - 1,
+                total=total,
+                step_code=stock_code,
+                step_status="analyzing",
+                message=f"正在执行 {stock_code} 的盘中分析",
+            )
+            success = monitor_service.manual_update_stock(int(task["id"]))
+            if success:
+                succeeded_codes.append(stock_code)
+                report_progress(
+                    current=index,
+                    total=total,
+                    step_code=stock_code,
+                    step_status="success",
+                    message=f"{stock_code} 盘中分析已完成",
+                )
+                continue
+
+            failed_codes.append(stock_code)
+            report_progress(
+                current=index,
+                total=total,
+                step_code=stock_code,
+                step_status="failed",
+                message=f"{stock_code} 盘中分析失败",
+            )
+
+        if failed_codes and not succeeded_codes:
+            raise RuntimeError(f"全部盘中分析失败：{', '.join(failed_codes[:8])}")
+
+        return {
+            "mode": "batch",
+            "total_tasks": total,
+            "succeeded_stock_codes": succeeded_codes,
+            "failed_stock_codes": failed_codes,
+            "stock_codes": stock_codes,
+        }
+
+    start_ui_analysis_task(
+        task_type=SMART_MONITOR_INTRADAY_ANALYSIS_TASK_TYPE,
+        label=f"全部盘中分析（{len(runnable_tasks)}只）",
+        runner=runner,
+        metadata={
+            "mode": "batch",
+            "total_tasks": len(runnable_tasks),
+            "stock_codes": stock_codes,
+        },
+    )
+
+
 def _consume_finished_intraday_analysis_task() -> None:
     finished_task = consume_finished_ui_analysis_task(
         SMART_MONITOR_INTRADAY_ANALYSIS_TASK_TYPE,
@@ -1732,6 +1884,22 @@ def _consume_finished_intraday_analysis_task() -> None:
         return
 
     result = finished_task.get("result") or {}
+    if str(result.get("mode") or "").lower() == "batch":
+        succeeded_codes = list(result.get("succeeded_stock_codes") or [])
+        failed_codes = list(result.get("failed_stock_codes") or [])
+        total_tasks = int(result.get("total_tasks") or len(succeeded_codes) + len(failed_codes))
+        if failed_codes:
+            failed_preview = "、".join(failed_codes[:6])
+            if len(failed_codes) > 6:
+                failed_preview += " 等"
+            st.warning(
+                f"全部盘中分析已完成：共 {total_tasks} 只，成功 {len(succeeded_codes)} 只，失败 {len(failed_codes)} 只"
+                f"（失败：{failed_preview}）。"
+            )
+        else:
+            st.success(f"全部盘中分析已完成：共 {total_tasks} 只盯盘股。")
+        return
+
     stock_code = result.get("stock_code") or "目标股票"
     st.success(f"{stock_code} 的盘中分析已完成。")
 
@@ -1760,6 +1928,7 @@ def render_ai_monitor_tasks_panel(show_header: bool = True, title: str = "AI监�
     db = st.session_state[SMART_MONITOR_DB_KEY]
     monitor_service.ensure_started()
     monitor_service.ensure_stopped_if_idle()
+    _render_smart_monitor_feedback()
 
     prefill = st.session_state.pop(INVESTMENT_AI_TASK_PREFILL_KEY, None)
     if not prefill:
@@ -1835,6 +2004,7 @@ def render_ai_monitor_tasks_panel(show_header: bool = True, title: str = "AI监�
                 st.session_state["ai_task_form_origin_analysis_id"] = None
                 st.session_state.pop("ai_task_form_notice", None)
                 st.success(f"{normalized_code} AI 监控任务已保存。")
+                _pin_smart_monitor_watchlist_view()
                 st.rerun()
 
     tasks = db.get_monitor_tasks(enabled_only=False)
@@ -1849,32 +2019,41 @@ def render_ai_monitor_tasks_panel(show_header: bool = True, title: str = "AI监�
         SMART_MONITOR_INTRADAY_ANALYSIS_TASK_TYPE,
         "立即盘中分析",
     )
+    run_all_button_label, run_all_button_disabled, run_all_button_help = get_ui_analysis_button_state(
+        SMART_MONITOR_INTRADAY_ANALYSIS_TASK_TYPE,
+        f"立即全部盘中分析（{len(tasks)}只）",
+    )
 
-    summary_col, bulk_toggle_col = st.columns([3.2, 1.4])
+    summary_col, run_all_col, bulk_toggle_col = st.columns([2.5, 1.8, 1.2])
     with summary_col:
         st.caption(f"共 {len(tasks)} 个任务，已启用 {enabled_count} 个，已停用 {disabled_count} 个。")
         if enabled_count not in {0, len(tasks)}:
             st.caption("当前为部分启用状态，总开关切换后会统一收敛为全开或全关。")
+    with run_all_col:
+        if st.button(
+            run_all_button_label,
+            key="run_all_intraday_analysis_tasks",
+            width="stretch",
+            disabled=run_all_button_disabled,
+            help=run_all_button_help or "对当前盯盘列表中的全部股票执行一次盘中分析。",
+        ):
+            try:
+                _start_bulk_intraday_analysis_task(tasks)
+                st.success(f"已提交全部盘中分析任务，共 {len(tasks)} 只盯盘股。")
+                _pin_smart_monitor_watchlist_view()
+                st.rerun()
+            except RuntimeError as exc:
+                st.error(str(exc))
     with bulk_toggle_col:
         bulk_toggle_key = "smart_monitor_all_ai_tasks_toggle"
-        bulk_enabled = st.toggle(
+        st.toggle(
             "全部启用",
             value=disabled_count == 0,
             key=bulk_toggle_key,
             help="打开后启用全部盯盘任务，关闭后停用全部盯盘任务。",
+            on_change=_handle_bulk_task_enable_toggle,
+            args=(db, tasks, monitor_service),
         )
-        if bulk_enabled != (disabled_count == 0):
-            changed_count = db.set_all_monitor_tasks_enabled(bulk_enabled)
-            for task in tasks:
-                st.session_state.pop(f"smart_monitor_task_enabled_toggle_{task['id']}", None)
-            st.session_state.pop(bulk_toggle_key, None)
-            if bulk_enabled:
-                monitor_service.ensure_started()
-                st.success(f"已启用 {changed_count} 个标的的盯盘任务，实时预警同步生效。")
-            else:
-                monitor_service.ensure_stopped_if_idle()
-                st.success(f"已停用 {changed_count} 个标的的盯盘任务，实时预警同步停用。")
-            st.rerun()
 
     for task in tasks:
         alert_item = _get_task_price_alert_item(db, task)
@@ -1929,29 +2108,20 @@ def render_ai_monitor_tasks_panel(show_header: bool = True, title: str = "AI监�
                     try:
                         _start_intraday_analysis_task(task)
                         st.success("已提交盘中分析任务。")
+                        _pin_smart_monitor_watchlist_view()
                         st.rerun()
                     except RuntimeError as exc:
                         st.error(str(exc))
             with action_col2:
                 item_toggle_key = f"smart_monitor_task_enabled_toggle_{task['id']}"
-                task_enabled = bool(task.get("enabled"))
-                toggled_enabled = st.toggle(
+                st.toggle(
                     "启用",
-                    value=task_enabled,
+                    value=bool(task.get("enabled")),
                     key=item_toggle_key,
                     help="打开后启用该股票盯盘，关闭后同步停用绑定价格预警。",
+                    on_change=_handle_task_enable_toggle,
+                    args=(db, task, monitor_service),
                 )
-                if toggled_enabled != task_enabled:
-                    db.set_monitor_task_enabled(int(task["id"]), toggled_enabled)
-                    st.session_state.pop("smart_monitor_all_ai_tasks_toggle", None)
-                    st.session_state.pop(item_toggle_key, None)
-                    if toggled_enabled:
-                        monitor_service.ensure_started()
-                    else:
-                        monitor_service.ensure_stopped_if_idle()
-                    state_text = "启用" if toggled_enabled else "停用"
-                    st.success(f"{task['stock_code']} 的盯盘任务已{state_text}，实时预警同步更新。")
-                    st.rerun()
             if not task.get('managed_by_portfolio'):
                 action_col3 = action_columns[2]
                 with action_col3:
@@ -1962,6 +2132,7 @@ def render_ai_monitor_tasks_panel(show_header: bool = True, title: str = "AI监�
                     ):
                         db.delete_monitor_task(task['id'])
                         st.success("任务已删除。")
+                        _pin_smart_monitor_watchlist_view()
                         st.rerun()
 
             st.markdown(
