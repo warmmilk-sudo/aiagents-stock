@@ -1730,6 +1730,16 @@ def display_add_stock_form():
     st.session_state.setdefault("portfolio_add_auto_monitor", True)
     st.session_state.setdefault("portfolio_add_buy_date", date.today())
 
+    feedback = st.session_state.pop("portfolio_add_feedback", None)
+    if isinstance(feedback, dict):
+        message = str(feedback.get("message") or "").strip()
+        if message:
+            st.success(message)
+        for warning in feedback.get("warnings") or []:
+            warning_text = str(warning or "").strip()
+            if warning_text:
+                st.warning(warning_text)
+
     if st.session_state.get(PORTFOLIO_ADD_ORIGIN_ANALYSIS_ID_KEY):
         st.info("已从分析结果预填持仓表单，补充数量后即可直接入账。")
     
@@ -1793,12 +1803,18 @@ def display_add_stock_form():
                     if not success:
                         st.error(msg)
                         return
+                    warnings = []
                     if stock_id and cost_price > 0 and quantity > 0:
-                        portfolio_manager.seed_initial_trade(
-                            stock_id,
-                            trade_date=buy_date,
-                            note=note.strip() if note else "",
-                        )
+                        try:
+                            trade_success, trade_msg = portfolio_manager.seed_initial_trade(
+                                stock_id,
+                                trade_date=buy_date,
+                                note=note.strip() if note else "",
+                            )
+                            if not trade_success:
+                                warnings.append(f"首笔建仓记录未补写: {trade_msg}")
+                        except Exception as exc:
+                            warnings.append(f"首笔建仓记录补写失败: {exc}")
                     st.session_state[PORTFOLIO_ADD_ACCOUNT_NAME_KEY] = "默认账户"
                     st.session_state[PORTFOLIO_ADD_ORIGIN_ANALYSIS_ID_KEY] = None
                     st.session_state["portfolio_add_code"] = ""
@@ -1807,7 +1823,10 @@ def display_add_stock_form():
                     st.session_state["portfolio_add_note"] = ""
                     st.session_state["portfolio_add_auto_monitor"] = True
                     st.session_state["portfolio_add_buy_date"] = date.today()
-                    st.success(msg)
+                    st.session_state["portfolio_add_feedback"] = {
+                        "message": msg,
+                        "warnings": warnings,
+                    }
                     st.rerun()
                 except Exception as e:
                     st.error(f"添加失败: {str(e)}")

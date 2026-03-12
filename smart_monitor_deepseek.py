@@ -3,8 +3,11 @@
 适配A股T+1交易规则的AI决策系统
 """
 
+import ast
+import json
 import logging
-from typing import Dict, List, Optional
+import re
+from typing import Any, Dict, List, Optional
 from datetime import datetime, time
 import time as time_module
 
@@ -386,31 +389,34 @@ class SmartMonitorDeepSeek:
 6. 🔴 重大利空：公司公告重大利空消息
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-💬 返回格式（必须严格JSON）
+💬 返回格式（必须严格 JSON，对象外不要输出任何解释、Markdown、代码块）
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 {
-    "action": "BUY" | "SELL" | "HOLD",
-    "confidence": 0-100,
+    "action": "HOLD",
+    "confidence": 72,
     "reasoning": "详细的决策理由，包括技术分析、风险评估等，200-300字",
-    "position_size_pct": 10-30,  // 建议仓位百分比（因为T+1，建议≤30%）
-    "stop_loss_pct": 5.0,  // 止损百分比（建议5%）
-    "take_profit_pct": 10.0,  // 止盈百分比（建议10-15%）
-    "risk_level": "low" | "medium" | "high",
+    "position_size_pct": 20,
+    "stop_loss_pct": 5.0,
+    "take_profit_pct": 10.0,
+    "risk_level": "medium",
     "key_price_levels": {
-        "support": 支撑位价格,
-        "resistance": 阻力位价格,
-        "stop_loss": 止损位价格
+        "support": 12.34,
+        "resistance": 13.10,
+        "stop_loss": 11.72
     },
     "monitor_levels": {
-        "entry_min": 进场区间下沿价格,
-        "entry_max": 进场区间上沿价格,
-        "take_profit": 止盈价位,
-        "stop_loss": 止损价位
+        "entry_min": 12.10,
+        "entry_max": 12.40,
+        "take_profit": 13.20,
+        "stop_loss": 11.70
     }
 }
 
 要求：
+- 只能返回一个 JSON 对象本体，不要输出 ```json、注释、补充说明、前后缀文本。
+- 所有 key 和字符串值都必须使用双引号。
+- 不要输出尾逗号，不要使用 `//` 注释。
 - `monitor_levels` 必须输出 4 个明确价格，不要省略。
 - 如果沿用战略基线，也要把具体价格完整写入 `monitor_levels`。
 - `key_price_levels` 用于解释，`monitor_levels` 用于系统实时预警回写。
@@ -431,7 +437,7 @@ MACD金叉且柱状图持续放大，RSI 62处于健康区间。今日成交量�
         try:
             response = self.chat_completion(
                 messages,
-                temperature=0.3,
+                temperature=0.1,
                 max_tokens=1600,
                 tier=ModelTier.LIGHTWEIGHT,
             )
@@ -609,51 +615,350 @@ KDJ:
         
         return prompt
 
+    @staticmethod
+    def _iter_json_candidates(ai_response: str) -> List[str]:
+        text = str(ai_response or "").strip()
+        if not text:
+            return []
+
+        candidates: List[str] = []
+        for match in re.finditer(r"```(?:json)?\s*([\s\S]*?)```", text, re.IGNORECASE):
+            candidate = str(match.group(1) or "").strip()
+            if candidate:
+                candidates.append(candidate)
+
+        braced = SmartMonitorDeepSeek._extract_balanced_braces(text)
+        if braced:
+            candidates.append(braced)
+
+        candidates.append(text)
+
+        deduped: List[str] = []
+        seen = set()
+        for candidate in candidates:
+            normalized = candidate.strip()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            deduped.append(normalized)
+        return deduped
+
+    @staticmethod
+    def _extract_balanced_braces(text: str) -> Optional[str]:
+        for start_index, char in enumerate(text):
+            if char != "{":
+                continue
+            depth = 0
+            quote_char = ""
+            escape = False
+            for index in range(start_index, len(text)):
+                current_char = text[index]
+                if quote_char:
+                    if escape:
+                        escape = False
+                    elif current_char == "\\":
+                        escape = True
+                    elif current_char == quote_char:
+                        quote_char = ""
+                    continue
+                if current_char in {'"', "'"}:
+                    quote_char = current_char
+                    continue
+                if current_char == "{":
+                    depth += 1
+                elif current_char == "}":
+                    depth -= 1
+                    if depth == 0:
+                        return text[start_index:index + 1]
+        return None
+
+    @staticmethod
+    def _strip_json_comments(text: str) -> str:
+        result: List[str] = []
+        quote_char = ""
+        escape = False
+        index = 0
+        while index < len(text):
+            current_char = text[index]
+            next_char = text[index + 1] if index + 1 < len(text) else ""
+            if quote_char:
+                result.append(current_char)
+                if escape:
+                    escape = False
+                elif current_char == "\\":
+                    escape = True
+                elif current_char == quote_char:
+                    quote_char = ""
+                index += 1
+                continue
+
+            if current_char in {'"', "'"}:
+                quote_char = current_char
+                result.append(current_char)
+                index += 1
+                continue
+
+            if current_char == "/" and next_char == "/":
+                index += 2
+                while index < len(text) and text[index] not in "\r\n":
+                    index += 1
+                continue
+
+            if current_char == "/" and next_char == "*":
+                index += 2
+                while index + 1 < len(text) and text[index:index + 2] != "*/":
+                    index += 1
+                index += 2
+                continue
+
+            result.append(current_char)
+            index += 1
+        return "".join(result)
+
+    @staticmethod
+    def _quote_unquoted_keys(text: str) -> str:
+        pattern = re.compile(r'([{\[,]\s*)([A-Za-z_\u4e00-\u9fff][A-Za-z0-9_\-\u4e00-\u9fff]*)(\s*:)')
+        return pattern.sub(r'\1"\2"\3', text)
+
+    @staticmethod
+    def _quote_known_string_values(text: str) -> str:
+        replacements = {
+            "action": r"BUY|SELL|HOLD|买入|卖出|持有|观望|等待|加仓|减仓|止盈|止损",
+            "risk_level": r"low|medium|high|低|中|高",
+        }
+        normalized = text
+        for field, options in replacements.items():
+            pattern = re.compile(
+                rf'("{field}"\s*:\s*)(?P<value>{options})(\s*[,}}])',
+                re.IGNORECASE,
+            )
+            normalized = pattern.sub(r'\1"\g<value>"\3', normalized)
+        return normalized
+
+    @staticmethod
+    def _strip_trailing_commas(text: str) -> str:
+        return re.sub(r",\s*([}\]])", r"\1", text)
+
+    @staticmethod
+    def _replace_json_literals_for_python(text: str) -> str:
+        replacements = {"true": "True", "false": "False", "null": "None"}
+        result: List[str] = []
+        quote_char = ""
+        escape = False
+        index = 0
+        while index < len(text):
+            current_char = text[index]
+            if quote_char:
+                result.append(current_char)
+                if escape:
+                    escape = False
+                elif current_char == "\\":
+                    escape = True
+                elif current_char == quote_char:
+                    quote_char = ""
+                index += 1
+                continue
+
+            if current_char in {'"', "'"}:
+                quote_char = current_char
+                result.append(current_char)
+                index += 1
+                continue
+
+            replaced = False
+            for source, target in replacements.items():
+                end_index = index + len(source)
+                if (
+                    text[index:end_index] == source
+                    and (index == 0 or not (text[index - 1].isalnum() or text[index - 1] == "_"))
+                    and (end_index >= len(text) or not (text[end_index].isalnum() or text[end_index] == "_"))
+                ):
+                    result.append(target)
+                    index = end_index
+                    replaced = True
+                    break
+            if replaced:
+                continue
+
+            result.append(current_char)
+            index += 1
+        return "".join(result)
+
+    @staticmethod
+    def _sanitize_json_like_text(text: str) -> str:
+        translation = str.maketrans({
+            "“": '"',
+            "”": '"',
+            "‘": "'",
+            "’": "'",
+            "，": ",",
+            "：": ":",
+            "；": ";",
+        })
+        sanitized = str(text or "").strip().translate(translation)
+        sanitized = SmartMonitorDeepSeek._strip_json_comments(sanitized)
+        sanitized = SmartMonitorDeepSeek._quote_unquoted_keys(sanitized)
+        sanitized = SmartMonitorDeepSeek._quote_known_string_values(sanitized)
+        sanitized = SmartMonitorDeepSeek._strip_trailing_commas(sanitized)
+        return sanitized
+
+    @staticmethod
+    def _coerce_numeric(value: Any, *, default: float = 0.0, scale_fraction_to_pct: bool = False) -> float:
+        if isinstance(value, bool):
+            return float(default)
+        if isinstance(value, (int, float)):
+            number = float(value)
+        else:
+            text = str(value or "").replace(",", "").strip()
+            match = re.search(r"-?\d+(?:\.\d+)?", text)
+            if not match:
+                return float(default)
+            number = float(match.group(0))
+        if scale_fraction_to_pct and 0 <= number <= 1:
+            number *= 100
+        return number
+
+    @staticmethod
+    def _normalize_action_value(value: Any) -> str:
+        text = str(value or "").strip().upper()
+        mapping = {
+            "BUY": "BUY",
+            "买入": "BUY",
+            "加仓": "BUY",
+            "建仓": "BUY",
+            "SELL": "SELL",
+            "卖出": "SELL",
+            "减仓": "SELL",
+            "止盈": "SELL",
+            "止损": "SELL",
+            "HOLD": "HOLD",
+            "持有": "HOLD",
+            "观望": "HOLD",
+            "等待": "HOLD",
+        }
+        return mapping.get(text, "HOLD")
+
+    @staticmethod
+    def _normalize_risk_level(value: Any) -> str:
+        text = str(value or "").strip().lower()
+        mapping = {
+            "low": "low",
+            "低": "low",
+            "medium": "medium",
+            "中": "medium",
+            "high": "high",
+            "高": "high",
+        }
+        return mapping.get(text, "medium")
+
+    @staticmethod
+    def _normalize_key_price_levels(value: Any) -> Dict[str, float]:
+        if not isinstance(value, dict):
+            return {}
+        normalized: Dict[str, float] = {}
+        for key in ("support", "resistance", "stop_loss"):
+            raw_value = value.get(key)
+            if raw_value in (None, ""):
+                continue
+            try:
+                normalized[key] = float(SmartMonitorDeepSeek._coerce_numeric(raw_value))
+            except (TypeError, ValueError):
+                continue
+        return normalized
+
+    def _normalize_decision_payload(self, decision: Dict[str, Any]) -> Dict[str, Any]:
+        reasoning_text = decision.get("reasoning")
+        if isinstance(reasoning_text, (dict, list)):
+            reasoning_text = json.dumps(reasoning_text, ensure_ascii=False)
+        reasoning = str(reasoning_text or "").strip()
+        if not reasoning:
+            raise ValueError("缺少必需字段: reasoning")
+
+        normalized: Dict[str, Any] = {
+            "action": self._normalize_action_value(decision.get("action")),
+            "confidence": int(max(0, min(100, round(self._coerce_numeric(
+                decision.get("confidence"),
+                default=0,
+                scale_fraction_to_pct=True,
+            ))))),
+            "reasoning": reasoning,
+            "position_size_pct": int(max(0, min(100, round(self._coerce_numeric(
+                decision.get("position_size_pct"),
+                default=20,
+            ))))),
+            "stop_loss_pct": round(max(0.0, self._coerce_numeric(decision.get("stop_loss_pct"), default=5.0)), 2),
+            "take_profit_pct": round(max(0.0, self._coerce_numeric(decision.get("take_profit_pct"), default=10.0)), 2),
+            "risk_level": self._normalize_risk_level(decision.get("risk_level")),
+            "key_price_levels": self._normalize_key_price_levels(decision.get("key_price_levels")),
+        }
+
+        monitor_levels = self._normalize_monitor_levels(decision)
+        if monitor_levels:
+            normalized["monitor_levels"] = monitor_levels
+        return normalized
+
+    def _salvage_decision_fields(self, text: str) -> Optional[Dict[str, Any]]:
+        normalized = self._sanitize_json_like_text(text)
+        action_match = re.search(r'(?i)(?:^|[,{]\s*)"action"\s*:\s*"?([A-Za-z\u4e00-\u9fff]+)', normalized)
+        confidence_match = re.search(r'(?i)(?:^|[,{]\s*)"confidence"\s*:\s*"?([0-9]+(?:\.[0-9]+)?%?)', normalized)
+        reasoning_match = re.search(
+            r'(?is)(?:^|[,{]\s*)"reasoning"\s*:\s*"?(.*?)(?:"?\s*(?:,\s*"[A-Za-z_][A-Za-z0-9_]*"\s*:|\}\s*$))',
+            normalized,
+        )
+        if not action_match or not confidence_match or not reasoning_match:
+            return None
+        return {
+            "action": action_match.group(1),
+            "confidence": confidence_match.group(1),
+            "reasoning": reasoning_match.group(1).strip().strip('"').strip(),
+        }
+
+    def _decode_decision_text(self, ai_response: str) -> Dict[str, Any]:
+        errors: List[str] = []
+        for candidate in self._iter_json_candidates(ai_response):
+            try:
+                parsed = json.loads(candidate)
+                if isinstance(parsed, str):
+                    parsed = json.loads(parsed)
+                if isinstance(parsed, dict):
+                    return parsed
+            except Exception as exc:
+                errors.append(f"strict_json: {exc}")
+
+            sanitized = self._sanitize_json_like_text(candidate)
+            try:
+                parsed = json.loads(sanitized)
+                if isinstance(parsed, str):
+                    parsed = json.loads(parsed)
+                if isinstance(parsed, dict):
+                    return parsed
+            except Exception as exc:
+                errors.append(f"sanitized_json: {exc}")
+
+            try:
+                python_like = self._replace_json_literals_for_python(sanitized)
+                parsed = ast.literal_eval(python_like)
+                if isinstance(parsed, str):
+                    parsed = ast.literal_eval(parsed)
+                if isinstance(parsed, dict):
+                    return parsed
+            except Exception as exc:
+                errors.append(f"python_literal: {exc}")
+
+        salvaged = self._salvage_decision_fields(ai_response)
+        if salvaged:
+            return salvaged
+
+        error_message = errors[-1] if errors else "未找到可解析的JSON对象"
+        raise ValueError(error_message)
+
     def _parse_decision(self, ai_response: str) -> Dict:
-        """解析AI决策响应"""
-        import json
-        
+        """解析AI决策响应。"""
         try:
-            # 尝试多种提取方式
-            if "```json" in ai_response.lower():
-                json_start = ai_response.lower().find("```json") + 7
-                json_end = ai_response.find("```", json_start)
-                json_str = ai_response[json_start:json_end].strip()
-            elif "```" in ai_response:
-                first_tick = ai_response.find("```")
-                json_start = ai_response.find("\n", first_tick) + 1
-                json_end = ai_response.find("```", json_start)
-                json_str = ai_response[json_start:json_end].strip()
-            elif "{" in ai_response and "}" in ai_response:
-                start_idx = ai_response.find('{')
-                end_idx = ai_response.rfind('}') + 1
-                json_str = ai_response[start_idx:end_idx]
-            else:
-                json_str = ai_response
-            
-            decision = json.loads(json_str)
-            
-            # 验证必需字段
-            required_fields = ['action', 'confidence', 'reasoning']
-            for field in required_fields:
-                if field not in decision:
-                    raise ValueError(f"缺少必需字段: {field}")
-            
-            # 设置默认值
-            decision.setdefault('position_size_pct', 20)
-            decision.setdefault('stop_loss_pct', 5.0)
-            decision.setdefault('take_profit_pct', 10.0)
-            decision.setdefault('risk_level', 'medium')
-            decision.setdefault('key_price_levels', {})
-            monitor_levels = self._normalize_monitor_levels(decision)
-            if monitor_levels:
-                decision['monitor_levels'] = monitor_levels
-            
-            return decision
-            
+            decoded = self._decode_decision_text(ai_response)
+            return self._normalize_decision_payload(decoded)
         except Exception as e:
-            self.logger.error(f"解析AI决策失败: {e}")
-            # 返回保守决策
+            self.logger.error("解析AI决策失败: %s; response=%s", e, str(ai_response or "")[:300])
             return {
                 'action': 'HOLD',
                 'confidence': 0,

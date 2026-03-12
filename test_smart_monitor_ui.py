@@ -1,9 +1,85 @@
+import sys
+import types
 import unittest
+
+
+class _DummyContext:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+
+class _DummyStreamlit(types.ModuleType):
+    def __init__(self):
+        super().__init__("streamlit")
+        self.session_state = {}
+
+    def __getattr__(self, name):
+        if name == "fragment":
+            def _fragment(*args, **kwargs):
+                def _decorator(func):
+                    return func
+                return _decorator
+            return _fragment
+        if name in {"container", "expander", "form", "spinner"}:
+            return lambda *args, **kwargs: _DummyContext()
+        if name == "columns":
+            return lambda spec, *args, **kwargs: [
+                _DummyContext() for _ in range(spec if isinstance(spec, int) else len(spec))
+            ]
+        if name == "tabs":
+            return lambda labels, *args, **kwargs: [_DummyContext() for _ in labels]
+        if name in {"button", "checkbox", "form_submit_button"}:
+            return lambda *args, **kwargs: False
+        if name in {"selectbox", "radio", "text_input", "text_area", "date_input"}:
+            return lambda *args, **kwargs: ""
+        if name in {"number_input", "slider"}:
+            return lambda *args, **kwargs: 0
+        return lambda *args, **kwargs: None
+
+
+sys.modules.setdefault("streamlit", _DummyStreamlit())
 
 import smart_monitor_ui
 
 
 class SmartMonitorUIHistorySplitTests(unittest.TestCase):
+    def test_select_latest_notification_events_keeps_latest_per_stock(self):
+        notifications = [
+            {
+                "id": 5,
+                "account_name": "默认账户",
+                "symbol": "600519",
+                "event_type": "sell",
+                "message": "最新卖出信号",
+                "is_read": False,
+            },
+            {
+                "id": 4,
+                "account_name": "默认账户",
+                "symbol": "600519",
+                "event_type": "buy",
+                "message": "旧买入信号",
+                "is_read": True,
+            },
+            {
+                "id": 3,
+                "account_name": "默认账户",
+                "symbol": "000001",
+                "event_type": "entry",
+                "message": "平安银行进入区间",
+                "is_read": True,
+            },
+        ]
+
+        latest = smart_monitor_ui._select_latest_notification_events(notifications)
+
+        self.assertEqual([event["id"] for event in latest], [5, 3])
+        self.assertEqual(latest[0]["message"], "最新卖出信号")
+        self.assertFalse(latest[0]["is_read"])
+
     def test_ai_analysis_events_are_grouped_with_ai_decisions(self):
         events = [
             {"event_type": "ai_analysis", "message": "AI决策: HOLD"},
@@ -47,6 +123,18 @@ class SmartMonitorUIHistorySplitTests(unittest.TestCase):
     def test_monitor_event_message_uses_reason_without_repeating_symbol(self):
         event = {
             "event_type": "entry",
+            "symbol": "002230",
+            "name": "科大讯飞",
+            "message": "股票 002230 (科大讯飞) 价格 53.08 进入进场区间 [51.2-55.0]",
+        }
+        self.assertEqual(
+            smart_monitor_ui._format_monitor_event_message(event),
+            "原因：价格 53.08 进入进场区间 [51.2-55.0]",
+        )
+
+    def test_monitor_event_message_supports_notification_type_fallback(self):
+        event = {
+            "type": "entry",
             "symbol": "002230",
             "name": "科大讯飞",
             "message": "股票 002230 (科大讯飞) 价格 53.08 进入进场区间 [51.2-55.0]",

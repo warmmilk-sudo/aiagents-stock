@@ -1416,6 +1416,7 @@ def _render_analysis_history_actions(
             if analysis_history_service.delete_record(int(record_id)):
                 if st.session_state.get("viewing_record_id") == int(record_id):
                     _clear_history_record_detail()
+                _sync_home_analysis_state_with_history(deleted_record_id=int(record_id))
                 st.success("记录已删除")
                 st.rerun()
             st.error("删除失败")
@@ -1498,13 +1499,121 @@ def _clear_batch_analysis_state() -> None:
         st.session_state.pop(key, None)
 
 
+def _normalize_history_record_id(record_id: Any) -> Optional[int]:
+    try:
+        normalized = int(record_id)
+    except (TypeError, ValueError):
+        return None
+    return normalized if normalized > 0 else None
+
+
+def _history_record_exists(record_id: Any) -> bool:
+    normalized_record_id = _normalize_history_record_id(record_id)
+    if normalized_record_id is None:
+        return False
+    return analysis_history_service.get_record(normalized_record_id) is not None
+
+
+def _filter_deleted_batch_analysis_results(results: Any) -> tuple[list[Dict[str, Any]], bool]:
+    if not isinstance(results, list):
+        return [], False
+
+    filtered_results: list[Dict[str, Any]] = []
+    removed_any = False
+    for item in results:
+        if not isinstance(item, dict):
+            filtered_results.append(item)
+            continue
+        record_id = item.get("record_id")
+        should_check_record = bool(item.get("saved_to_db")) and _normalize_history_record_id(record_id) is not None
+        if should_check_record and not _history_record_exists(record_id):
+            removed_any = True
+            continue
+        filtered_results.append(item)
+    return filtered_results, removed_any
+
+
+def _sanitize_home_analysis_payload(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    if not isinstance(payload, dict):
+        return None
+
+    mode = payload.get("mode")
+    if mode == "single":
+        record_id = payload.get("record_id")
+        if _normalize_history_record_id(record_id) is not None and not _history_record_exists(record_id):
+            return None
+        return payload
+
+    if mode == "batch":
+        filtered_results, removed_any = _filter_deleted_batch_analysis_results(payload.get("results"))
+        if not removed_any:
+            return payload
+
+        success_count = sum(1 for item in filtered_results if isinstance(item, dict) and item.get("success"))
+        saved_count = sum(1 for item in filtered_results if isinstance(item, dict) and item.get("saved_to_db"))
+        sanitized_payload = dict(payload)
+        sanitized_payload["results"] = filtered_results
+        sanitized_payload["success_count"] = success_count
+        sanitized_payload["failed_count"] = max(len(filtered_results) - success_count, 0)
+        sanitized_payload["saved_count"] = saved_count
+        return sanitized_payload
+
+    return payload
+
+
+def _sync_home_analysis_state_with_history(*, deleted_record_id: Optional[int] = None) -> bool:
+    changed = False
+    target_record_id = _normalize_history_record_id(deleted_record_id)
+
+    current_single_record_id = _normalize_history_record_id(st.session_state.get("analysis_record_id"))
+    if current_single_record_id is not None:
+        should_clear_single = (
+            target_record_id == current_single_record_id
+            if target_record_id is not None
+            else not _history_record_exists(current_single_record_id)
+        )
+        if should_clear_single:
+            _clear_single_analysis_state()
+            changed = True
+
+    batch_results = st.session_state.get("batch_analysis_results")
+    if isinstance(batch_results, list):
+        if target_record_id is not None:
+            filtered_results = []
+            removed_any = False
+            for item in batch_results:
+                if (
+                    isinstance(item, dict)
+                    and _normalize_history_record_id(item.get("record_id")) == target_record_id
+                ):
+                    removed_any = True
+                    continue
+                filtered_results.append(item)
+        else:
+            filtered_results, removed_any = _filter_deleted_batch_analysis_results(batch_results)
+
+        if removed_any:
+            if filtered_results:
+                st.session_state.batch_analysis_results = filtered_results
+            else:
+                _clear_batch_analysis_state()
+            changed = True
+
+    return changed
+
+
 def _apply_home_analysis_result(payload: Dict[str, Any]) -> None:
+    payload = _sanitize_home_analysis_payload(payload) or {}
     mode = payload.get("mode")
     if mode == "batch":
         _clear_single_analysis_state()
         st.session_state.batch_analysis_results = payload.get("results") or []
         st.session_state.batch_analysis_mode = payload.get("batch_mode") or "顺序分析"
         st.session_state.main_analysis_mode = "批量分析"
+        return
+    if mode != "single":
+        _clear_single_analysis_state()
+        _clear_batch_analysis_state()
         return
 
     _clear_batch_analysis_state()
@@ -1526,7 +1635,7 @@ def _restore_home_analysis_result_from_latest_task() -> None:
     if not latest_task or latest_task.get("status") != "success":
         return
 
-    payload = latest_task.get("result") or {}
+    payload = _sanitize_home_analysis_payload(latest_task.get("result") or {}) or {}
     if payload.get("mode") in {"single", "batch"}:
         _apply_home_analysis_result(payload)
 
@@ -1543,7 +1652,11 @@ def _consume_finished_home_analysis_task() -> None:
         st.error(f"深度分析失败：{finished_task.get('error', '未知错误')}")
         return
 
-    payload = finished_task.get("result") or {}
+    payload = _sanitize_home_analysis_payload(finished_task.get("result") or {}) or {}
+    if payload.get("mode") not in {"single", "batch"}:
+        _clear_single_analysis_state()
+        _clear_batch_analysis_state()
+        return
     _apply_home_analysis_result(payload)
 
     if payload.get("mode") == "batch":
@@ -1954,6 +2067,7 @@ def _run_home_single_analysis_task(
         "agents_results": result.get("agents_results"),
         "discussion_result": result.get("discussion_result"),
         "final_decision": result.get("final_decision"),
+        "record_id": result.get("record_id"),
         "saved_to_db": bool(result.get("saved_to_db")),
         "db_error": result.get("db_error"),
     }
@@ -2269,8 +2383,10 @@ def _render_home_analysis_workbench(api_key_status: bool, period: str) -> None:
 
 def display_home_workspace(api_key_status: bool, period: str) -> None:
     _render_home_analysis_task_fragment()
+    _sync_home_analysis_state_with_history()
     _restore_home_analysis_result_from_latest_task()
     _consume_finished_home_analysis_task()
+    _sync_home_analysis_state_with_history()
     _render_home_analysis_workbench(api_key_status, period)
 
 def _legacy_analyze_single_stock_for_batch(symbol, period, enabled_analysts_config=None,

@@ -214,9 +214,23 @@ class PortfolioManager:
             )
             if not success or stock_id is None:
                 return False, message, None
+
+            warnings: List[str] = []
+            lifecycle_message = str(message or "").strip()
+            if "（" in lifecycle_message and lifecycle_message.endswith("）"):
+                warnings.append(lifecycle_message.split("（", 1)[1][:-1])
+
             self._mark_integrations_reconcile_pending()
-            self.capture_daily_snapshot(account_name=account_name, source="manual")
-            return True, f"添加持仓股票成功: {code} {final_name}", stock_id
+            try:
+                self.capture_daily_snapshot(account_name=account_name, source="manual")
+            except Exception as exc:
+                print(f"[WARN] 添加持仓后补写快照失败 ({code}): {exc}")
+                warnings.append(f"快照补写失败: {exc}")
+
+            success_message = f"添加持仓股票成功: {code} {final_name}"
+            if warnings:
+                success_message = f"{success_message}（{'；'.join(warnings)}）"
+            return True, success_message, stock_id
             
         except Exception as e:
             return False, f"添加失败: {str(e)}", None

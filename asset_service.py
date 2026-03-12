@@ -297,8 +297,13 @@ class AssetService:
                 origin_analysis_id=origin_analysis_id,
                 last_trade_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             )
-        self.sync_managed_monitors(asset_id)
-        return True, f"已设为持仓: {symbol}", asset_id
+        warning = ""
+        try:
+            self.sync_managed_monitors(asset_id)
+        except Exception as exc:
+            print(f"[WARN] 设为持仓后同步监测失败 ({symbol}): {exc}")
+            warning = f"（监测同步失败: {exc}）"
+        return True, f"已设为持仓: {symbol}{warning}", asset_id
 
     def clear_position_to_watchlist(self, asset_id: int, *, note: str = "", last_trade_at: Optional[str] = None) -> bool:
         changed = self.asset_repository.transition_asset_status(

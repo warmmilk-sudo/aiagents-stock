@@ -270,6 +270,42 @@ class MonitoringRepositoryTests(unittest.TestCase):
         due_later = self.repo.get_due_items(now=now + timedelta(minutes=4), service_running=True)
         self.assertEqual([item["id"] for item in due_later], [item_id])
 
+    def test_mark_notification_read_preserves_delivery_state_and_records_timestamp(self):
+        item_id = self.repo.create_item(
+            {
+                "symbol": "600519",
+                "name": "贵州茅台",
+                "monitor_type": "ai_task",
+                "account_name": "主账户",
+            }
+        )
+        event_id = self.repo.record_event(
+            item_id=item_id,
+            event_type="sell",
+            message="触发最新卖出信号",
+            notification_pending=True,
+            sent=False,
+            details={"source": "unit-test"},
+            created_at="2026-03-12 10:30:00",
+        )
+
+        notifications = self.repo.get_all_recent_notifications(limit=10)
+        self.assertEqual(len(notifications), 1)
+        self.assertEqual(notifications[0]["id"], event_id)
+        self.assertEqual(notifications[0]["event_type"], "sell")
+        self.assertEqual(notifications[0]["type"], "sell")
+        self.assertFalse(notifications[0]["sent"])
+        self.assertFalse(notifications[0]["is_read"])
+        self.assertIsNone(notifications[0]["read_at"])
+
+        self.repo.mark_notification_read(event_id)
+
+        latest = self.repo.get_all_recent_notifications(limit=10)[0]
+        self.assertEqual(latest["id"], event_id)
+        self.assertTrue(latest["is_read"])
+        self.assertTrue(bool(latest["read_at"]))
+        self.assertFalse(latest["sent"])
+
     def test_price_alert_upsert_reuses_existing_asset_record_when_managed_state_changes(self):
         first_id = self.repo.create_item(
             {

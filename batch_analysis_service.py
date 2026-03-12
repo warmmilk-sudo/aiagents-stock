@@ -149,6 +149,7 @@ def analyze_single_stock_for_batch(
         final_decision = agents.make_final_decision(discussion_result, stock_info, indicators)
 
         saved_to_db = False
+        record_id = None
         db_error = None
         if save_to_global_history:
             try:
@@ -178,6 +179,7 @@ def analyze_single_stock_for_batch(
             "agents_results": agents_results,
             "discussion_result": discussion_result,
             "final_decision": final_decision,
+            "record_id": record_id,
             "saved_to_db": saved_to_db,
             "db_error": db_error,
         }

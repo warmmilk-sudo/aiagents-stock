@@ -89,6 +89,46 @@ class PortfolioIntegrationTests(unittest.TestCase):
         self.assertIsNotNone(disabled_alert)
         self.assertFalse(disabled_alert["enabled"])
 
+    def test_add_stock_survives_snapshot_failure_after_position_created(self):
+        with patch.object(self.manager, "capture_daily_snapshot", side_effect=RuntimeError("snapshot broken")):
+            success, msg, stock_id = self.manager.add_stock(
+                code="688256",
+                name=None,
+                cost_price=36.5,
+                quantity=100,
+                note="snapshot-failure",
+                auto_monitor=True,
+            )
+
+        self.assertTrue(success, msg)
+        self.assertIsNotNone(stock_id)
+        self.assertIn("快照补写失败", msg)
+        stock = self.portfolio_db.get_stock(stock_id)
+        self.assertIsNotNone(stock)
+        self.assertEqual(stock["code"], "688256")
+
+    def test_add_stock_survives_monitor_sync_failure_after_position_created(self):
+        with patch.object(
+            self.manager.lifecycle_service.asset_service,
+            "sync_managed_monitors",
+            side_effect=RuntimeError("monitor sync broken"),
+        ):
+            success, msg, stock_id = self.manager.add_stock(
+                code="688001",
+                name=None,
+                cost_price=45.0,
+                quantity=200,
+                note="monitor-failure",
+                auto_monitor=True,
+            )
+
+        self.assertTrue(success, msg)
+        self.assertIsNotNone(stock_id)
+        self.assertIn("监测同步失败", msg)
+        stock = self.portfolio_db.get_stock(stock_id)
+        self.assertIsNotNone(stock)
+        self.assertEqual(stock["code"], "688001")
+
     def test_persist_analysis_results_saves_portfolio_history_and_syncs_realtime_monitor(self):
         stock_id = self._add_stock("300750", cost_price=150.0, quantity=100)
 

@@ -112,6 +112,8 @@ class MonitoringRepository:
                     details_json TEXT,
                     notification_pending INTEGER DEFAULT 0,
                     sent INTEGER DEFAULT 0,
+                    is_read INTEGER DEFAULT 0,
+                    read_at TEXT,
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (monitoring_item_id) REFERENCES monitoring_items (id)
                 )
@@ -141,6 +143,8 @@ class MonitoringRepository:
             self._ensure_column(cursor, "monitoring_items", "asset_id", "INTEGER")
             self._ensure_column(cursor, "monitoring_items", "portfolio_stock_id", "INTEGER")
             self._ensure_column(cursor, "monitoring_items", "origin_analysis_id", "INTEGER")
+            self._ensure_column(cursor, "monitoring_events", "is_read", "INTEGER DEFAULT 0")
+            self._ensure_column(cursor, "monitoring_events", "read_at", "TEXT")
             self._cleanup_dirty_monitoring_data_if_needed(cursor)
             self._migrate_indexes_if_needed(cursor)
             self._ensure_indexes(cursor)
@@ -1478,9 +1482,9 @@ class MonitoringRepository:
                     """
                     INSERT INTO monitoring_events (
                         monitoring_item_id, symbol, name, monitor_type, event_type,
-                        message, details_json, notification_pending, sent, created_at
+                        message, details_json, notification_pending, sent, is_read, read_at, created_at
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         item_id,
@@ -1492,6 +1496,8 @@ class MonitoringRepository:
                         json.dumps(details or {}, ensure_ascii=False),
                         1 if notification_pending else 0,
                         1 if sent else 0,
+                        0,
+                        None,
                         created_at or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     ),
                 )
@@ -1526,6 +1532,7 @@ class MonitoringRepository:
                     "stock_id": row["monitoring_item_id"],
                     "symbol": row["symbol"],
                     "name": row["name"] or row["symbol"],
+                    "event_type": row["event_type"],
                     "type": row["event_type"],
                     "message": row["message"],
                     "triggered_at": row["created_at"],
@@ -1555,10 +1562,25 @@ class MonitoringRepository:
         cursor = conn.cursor()
         cursor.execute(
             """
-            SELECT id, monitoring_item_id, symbol, name, event_type, message, details_json, created_at, sent
-            FROM monitoring_events
-            WHERE notification_pending = 1
-            ORDER BY datetime(created_at) DESC, id DESC
+            SELECT
+                e.id,
+                e.monitoring_item_id,
+                e.symbol,
+                e.name,
+                e.monitor_type,
+                e.event_type,
+                e.message,
+                e.details_json,
+                e.created_at,
+                e.sent,
+                e.is_read,
+                e.read_at,
+                COALESCE(mi.account_name, '') AS account_name
+            FROM monitoring_events e
+            LEFT JOIN monitoring_items mi
+                ON mi.id = e.monitoring_item_id
+            WHERE e.notification_pending = 1
+            ORDER BY datetime(e.created_at) DESC, e.id DESC
             LIMIT ?
             """,
             (limit,),
@@ -1575,10 +1597,15 @@ class MonitoringRepository:
                     "stock_id": row["monitoring_item_id"],
                     "symbol": row["symbol"],
                     "name": row["name"] or row["symbol"],
+                    "monitor_type": row["monitor_type"],
+                    "account_name": row["account_name"] or DEFAULT_ACCOUNT_NAME,
+                    "event_type": row["event_type"],
                     "type": row["event_type"],
                     "message": row["message"],
                     "triggered_at": row["created_at"],
                     "sent": bool(row["sent"]),
+                    "is_read": bool(row["is_read"]),
+                    "read_at": row["read_at"],
                 }
             )
             notifications.append(payload)
@@ -1595,6 +1622,26 @@ class MonitoringRepository:
                 conn.close()
 
         run_with_monitoring_write_lock(_mark)
+
+    def mark_notification_read(self, event_id: int) -> None:
+        def _mark_read() -> None:
+            conn = self._connect()
+            try:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    UPDATE monitoring_events
+                    SET is_read = 1,
+                        read_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """,
+                    (event_id,),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+        run_with_monitoring_write_lock(_mark_read)
 
     def mark_all_notifications_sent(self) -> int:
         def _mark_all() -> int:

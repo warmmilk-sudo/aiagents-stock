@@ -828,27 +828,17 @@ def render_history(show_header: bool = True, title: str = "历史记录"):
     monitor_service.ensure_stopped_if_idle()
 
     recent_notifications = db.monitoring_repository.get_all_recent_notifications(limit=200)
-    notification_count = len(recent_notifications)
-    notification_summary_col, notification_action_col = st.columns([5, 1.2])
-    with notification_summary_col:
-        st.caption(f"当前通知 {notification_count} 条。清除后不会影响 AI 决策记录。")
-    with notification_action_col:
-        if st.button(
-            "清除通知",
-            key="smart_monitor_clear_notifications",
-            width="stretch",
-            disabled=notification_count == 0,
-            help="清空监测通知事件，不影响 AI 决策历史。",
-        ):
-            cleared_count = db.monitoring_repository.clear_all_notifications()
-            st.success(f"已清除 {cleared_count} 条通知。")
-            st.rerun()
+    latest_notifications = _select_latest_notification_events(recent_notifications)
+    unread_count = sum(1 for item in latest_notifications if not item.get("is_read"))
+    st.caption(
+        f"监测通知按股票仅保留最新一条，当前共 {len(latest_notifications)} 条，未读 {unread_count} 条。"
+    )
 
     events = db.monitoring_repository.get_recent_events(limit=60)
     decisions = db.get_ai_decisions(limit=30)
     ai_events, monitor_events = _split_history_events(events)
 
-    decision_tab, event_tab = st.tabs(["最新AI决策", "最新监测事件"])
+    decision_tab, event_tab = st.tabs(["最新AI决策", "监测通知"])
 
     with decision_tab:
         if not decisions and not ai_events:
@@ -860,11 +850,19 @@ def render_history(show_header: bool = True, title: str = "历史记录"):
                 _render_monitor_event_notice(event)
 
     with event_tab:
-        if not monitor_events:
-            st.info("暂无监测事件。")
+        if not latest_notifications:
+            st.info("暂无监测通知。")
         else:
-            for event in monitor_events:
-                _render_monitor_event_notice(event)
+            for event in latest_notifications:
+                _render_monitor_event_notice(
+                    event,
+                    allow_mark_read=True,
+                    key_prefix="smart_monitor_notification",
+                    on_mark_read=lambda event_id=int(event["id"]): _mark_monitor_notification_read(
+                        db,
+                        event_id,
+                    ),
+                )
 
 
 def _is_ai_decision_history_event(event: Dict) -> bool:
@@ -881,6 +879,30 @@ def _split_history_events(events: List[Dict]) -> tuple[List[Dict], List[Dict]]:
         else:
             monitor_events.append(event)
     return ai_events, monitor_events
+
+
+def _build_notification_identity(event: Dict) -> tuple:
+    return (
+        str(event.get("account_name") or DEFAULT_ACCOUNT_NAME).strip() or DEFAULT_ACCOUNT_NAME,
+        str(event.get("symbol") or "").strip(),
+    )
+
+
+def _select_latest_notification_events(events: List[Dict]) -> List[Dict]:
+    latest_events: List[Dict] = []
+    seen_keys = set()
+    for event in events or []:
+        identity = _build_notification_identity(event)
+        if identity in seen_keys:
+            continue
+        seen_keys.add(identity)
+        latest_events.append(event)
+    return latest_events
+
+
+def _mark_monitor_notification_read(db: SmartMonitorDB, event_id: int) -> None:
+    db.monitoring_repository.mark_notification_read(event_id)
+    st.rerun()
 
 
 def render_settings(show_header: bool = True, title: str = "系统设置"):
@@ -1322,12 +1344,14 @@ def _get_event_notice_style(event_type: str) -> tuple[str, str]:
     return "#2d2344", "#a78bfa"
 
 
-def _render_notice_card(message: str, *, background: str, foreground: str) -> None:
+def _render_notice_card(message: str, *, background: str, foreground: str, muted: bool = False) -> None:
+    opacity = "0.58" if muted else "1"
+    border = "rgba(255,255,255,0.04)" if muted else "rgba(255,255,255,0.06)"
     st.markdown(
         (
             f"<div style='margin-bottom:0.5rem; padding:0.8rem 1rem; border-radius:0.7rem; "
             f"background:{background}; color:{foreground}; font-size:0.94rem; line-height:1.5; "
-            f"border:1px solid rgba(255,255,255,0.06);'>"
+            f"border:1px solid {border}; opacity:{opacity};'>"
             f"{message}"
             f"</div>"
         ),
@@ -1345,7 +1369,7 @@ def _format_symbol_with_name(symbol: object, name: object) -> str:
 
 def _format_monitor_event_message(event: Dict) -> str:
     message = str(event.get("message") or "").strip()
-    normalized_event_type = str(event.get("event_type") or "").strip().lower()
+    normalized_event_type = str(event.get("event_type") or event.get("type") or "").strip().lower()
     if normalized_event_type not in {"entry", "take_profit", "stop_loss"}:
         return message
 
@@ -1357,24 +1381,53 @@ def _format_monitor_event_message(event: Dict) -> str:
     return f"原因：{message}" if message else "原因：-"
 
 
-def _render_monitor_event_notice(event: Dict) -> None:
-    background, foreground = _get_event_notice_style(event.get("event_type"))
-    event_type = html.escape(str(event.get("event_type") or "-").upper())
-    created_at = html.escape(str(event.get("created_at") or "-"))
+def _render_monitor_event_notice(
+    event: Dict,
+    *,
+    allow_mark_read: bool = False,
+    key_prefix: str = "monitor_event",
+    on_mark_read=None,
+) -> None:
+    raw_event_type = event.get("event_type") or event.get("type")
+    background, foreground = _get_event_notice_style(raw_event_type)
+    event_type = html.escape(str(raw_event_type or "-").upper())
+    created_at = html.escape(str(event.get("created_at") or event.get("triggered_at") or "-"))
     symbol = html.escape(_format_symbol_with_name(event.get("symbol"), event.get("name")))
     message = html.escape(_format_monitor_event_message(event))
-    _render_notice_card(
-        (
-            f"<div style='display:flex; justify-content:space-between; gap:0.75rem; align-items:flex-start;'>"
-            f"<strong>{event_type}</strong>"
-            f"<span style='opacity:0.72; white-space:nowrap;'>{created_at}</span>"
-            f"</div>"
-            f"<div style='margin-top:0.18rem; font-weight:600;'>{symbol}</div>"
-            f"<div style='margin-top:0.2rem; opacity:0.92;'>{message}</div>"
-        ),
-        background=background,
-        foreground=foreground,
+    is_read = bool(event.get("is_read"))
+    read_badge = (
+        "<span style='opacity:0.72; font-size:0.82rem; margin-right:0.55rem;'>已读</span>"
+        if is_read
+        else "<span style='opacity:0.86; font-size:0.82rem; margin-right:0.55rem;'>未读</span>"
     )
+    notice_html = (
+        f"<div style='display:flex; justify-content:space-between; gap:0.75rem; align-items:flex-start;'>"
+        f"<strong>{event_type}</strong>"
+        f"<span style='white-space:nowrap;'>{read_badge}<span style='opacity:0.72;'>{created_at}</span></span>"
+        f"</div>"
+        f"<div style='margin-top:0.18rem; font-weight:600;'>{symbol}</div>"
+        f"<div style='margin-top:0.2rem; opacity:0.92;'>{message}</div>"
+    )
+    if allow_mark_read and not is_read:
+        content_col, action_col = st.columns([8.6, 1.4])
+        with content_col:
+            _render_notice_card(
+                notice_html,
+                background=background,
+                foreground=foreground,
+                muted=False,
+            )
+        with action_col:
+            if st.button("已读", key=f"{key_prefix}_{event.get('id')}_read", width="stretch"):
+                if callable(on_mark_read):
+                    on_mark_read()
+    else:
+        _render_notice_card(
+            notice_html,
+            background=background,
+            foreground=foreground,
+            muted=is_read,
+        )
 
 
 def _get_decision_notice_style(action: str) -> tuple[str, str]:

@@ -7,6 +7,65 @@ from smart_monitor_deepseek import SmartMonitorDeepSeek
 
 
 class SmartMonitorDeepSeekTests(unittest.TestCase):
+    def test_parse_decision_repairs_json_like_response(self):
+        client = SmartMonitorDeepSeek(api_key="test-key")
+        ai_response = """
+```json
+{
+  action: BUY,
+  confidence: 0.82,
+  reasoning: "量价配合良好，趋势保持上行，可继续观察突破延续。",
+  position_size_pct: 20,
+  stop_loss_pct: 5.0,
+  take_profit_pct: 10.0,
+  risk_level: medium,
+  key_price_levels: {
+    support: 12.34,
+    resistance: 13.10,
+    stop_loss: 11.72,
+  },
+  monitor_levels: {
+    entry_min: 12.10,
+    entry_max: 12.40,
+    take_profit: 13.20,
+    stop_loss: 11.70,
+  },
+}
+```
+"""
+
+        decision = client._parse_decision(ai_response)
+
+        self.assertEqual(decision["action"], "BUY")
+        self.assertEqual(decision["confidence"], 82)
+        self.assertEqual(decision["risk_level"], "medium")
+        self.assertEqual(decision["monitor_levels"]["entry_min"], 12.1)
+        self.assertEqual(decision["monitor_levels"]["take_profit"], 13.2)
+
+    def test_parse_decision_normalizes_chinese_action_and_percent_strings(self):
+        client = SmartMonitorDeepSeek(api_key="test-key")
+        ai_response = """
+{
+  "action": "买入",
+  "confidence": "85%",
+  "reasoning": "分时量能放大，短线趋势仍然偏强。",
+  "risk_level": "中",
+  "monitor_levels": {
+    "entry_min": "12.10",
+    "entry_max": "12.40",
+    "take_profit": "13.20",
+    "stop_loss": "11.70"
+  }
+}
+"""
+
+        decision = client._parse_decision(ai_response)
+
+        self.assertEqual(decision["action"], "BUY")
+        self.assertEqual(decision["confidence"], 85)
+        self.assertEqual(decision["risk_level"], "medium")
+        self.assertEqual(decision["monitor_levels"]["stop_loss"], 11.7)
+
     @patch("smart_monitor_deepseek.requests.post")
     def test_chat_completion_defaults_to_lightweight_model(self, mock_post):
         response = MagicMock()

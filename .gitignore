@@ -14,4 +14,4 @@ TradEnv/
 __pycache__/
 .codex_test_tmp/
 *.db
-
+test_*.py
