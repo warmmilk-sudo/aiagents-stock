@@ -14,6 +14,7 @@ from dotenv import load_dotenv
 import config
 
 from investment_db_utils import DEFAULT_ACCOUNT_NAME
+from monitor_service import monitor_service
 from smart_monitor_engine import SmartMonitorEngine
 from smart_monitor_db import SmartMonitorDB
 from config_manager import config_manager  # 使用主程序的配置管理器
