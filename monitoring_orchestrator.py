@@ -60,6 +60,8 @@ class MonitoringOrchestrator:
         tdx_config = getattr(config, "TDX_CONFIG", {}) or {}
         tdx_enabled = bool(tdx_config.get("enabled", False))
         tdx_base_url = str(tdx_config.get("base_url") or "").strip()
+        if not tdx_enabled:
+            self.logger.info("TDX数据源未启用，监测服务将使用默认数据源")
         if tdx_enabled and not tdx_base_url:
             self.logger.warning("TDX 已启用，但未配置 TDX_BASE_URL，已降级使用默认数据源")
         elif tdx_enabled and TDX_AVAILABLE:
@@ -78,6 +80,8 @@ class MonitoringOrchestrator:
                 self.logger.warning("TDX数据源初始化失败，将使用默认数据源: %s", exc)
             except Exception:
                 self.logger.exception("TDX数据源初始化出现未知异常，将降级使用默认数据源")
+        elif tdx_enabled:
+            self.logger.warning("TDX 已启用，但 smart_monitor_tdx_data 模块不可用，已降级使用默认数据源")
 
     def has_enabled_items(self) -> bool:
         return bool(self.repository.list_items(enabled_only=True))

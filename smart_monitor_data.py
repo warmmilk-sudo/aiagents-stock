@@ -62,6 +62,8 @@ class SmartMonitorDataFetcher:
             except Exception as e:
                 self.logger.warning(f"TDX数据源初始化失败: {e}，将使用AKShare")
                 self.use_tdx = False
+        else:
+            self.logger.info("TDX数据源未启用，实时行情将优先使用AKShare/Tushare")
         
         # 初始化Tushare（备用数据源）
         self.ts_pro = None

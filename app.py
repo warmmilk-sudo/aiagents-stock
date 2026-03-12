@@ -11,6 +11,10 @@ import base64
 import os
 from typing import Any, Dict, Optional
 from urllib.parse import urlparse
+from app_logging import configure_logging
+
+configure_logging()
+
 import config
 import streamlit.components.v1 as components
 from analysis_history_service import analysis_history_service
