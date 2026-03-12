@@ -31,16 +31,41 @@ class SmartMonitorTDXDataFetcher:
         if not self.available:
             self.logger.warning(f"TDX初始化完成，但连接探测失败: {self.base_url}")
 
+    def _log_request(self, endpoint: str, *, params: Optional[Dict] = None, timeout: Optional[int] = None) -> None:
+        """Log TDX request details at debug level to help diagnose connectivity issues."""
+        self.logger.debug(
+            "TDX请求 -> endpoint=%s params=%s timeout=%ss base_url=%s",
+            endpoint,
+            params or {},
+            timeout if timeout is not None else self.timeout,
+            self.base_url,
+        )
+
+    def _log_response(self, endpoint: str, response: requests.Response) -> None:
+        """Log lightweight response metadata without dumping the full payload."""
+        self.logger.debug(
+            "TDX响应 <- endpoint=%s status=%s content_type=%s",
+            endpoint,
+            response.status_code,
+            response.headers.get("Content-Type", ""),
+        )
+
     def _probe_quote_endpoint(self) -> bool:
         """部分旧版 TDX 服务没有 /api/health，退化到行情接口探测。"""
         probe_codes = ("000001", "600000")
         for stock_code in probe_codes:
             try:
+                self._log_request(
+                    "/api/quote",
+                    params={"code": stock_code},
+                    timeout=min(self.timeout, 5),
+                )
                 response = requests.get(
                     f"{self.base_url}/api/quote",
                     params={"code": stock_code},
                     timeout=min(self.timeout, 5),
                 )
+                self._log_response("/api/quote", response)
                 if response.status_code != 200:
                     continue
 
@@ -58,10 +83,12 @@ class SmartMonitorTDXDataFetcher:
     def check_connection(self, log_on_success: bool = False) -> bool:
         """Check whether the configured TDX service is reachable."""
         try:
+            self._log_request("/api/health", timeout=min(self.timeout, 5))
             response = requests.get(
                 f"{self.base_url}/api/health",
                 timeout=min(self.timeout, 5),
             )
+            self._log_response("/api/health", response)
             if response.status_code == 200:
                 if log_on_success:
                     self.logger.info(f"TDX连接成功，健康检查通过: {self.base_url}/api/health")
@@ -91,8 +118,10 @@ class SmartMonitorTDXDataFetcher:
         try:
             url = f"{self.base_url}/api/quote"
             params = {'code': stock_code}
-            
+
+            self._log_request("/api/quote", params=params)
             response = requests.get(url, params=params, timeout=self.timeout)
+            self._log_response("/api/quote", response)
             result = response.json()
             
             if result['code'] != 0:
@@ -135,6 +164,14 @@ class SmartMonitorTDXDataFetcher:
             # 获取股票名称（需要调用搜索接口）
             stock_name = self._get_stock_name(stock_code)
             
+            self.logger.debug(
+                "TDX行情摘要 %s: price=%s change_pct=%.2f volume=%s update_time=%s",
+                stock_code,
+                current_price,
+                change_pct,
+                volume,
+                datetime.fromtimestamp(int(quote_data.get('ServerTime', 0))).strftime('%Y-%m-%d %H:%M:%S'),
+            )
             self.logger.info(f"✅ TDX成功获取 {stock_code} ({stock_name}) 实时行情")
             
             return {
@@ -178,8 +215,10 @@ class SmartMonitorTDXDataFetcher:
         try:
             url = f"{self.base_url}/api/search"
             params = {'keyword': stock_code}
-            
+
+            self._log_request("/api/search", params=params)
             response = requests.get(url, params=params, timeout=self.timeout)
+            self._log_response("/api/search", response)
             result = response.json()
             
             if result['code'] == 0:
@@ -212,8 +251,10 @@ class SmartMonitorTDXDataFetcher:
                 'code': stock_code,
                 'type': kline_type
             }
-            
+
+            self._log_request("/api/kline", params=params)
             response = requests.get(url, params=params, timeout=self.timeout)
+            self._log_response("/api/kline", response)
             result = response.json()
             
             if result['code'] != 0:
@@ -249,7 +290,14 @@ class SmartMonitorTDXDataFetcher:
             
             # 转换日期格式
             df['日期'] = pd.to_datetime(df['日期'])
-            
+            self.logger.debug(
+                "TDX K线摘要 %s: type=%s rows=%s first=%s last=%s",
+                stock_code,
+                kline_type,
+                len(df),
+                df.iloc[0]['日期'],
+                df.iloc[-1]['日期'],
+            )
             self.logger.info(f"✅ TDX成功获取 {stock_code} K线数据，共{len(df)}条")
             
             return df
