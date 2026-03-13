@@ -7,6 +7,7 @@ from sector_strategy_agents import SectorStrategyAgents
 from sector_strategy_db import SectorStrategyDatabase
 from deepseek_client import DeepSeekClient
 from model_routing import ModelTier
+from time_utils import local_now_str, local_today_str
 from typing import Dict, Any
 import time
 import json
@@ -50,7 +51,7 @@ class SectorStrategyEngine:
             tuple: (success, version, message)
         """
         if data_date is None:
-            data_date = time.strftime("%Y-%m-%d")
+            data_date = local_today_str()
         
         try:
             is_empty = False
@@ -83,7 +84,7 @@ class SectorStrategyEngine:
             tuple: (data_df, is_fallback, message)
         """
         if data_date is None:
-            data_date = time.strftime("%Y-%m-%d")
+            data_date = local_today_str()
         
         try:
             # 尝试获取指定日期的数据
@@ -122,7 +123,7 @@ class SectorStrategyEngine:
         
         results = {
             "success": False,
-            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "timestamp": local_now_str(),
             "agents_analysis": {},
             "comprehensive_report": "",
             "final_predictions": {}
@@ -448,7 +449,7 @@ class SectorStrategyEngine:
         """
         try:
             # 提取数据日期范围
-            data_date_range = f"{time.strftime('%Y-%m-%d')} 数据分析"
+            data_date_range = f"{local_today_str()} 数据分析"
             
             # 提取推荐板块
             recommended_sectors = []

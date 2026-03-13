@@ -13,6 +13,7 @@ from investment_db_utils import (
     resolve_investment_db_path,
     run_with_monitoring_write_lock,
 )
+from time_utils import local_now_str
 
 
 def resolve_monitoring_db_path(seed_db_path: str) -> str:
@@ -216,7 +217,7 @@ class MonitoringRepository:
         self._set_metadata_on_cursor(
             cursor,
             self.INDEX_MIGRATION_KEY,
-            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            local_now_str(),
         )
 
     def _ensure_indexes(self, cursor: sqlite3.Cursor) -> None:
@@ -253,7 +254,7 @@ class MonitoringRepository:
                 json.dumps(
                     {
                         "repaired": repaired,
-                        "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "updated_at": local_now_str(),
                     },
                     ensure_ascii=False,
                 ),
@@ -556,7 +557,7 @@ class MonitoringRepository:
             json.dumps(
                 {
                     "changed": changed,
-                    "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "updated_at": local_now_str(),
                 },
                 ensure_ascii=False,
             ),
@@ -573,7 +574,7 @@ class MonitoringRepository:
             json.dumps(
                 {
                     **summary,
-                    "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "updated_at": local_now_str(),
                 },
                 ensure_ascii=False,
             ),
@@ -1413,7 +1414,7 @@ class MonitoringRepository:
             if not item:
                 return False
 
-            effective_checked = last_checked or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            effective_checked = last_checked or local_now_str()
             updated = self.update_item(
                 item_id,
                 {
@@ -1498,7 +1499,7 @@ class MonitoringRepository:
                         1 if sent else 0,
                         0,
                         None,
-                        created_at or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        created_at or local_now_str(),
                     ),
                 )
                 event_id = int(cursor.lastrowid)

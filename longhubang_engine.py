@@ -11,6 +11,7 @@ from typing import Dict, Any, List
 from datetime import datetime, timedelta
 import time
 import logging
+from time_utils import local_now_str
 
 
 class LonghubangEngine:
@@ -43,7 +44,7 @@ class LonghubangEngine:
         运行完整的龙虎榜分析流程
         
         Args:
-            date: 指定日期，格式 YYYY-MM-DD，默认为昨日
+            date: 指定日期，格式 YYYY-MM-DD，默认由调用方控制
             days: 分析最近几天的数据，默认1天
             
         Returns:
@@ -55,7 +56,7 @@ class LonghubangEngine:
         
         results = {
             "success": False,
-            "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            "timestamp": local_now_str(),
             "data_info": {},
             "agents_analysis": {},
             "final_report": {},
@@ -96,7 +97,9 @@ class LonghubangEngine:
                 "total_records": summary.get('total_records', 0),
                 "total_stocks": summary.get('total_stocks', 0),
                 "total_youzi": summary.get('total_youzi', 0),
-                "summary": summary
+                "summary": summary,
+                "data_source": getattr(self.data_fetcher, "source_label", ""),
+                "update_hint": getattr(self.data_fetcher, "update_hint", ""),
             }
             self.logger.info("数据统计完成")
             

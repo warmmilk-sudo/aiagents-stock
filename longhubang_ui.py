@@ -7,12 +7,13 @@ import streamlit as st
 import plotly.graph_objects as go
 import plotly.express as px
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import date, datetime, time as dt_time, timedelta
 import time
 import base64
 
 from longhubang_engine import LonghubangEngine
 from longhubang_pdf import LonghubangPDFGenerator
+from time_utils import local_now, local_now_str
 from ui_analysis_task_utils import (
     consume_finished_ui_analysis_task,
     get_ui_analysis_button_state,
@@ -23,6 +24,31 @@ from ui_analysis_task_utils import (
 
 LONGHUBANG_TASK_TYPE = "longhubang_analysis"
 LONGHUBANG_TASK_DONE_KEY = "longhubang_analysis_last_handled_task"
+LONGHUBANG_DAILY_RELEASE_TIME = dt_time(17, 30)
+
+
+def _get_longhubang_data_source_text() -> str:
+    return "数据来源：lhb-api.ws4.cn 龙虎榜接口（/v1/youzi/all），交易日 17:30 后通常可获取当天数据。"
+
+
+def _can_fetch_same_day_longhubang(target_date: date) -> bool:
+    now = local_now()
+    if target_date != now.date():
+        return True
+    if target_date.weekday() >= 5:
+        return False
+    return now.time() >= LONGHUBANG_DAILY_RELEASE_TIME
+
+
+def _render_longhubang_date_hint(target_date: date) -> bool:
+    now = local_now()
+    if target_date.weekday() >= 5:
+        st.info("所选日期是非交易日，龙虎榜通常没有当日数据。")
+        return False
+    if target_date == now.date() and not _can_fetch_same_day_longhubang(target_date):
+        st.warning("今日龙虎榜数据通常在交易日 17:30 后更新，当前时段可能还拿不到当天数据，建议稍后再试或改选上一交易日。")
+        return False
+    return True
 
 
 @st.fragment(run_every=1.0)
@@ -65,7 +91,7 @@ def display_longhubang(lightweight_model=None, reasoning_model=None):
     """显示智瞰龙虎主界面"""
 
     # 功能说明
-    with st.expander("💡 智瞰龙虎系统介绍", expanded=False):
+    with st.expander("智瞰龙虎系统介绍", expanded=False):
         st.caption("Multi-Agent Dragon Tiger Analysis | 游资·个股·题材·风险多维分析")
         st.markdown("""
         ### 🌟 系统特色
@@ -122,9 +148,9 @@ def display_longhubang(lightweight_model=None, reasoning_model=None):
     
     # 创建标签页
     tab1, tab2, tab3 = st.tabs([
-        "📊 龙虎榜分析",
-        "📚 历史报告",
-        "📈 数据统计"
+        "龙虎榜分析",
+        "历史报告",
+        "数据统计"
     ])
     
     with tab1:
@@ -137,7 +163,7 @@ def display_longhubang(lightweight_model=None, reasoning_model=None):
         display_statistics_tab()
 
 
-def display_analysis_tab(lightweight_model=None, reasoning_model=None):
+def _display_analysis_tab_legacy(lightweight_model=None, reasoning_model=None):
     """显示分析标签页"""
     
     # 检查是否触发批量分析（不立即删除标志）
@@ -145,7 +171,8 @@ def display_analysis_tab(lightweight_model=None, reasoning_model=None):
         run_longhubang_batch_analysis(lightweight_model, reasoning_model)
         return
     
-    st.subheader("🔍 龙虎榜综合分析")
+    st.subheader("龙虎榜综合分析")
+    st.caption(_get_longhubang_data_source_text())
     _render_longhubang_task_fragment()
     finished_task = consume_finished_ui_analysis_task(LONGHUBANG_TASK_TYPE, LONGHUBANG_TASK_DONE_KEY)
     if finished_task:
@@ -172,9 +199,10 @@ def display_analysis_tab(lightweight_model=None, reasoning_model=None):
         if analysis_mode == "指定日期":
             selected_date = st.date_input(
                 "选择日期",
-                value=datetime.now() - timedelta(days=1),
-                help="选择要分析的龙虎榜日期"
+                value=local_now().date(),
+                help="默认选择当天；如果当天数据尚未更新，会在下方给出提示。"
             )
+            _render_longhubang_date_hint(selected_date)
         else:
             days = st.number_input(
                 "最近天数",
@@ -188,7 +216,7 @@ def display_analysis_tab(lightweight_model=None, reasoning_model=None):
     col1, col2 = st.columns([2, 2])
     action_label, action_disabled, action_help = get_ui_analysis_button_state(
         LONGHUBANG_TASK_TYPE,
-        "🚀 开始分析",
+        "开始分析",
     )
     
     with col1:
@@ -219,6 +247,8 @@ def display_analysis_tab(lightweight_model=None, reasoning_model=None):
         try:
             date_str = selected_date.strftime('%Y-%m-%d') if analysis_mode == "指定日期" else None
             analysis_days = days if analysis_mode != "指定日期" else 1
+            if analysis_mode == "指定日期" and not _render_longhubang_date_hint(selected_date):
+                return
             start_ui_analysis_task(
                 task_type=LONGHUBANG_TASK_TYPE,
                 label="龙虎榜分析",
@@ -296,7 +326,7 @@ def run_longhubang_analysis(model=None, date=None, days=1,
         status_text.empty()
 
 
-def display_analysis_results(result):
+def _display_analysis_results_legacy(result):
     """显示分析结果"""
     
     st.success("✅ 龙虎榜分析完成！")
@@ -318,6 +348,13 @@ def display_analysis_results(result):
     with col4:
         recommended = result.get('recommended_stocks', [])
         st.metric("推荐股票", f"{len(recommended)} 只", delta="AI筛选")
+    if data_info.get("data_source") or data_info.get("update_hint"):
+        source_parts = []
+        if data_info.get("data_source"):
+            source_parts.append(f"数据来源: {data_info.get('data_source')}")
+        if data_info.get("update_hint"):
+            source_parts.append(f"更新时间提示: {data_info.get('update_hint')}")
+        st.caption(" | ".join(source_parts))
     
     # PDF导出功能
     display_pdf_export_section(result)
@@ -788,7 +825,7 @@ def display_visualizations(result):
         st.plotly_chart(fig, config={'displayModeBar': False}, width='stretch')
 
 
-def display_pdf_export_section(result):
+def _display_pdf_export_section_legacy(result):
     """显示PDF导出功能"""
     
     st.markdown("### 📄 导出报告")
@@ -845,11 +882,233 @@ def display_pdf_export_section(result):
                     st.error(f"❌ Markdown生成失败: {str(e)}")
 
 
+def display_analysis_tab(lightweight_model=None, reasoning_model=None):
+    """显示龙虎榜分析标签页。"""
+
+    if st.session_state.get('longhubang_batch_trigger'):
+        run_longhubang_batch_analysis(lightweight_model, reasoning_model)
+        return
+
+    st.subheader("龙虎榜综合分析")
+    st.caption(_get_longhubang_data_source_text())
+    _render_longhubang_task_fragment()
+
+    finished_task = consume_finished_ui_analysis_task(
+        LONGHUBANG_TASK_TYPE,
+        LONGHUBANG_TASK_DONE_KEY,
+    )
+    if finished_task:
+        if finished_task.get("status") == "success":
+            payload = finished_task.get("result") or {}
+            st.session_state.longhubang_result = payload.get("result")
+            st.success(payload.get("message") or "龙虎榜分析完成。")
+        else:
+            error_message = finished_task.get("error") or "未知错误"
+            st.session_state.longhubang_result = {"success": False, "error": error_message}
+            st.error(f"分析失败: {error_message}")
+
+    selected_date = local_now().date()
+    days = 1
+    can_analyze_selected_date = True
+
+    col1, col2 = st.columns([2, 2])
+    with col1:
+        analysis_mode = st.selectbox(
+            "分析模式",
+            ["指定日期", "最近N天"],
+            help="选择分析特定日期，或按最近几天的数据汇总分析。",
+        )
+
+    with col2:
+        if analysis_mode == "指定日期":
+            selected_date = st.date_input(
+                "选择日期",
+                value=local_now().date(),
+                help="默认选择当天；如果当天数据尚未更新，会在下方给出提示。",
+            )
+            can_analyze_selected_date = _render_longhubang_date_hint(selected_date)
+        else:
+            days = st.number_input(
+                "最近天数",
+                min_value=1,
+                max_value=10,
+                value=1,
+                help="分析最近 N 天的龙虎榜数据。",
+            )
+
+    col1, col2 = st.columns([2, 2])
+    action_label, action_disabled, action_help = get_ui_analysis_button_state(
+        LONGHUBANG_TASK_TYPE,
+        "开始分析",
+    )
+
+    with col1:
+        analyze_button = st.button(
+            action_label,
+            type="primary",
+            width='stretch',
+            disabled=action_disabled,
+            help=action_help,
+            key="longhubang_start_analysis",
+        )
+
+    with col2:
+        if st.button("清除结果", width='stretch', key="longhubang_clear_analysis_result"):
+            st.session_state.pop("longhubang_result", None)
+            st.success("已清除分析结果。")
+            st.rerun()
+
+    st.markdown("---")
+
+    if analyze_button:
+        st.session_state.pop("longhubang_result", None)
+
+        if analysis_mode == "指定日期" and not can_analyze_selected_date:
+            return
+
+        try:
+            date_str = selected_date.strftime('%Y-%m-%d') if analysis_mode == "指定日期" else None
+            analysis_days = days if analysis_mode != "指定日期" else 1
+            start_ui_analysis_task(
+                task_type=LONGHUBANG_TASK_TYPE,
+                label="龙虎榜分析",
+                runner=lambda _task_id, report_progress: _run_longhubang_analysis_task(
+                    date=date_str,
+                    days=analysis_days,
+                    lightweight_model=lightweight_model,
+                    reasoning_model=reasoning_model,
+                    report_progress=report_progress,
+                ),
+                metadata={"mode": analysis_mode, "date": date_str, "days": analysis_days},
+            )
+            st.info("已提交后台分析任务，可先切换页面，返回后会自动同步进度和结果。")
+            st.rerun()
+        except RuntimeError as exc:
+            st.warning(str(exc))
+
+    result = st.session_state.get("longhubang_result")
+    if result:
+        if result.get("success"):
+            display_analysis_results(result)
+        else:
+            st.error(f"分析失败: {result.get('error', '未知错误')}")
+
+
+def display_analysis_results(result):
+    """显示龙虎榜分析结果。"""
+
+    st.success("龙虎榜分析完成。")
+    st.info(f"分析时间: {result.get('timestamp', 'N/A')}")
+
+    data_info = result.get('data_info', {})
+    col1, col2, col3, col4 = st.columns(4)
+
+    with col1:
+        st.metric("龙虎榜记录", f"{data_info.get('total_records', 0)} 条")
+    with col2:
+        st.metric("涉及股票", f"{data_info.get('total_stocks', 0)} 只")
+    with col3:
+        st.metric("涉及游资", f"{data_info.get('total_youzi', 0)} 个")
+    with col4:
+        recommended = result.get('recommended_stocks', [])
+        st.metric("推荐股票", f"{len(recommended)} 只", delta="AI筛选")
+
+    source_parts = []
+    if data_info.get("data_source"):
+        source_parts.append(f"数据来源: {data_info.get('data_source')}")
+    if data_info.get("update_hint"):
+        source_parts.append(f"更新时间提示: {data_info.get('update_hint')}")
+    if source_parts:
+        st.caption(" | ".join(source_parts))
+
+    display_pdf_export_section(result)
+
+    st.markdown("---")
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "AI评分排名",
+        "推荐股票",
+        "AI分析师报告",
+        "数据详情",
+        "可视化图表",
+    ])
+
+    with tab1:
+        display_scoring_ranking(result)
+    with tab2:
+        display_recommended_stocks(result)
+    with tab3:
+        display_agents_reports(result)
+    with tab4:
+        display_data_details(result)
+    with tab5:
+        display_visualizations(result)
+
+
+def display_pdf_export_section(result):
+    """显示龙虎榜导出报告区域。"""
+
+    st.subheader("导出报告")
+    export_ts = local_now_str("%Y%m%d_%H%M%S")
+
+    col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
+    with col1:
+        st.write("可将龙虎榜综合分析导出为 PDF 或 Markdown 报告，便于归档和分享。")
+
+    with col2:
+        if st.button("生成PDF报告", type="primary", width='content', key="longhubang_pdf_gen"):
+            with st.spinner("正在生成PDF报告..."):
+                try:
+                    generator = LonghubangPDFGenerator()
+                    pdf_path = generator.generate_pdf(result)
+                    with open(pdf_path, "rb") as file_obj:
+                        pdf_bytes = file_obj.read()
+
+                    st.session_state["longhubang_pdf_data"] = pdf_bytes
+                    st.session_state["longhubang_pdf_filename"] = f"智瞰龙虎报告_{export_ts}.pdf"
+                    st.success("PDF报告生成成功。")
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"PDF生成失败: {exc}")
+
+    with col3:
+        if st.button("生成Markdown", type="secondary", width='content', key="longhubang_md_gen"):
+            with st.spinner("正在生成Markdown报告..."):
+                try:
+                    markdown_content = generate_markdown_report(result)
+                    st.session_state["longhubang_md_data"] = markdown_content
+                    st.session_state["longhubang_md_filename"] = f"智瞰龙虎报告_{export_ts}.md"
+                    st.success("Markdown报告生成成功。")
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"Markdown生成失败: {exc}")
+
+    with col4:
+        if "longhubang_pdf_data" in st.session_state:
+            st.download_button(
+                label="下载PDF",
+                data=st.session_state["longhubang_pdf_data"],
+                file_name=st.session_state["longhubang_pdf_filename"],
+                mime="application/pdf",
+                width='content',
+                key="longhubang_pdf_dl",
+            )
+
+        if "longhubang_md_data" in st.session_state:
+            st.download_button(
+                label="下载Markdown",
+                data=st.session_state["longhubang_md_data"],
+                file_name=st.session_state["longhubang_md_filename"],
+                mime="text/markdown",
+                width='content',
+                key="longhubang_md_dl",
+            )
+
+
 def generate_markdown_report(result_data: dict) -> str:
     """生成龙虎榜分析Markdown报告"""
     
     # 获取当前时间
-    current_time = datetime.now().strftime("%Y年%m月%d日 %H:%M:%S")
+    current_time = local_now_str("%Y年%m月%d日 %H:%M:%S")
     
     # 标题页
     markdown_content = f"""# 智瞰龙虎榜分析报告

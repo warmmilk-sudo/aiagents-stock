@@ -18,6 +18,7 @@ from investment_db_utils import (
 )
 from monitoring_repository import MonitoringRepository
 from portfolio_db import PortfolioDB
+from time_utils import local_now_str
 
 
 class SmartMonitorDB:
@@ -281,7 +282,7 @@ class SmartMonitorDB:
                 payload.get("asset_id"),
                 payload.get("portfolio_stock_id"),
                 payload.get("origin_analysis_id"),
-                payload.get("decision_time", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+                payload.get("decision_time", local_now_str()),
                 payload.get("trading_session"),
                 payload.get("action"),
                 payload.get("confidence"),
@@ -297,7 +298,7 @@ class SmartMonitorDB:
                 payload.get("action_status", "suggested"),
                 int(payload.get("executed", 0) or 0),
                 payload.get("execution_result"),
-                payload.get("created_at") or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                payload.get("created_at") or local_now_str(),
             ),
         )
         return int(cursor.lastrowid)
@@ -469,7 +470,7 @@ class SmartMonitorDB:
                         "invalid": removed_invalid,
                         "duplicates": removed_duplicates,
                         "status": repaired_status,
-                        "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "updated_at": local_now_str(),
                     },
                     ensure_ascii=False,
                 ),
@@ -527,7 +528,7 @@ class SmartMonitorDB:
                     {
                         "assets": synchronized_assets,
                         "alerts": synchronized_alerts,
-                        "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "updated_at": local_now_str(),
                     },
                     ensure_ascii=False,
                 ),
@@ -595,7 +596,7 @@ class SmartMonitorDB:
                             notification.get("status", "pending"),
                             notification.get("error_msg"),
                             notification.get("sent_at"),
-                            notification.get("created_at") or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            notification.get("created_at") or local_now_str(),
                         ),
                     )
 
@@ -993,6 +994,7 @@ class SmartMonitorDB:
         for row in rows:
             decision = dict(row)
             decision["key_price_levels"] = json.loads(decision["key_price_levels"]) if decision.get("key_price_levels") else {}
+            decision["monitor_levels"] = json.loads(decision["monitor_levels"]) if decision.get("monitor_levels") else {}
             decision["market_data"] = json.loads(decision["market_data"]) if decision.get("market_data") else {}
             decision["account_info"] = json.loads(decision["account_info"]) if decision.get("account_info") else {}
             decisions.append(decision)
@@ -1110,7 +1112,7 @@ class SmartMonitorDB:
         return self.asset_service.clear_position_to_watchlist(
             stock["id"],
             note="手动清仓",
-            last_trade_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            last_trade_at=local_now_str(),
         )
 
     def save_notification(self, notify_data: Dict) -> int:

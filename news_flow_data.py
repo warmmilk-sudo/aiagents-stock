@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 import time
 from collections import Counter
+import re
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -71,6 +72,32 @@ class NewsFlowDataFetcher:
             '从', '以', '及', '或', '如', '还', '没', '很', '更', '最',
         }
     
+        self.noise_topic_words = {
+            "一个", "一些", "一种", "哪些", "什么", "为何", "为什么", "如何", "怎么",
+            "是否", "多少", "几个", "这个", "那个", "这些", "那些", "其中", "以及",
+            "如果", "因为", "所以", "但是", "然后", "已经", "正在", "继续", "进行",
+            "相关", "有关", "可能", "可以", "需要", "成为", "没有", "出现", "发布",
+            "最新", "今日", "昨天", "今天", "明天", "目前", "此次", "其实", "真的",
+            "注意", "问题", "情况", "内容", "消息", "表示", "介绍", "记者", "网友",
+        }
+        self.noise_topic_pattern = re.compile(
+            r"^(第?\d+|[\d.%+-]+|[一二三四五六七八九十百千万]+|[年月日天个只家位次条点分秒]+)$"
+        )
+
+    def _is_meaningful_topic_word(self, word: str) -> bool:
+        token = str(word or "").strip()
+        if len(token) < 2:
+            return False
+        if token in self.stop_words or token in self.noise_topic_words:
+            return False
+        if self.noise_topic_pattern.fullmatch(token):
+            return False
+        if re.fullmatch(r"[A-Za-z]{1,2}", token):
+            return False
+        if re.fullmatch(r"[\W_]+", token):
+            return False
+        return True
+
     def get_platform_news(self, platform: str) -> Dict:
         """
         获取单个平台的新闻数据
@@ -410,7 +437,7 @@ class NewsFlowDataFetcher:
             if title:
                 words = jieba.cut(title)
                 for word in words:
-                    if len(word) >= 2 and word not in self.stop_words:
+                    if self._is_meaningful_topic_word(word):
                         word_counter[word] += 1
                         if word not in word_sources:
                             word_sources[word] = set()
