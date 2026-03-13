@@ -761,6 +761,51 @@ class PortfolioDB:
         conn.close()
         return [dict(row) for row in rows]
 
+    def get_account_trade_history(
+        self,
+        account_name: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> List[Dict]:
+        """获取账户交易流水明细（支持日期区间）。"""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        sql = [
+            """
+            SELECT
+                t.id,
+                t.asset_id,
+                a.account_name,
+                a.symbol AS stock_code,
+                a.name AS stock_name,
+                LOWER(t.trade_type) AS trade_type,
+                t.trade_date,
+                t.price,
+                t.quantity,
+                t.note,
+                t.trade_source
+            FROM asset_trade_history t
+            INNER JOIN assets a
+                ON a.id = t.asset_id
+            WHERE a.deleted_at IS NULL
+            """
+        ]
+        params: List[Any] = []
+        if account_name:
+            sql.append("AND a.account_name = ?")
+            params.append(account_name)
+        if start_date:
+            sql.append("AND t.trade_date >= ?")
+            params.append(start_date)
+        if end_date:
+            sql.append("AND t.trade_date <= ?")
+            params.append(end_date)
+        sql.append("ORDER BY t.trade_date ASC, t.id ASC")
+        cursor.execute(" ".join(sql), tuple(params))
+        rows = cursor.fetchall()
+        conn.close()
+        return [dict(row) for row in rows]
+
     def get_trade_summary_map(self, stock_ids: Optional[List[int]] = None) -> Dict[int, Dict]:
         """批量获取持仓交易摘要。"""
         return self.asset_repository.get_trade_summary_map(stock_ids)

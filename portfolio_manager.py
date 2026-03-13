@@ -54,6 +54,7 @@ class PortfolioManager:
         self._integrations_reconcile_pending = True
         self._stock_data_fetcher = None
         self._basic_stock_info_cache: Dict[str, Dict[str, Any]] = {}
+        self._realtime_quote_fetcher = None
 
     @staticmethod
     def get_default_smart_monitor_check_interval() -> int:
@@ -734,9 +735,37 @@ class PortfolioManager:
         self._basic_stock_info_cache[normalized_code] = info
         return info
 
+    def _get_realtime_quote(self, code: Optional[str]) -> Dict[str, Any]:
+        normalized_code = self._normalize_stock_code(code or "")
+        if not normalized_code:
+            return {}
+
+        try:
+            if self._realtime_quote_fetcher is None:
+                from smart_monitor_data import SmartMonitorDataFetcher
+
+                self._realtime_quote_fetcher = SmartMonitorDataFetcher()
+            quote = self._realtime_quote_fetcher.get_realtime_quote(normalized_code, retry=1)
+            return quote if isinstance(quote, dict) else {}
+        except Exception as e:
+            print(f"[WARN] 实时行情回补失败 ({normalized_code}): {e}")
+            return {}
+
     def _get_latest_price_and_industry(self, stock: Dict) -> Tuple[float, str]:
         current_price = self._safe_float(stock.get("current_price"))
         industry = self._extract_industry_from_payload(stock) or "未知行业"
+        normalized_code = self._normalize_stock_code(str(stock.get("code") or stock.get("symbol") or ""))
+
+        # Prefer real-time quote (TDX when enabled) for valuation freshness.
+        realtime_quote = self._get_realtime_quote(normalized_code)
+        if realtime_quote:
+            realtime_price = self._extract_first_number(
+                realtime_quote.get("current_price", realtime_quote.get("price")),
+                allow_zero=True,
+            ) or 0.0
+            if realtime_price > 0:
+                current_price = realtime_price
+            industry = self._extract_industry_from_payload(realtime_quote) or industry
 
         stock_info = stock.get("stock_info")
         if isinstance(stock_info, dict):
@@ -1075,6 +1104,162 @@ class PortfolioManager:
         estimated["source"] = "estimated"
         return estimated
 
+    def _build_trade_reconstructed_series(
+        self,
+        account_name: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """按交易流水重建组合序列（含已实现/未实现盈亏）。"""
+        start_str = self._format_date_value(start_date)
+        end_str = self._format_date_value(end_date)
+        query_account_name = None
+        if account_name and account_name != self.AGGREGATE_ACCOUNT_NAME:
+            query_account_name = self._get_account_display_name(account_name)
+
+        raw_trades = self.db.get_account_trade_history(
+            account_name=query_account_name,
+            end_date=end_str,
+        )
+        if not raw_trades:
+            return pd.DataFrame()
+
+        trades_by_asset: Dict[int, List[Dict[str, Any]]] = {}
+        for row in raw_trades:
+            try:
+                asset_id = int(row.get("asset_id") or 0)
+            except (TypeError, ValueError):
+                continue
+            if asset_id <= 0:
+                continue
+
+            trade_date = self._format_date_value(row.get("trade_date"))
+            if not trade_date:
+                continue
+            trade_type = self._normalize_trade_type(row.get("trade_type"))
+            if trade_type not in {"buy", "sell", "clear"}:
+                continue
+
+            trades_by_asset.setdefault(asset_id, []).append(
+                {
+                    "id": int(row.get("id") or 0),
+                    "asset_id": asset_id,
+                    "symbol": str(row.get("stock_code") or ""),
+                    "trade_date": trade_date,
+                    "trade_type": trade_type,
+                    "price": self._safe_float(row.get("price")),
+                    "quantity": self._safe_int(row.get("quantity")),
+                }
+            )
+
+        if not trades_by_asset:
+            return pd.DataFrame()
+
+        asset_frames: List[pd.DataFrame] = []
+        for trade_rows in trades_by_asset.values():
+            if not trade_rows:
+                continue
+            trade_rows.sort(key=lambda item: (item["trade_date"], item["id"]))
+            symbol = str(trade_rows[0].get("symbol") or "").strip()
+            if not symbol:
+                continue
+
+            price_series = self._fetch_price_series(symbol, start_date=start_str, end_date=end_str)
+            if price_series.empty:
+                continue
+            price_series = price_series.sort_index()
+            price_series.index = pd.DatetimeIndex(price_series.index).normalize()
+
+            first_date_text = price_series.index[0].strftime("%Y-%m-%d")
+
+            running_qty = 0
+            running_avg_cost = 0.0
+            running_realized = 0.0
+
+            def _apply_trade(trade_item: Dict[str, Any]) -> Tuple[int, float, float]:
+                qty = max(0, self._safe_int(trade_item.get("quantity")))
+                price = self._safe_float(trade_item.get("price"))
+                if qty <= 0 or price <= 0:
+                    return running_qty, running_avg_cost, running_realized
+
+                trade_type = trade_item.get("trade_type")
+                next_qty = running_qty
+                next_avg_cost = running_avg_cost
+                next_realized = running_realized
+
+                if trade_type == "buy":
+                    merged_qty = running_qty + qty
+                    next_avg_cost = (
+                        ((running_avg_cost * running_qty) + (price * qty)) / merged_qty
+                        if merged_qty > 0
+                        else 0.0
+                    )
+                    next_qty = merged_qty
+                else:
+                    sell_qty = running_qty if trade_type == "clear" else qty
+                    if running_qty <= 0 or sell_qty <= 0:
+                        return running_qty, running_avg_cost, running_realized
+                    sell_qty = min(sell_qty, running_qty)
+                    next_realized = running_realized + (price - running_avg_cost) * sell_qty
+                    next_qty = running_qty - sell_qty
+                    if next_qty <= 0:
+                        next_qty = 0
+                        next_avg_cost = 0.0
+                return next_qty, next_avg_cost, next_realized
+
+            trade_cursor = 0
+            total_trades = len(trade_rows)
+            while trade_cursor < total_trades and trade_rows[trade_cursor]["trade_date"] < first_date_text:
+                running_qty, running_avg_cost, running_realized = _apply_trade(trade_rows[trade_cursor])
+                trade_cursor += 1
+
+            daily_records: List[Dict[str, Any]] = []
+            for dt, close_price in price_series.items():
+                day_text = dt.strftime("%Y-%m-%d")
+                while trade_cursor < total_trades and trade_rows[trade_cursor]["trade_date"] <= day_text:
+                    running_qty, running_avg_cost, running_realized = _apply_trade(trade_rows[trade_cursor])
+                    trade_cursor += 1
+
+                latest_price = self._safe_float(close_price)
+                market_value = latest_price * running_qty
+                cost_value = running_avg_cost * running_qty
+                unrealized_pnl = market_value - cost_value
+                total_pnl = running_realized + unrealized_pnl
+                daily_records.append(
+                    {
+                        "date": dt,
+                        "total_market_value": market_value,
+                        "total_cost_value": cost_value,
+                        "realized_pnl": running_realized,
+                        "unrealized_pnl": unrealized_pnl,
+                        "total_pnl": total_pnl,
+                    }
+                )
+
+            if not daily_records:
+                continue
+            asset_frame = pd.DataFrame(daily_records).set_index("date").sort_index()
+            asset_frames.append(asset_frame)
+
+        if not asset_frames:
+            return pd.DataFrame()
+
+        combined = pd.concat(asset_frames, axis=0).groupby(level=0).sum().sort_index()
+        combined["source"] = "reconstructed"
+        combined["total_pnl"] = combined["realized_pnl"] + combined["unrealized_pnl"]
+        combined["daily_pnl_change"] = pd.to_numeric(combined["total_pnl"], errors="coerce").diff().fillna(0.0)
+        prev_market_value = pd.to_numeric(combined["total_market_value"], errors="coerce").shift(1)
+        combined["daily_return"] = np.where(
+            prev_market_value > 0,
+            combined["daily_pnl_change"] / prev_market_value,
+            0.0,
+        )
+        combined.attrs["data_mode"] = "reconstructed"
+        combined.attrs["stock_count"] = len(trades_by_asset)
+        combined.attrs["available_days"] = len(combined.index)
+        combined.attrs["contains_estimated"] = False
+        return combined
+
     def build_portfolio_return_series(
         self,
         account_name: Optional[str] = None,
@@ -1270,25 +1455,16 @@ class PortfolioManager:
     def _resolve_review_period(self, period_type: str, reference: Optional[date] = None) -> Tuple[date, date]:
         today = reference or datetime.now().date()
         if period_type == "week":
-            current_week_start = today - timedelta(days=today.weekday())
-            end_date = current_week_start - timedelta(days=1)
+            end_date = today
             start_date = end_date - timedelta(days=6)
             return start_date, end_date
         if period_type == "quarter":
-            current_quarter = (today.month - 1) // 3 + 1
-            quarter_end_month = (current_quarter - 1) * 3
-            if quarter_end_month == 0:
-                year = today.year - 1
-                quarter_end_month = 12
-            else:
-                year = today.year
-            end_date = (pd.Timestamp(date(year, quarter_end_month, 1)) + pd.offsets.MonthEnd(0)).date()
-            start_date = date(end_date.year, end_date.month - 2, 1)
+            end_date = today
+            start_date = (pd.Timestamp(end_date) - pd.DateOffset(months=3) + pd.Timedelta(days=1)).date()
             return start_date, end_date
 
-        first_day_this_month = today.replace(day=1)
-        end_date = first_day_this_month - timedelta(days=1)
-        start_date = end_date.replace(day=1)
+        end_date = today
+        start_date = (pd.Timestamp(end_date) - pd.DateOffset(months=1) + pd.Timedelta(days=1)).date()
         return start_date, end_date
 
     def _calculate_stock_contributions(
@@ -1350,6 +1526,8 @@ class PortfolioManager:
             f"- 期末组合市值: ¥{summary.get('end_market_value', 0):,.2f}",
             f"- 周期累计盈亏: ¥{summary.get('cumulative_pnl', 0):,.2f}",
             f"- 周期收益率: {summary.get('cumulative_return_pct', 0):.2f}%",
+            f"- 已实现盈亏变动: ¥{summary.get('realized_pnl_change', 0):,.2f}",
+            f"- 期末未实现盈亏: ¥{summary.get('end_unrealized_pnl', 0):,.2f}",
             f"- 盈利天数 / 亏损天数: {summary.get('winning_days', 0)} / {summary.get('losing_days', 0)}",
             f"- 胜率: {summary.get('win_rate_pct', 0):.2f}%",
             f"- 最大单日盈利: ¥{summary.get('best_day_pnl', 0):,.2f}",
@@ -1404,16 +1582,22 @@ class PortfolioManager:
         """生成并保存周/月/季持仓复盘报告。"""
         start_dt, end_dt = self._resolve_review_period(period_type)
         account_label = self._get_account_display_name(account_name)
-        history_start = (pd.Timestamp(start_dt) - timedelta(days=10)).strftime("%Y-%m-%d")
         start_str = start_dt.strftime("%Y-%m-%d")
         end_str = end_dt.strftime("%Y-%m-%d")
 
-        series = self.build_portfolio_return_series(
+        series = self._build_trade_reconstructed_series(
             account_name=account_name,
-            start_date=history_start,
+            start_date=start_str,
             end_date=end_str,
-            prefer_snapshots=True,
         )
+        if series.empty:
+            history_start = (pd.Timestamp(start_dt) - timedelta(days=10)).strftime("%Y-%m-%d")
+            series = self.build_portfolio_return_series(
+                account_name=account_name,
+                start_date=history_start,
+                end_date=end_str,
+                prefer_snapshots=True,
+            )
         if series.empty:
             return {"status": "error", "message": "暂无足够的组合历史数据生成复盘报告。"}
 
@@ -1422,7 +1606,9 @@ class PortfolioManager:
             return {"status": "error", "message": "所选周期内没有可用的组合数据。"}
 
         risk_metrics = self._calculate_quantitative_risk_metrics(window, start_date=start_str, end_date=end_str)
-        cumulative_pnl = self._safe_float(window["total_market_value"].iloc[-1] - window["total_market_value"].iloc[0])
+        start_total_pnl = self._safe_float(window["total_pnl"].iloc[0])
+        end_total_pnl = self._safe_float(window["total_pnl"].iloc[-1])
+        cumulative_pnl = end_total_pnl - start_total_pnl
         cumulative_return = (
             cumulative_pnl / self._safe_float(window["total_market_value"].iloc[0])
             if self._safe_float(window["total_market_value"].iloc[0]) > 0
@@ -1439,11 +1625,21 @@ class PortfolioManager:
         stock_distribution = concentration_data.get("stock_distribution", [])
         industry_distribution = concentration_data.get("industry_distribution", [])
         contributions = self._calculate_stock_contributions(stocks, start_str, end_str)
+        realized_series = pd.to_numeric(window.get("realized_pnl", pd.Series(dtype=float)), errors="coerce").fillna(0.0)
+        unrealized_series = pd.to_numeric(window.get("unrealized_pnl", pd.Series(dtype=float)), errors="coerce").fillna(0.0)
+        realized_change = (
+            self._safe_float(realized_series.iloc[-1] - realized_series.iloc[0])
+            if not realized_series.empty
+            else 0.0
+        )
+        end_unrealized = self._safe_float(unrealized_series.iloc[-1]) if not unrealized_series.empty else 0.0
         summary = {
             "start_market_value": self._safe_float(window["total_market_value"].iloc[0]),
             "end_market_value": self._safe_float(window["total_market_value"].iloc[-1]),
             "cumulative_pnl": cumulative_pnl,
             "cumulative_return_pct": cumulative_return * 100,
+            "realized_pnl_change": realized_change,
+            "end_unrealized_pnl": end_unrealized,
             "winning_days": winning_days,
             "losing_days": losing_days,
             "win_rate_pct": win_rate * 100,
@@ -1483,6 +1679,7 @@ class PortfolioManager:
                 "actual": "真实",
                 "estimated": "估算",
                 "mixed": "混合",
+                "reconstructed": "交易重建",
             }.get(window.attrs.get("data_mode", "estimated"), "估算"),
             "risk_metrics": risk_metrics,
         }

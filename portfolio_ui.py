@@ -1179,7 +1179,7 @@ def display_portfolio_review_reports(account_filter: str | None) -> None:
     )
     report_account_filter = None if selected_account_label == "全部账户" else selected_account_label
     account_label = report_account_filter or "全部账户"
-    st.caption(f"默认生成最近一个完整的周 / 月 / 季复盘报告。当前筛选：{account_label}")
+    st.caption(f"默认生成最近一周 / 一月 / 一季复盘报告（截至今日）。当前筛选：{account_label}")
 
     col1, col2, col3 = st.columns(3)
     period_specs = [

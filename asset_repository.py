@@ -894,7 +894,7 @@ class AssetRepository:
                     )
                 remaining_quantity = running_quantity - quantity
                 if remaining_quantity > 0:
-                    running_cost = ((running_cost * running_quantity) - (price * quantity)) / remaining_quantity
+                    # Selling should not reprice the remaining average cost basis.
                     if abs(running_cost) < 1e-12:
                         running_cost = 0.0
                 else:
