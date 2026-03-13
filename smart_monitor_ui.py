@@ -460,6 +460,11 @@ def display_analysis_result(result: dict):
     
     # 交易时段信息
     st.info(f"当前时段: {session_info['session']} - {session_info['recommendation']}")
+    st.caption(
+        f"行情源: {str(market_data.get('data_source', 'N/A')).upper()} · "
+        f"更新时间: {market_data.get('update_time', 'N/A')} · "
+        f"精度模式: {market_data.get('precision_mode', 'N/A')}"
+    )
     
     # AI决策
     st.markdown("### AI决策")

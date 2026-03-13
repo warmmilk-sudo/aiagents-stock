@@ -5,6 +5,7 @@
 
 import logging
 import time
+import inspect
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from typing import Dict, List, Optional
 from datetime import datetime
@@ -305,11 +306,24 @@ class SmartMonitorEngine:
                 }
             
             # 2. 获取市场数据
+            market_data_kwargs = {}
+            try:
+                if "intraday_strict" in inspect.signature(self.data_fetcher.get_comprehensive_data).parameters:
+                    market_data_kwargs["intraday_strict"] = bool(session_info.get("can_trade", False))
+            except (TypeError, ValueError):
+                market_data_kwargs["intraday_strict"] = bool(session_info.get("can_trade", False))
             market_data = self._run_with_timeout(
                 self.data_fetcher.get_comprehensive_data,
                 self.DATA_FETCH_TIMEOUT_SECONDS,
                 stock_code,
+                **market_data_kwargs,
             )
+            if market_data and market_data.get("precision_status") == "failed":
+                return {
+                    'success': False,
+                    'error': market_data.get('precision_error') or '盘中TDX数据获取失败',
+                    'session_info': session_info,
+                }
             if not market_data:
                 return {
                     'success': False,

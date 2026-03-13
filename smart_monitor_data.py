@@ -2,14 +2,17 @@
 智能盯盘 - A股数据获取模块
 使用TDX/akshare获取实时行情和技术指标
 支持降级到tushare作为备用数据源
+盘中分析可强制使用TDX
 """
 
 import logging
 import os
+import time
 import akshare as ak
 import pandas as pd
 from typing import Dict, Optional
 from datetime import datetime, timedelta
+import config
 from tushare_utils import create_tushare_pro
 
 
@@ -25,18 +28,20 @@ class SmartMonitorDataFetcher:
             tdx_base_url: TDX接口地址（可选，从配置读取）
         """
         self.logger = logging.getLogger(__name__)
+        self.intraday_tdx_retry_count = max(
+            1,
+            int(getattr(config, "SMART_MONITOR_INTRADAY_TDX_RETRY_COUNT", 3) or 3),
+        )
         
         # TDX数据源配置
         if use_tdx is None:
-            from config import TDX_CONFIG
-            use_tdx = TDX_CONFIG.get('enabled', False)
+            use_tdx = config.TDX_CONFIG.get('enabled', False)
 
         tdx_timeout_seconds = 10
         try:
-            from config import TDX_CONFIG, TDX_TIMEOUT_SECONDS
             if tdx_base_url is None:
-                tdx_base_url = TDX_CONFIG.get('base_url', '')
-            tdx_timeout_seconds = int(TDX_TIMEOUT_SECONDS or tdx_timeout_seconds)
+                tdx_base_url = config.TDX_CONFIG.get('base_url', '')
+            tdx_timeout_seconds = int(config.TDX_TIMEOUT_SECONDS or tdx_timeout_seconds)
         except Exception:
             if tdx_base_url is None:
                 tdx_base_url = ''
@@ -79,6 +84,90 @@ class SmartMonitorDataFetcher:
 
         else:
             self.logger.info("未配置Tushare Token，仅使用AKShare数据源")
+
+    def _build_precision_error(self, message: str, stock_code: str) -> Dict:
+        return {
+            "precision_status": "failed",
+            "precision_mode": "tdx_intraday_strict",
+            "precision_error": f"{stock_code} {message}",
+            "data_source": "tdx",
+            "tdx_retry_count": self.intraday_tdx_retry_count,
+        }
+
+    def _call_tdx_with_retry(self, stock_code: str, operation_label: str, callback):
+        last_error = ""
+        for attempt in range(1, self.intraday_tdx_retry_count + 1):
+            try:
+                payload = callback()
+                if payload:
+                    if isinstance(payload, dict):
+                        payload.setdefault("data_source", "tdx")
+                        payload[f"tdx_{operation_label}_retry_attempts"] = attempt
+                    return payload
+                last_error = "empty_response"
+                self.logger.warning(
+                    "盘中分析要求使用TDX，%s %s 未返回有效数据 (%s/%s)",
+                    stock_code,
+                    operation_label,
+                    attempt,
+                    self.intraday_tdx_retry_count,
+                )
+            except Exception as exc:
+                last_error = f"{type(exc).__name__}: {exc}"
+                self.logger.warning(
+                    "盘中分析要求使用TDX，%s %s 获取异常 (%s/%s): %s",
+                    stock_code,
+                    operation_label,
+                    attempt,
+                    self.intraday_tdx_retry_count,
+                    exc,
+                )
+
+            if attempt < self.intraday_tdx_retry_count:
+                time.sleep(1)
+
+        self.logger.error(
+            "盘中分析TDX %s 最终失败 %s，已重试 %s 次，最后错误: %s",
+            operation_label,
+            stock_code,
+            self.intraday_tdx_retry_count,
+            last_error or "unknown_error",
+        )
+        return None
+
+    def _get_intraday_tdx_comprehensive_data(self, stock_code: str) -> Dict:
+        if not (self.use_tdx and self.tdx_fetcher):
+            return self._build_precision_error("盘中分析必须使用TDX数据，但当前TDX未启用或不可用。", stock_code)
+
+        quote = self._call_tdx_with_retry(
+            stock_code,
+            "quote",
+            lambda: self.tdx_fetcher.get_realtime_quote(stock_code),
+        )
+        if not quote:
+            return self._build_precision_error(
+                f"盘中分析必须使用TDX数据，实时行情连续{self.intraday_tdx_retry_count}次获取失败。",
+                stock_code,
+            )
+
+        indicators = self._call_tdx_with_retry(
+            stock_code,
+            "indicators",
+            lambda: self.tdx_fetcher.get_technical_indicators(stock_code),
+        )
+        if not indicators:
+            return self._build_precision_error(
+                f"盘中分析必须使用TDX数据，技术指标连续{self.intraday_tdx_retry_count}次获取失败。",
+                stock_code,
+            )
+
+        result = {}
+        result.update(quote)
+        result.update(indicators)
+        result["precision_status"] = "validated"
+        result["precision_mode"] = "tdx_intraday_strict"
+        result["tdx_retry_count"] = self.intraday_tdx_retry_count
+        return result
 
     def _stock_code_to_ts_code(self, stock_code: str) -> Optional[str]:
         """将A股代码转换为Tushare代码。"""
@@ -585,17 +674,21 @@ class SmartMonitorDataFetcher:
             self.logger.error(f"AKShare失败且未配置Tushare，无法获取 {stock_code} 资金流向")
             return None
     
-    def get_comprehensive_data(self, stock_code: str) -> Dict:
+    def get_comprehensive_data(self, stock_code: str, intraday_strict: bool = False) -> Dict:
         """
         获取综合数据（实时行情+技术指标）
         注意：已移除主力资金流向数据，因为该接口不稳定且AI决策不依赖此数据
         
         Args:
             stock_code: 股票代码
+            intraday_strict: 盘中严格模式，强制只使用TDX
             
         Returns:
             综合数据
         """
+        if intraday_strict:
+            return self._get_intraday_tdx_comprehensive_data(stock_code)
+
         result = {}
         
         # 实时行情
@@ -612,6 +705,10 @@ class SmartMonitorDataFetcher:
         # main_force = self.get_main_force_flow(stock_code)
         # if main_force:
         #     result['main_force'] = main_force
+
+        if result:
+            result.setdefault("precision_status", "best_effort")
+            result.setdefault("precision_mode", "fallback_allowed")
         
         return result
     

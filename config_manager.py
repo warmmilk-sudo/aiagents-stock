@@ -53,6 +53,12 @@ class ConfigManager:
                 "required": False,
                 "type": "text",
             },
+            "SMART_MONITOR_INTRADAY_TDX_RETRY_COUNT": {
+                "value": "3",
+                "description": "盘中分析强制使用 TDX 时的重试次数",
+                "required": False,
+                "type": "text",
+            },
             "SMART_MONITOR_DEFAULT_POSITION_SIZE_PCT": {
                 "value": "20",
                 "description": "智能盯盘默认仓位百分比",
