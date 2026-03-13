@@ -771,34 +771,39 @@ class AnalysisRepository:
         symbol: Optional[str] = None,
         account_name: Optional[str] = None,
     ) -> Optional[Dict]:
-        def _fetch_one(clauses: List[str], params: List[Any]) -> Optional[Dict]:
+        conn = self._connect()
+        cursor = conn.cursor()
+        match_clauses: List[str] = []
+        params: List[Any] = []
+
+        if asset_id is not None:
+            match_clauses.append("asset_id = ?")
+            params.append(asset_id)
+        if portfolio_stock_id is not None:
+            match_clauses.append("portfolio_stock_id = ?")
+            params.append(portfolio_stock_id)
+        if symbol:
+            symbol_clause = "symbol = ?"
+            symbol_params: List[Any] = [symbol]
+            if account_name:
+                symbol_clause += " AND (account_name = ? OR account_name = ? OR account_name IS NULL)"
+                symbol_params.extend([account_name, DEFAULT_ACCOUNT_NAME])
+            match_clauses.append(f"({symbol_clause})")
+            params.extend(symbol_params)
+
+        record = None
+        if match_clauses:
             sql = (
                 "SELECT * FROM analysis_records "
-                f"WHERE {' AND '.join(clauses)} "
-                "ORDER BY CASE WHEN analysis_scope = 'portfolio' THEN 0 ELSE 1 END, "
-                "datetime(analysis_date) DESC, id DESC LIMIT 1"
+                "WHERE COALESCE(has_full_report, 0) = 1 "
+                f"AND ({' OR '.join(match_clauses)}) "
+                "ORDER BY datetime(analysis_date) DESC, "
+                "CASE WHEN analysis_scope = 'portfolio' THEN 0 ELSE 1 END, "
+                "id DESC LIMIT 1"
             )
             cursor.execute(sql, tuple(params))
             row = cursor.fetchone()
-            return self._deserialize_row(row) if row else None
-
-        conn = self._connect()
-        cursor = conn.cursor()
-        record = None
-        if asset_id is not None:
-            record = _fetch_one(["COALESCE(has_full_report, 0) = 1", "asset_id = ?"], [asset_id])
-        if record is None and portfolio_stock_id is not None:
-            record = _fetch_one(
-                ["COALESCE(has_full_report, 0) = 1", "portfolio_stock_id = ?"],
-                [portfolio_stock_id],
-            )
-        if record is None and symbol:
-            clauses = ["COALESCE(has_full_report, 0) = 1", "symbol = ?"]
-            params: List[Any] = [symbol]
-            if account_name:
-                clauses.append("(account_name = ? OR account_name = ? OR account_name IS NULL)")
-                params.extend([account_name, DEFAULT_ACCOUNT_NAME])
-            record = _fetch_one(clauses, params)
+            record = self._deserialize_row(row) if row else None
         conn.close()
         if not record:
             return None

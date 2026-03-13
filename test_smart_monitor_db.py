@@ -62,6 +62,85 @@ class SmartMonitorDBTests(unittest.TestCase):
         self.assertEqual(decisions[1]["id"], first_id)
         self.assertEqual(decisions[1]["decision_time"], "2026-03-12 09:30:00")
 
+    def test_monitor_task_strategy_context_uses_latest_report_timestamp_across_scopes(self):
+        success, _, asset_id = self.db.asset_service.promote_to_watchlist(
+            symbol="600519",
+            stock_name="贵州茅台",
+            account_name="默认账户",
+        )
+        self.assertTrue(success)
+        self.assertIsNotNone(asset_id)
+
+        self.db.analysis_repository.save_record(
+            symbol="600519",
+            stock_name="贵州茅台",
+            period="1y",
+            stock_info={"symbol": "600519", "name": "贵州茅台", "current_price": 1500.0},
+            agents_results={"technical": {"analysis": "较早持仓分析"}},
+            discussion_result="较早持仓分析",
+            final_decision={
+                "rating": "持有",
+                "entry_min": 1480.0,
+                "entry_max": 1500.0,
+                "take_profit": 1580.0,
+                "stop_loss": 1450.0,
+                "operation_advice": "旧基线",
+            },
+            account_name="默认账户",
+            asset_id=asset_id,
+            portfolio_stock_id=asset_id,
+            analysis_scope="portfolio",
+            analysis_source="portfolio_single_analysis",
+            analysis_date="2026-03-12 09:00:00",
+            summary="较早持仓分析",
+            has_full_report=True,
+            asset_status_snapshot="portfolio",
+        )
+
+        latest_research_id = self.db.analysis_repository.save_record(
+            symbol="600519",
+            stock_name="贵州茅台",
+            period="1y",
+            stock_info={"symbol": "600519", "name": "贵州茅台", "current_price": 1515.0},
+            agents_results={"technical": {"analysis": "更新深度分析"}},
+            discussion_result="更新深度分析",
+            final_decision={
+                "rating": "买入",
+                "entry_min": 1510.0,
+                "entry_max": 1520.0,
+                "take_profit": 1620.0,
+                "stop_loss": 1470.0,
+                "operation_advice": "最新基线",
+            },
+            account_name="默认账户",
+            analysis_scope="research",
+            analysis_source="home_single_analysis",
+            analysis_date="2026-03-12 10:30:00",
+            summary="更新深度分析",
+            has_full_report=True,
+            asset_status_snapshot="research",
+        )
+
+        task_id = self.db.upsert_monitor_task(
+            {
+                "stock_code": "600519",
+                "stock_name": "贵州茅台",
+                "account_name": "默认账户",
+                "asset_id": asset_id,
+                "enabled": 1,
+                "check_interval": 3600,
+                "trading_hours_only": 1,
+            }
+        )
+        self.assertGreater(task_id, 0)
+
+        task = self.db.get_monitor_task_by_code("600519", account_name="默认账户", asset_id=asset_id)
+        self.assertIsNotNone(task)
+        self.assertEqual(task["origin_analysis_id"], latest_research_id)
+        self.assertEqual(task["strategy_context"]["origin_analysis_id"], latest_research_id)
+        self.assertEqual(task["strategy_context"]["analysis_scope"], "research")
+        self.assertEqual(task["strategy_context"]["summary"], "更新深度分析")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -226,6 +226,87 @@ class ManualOnlyMonitoringTests(unittest.TestCase):
         self.assertEqual(len(fake_db.pending_actions), 0)
         self.assertEqual(notifications, [])
 
+    def test_intraday_analysis_refreshes_latest_strategy_context_before_decision(self):
+        fake_db = FakeSmartMonitorDB()
+        latest_strategy_context = {
+            "origin_analysis_id": 99,
+            "analysis_scope": "research",
+            "analysis_date": "2026-03-13 10:30:00",
+            "rating": "买入",
+            "entry_min": 1500.0,
+            "entry_max": 1510.0,
+            "take_profit": 1650.0,
+            "stop_loss": 1460.0,
+            "summary": "最新深度分析基线",
+        }
+        fake_db.analysis_repository.get_latest_strategy_context = lambda **kwargs: latest_strategy_context
+
+        captured_strategy_context = {}
+
+        with patch.object(smart_monitor_engine_module, "SmartMonitorDB", return_value=fake_db), patch.object(
+            smart_monitor_engine_module.event_bus,
+            "subscribe",
+            return_value=None,
+        ):
+            engine = smart_monitor_engine_module.SmartMonitorEngine(deepseek_api_key="stub")
+
+        engine.deepseek.get_trading_session = lambda: {
+            "session": "上午盘",
+            "can_trade": True,
+            "recommendation": "",
+        }
+        engine.data_fetcher.get_comprehensive_data = lambda stock_code, intraday_strict=False: {
+            "name": "贵州茅台",
+            "current_price": 1520.0,
+            "change_pct": 1.25,
+            "change_amount": 18.8,
+            "volume": 123456,
+            "turnover_rate": 0.75,
+        }
+
+        def _fake_ai_decision(**kwargs):
+            captured_strategy_context.update(kwargs.get("strategy_context") or {})
+            return {
+                "success": True,
+                "decision": {
+                    "action": "HOLD",
+                    "confidence": 82,
+                    "reasoning": "按最新基线继续观察。",
+                    "position_size_pct": 20,
+                    "stop_loss_pct": 5,
+                    "take_profit_pct": 12,
+                    "risk_level": "中",
+                    "key_price_levels": {"support": 1500, "resistance": 1560},
+                    "monitor_levels": {
+                        "entry_min": 1500,
+                        "entry_max": 1510,
+                        "take_profit": 1650,
+                        "stop_loss": 1460,
+                    },
+                },
+            }
+
+        engine.deepseek.analyze_stock_and_decide = _fake_ai_decision
+        engine._send_notification = lambda **kwargs: None
+        engine._sync_runtime_thresholds = lambda **kwargs: True
+
+        result = engine.analyze_stock(
+            "600519",
+            notify=False,
+            account_name="测试账户",
+            strategy_context={
+                "origin_analysis_id": 1,
+                "analysis_scope": "portfolio",
+                "analysis_date": "2026-03-12 09:00:00",
+                "summary": "旧持仓分析基线",
+            },
+        )
+
+        self.assertTrue(result["success"])
+        self.assertEqual(captured_strategy_context["origin_analysis_id"], 99)
+        self.assertEqual(captured_strategy_context["analysis_date"], "2026-03-13 10:30:00")
+        self.assertEqual(result["strategy_context"]["origin_analysis_id"], 99)
+
 
 if __name__ == "__main__":
     unittest.main()

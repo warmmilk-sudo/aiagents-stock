@@ -152,6 +152,31 @@ class SmartMonitorEngine:
                 return None
         return normalized
 
+    def _resolve_latest_strategy_context(
+        self,
+        *,
+        stock_code: str,
+        account_name: str,
+        asset_id: Optional[int],
+        portfolio_stock_id: Optional[int],
+        provided_strategy_context: Optional[Dict],
+        task_context: Optional[Dict],
+    ) -> Dict:
+        latest_context = self.db.analysis_repository.get_latest_strategy_context(
+            asset_id=asset_id,
+            portfolio_stock_id=portfolio_stock_id,
+            symbol=stock_code,
+            account_name=account_name,
+        ) or {}
+        if latest_context:
+            return latest_context
+
+        task_strategy_context = (task_context or {}).get("strategy_context") or {}
+        if task_strategy_context:
+            return task_strategy_context
+
+        return provided_strategy_context or {}
+
     def _find_ai_task_item(
         self,
         stock_code: str,
@@ -355,17 +380,25 @@ class SmartMonitorEngine:
                 position_cost=position_cost,
                 position_quantity=position_quantity,
             )
-            if strategy_context is None:
-                strategy_context = task_context.get("strategy_context") or {}
-            if strategy_context is None or not strategy_context:
-                strategy_context = self.db.analysis_repository.get_latest_strategy_context(
-                    asset_id=asset_id,
-                    symbol=stock_code,
-                    account_name=account_name,
-                ) or {}
             portfolio_stock_id = portfolio_stock_id or task_context.get("portfolio_stock_id") or (
                 asset_id if asset and asset.get("status") == STATUS_PORTFOLIO else None
             )
+            strategy_context = self._resolve_latest_strategy_context(
+                stock_code=stock_code,
+                account_name=account_name,
+                asset_id=asset_id,
+                portfolio_stock_id=portfolio_stock_id,
+                provided_strategy_context=strategy_context,
+                task_context=task_context,
+            )
+            if strategy_context:
+                self.logger.info(
+                    "[%s] 使用最新分析基线: analysis_id=%s scope=%s time=%s",
+                    stock_code,
+                    strategy_context.get("origin_analysis_id"),
+                    strategy_context.get("analysis_scope"),
+                    strategy_context.get("analysis_date"),
+                )
 
             # 5. 调用DeepSeek AI决策
             ai_result = self._run_with_timeout(

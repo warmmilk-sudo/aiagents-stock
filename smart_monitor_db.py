@@ -631,6 +631,12 @@ class SmartMonitorDB:
         interval_minutes = int(item.get("interval_minutes") or 1)
         asset = self.asset_repository.get_asset(item.get("asset_id")) if item.get("asset_id") else None
         has_position = bool(asset and asset.get("status") == STATUS_PORTFOLIO and (asset.get("quantity") or 0) > 0)
+        strategy_context = self.analysis_repository.get_latest_strategy_context(
+            asset_id=item.get("asset_id"),
+            portfolio_stock_id=item.get("portfolio_stock_id"),
+            symbol=item.get("symbol"),
+            account_name=item.get("account_name") or DEFAULT_ACCOUNT_NAME,
+        ) or {}
         return {
             "id": item["id"],
             "task_name": config.get("task_name") or f"{item['symbol']} AI监控任务",
@@ -653,12 +659,8 @@ class SmartMonitorDB:
             "asset_id": item.get("asset_id"),
             "asset_status": asset.get("status") if asset else None,
             "portfolio_stock_id": item.get("portfolio_stock_id"),
-            "origin_analysis_id": item.get("origin_analysis_id"),
-            "strategy_context": self.analysis_repository.get_latest_strategy_context(
-                asset_id=item.get("asset_id"),
-                symbol=item.get("symbol"),
-                account_name=item.get("account_name") or DEFAULT_ACCOUNT_NAME,
-            ) or {},
+            "origin_analysis_id": strategy_context.get("origin_analysis_id") or item.get("origin_analysis_id"),
+            "strategy_context": strategy_context,
             "created_at": item.get("created_at"),
             "updated_at": item.get("updated_at"),
         }
