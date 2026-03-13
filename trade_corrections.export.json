@@ -1,0 +1,556 @@
+{
+  "generated_at": "2026-03-13 17:01:10",
+  "db_path": "investment.db",
+  "default_account_name": "默认账户",
+  "default_trade_source": "manual_fix",
+  "default_status_when_flat": "watchlist",
+  "filters": {
+    "account_name": null,
+    "symbol": null,
+    "portfolio_only": false,
+    "include_empty": true
+  },
+  "summary": {
+    "matched_asset_count": 30,
+    "exported_asset_count": 30,
+    "skipped_no_trade_asset_count": 0,
+    "total_trade_count": 35
+  },
+  "corrections": [
+    {
+      "stock_id": 6,
+      "symbol": "603083",
+      "stock_name": "剑桥科技",
+      "account_name": "zfy",
+      "status_when_flat": "watchlist",
+      "trades": [
+        {
+          "trade_date": "2026-03-04",
+          "trade_type": "buy",
+          "price": 111.39,
+          "quantity": 100,
+          "note": "",
+          "trade_source": "initial_position"
+        },
+        {
+          "trade_date": "2026-03-09",
+          "trade_type": "buy",
+          "price": 104.61,
+          "quantity": 100,
+          "note": "逢低买入做T",
+          "trade_source": "manual"
+        },
+        {
+          "trade_date": "2026-03-10",
+          "trade_type": "sell",
+          "price": 118.1,
+          "quantity": 100,
+          "note": "做T减仓",
+          "trade_source": "manual"
+        },
+        {
+          "trade_date": "2026-03-13",
+          "trade_type": "sell",
+          "price": 119.49,
+          "quantity": 100,
+          "note": "资金流出，趋势走弱，获利了解",
+          "trade_source": "manual"
+        }
+      ]
+    },
+    {
+      "stock_id": 7,
+      "symbol": "300308",
+      "stock_name": "中际旭创",
+      "account_name": "zfy",
+      "status_when_flat": "watchlist",
+      "trades": [
+        {
+          "trade_date": "2026-03-06",
+          "trade_type": "buy",
+          "price": 540.617,
+          "quantity": 100,
+          "note": "",
+          "trade_source": "initial_position"
+        },
+        {
+          "trade_date": "2026-03-13",
+          "trade_type": "buy",
+          "price": 543.0,
+          "quantity": 100,
+          "note": "判断调整快结束即将拉涨，打算增加筹码，或做T降低成本",
+          "trade_source": "manual"
+        }
+      ]
+    },
+    {
+      "stock_id": 10,
+      "symbol": "300136",
+      "stock_name": "信维通信",
+      "account_name": "zfy",
+      "status_when_flat": "watchlist",
+      "trades": [
+        {
+          "trade_date": "2026-02-27",
+          "trade_type": "buy",
+          "price": 82.031,
+          "quantity": 200,
+          "note": "",
+          "trade_source": "initial_position"
+        },
+        {
+          "trade_date": "2026-03-11",
+          "trade_type": "buy",
+          "price": 68.97,
+          "quantity": 200,
+          "note": "看涨航天，左侧布局一下",
+          "trade_source": "manual"
+        }
+      ]
+    },
+    {
+      "stock_id": 11,
+      "symbol": "600875",
+      "stock_name": "东方电气",
+      "account_name": "zfy",
+      "status_when_flat": "watchlist",
+      "trades": [
+        {
+          "trade_date": "2026-03-02",
+          "trade_type": "buy",
+          "price": 37.467,
+          "quantity": 300,
+          "note": "",
+          "trade_source": "initial_position"
+        },
+        {
+          "trade_date": "2026-03-11",
+          "trade_type": "sell",
+          "price": 41.1,
+          "quantity": 200,
+          "note": "主力派发",
+          "trade_source": "manual"
+        },
+        {
+          "trade_date": "2026-03-12",
+          "trade_type": "sell",
+          "price": 40.5,
+          "quantity": 100,
+          "note": "主力派发后下跌无承接，清仓",
+          "trade_source": "manual"
+        }
+      ]
+    },
+    {
+      "stock_id": 12,
+      "symbol": "002202",
+      "stock_name": "金风科技",
+      "account_name": "zfy",
+      "status_when_flat": "watchlist",
+      "trades": [
+        {
+          "trade_date": "2026-03-02",
+          "trade_type": "buy",
+          "price": 26.05,
+          "quantity": 500,
+          "note": "",
+          "trade_source": "initial_position"
+        },
+        {
+          "trade_date": "2026-03-02",
+          "trade_type": "sell",
+          "price": 28.11,
+          "quantity": 200,
+          "note": "趋势走弱，减仓",
+          "trade_source": "manual"
+        },
+        {
+          "trade_date": "2026-03-11",
+          "trade_type": "buy",
+          "price": 28.03,
+          "quantity": 200,
+          "note": "板块热点，追加",
+          "trade_source": "manual"
+        }
+      ]
+    },
+    {
+      "stock_id": 13,
+      "symbol": "300274",
+      "stock_name": "阳光电源",
+      "account_name": "zfy",
+      "status_when_flat": "watchlist",
+      "trades": [
+        {
+          "trade_date": "2026-03-06",
+          "trade_type": "buy",
+          "price": 148.37,
+          "quantity": 200,
+          "note": "",
+          "trade_source": "initial_position"
+        },
+        {
+          "trade_date": "2026-03-13",
+          "trade_type": "sell",
+          "price": 175.39,
+          "quantity": 100,
+          "note": "上涨动力不足，先减仓一半锁定一部分盈利",
+          "trade_source": "manual"
+        }
+      ]
+    },
+    {
+      "stock_id": 14,
+      "symbol": "300179",
+      "stock_name": "四方达",
+      "account_name": "zfy",
+      "status_when_flat": "watchlist",
+      "trades": [
+        {
+          "trade_date": "2026-03-06",
+          "trade_type": "buy",
+          "price": 24.176,
+          "quantity": 300,
+          "note": "",
+          "trade_source": "initial_position"
+        },
+        {
+          "trade_date": "2026-03-10",
+          "trade_type": "sell",
+          "price": 26.85,
+          "quantity": 100,
+          "note": "减仓",
+          "trade_source": "manual"
+        },
+        {
+          "trade_date": "2026-03-10",
+          "trade_type": "sell",
+          "price": 26.91,
+          "quantity": 200,
+          "note": "趋势下跌明显，清仓",
+          "trade_source": "manual"
+        }
+      ]
+    },
+    {
+      "stock_id": 15,
+      "symbol": "600547",
+      "stock_name": "山东黄金",
+      "account_name": "zfy",
+      "status_when_flat": "watchlist",
+      "trades": [
+        {
+          "trade_date": "2026-03-02",
+          "trade_type": "buy",
+          "price": 48.066,
+          "quantity": 300,
+          "note": "",
+          "trade_source": "initial_position"
+        }
+      ]
+    },
+    {
+      "stock_id": 16,
+      "symbol": "000969",
+      "stock_name": "安泰科技",
+      "account_name": "zfy",
+      "status_when_flat": "watchlist",
+      "trades": [
+        {
+          "trade_date": "2026-03-05",
+          "trade_type": "buy",
+          "price": 25.377,
+          "quantity": 400,
+          "note": "",
+          "trade_source": "initial_position"
+        },
+        {
+          "trade_date": "2026-03-13",
+          "trade_type": "sell",
+          "price": 22.42,
+          "quantity": 400,
+          "note": "止损",
+          "trade_source": "manual"
+        },
+        {
+          "trade_date": "2026-03-13",
+          "trade_type": "buy",
+          "price": 22.8,
+          "quantity": 200,
+          "note": "看到上涨再赌一下",
+          "trade_source": "manual"
+        }
+      ]
+    },
+    {
+      "stock_id": 17,
+      "symbol": "000426",
+      "stock_name": "兴业银锡",
+      "account_name": "zfy",
+      "status_when_flat": "watchlist",
+      "trades": [
+        {
+          "trade_date": "2026-03-02",
+          "trade_type": "buy",
+          "price": 56.637,
+          "quantity": 300,
+          "note": "",
+          "trade_source": "initial_position"
+        },
+        {
+          "trade_date": "2026-03-13",
+          "trade_type": "sell",
+          "price": 48.47,
+          "quantity": 300,
+          "note": "银价回落，止损",
+          "trade_source": "manual"
+        }
+      ]
+    },
+    {
+      "stock_id": 18,
+      "symbol": "603650",
+      "stock_name": "彤程新材",
+      "account_name": "zfy",
+      "status_when_flat": "watchlist",
+      "trades": [
+        {
+          "trade_date": "2026-03-04",
+          "trade_type": "buy",
+          "price": 62.092,
+          "quantity": 200,
+          "note": "",
+          "trade_source": "initial_position"
+        }
+      ]
+    },
+    {
+      "stock_id": 19,
+      "symbol": "600873",
+      "stock_name": "梅花生物",
+      "account_name": "zfy",
+      "status_when_flat": "watchlist",
+      "trades": [
+        {
+          "trade_date": "2026-03-09",
+          "trade_type": "buy",
+          "price": 11.865,
+          "quantity": 400,
+          "note": "",
+          "trade_source": "initial_position"
+        },
+        {
+          "trade_date": "2026-03-10",
+          "trade_type": "buy",
+          "price": 11.57,
+          "quantity": 200,
+          "note": "补仓",
+          "trade_source": "manual"
+        },
+        {
+          "trade_date": "2026-03-12",
+          "trade_type": "buy",
+          "price": 12.69,
+          "quantity": 400,
+          "note": "突破阻力，追加",
+          "trade_source": "manual"
+        }
+      ]
+    },
+    {
+      "stock_id": 20,
+      "symbol": "002230",
+      "stock_name": "科大讯飞",
+      "account_name": "zfy",
+      "status_when_flat": "watchlist",
+      "trades": [
+        {
+          "trade_date": "2026-03-09",
+          "trade_type": "buy",
+          "price": 53.56,
+          "quantity": 100,
+          "note": "",
+          "trade_source": "initial_position"
+        },
+        {
+          "trade_date": "2026-03-12",
+          "trade_type": "sell",
+          "price": 52.6,
+          "quantity": 100,
+          "note": "近期不看好",
+          "trade_source": "manual"
+        }
+      ]
+    },
+    {
+      "stock_id": 21,
+      "symbol": "601882",
+      "stock_name": "海天精工",
+      "account_name": "默认账户",
+      "status_when_flat": "research",
+      "trades": []
+    },
+    {
+      "stock_id": 22,
+      "symbol": "600873",
+      "stock_name": "梅花生物",
+      "account_name": "默认账户",
+      "status_when_flat": "research",
+      "trades": []
+    },
+    {
+      "stock_id": 23,
+      "symbol": "002714",
+      "stock_name": "牧原股份",
+      "account_name": "默认账户",
+      "status_when_flat": "watchlist",
+      "trades": []
+    },
+    {
+      "stock_id": 24,
+      "symbol": "601868",
+      "stock_name": "中国能建",
+      "account_name": "默认账户",
+      "status_when_flat": "research",
+      "trades": []
+    },
+    {
+      "stock_id": 25,
+      "symbol": "000968",
+      "stock_name": "蓝焰控股",
+      "account_name": "默认账户",
+      "status_when_flat": "watchlist",
+      "trades": []
+    },
+    {
+      "stock_id": 26,
+      "symbol": "002281",
+      "stock_name": "光迅科技",
+      "account_name": "默认账户",
+      "status_when_flat": "research",
+      "trades": []
+    },
+    {
+      "stock_id": 27,
+      "symbol": "002281",
+      "stock_name": "光迅科技",
+      "account_name": "zfy",
+      "status_when_flat": "watchlist",
+      "trades": [
+        {
+          "trade_date": "2026-03-10",
+          "trade_type": "buy",
+          "price": 80.6,
+          "quantity": 200,
+          "note": "",
+          "trade_source": "initial_position"
+        },
+        {
+          "trade_date": "2026-03-13",
+          "trade_type": "sell",
+          "price": 88.94,
+          "quantity": 200,
+          "note": "澄清不实消息，几乎跌停，获利了结",
+          "trade_source": "manual"
+        }
+      ]
+    },
+    {
+      "stock_id": 28,
+      "symbol": "600519",
+      "stock_name": "贵州茅台",
+      "account_name": "默认账户",
+      "status_when_flat": "research",
+      "trades": []
+    },
+    {
+      "stock_id": 29,
+      "symbol": "603083",
+      "stock_name": "剑桥科技",
+      "account_name": "默认账户",
+      "status_when_flat": "research",
+      "trades": []
+    },
+    {
+      "stock_id": 30,
+      "symbol": "300083",
+      "stock_name": "创世纪",
+      "account_name": "zfy",
+      "status_when_flat": "watchlist",
+      "trades": [
+        {
+          "trade_date": "2026-03-12",
+          "trade_type": "buy",
+          "price": 8.6,
+          "quantity": 500,
+          "note": "",
+          "trade_source": "initial_position"
+        },
+        {
+          "trade_date": "2026-03-13",
+          "trade_type": "sell",
+          "price": 8.52,
+          "quantity": 500,
+          "note": "技术面不好，上涨动能不足",
+          "trade_source": "manual"
+        }
+      ]
+    },
+    {
+      "stock_id": 31,
+      "symbol": "301035",
+      "stock_name": "润丰股份",
+      "account_name": "默认账户",
+      "status_when_flat": "watchlist",
+      "trades": []
+    },
+    {
+      "stock_id": 32,
+      "symbol": "600096",
+      "stock_name": "云天化",
+      "account_name": "默认账户",
+      "status_when_flat": "research",
+      "trades": []
+    },
+    {
+      "stock_id": 33,
+      "symbol": "600426",
+      "stock_name": "华鲁恒升",
+      "account_name": "默认账户",
+      "status_when_flat": "research",
+      "trades": []
+    },
+    {
+      "stock_id": 34,
+      "symbol": "603887",
+      "stock_name": "城地香江",
+      "account_name": "默认账户",
+      "status_when_flat": "research",
+      "trades": []
+    },
+    {
+      "stock_id": 35,
+      "symbol": "600522",
+      "stock_name": "中天科技",
+      "account_name": "默认账户",
+      "status_when_flat": "research",
+      "trades": []
+    },
+    {
+      "stock_id": 36,
+      "symbol": "605305",
+      "stock_name": "中际联合",
+      "account_name": "默认账户",
+      "status_when_flat": "watchlist",
+      "trades": []
+    },
+    {
+      "stock_id": 37,
+      "symbol": "600410",
+      "stock_name": "华胜天成",
+      "account_name": "默认账户",
+      "status_when_flat": "research",
+      "trades": []
+    }
+  ]
+}

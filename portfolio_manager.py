@@ -19,6 +19,7 @@ import config
 from portfolio_db import portfolio_db
 from monitor_db import monitor_db as realtime_monitor_db
 from investment_lifecycle_service import InvestmentLifecycleService, investment_lifecycle_service
+from investment_db_utils import DEFAULT_ACCOUNT_NAME
 from smart_monitor_db import SmartMonitorDB
 
 
@@ -317,6 +318,190 @@ class PortfolioManager:
         if normalized in {"clear", "liquidate", "清仓", "清仓并降级"}:
             return "clear"
         return ""
+
+    @staticmethod
+    def _extract_first_present_value(payload: Dict[str, Any], keys: List[str]) -> Any:
+        for key in keys:
+            if key in payload:
+                return payload.get(key)
+        return None
+
+    def apply_trade_corrections(
+        self,
+        corrections: List[Dict[str, Any]],
+        *,
+        default_account_name: str = DEFAULT_ACCOUNT_NAME,
+        default_trade_source: str = "manual_fix",
+        default_status_when_flat: str = "watchlist",
+        capture_snapshot: bool = False,
+        sync_integrations: bool = False,
+    ) -> Dict[str, Any]:
+        """按批量修正配置替换交易流水并回算持仓。"""
+        if not isinstance(corrections, list):
+            raise ValueError("corrections 必须是数组")
+
+        normalized_default_account = str(default_account_name or DEFAULT_ACCOUNT_NAME).strip() or DEFAULT_ACCOUNT_NAME
+        results: List[Dict[str, Any]] = []
+        succeeded = 0
+        failed = 0
+
+        for index, item in enumerate(corrections):
+            row_index = index + 1
+            if not isinstance(item, dict):
+                results.append({"index": row_index, "success": False, "message": "条目必须是对象"})
+                failed += 1
+                continue
+
+            try:
+                stock: Optional[Dict] = None
+                stock_id_value = self._extract_first_present_value(item, ["stock_id", "asset_id", "id"])
+                if stock_id_value not in (None, ""):
+                    stock = self.db.get_stock(int(stock_id_value))
+                else:
+                    symbol_raw = self._extract_first_present_value(item, ["symbol", "code", "stock_code", "股票代码"])
+                    normalized_symbol = self._normalize_stock_code(str(symbol_raw or ""))
+                    if not normalized_symbol:
+                        raise ValueError("股票代码不能为空")
+                    account_name = str(
+                        self._extract_first_present_value(item, ["account_name", "account", "账户"])
+                        or normalized_default_account
+                    ).strip() or normalized_default_account
+                    stock = self.db.get_stock_by_code(normalized_symbol, account_name)
+                    if stock is None:
+                        raise ValueError(f"未找到持仓: {normalized_symbol} ({account_name})")
+
+                if stock is None:
+                    raise ValueError(f"未找到持仓ID: {stock_id_value}")
+
+                raw_trades = self._extract_first_present_value(
+                    item,
+                    ["trades", "trade_history", "records", "交易记录"],
+                )
+                if raw_trades is None:
+                    raise ValueError("缺少交易记录字段 trades")
+                if not isinstance(raw_trades, list):
+                    raise ValueError("trades 必须是数组")
+
+                normalized_trades: List[Dict[str, Any]] = []
+                for trade_idx, raw_trade in enumerate(raw_trades):
+                    if not isinstance(raw_trade, dict):
+                        raise ValueError(f"第 {trade_idx + 1} 条交易必须是对象")
+
+                    raw_trade_type = self._extract_first_present_value(
+                        raw_trade,
+                        ["trade_type", "type", "action", "交易类型", "类型"],
+                    )
+                    trade_type = self._normalize_trade_type(str(raw_trade_type or ""))
+                    if not trade_type:
+                        raise ValueError(f"第 {trade_idx + 1} 条交易类型无效: {raw_trade_type}")
+
+                    raw_trade_date = self._extract_first_present_value(
+                        raw_trade,
+                        ["trade_date", "date", "time", "交易日期", "日期"],
+                    )
+                    trade_date = self._format_date_value(raw_trade_date)
+                    if not trade_date:
+                        raise ValueError(f"第 {trade_idx + 1} 条交易日期无效: {raw_trade_date}")
+
+                    raw_price = self._extract_first_present_value(
+                        raw_trade,
+                        ["price", "trade_price", "成交价", "价格"],
+                    )
+                    trade_price = self._safe_float(raw_price)
+                    if trade_price <= 0:
+                        raise ValueError(f"第 {trade_idx + 1} 条交易价格必须大于 0")
+
+                    raw_quantity = self._extract_first_present_value(
+                        raw_trade,
+                        ["quantity", "shares", "成交数量", "数量"],
+                    )
+                    trade_quantity = self._safe_int(raw_quantity)
+                    if trade_type != "clear" and trade_quantity <= 0:
+                        raise ValueError(f"第 {trade_idx + 1} 条交易数量必须大于 0")
+
+                    trade_note = str(
+                        self._extract_first_present_value(raw_trade, ["note", "remark", "备注"]) or ""
+                    ).strip()
+                    trade_source = str(
+                        self._extract_first_present_value(raw_trade, ["trade_source", "source"])
+                        or item.get("trade_source")
+                        or default_trade_source
+                    ).strip() or default_trade_source
+
+                    normalized_trades.append(
+                        {
+                            "trade_date": trade_date,
+                            "trade_type": trade_type,
+                            "price": trade_price,
+                            "quantity": trade_quantity,
+                            "note": trade_note,
+                            "trade_source": trade_source,
+                            "input_order": trade_idx,
+                        }
+                    )
+
+                normalized_trades.sort(
+                    key=lambda trade: (str(trade.get("trade_date") or ""), int(trade.get("input_order") or 0))
+                )
+                for trade in normalized_trades:
+                    trade.pop("input_order", None)
+
+                status_when_flat = str(
+                    self._extract_first_present_value(
+                        item,
+                        ["status_when_flat", "empty_position_status", "清仓后状态"],
+                    )
+                    or default_status_when_flat
+                ).strip().lower()
+                replace_result = self.db.replace_trade_history(
+                    stock["id"],
+                    normalized_trades,
+                    final_status_when_flat=status_when_flat,
+                    default_trade_source=default_trade_source,
+                )
+                self._mark_integrations_reconcile_pending()
+
+                warnings: List[str] = []
+                if capture_snapshot:
+                    try:
+                        self.capture_daily_snapshot(account_name=stock.get("account_name", normalized_default_account), source="manual_fix")
+                    except Exception as exc:
+                        warnings.append(f"快照补写失败: {exc}")
+                if sync_integrations:
+                    try:
+                        self.lifecycle_service.sync_position(stock_id=stock["id"])
+                    except Exception as exc:
+                        warnings.append(f"联动同步失败: {exc}")
+                    self._mark_integrations_reconcile_pending()
+
+                result_row = {
+                    "index": row_index,
+                    "stock_id": int(stock["id"]),
+                    "symbol": stock.get("code") or stock.get("symbol"),
+                    "account_name": stock.get("account_name", normalized_default_account),
+                    "success": True,
+                    "message": "交易记录修正成功",
+                    "replace_result": replace_result,
+                    "warnings": warnings,
+                }
+                results.append(result_row)
+                succeeded += 1
+            except Exception as exc:
+                results.append(
+                    {
+                        "index": row_index,
+                        "success": False,
+                        "message": str(exc),
+                    }
+                )
+                failed += 1
+
+        return {
+            "total": len(corrections),
+            "succeeded": succeeded,
+            "failed": failed,
+            "results": results,
+        }
 
     def seed_initial_trade(
         self,

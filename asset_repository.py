@@ -153,6 +153,41 @@ class AssetRepository:
     def _normalize_symbol(symbol: Optional[str]) -> str:
         return str(symbol or "").strip().upper()
 
+    @staticmethod
+    def _normalize_trade_type(trade_type: Any) -> str:
+        normalized = str(trade_type or "").strip().lower()
+        if normalized in {"buy", "加仓", "买入", "建仓"}:
+            return "buy"
+        if normalized in {"sell", "减仓", "卖出"}:
+            return "sell"
+        if normalized in {"clear", "liquidate", "清仓", "清仓并降级"}:
+            return "clear"
+        return ""
+
+    @staticmethod
+    def _normalize_trade_date_text(value: Any) -> str:
+        if isinstance(value, datetime):
+            return value.strftime("%Y-%m-%d")
+        raw = str(value or "").strip()
+        if not raw:
+            raise ValueError("交易日期不能为空")
+
+        for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%Y-%m-%d %H:%M:%S", "%Y/%m/%d %H:%M:%S"):
+            try:
+                return datetime.strptime(raw, fmt).strftime("%Y-%m-%d")
+            except ValueError:
+                pass
+
+        try:
+            return datetime.fromisoformat(raw.replace("Z", "+00:00")).strftime("%Y-%m-%d")
+        except ValueError as exc:
+            raise ValueError(f"无法识别交易日期: {raw}") from exc
+
+    @staticmethod
+    def _normalize_flat_status(status: Any) -> str:
+        normalized = str(status or "").strip().lower()
+        return normalized if normalized in {STATUS_WATCHLIST, STATUS_RESEARCH} else STATUS_WATCHLIST
+
     def _row_to_asset(self, row: sqlite3.Row) -> Dict:
         asset = dict(row)
         asset["monitor_enabled"] = bool(asset.get("monitor_enabled", 1))
@@ -783,6 +818,166 @@ class AssetRepository:
                 "last_trade_date": row["last_trade_date"],
             }
             for row in rows
+        }
+
+    def replace_trade_history(
+        self,
+        asset_id: int,
+        trades: List[Dict],
+        *,
+        final_status_when_flat: str = STATUS_WATCHLIST,
+        default_trade_source: str = "manual_fix",
+    ) -> Dict:
+        asset = self.get_asset(asset_id)
+        if not asset:
+            raise ValueError(f"未找到资产ID: {asset_id}")
+        if trades is None:
+            raise ValueError("trades 不能为空")
+        if not isinstance(trades, list):
+            raise ValueError("trades 必须是数组")
+
+        staged: List[Dict] = []
+        for index, trade in enumerate(trades):
+            if not isinstance(trade, dict):
+                raise ValueError(f"第 {index + 1} 条交易格式错误，必须是对象")
+
+            normalized_type = self._normalize_trade_type(trade.get("trade_type"))
+            if not normalized_type:
+                raise ValueError(f"第 {index + 1} 条交易类型无效: {trade.get('trade_type')}")
+
+            staged.append(
+                {
+                    "trade_date": self._normalize_trade_date_text(trade.get("trade_date")),
+                    "trade_type": normalized_type,
+                    "price": float(trade.get("price") or 0),
+                    "quantity": int(trade.get("quantity") or 0),
+                    "note": str(trade.get("note") or ""),
+                    "trade_source": str(trade.get("trade_source") or default_trade_source).strip() or default_trade_source,
+                    "input_order": index,
+                }
+            )
+
+        staged.sort(key=lambda item: (item["trade_date"], int(item["input_order"])))
+
+        replayed: List[Dict] = []
+        running_quantity = 0
+        running_cost = 0.0
+        for index, trade in enumerate(staged):
+            price = float(trade["price"])
+            if price <= 0:
+                raise ValueError(f"第 {index + 1} 条交易价格必须大于 0")
+
+            trade_type = trade["trade_type"]
+            quantity = int(trade["quantity"])
+            if trade_type == "clear":
+                if running_quantity <= 0:
+                    raise ValueError(f"第 {index + 1} 条清仓交易无可用持仓数量")
+                quantity = running_quantity
+                persisted_type = "sell"
+            else:
+                if quantity <= 0:
+                    raise ValueError(f"第 {index + 1} 条交易数量必须大于 0")
+                persisted_type = trade_type
+
+            if persisted_type == "buy":
+                new_quantity = running_quantity + quantity
+                running_cost = (
+                    ((running_cost * running_quantity) + (price * quantity)) / new_quantity
+                    if new_quantity > 0
+                    else 0.0
+                )
+                running_quantity = new_quantity
+            else:
+                if quantity > running_quantity:
+                    raise ValueError(
+                        f"第 {index + 1} 条卖出数量超过当前持仓: 当前 {running_quantity}，卖出 {quantity}"
+                    )
+                remaining_quantity = running_quantity - quantity
+                if remaining_quantity > 0:
+                    running_cost = ((running_cost * running_quantity) - (price * quantity)) / remaining_quantity
+                    if abs(running_cost) < 1e-12:
+                        running_cost = 0.0
+                else:
+                    running_cost = 0.0
+                running_quantity = remaining_quantity
+
+            replayed.append(
+                {
+                    "trade_date": trade["trade_date"],
+                    "trade_type": persisted_type,
+                    "price": price,
+                    "quantity": quantity,
+                    "note": trade["note"],
+                    "trade_source": trade["trade_source"],
+                }
+            )
+
+        normalized_flat_status = self._normalize_flat_status(final_status_when_flat)
+        final_status = STATUS_PORTFOLIO if running_quantity > 0 else normalized_flat_status
+        final_cost_price = running_cost if running_quantity > 0 else None
+        final_quantity = running_quantity if running_quantity > 0 else None
+        now_text = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        last_trade_at = (
+            f"{replayed[-1]['trade_date']} 00:00:00"
+            if replayed
+            else (asset.get("last_trade_at") or now_text)
+        )
+
+        conn = self._connect()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("BEGIN")
+            cursor.execute("DELETE FROM asset_trade_history WHERE asset_id = ?", (asset_id,))
+            for trade in replayed:
+                cursor.execute(
+                    """
+                    INSERT INTO asset_trade_history (
+                        asset_id, trade_date, trade_type, price, quantity, note, trade_source, created_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        asset_id,
+                        trade["trade_date"],
+                        trade["trade_type"],
+                        trade["price"],
+                        trade["quantity"],
+                        trade["note"],
+                        trade["trade_source"],
+                        now_text,
+                    ),
+                )
+
+            cursor.execute(
+                """
+                UPDATE assets
+                SET
+                    status = ?,
+                    cost_price = ?,
+                    quantity = ?,
+                    last_trade_at = ?,
+                    updated_at = ?
+                WHERE id = ? AND deleted_at IS NULL
+                """,
+                (final_status, final_cost_price, final_quantity, last_trade_at, now_text, asset_id),
+            )
+            if cursor.rowcount <= 0:
+                raise ValueError(f"未找到资产ID: {asset_id}")
+
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+        return {
+            "asset_id": int(asset_id),
+            "trade_count": len(replayed),
+            "final_status": final_status,
+            "final_quantity": int(final_quantity or 0),
+            "final_cost_price": float(final_cost_price or 0.0),
+            "last_trade_date": replayed[-1]["trade_date"] if replayed else None,
         }
 
     def create_pending_action(

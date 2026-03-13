@@ -327,6 +327,81 @@ class PortfolioAnalyticsTests(unittest.TestCase):
         self.assertFalse(failed)
         self.assertIn("减仓数量", error_msg)
 
+    def test_apply_trade_corrections_replaces_history_and_rebuilds_position(self):
+        stock_id = self._add_stock(cost_price=9.0, quantity=100)
+        self.manager.seed_initial_trade(stock_id, trade_date="2026-01-01", note="legacy")
+        self.manager.record_trade(
+            stock_id=stock_id,
+            trade_type="buy",
+            quantity=100,
+            price=10.0,
+            trade_date="2026-01-02",
+            note="legacy add",
+        )
+
+        summary = self.manager.apply_trade_corrections(
+            [
+                {
+                    "stock_id": stock_id,
+                    "trades": [
+                        {"trade_date": "2026-02-03", "trade_type": "buy", "price": 10.0, "quantity": 300},
+                        {"trade_date": "2026-02-04", "trade_type": "sell", "price": 13.0, "quantity": 100},
+                    ],
+                }
+            ],
+            capture_snapshot=False,
+            sync_integrations=False,
+        )
+
+        self.assertEqual(summary["succeeded"], 1)
+        self.assertEqual(summary["failed"], 0)
+
+        updated = self.manager.get_stock(stock_id)
+        self.assertIsNotNone(updated)
+        self.assertEqual(updated["quantity"], 200)
+        self.assertAlmostEqual(updated["cost_price"], 8.5)
+        self.assertEqual(updated["position_status"], "active")
+
+        history = self.manager.get_trade_history(stock_id, limit=10)
+        self.assertEqual(len(history), 2)
+        self.assertEqual(history[0]["trade_type"], "sell")
+        self.assertEqual(history[0]["trade_date"], "2026-02-04")
+        self.assertEqual(history[0]["quantity"], 100)
+
+    def test_apply_trade_corrections_supports_clear_and_watchlist_fallback(self):
+        stock_id = self._add_stock(cost_price=12.0, quantity=200)
+
+        summary = self.manager.apply_trade_corrections(
+            [
+                {
+                    "stock_id": stock_id,
+                    "status_when_flat": "watchlist",
+                    "trades": [
+                        {"trade_date": "2026-03-01", "trade_type": "buy", "price": 12.0, "quantity": 200},
+                        {"trade_date": "2026-03-02", "trade_type": "clear", "price": 12.8},
+                    ],
+                }
+            ],
+            capture_snapshot=False,
+            sync_integrations=False,
+        )
+
+        self.assertEqual(summary["succeeded"], 1)
+        result = summary["results"][0]["replace_result"]
+        self.assertEqual(result["final_status"], "watchlist")
+        self.assertEqual(result["final_quantity"], 0)
+
+        updated = self.manager.get_stock(stock_id)
+        self.assertIsNotNone(updated)
+        self.assertEqual(updated["position_status"], "watchlist")
+        self.assertIsNone(updated.get("quantity"))
+        self.assertIsNone(updated.get("cost_price"))
+
+        history = self.manager.get_trade_history(stock_id, limit=10)
+        self.assertEqual(len(history), 2)
+        self.assertEqual(history[0]["trade_type"], "sell")
+        self.assertEqual(history[0]["quantity"], 200)
+
 
 class PortfolioSchedulerConfigTests(unittest.TestCase):
     def test_scheduler_exposes_shared_task_config(self):

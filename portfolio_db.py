@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import os
 
 from analysis_repository import AnalysisRepository
-from asset_repository import STATUS_PORTFOLIO, STATUS_WATCHLIST, AssetRepository
+from asset_repository import STATUS_PORTFOLIO, STATUS_RESEARCH, STATUS_WATCHLIST, AssetRepository
 from investment_db_utils import DEFAULT_ACCOUNT_NAME, connect_sqlite, get_metadata, resolve_investment_db_path, set_metadata
 
 # 数据库文件路径
@@ -764,6 +764,25 @@ class PortfolioDB:
     def get_trade_summary_map(self, stock_ids: Optional[List[int]] = None) -> Dict[int, Dict]:
         """批量获取持仓交易摘要。"""
         return self.asset_repository.get_trade_summary_map(stock_ids)
+
+    def replace_trade_history(
+        self,
+        stock_id: int,
+        trades: List[Dict],
+        *,
+        final_status_when_flat: str = STATUS_WATCHLIST,
+        default_trade_source: str = "manual_fix",
+    ) -> Dict:
+        """替换单只持仓的交易流水并回算最新持仓状态。"""
+        normalized_status = str(final_status_when_flat or "").strip().lower()
+        if normalized_status not in {STATUS_WATCHLIST, STATUS_RESEARCH}:
+            normalized_status = STATUS_WATCHLIST
+        return self.asset_repository.replace_trade_history(
+            stock_id,
+            trades,
+            final_status_when_flat=normalized_status,
+            default_trade_source=default_trade_source,
+        )
 
     def save_analysis(self, stock_id: int, rating: str, confidence: float,
                      current_price: float, target_price: Optional[float] = None,
