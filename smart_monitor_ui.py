@@ -250,7 +250,6 @@ def _handle_bulk_task_enable_toggle(db: SmartMonitorDB, tasks: List[Dict], monit
     changed_count = db.set_all_monitor_tasks_enabled(target_enabled)
     for task in tasks:
         st.session_state[f"smart_monitor_task_enabled_toggle_{task['id']}"] = target_enabled
-    st.session_state[bulk_toggle_key] = target_enabled
     _pin_smart_monitor_watchlist_view()
     if target_enabled:
         monitor_service.ensure_started()
@@ -270,7 +269,6 @@ def _handle_task_enable_toggle(db: SmartMonitorDB, task: Dict, monitor_service) 
     if target_enabled == current_enabled:
         return
     db.set_monitor_task_enabled(task_id, target_enabled)
-    st.session_state[item_toggle_key] = target_enabled
     refreshed_tasks = db.get_monitor_tasks(enabled_only=False)
     st.session_state["smart_monitor_all_ai_tasks_toggle"] = bool(refreshed_tasks) and all(
         bool(item.get("enabled")) for item in refreshed_tasks
@@ -2231,7 +2229,6 @@ def render_ai_monitor_tasks_panel(show_header: bool = True, title: str = "AI监�
         bulk_toggle_key = "smart_monitor_all_ai_tasks_toggle"
         st.toggle(
             "全部启用",
-            value=disabled_count == 0,
             key=bulk_toggle_key,
             help="打开后启用全部盯盘任务，关闭后停用全部盯盘任务。",
             on_change=_handle_bulk_task_enable_toggle,
@@ -2307,7 +2304,6 @@ def render_ai_monitor_tasks_panel(show_header: bool = True, title: str = "AI监�
                 item_toggle_key = f"smart_monitor_task_enabled_toggle_{task['id']}"
                 st.toggle(
                     "启用",
-                    value=bool(task.get("enabled")),
                     key=item_toggle_key,
                     help="打开后启用该股票盯盘，关闭后同步停用绑定价格预警。",
                     on_change=_handle_task_enable_toggle,

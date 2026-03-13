@@ -1231,6 +1231,26 @@ class PortfolioDB:
         finally:
             conn.close()
 
+    def delete_review_report(self, report_id: int, account_name: Optional[str] = None) -> bool:
+        """删除指定复盘报告，可按账户约束删除范围。"""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        try:
+            query = ["DELETE FROM portfolio_review_reports WHERE id = ?"]
+            params: List[Any] = [report_id]
+            if account_name:
+                query.append("AND account_name = ?")
+                params.append(account_name)
+            cursor.execute(" ".join(query), tuple(params))
+            conn.commit()
+            return cursor.rowcount > 0
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
     def set_setting(self, key: str, value: Any) -> None:
         """写入持仓域设置。"""
         conn = self._get_connection()

@@ -63,10 +63,9 @@ from ui_shared import (
 )
 from ui_state_keys import (
     INVESTMENT_AI_TASK_PREFILL_KEY,
+    INVESTMENT_PORTFOLIO_PREFILL_KEY,
     INVESTMENT_PRICE_ALERT_PREFILL_KEY,
     INVESTMENT_WORKSPACE_ACTIVE_TAB_KEY,
-    PORTFOLIO_ADD_ACCOUNT_NAME_KEY,
-    PORTFOLIO_ADD_ORIGIN_ANALYSIS_ID_KEY,
     SMART_MONITOR_ACTIVE_TAB_KEY,
 )
 
@@ -1361,14 +1360,15 @@ def _build_analysis_record_action_payload(record: Optional[Dict[str, Any]], anal
 def _apply_portfolio_prefill(action_payload: Dict[str, Any]) -> None:
     if not action_payload:
         return
-    st.session_state[PORTFOLIO_ADD_ACCOUNT_NAME_KEY] = (
-        action_payload.get("account_name") or DEFAULT_ACCOUNT_NAME
-    )
-    st.session_state[PORTFOLIO_ADD_ORIGIN_ANALYSIS_ID_KEY] = action_payload.get("origin_analysis_id")
-    st.session_state["portfolio_add_code"] = action_payload.get("symbol") or ""
-    st.session_state["portfolio_add_cost_price"] = float(action_payload.get("default_cost_price") or 0.0)
-    st.session_state["portfolio_add_note"] = action_payload.get("default_note") or ""
-    st.session_state["portfolio_add_auto_monitor"] = True
+    # Defer writing widget-bound keys to portfolio_ui before form rendering.
+    st.session_state[INVESTMENT_PORTFOLIO_PREFILL_KEY] = {
+        "account_name": action_payload.get("account_name") or DEFAULT_ACCOUNT_NAME,
+        "origin_analysis_id": action_payload.get("origin_analysis_id"),
+        "symbol": action_payload.get("symbol") or "",
+        "default_cost_price": float(action_payload.get("default_cost_price") or 0.0),
+        "default_note": action_payload.get("default_note") or "",
+        "auto_monitor": True,
+    }
 
 
 def _apply_ai_task_prefill(action_payload: Dict[str, Any]) -> None:
@@ -1497,7 +1497,7 @@ def _render_analysis_history_actions(
         analysis_source="history_record_detail" if key_prefix.endswith("_detail") else "history_record",
     )
 
-    col1, col2, col3, col4, col5 = st.columns(5)
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
         detail_label = "收起详情" if is_selected else "查看详情"
         if st.button(detail_label, key=f"{key_prefix}_view", width="stretch") and record_id:
@@ -1517,10 +1517,6 @@ def _render_analysis_history_actions(
                 _apply_portfolio_prefill(action_payload or {})
             open_investment_workspace("portfolio", "show_portfolio")
     with col4:
-        if st.button("价格预警", key=f"{key_prefix}_price_alert", width="stretch", disabled=not action_payload):
-            _apply_price_alert_prefill(action_payload or {})
-            open_investment_workspace("price_alert", "show_smart_monitor")
-    with col5:
         if st.button("删除", key=f"{key_prefix}_delete", width="stretch") and record_id:
             if analysis_history_service.delete_record(int(record_id)):
                 if st.session_state.get("viewing_record_id") == int(record_id):

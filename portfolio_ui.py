@@ -28,6 +28,7 @@ from ui_shared import (
     render_reasoning_process,
 )
 from ui_state_keys import (
+    INVESTMENT_PORTFOLIO_PREFILL_KEY,
     PORTFOLIO_ADD_ACCOUNT_NAME_KEY,
     PORTFOLIO_ADD_ORIGIN_ANALYSIS_ID_KEY,
     PORTFOLIO_ACTIVE_VIEW_KEY,
@@ -1159,8 +1160,26 @@ def display_portfolio_trade_records(account_filter: str | None) -> None:
 
 def display_portfolio_review_reports(account_filter: str | None) -> None:
     st.markdown("#### 周期复盘报告")
-    account_label = account_filter or "全部账户"
-    st.caption("默认生成最近一个完整的周 / 月 / 季复盘报告。")
+    default_account_label = account_filter or "全部账户"
+    all_reports = portfolio_manager.get_review_reports(account_name=None, limit=200)
+    report_account_options = sorted(
+        {
+            str(item.get("account_name") or DEFAULT_ACCOUNT_NAME).strip() or DEFAULT_ACCOUNT_NAME
+            for item in all_reports
+        }
+    )
+    selectable_accounts = ["全部账户"] + report_account_options
+    if default_account_label not in selectable_accounts:
+        selectable_accounts.append(default_account_label)
+    selected_account_label = st.selectbox(
+        "报告账户筛选",
+        selectable_accounts,
+        index=selectable_accounts.index(default_account_label),
+        key="portfolio_review_report_account_filter",
+    )
+    report_account_filter = None if selected_account_label == "全部账户" else selected_account_label
+    account_label = report_account_filter or "全部账户"
+    st.caption(f"默认生成最近一个完整的周 / 月 / 季复盘报告。当前筛选：{account_label}")
 
     col1, col2, col3 = st.columns(3)
     period_specs = [
@@ -1171,7 +1190,7 @@ def display_portfolio_review_reports(account_filter: str | None) -> None:
     for period_type, label, col in period_specs:
         with col:
             if st.button(label, key=f"generate_review_{period_type}_{account_label}", width="stretch"):
-                result = portfolio_manager.generate_review_report(account_name=account_filter, period_type=period_type)
+                result = portfolio_manager.generate_review_report(account_name=report_account_filter, period_type=period_type)
                 if result.get("status") == "success":
                     st.session_state["portfolio_latest_review_report"] = result
                     st.success(f"{label}已生成。")
@@ -1191,16 +1210,33 @@ def display_portfolio_review_reports(account_filter: str | None) -> None:
         latest_report_id = latest_report.get("report_id") or latest_report.get("id")
         st.markdown("##### 最新生成")
         st.code(latest_report.get("report_markdown", ""), language="markdown")
-        st.download_button(
-            "下载最新 Markdown",
-            data=latest_report.get("report_markdown", ""),
-            file_name=f"portfolio_review_{latest_report.get('period_type', 'report')}.md",
-            mime="text/markdown",
-            key=f"download_latest_review_{account_label}",
-        )
+        latest_col1, latest_col2 = st.columns(2)
+        with latest_col1:
+            st.download_button(
+                "下载最新 Markdown",
+                data=latest_report.get("report_markdown", ""),
+                file_name=f"portfolio_review_{latest_report.get('period_type', 'report')}.md",
+                mime="text/markdown",
+                key=f"download_latest_review_{account_label}",
+            )
+        with latest_col2:
+            if latest_report_id not in (None, "") and st.button(
+                "删除最新报告",
+                key=f"delete_latest_review_{latest_report_id}_{account_label}",
+                width="stretch",
+            ):
+                deleted, message = portfolio_manager.delete_review_report(
+                    int(latest_report_id),
+                    account_name=report_account_filter,
+                )
+                if deleted:
+                    st.session_state.pop("portfolio_latest_review_report", None)
+                    st.success(message)
+                    st.rerun()
+                st.error(message)
 
     reports = _dedupe_items(
-        portfolio_manager.get_review_reports(account_name=account_filter, limit=12),
+        portfolio_manager.get_review_reports(account_name=report_account_filter, limit=24),
         _build_review_report_identity_key,
         _build_review_report_semantic_key,
     )
@@ -1229,13 +1265,35 @@ def display_portfolio_review_reports(account_filter: str | None) -> None:
                 f"{ {'actual': '真实', 'estimated': '估算', 'mixed': '混合'}.get(report.get('data_mode'), '估算') }"
             )
             st.code(report.get("report_markdown", ""), language="markdown")
-            st.download_button(
-                "下载 Markdown",
-                data=report.get("report_markdown", ""),
-                file_name=f"portfolio_review_{report.get('id')}.md",
-                mime="text/markdown",
-                key=f"download_review_{report.get('id')}",
-            )
+            action_col1, action_col2 = st.columns(2)
+            with action_col1:
+                st.download_button(
+                    "下载 Markdown",
+                    data=report.get("report_markdown", ""),
+                    file_name=f"portfolio_review_{report.get('id')}.md",
+                    mime="text/markdown",
+                    key=f"download_review_{report.get('id')}",
+                )
+            with action_col2:
+                report_id = report.get("id")
+                if st.button(
+                    "删除报告",
+                    key=f"delete_review_{report_id}_{account_label}",
+                    width="stretch",
+                    disabled=report_id in (None, ""),
+                ):
+                    deleted, message = portfolio_manager.delete_review_report(
+                        int(report_id),
+                        account_name=report_account_filter,
+                    )
+                    if deleted:
+                        cached_latest = st.session_state.get("portfolio_latest_review_report") or {}
+                        cached_latest_id = cached_latest.get("report_id") or cached_latest.get("id")
+                        if str(cached_latest_id) == str(report_id):
+                            st.session_state.pop("portfolio_latest_review_report", None)
+                        st.success(message)
+                        st.rerun()
+                    st.error(message)
 
 
 def display_analysis_task_center(lightweight_model=None, reasoning_model=None):
@@ -1721,6 +1779,30 @@ def run_single_stock_analysis(stock: Dict, lightweight_model=None, reasoning_mod
 
 def display_add_stock_form():
     """显示添加股票表单"""
+    if st.session_state.pop("portfolio_add_form_reset_pending", False):
+        for key in (
+            PORTFOLIO_ADD_ACCOUNT_NAME_KEY,
+            PORTFOLIO_ADD_ORIGIN_ANALYSIS_ID_KEY,
+            "portfolio_add_code",
+            "portfolio_add_cost_price",
+            "portfolio_add_quantity",
+            "portfolio_add_note",
+            "portfolio_add_auto_monitor",
+            "portfolio_add_buy_date",
+        ):
+            st.session_state.pop(key, None)
+
+    pending_prefill = st.session_state.pop(INVESTMENT_PORTFOLIO_PREFILL_KEY, None)
+    if isinstance(pending_prefill, dict):
+        st.session_state[PORTFOLIO_ADD_ACCOUNT_NAME_KEY] = (
+            pending_prefill.get("account_name") or DEFAULT_ACCOUNT_NAME
+        )
+        st.session_state[PORTFOLIO_ADD_ORIGIN_ANALYSIS_ID_KEY] = pending_prefill.get("origin_analysis_id")
+        st.session_state["portfolio_add_code"] = pending_prefill.get("symbol") or ""
+        st.session_state["portfolio_add_cost_price"] = float(pending_prefill.get("default_cost_price") or 0.0)
+        st.session_state["portfolio_add_note"] = pending_prefill.get("default_note") or ""
+        st.session_state["portfolio_add_auto_monitor"] = bool(pending_prefill.get("auto_monitor", True))
+
     st.session_state.setdefault(PORTFOLIO_ADD_ACCOUNT_NAME_KEY, "默认账户")
     st.session_state.setdefault(PORTFOLIO_ADD_ORIGIN_ANALYSIS_ID_KEY, None)
     st.session_state.setdefault("portfolio_add_code", "")
@@ -1815,14 +1897,7 @@ def display_add_stock_form():
                                 warnings.append(f"首笔建仓记录未补写: {trade_msg}")
                         except Exception as exc:
                             warnings.append(f"首笔建仓记录补写失败: {exc}")
-                    st.session_state[PORTFOLIO_ADD_ACCOUNT_NAME_KEY] = "默认账户"
-                    st.session_state[PORTFOLIO_ADD_ORIGIN_ANALYSIS_ID_KEY] = None
-                    st.session_state["portfolio_add_code"] = ""
-                    st.session_state["portfolio_add_cost_price"] = 0.0
-                    st.session_state["portfolio_add_quantity"] = 0
-                    st.session_state["portfolio_add_note"] = ""
-                    st.session_state["portfolio_add_auto_monitor"] = True
-                    st.session_state["portfolio_add_buy_date"] = date.today()
+                    st.session_state["portfolio_add_form_reset_pending"] = True
                     st.session_state["portfolio_add_feedback"] = {
                         "message": msg,
                         "warnings": warnings,

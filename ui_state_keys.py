@@ -7,6 +7,7 @@ MONITOR_DELETING_STOCK_ID_KEY = "deleting_stock_id"
 INVESTMENT_WORKSPACE_ACTIVE_TAB_KEY = "investment_workspace_active_tab"
 INVESTMENT_AI_TASK_PREFILL_KEY = "investment_ai_task_prefill"
 INVESTMENT_PRICE_ALERT_PREFILL_KEY = "investment_price_alert_prefill"
+INVESTMENT_PORTFOLIO_PREFILL_KEY = "investment_portfolio_prefill"
 
 PORTFOLIO_ADD_ACCOUNT_NAME_KEY = "portfolio_add_account_name"
 PORTFOLIO_ADD_ORIGIN_ANALYSIS_ID_KEY = "portfolio_add_origin_analysis_id"

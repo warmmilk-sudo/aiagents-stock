@@ -1517,6 +1517,26 @@ class PortfolioManager:
         account_label = self._get_account_display_name(account_name) if account_name else None
         return self.db.get_review_reports(account_name=account_label, limit=limit, period_type=period_type)
 
+    def delete_review_report(
+        self,
+        report_id: int,
+        account_name: Optional[str] = None,
+    ) -> Tuple[bool, str]:
+        """删除复盘报告。"""
+        try:
+            normalized_report_id = int(report_id)
+        except (TypeError, ValueError):
+            return False, "无效的报告ID"
+
+        if normalized_report_id <= 0:
+            return False, "无效的报告ID"
+
+        account_label = self._get_account_display_name(account_name) if account_name else None
+        deleted = self.db.delete_review_report(normalized_report_id, account_name=account_label)
+        if deleted:
+            return True, "复盘报告已删除"
+        return False, "未找到可删除的复盘报告"
+
     def _extract_first_number(self, value, allow_zero: bool = False) -> Optional[float]:
         """从数值或字符串中提取首个数字。"""
         if value is None:
