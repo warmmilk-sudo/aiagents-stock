@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import config
 
@@ -80,6 +80,20 @@ class AssetService:
         if existing_origin is None or next_origin is None:
             return True
         return int(existing_origin) == int(next_origin)
+
+    @staticmethod
+    def _matches_followup_search(item: Dict, search_term: str) -> bool:
+        normalized_search = str(search_term or "").strip().lower()
+        if not normalized_search:
+            return True
+        haystacks = (
+            str(item.get("symbol") or "").lower(),
+            str(item.get("name") or "").lower(),
+            str(item.get("account_name") or "").lower(),
+            str(item.get("note") or "").lower(),
+            str(item.get("latest_analysis_summary") or "").lower(),
+        )
+        return any(normalized_search in value for value in haystacks)
 
     def _build_ai_task_payload(self, asset: Dict, existing_item: Optional[Dict] = None) -> Dict:
         existing_item = existing_item or {}
@@ -167,6 +181,68 @@ class AssetService:
             "origin_analysis_id": strategy_context.get("origin_analysis_id") or asset.get("origin_analysis_id"),
             "config": config,
         }
+
+    def list_followup_assets(
+        self,
+        *,
+        account_name: Optional[str] = None,
+        statuses: Optional[Tuple[str, ...]] = None,
+        search_term: str = "",
+        limit: Optional[int] = 30,
+    ) -> List[Dict]:
+        requested_statuses = statuses or (STATUS_WATCHLIST, STATUS_RESEARCH)
+        normalized_statuses = tuple(
+            status
+            for status in requested_statuses
+            if status in {STATUS_RESEARCH, STATUS_WATCHLIST}
+        )
+        if not normalized_statuses:
+            return []
+
+        assets: List[Dict] = []
+        for status in normalized_statuses:
+            assets.extend(
+                self.asset_repository.list_assets(
+                    status=status,
+                    account_name=account_name,
+                    include_deleted=False,
+                )
+            )
+
+        result: List[Dict] = []
+        for asset in assets:
+            strategy_context = self._get_strategy_context(asset) or {}
+            item = dict(asset)
+            item["strategy_context"] = strategy_context
+            item["followup_status_label"] = "关注中" if asset.get("status") == STATUS_WATCHLIST else "看过"
+            item["latest_analysis_id"] = (
+                strategy_context.get("origin_analysis_id") or asset.get("origin_analysis_id")
+            )
+            item["latest_analysis_time"] = strategy_context.get("analysis_date") or ""
+            item["latest_analysis_scope"] = strategy_context.get("analysis_scope") or ""
+            item["latest_analysis_source"] = strategy_context.get("analysis_source") or ""
+            item["latest_analysis_rating"] = strategy_context.get("rating") or ""
+            item["latest_analysis_summary"] = (
+                strategy_context.get("summary")
+                or asset.get("note")
+                or ""
+            )
+            if not self._matches_followup_search(item, search_term):
+                continue
+            result.append(item)
+
+        result.sort(
+            key=lambda item: (
+                1 if item.get("status") == STATUS_WATCHLIST else 0,
+                str(item.get("latest_analysis_time") or ""),
+                str(item.get("updated_at") or ""),
+                int(item.get("id") or 0),
+            ),
+            reverse=True,
+        )
+        if limit is not None and limit > 0:
+            return result[:limit]
+        return result
 
     def sync_managed_monitors(self, asset_id: int) -> Dict[str, int]:
         if not self.monitoring_repository:

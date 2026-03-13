@@ -18,6 +18,8 @@ configure_logging()
 import config
 import streamlit.components.v1 as components
 from analysis_history_service import analysis_history_service
+from asset_repository import STATUS_RESEARCH, STATUS_WATCHLIST
+from asset_service import asset_service
 from model_config import get_lightweight_model_options, get_reasoning_model_options
 
 from stock_data import StockDataFetcher
@@ -1408,6 +1410,34 @@ def _render_investment_action_buttons(action_payload: Optional[Dict[str, Any]], 
             open_investment_workspace("portfolio", "show_portfolio")
 
 
+def _build_followup_asset_action_payload(asset: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not asset:
+        return None
+    symbol = str(asset.get("symbol") or "").strip()
+    if not symbol:
+        return None
+    strategy_context = asset.get("strategy_context") or {}
+    return build_analysis_action_payload(
+        symbol=symbol,
+        stock_name=asset.get("name") or symbol,
+        final_decision=strategy_context.get("final_decision") or {},
+        origin_analysis_id=asset.get("latest_analysis_id") or asset.get("origin_analysis_id"),
+        summary=asset.get("latest_analysis_summary") or asset.get("note"),
+        account_name=asset.get("account_name") or DEFAULT_ACCOUNT_NAME,
+        analysis_scope=strategy_context.get("analysis_scope") or "research",
+        analysis_source=strategy_context.get("analysis_source") or "home_single_analysis",
+    )
+
+
+def _open_analysis_history_record(record_id: Any) -> None:
+    normalized_record_id = _normalize_history_record_id(record_id)
+    if normalized_record_id is None or not _history_record_exists(normalized_record_id):
+        st.error("未找到对应的分析记录")
+        return
+    st.session_state.viewing_record_id = normalized_record_id
+    activate_view("show_analysis_history")
+
+
 def _clear_history_record_detail() -> None:
     st.session_state.pop("viewing_record_id", None)
 
@@ -2238,6 +2268,213 @@ def _run_home_batch_analysis_task(
     }
 
 
+def _submit_home_analysis_task(*, stock_list: list[str], period: str, api_key_status: bool) -> bool:
+    if not api_key_status:
+        st.error("请先配置 DeepSeek API Key")
+        return False
+
+    enabled_analysts_config = _build_enabled_analysts_config()
+    if not any(enabled_analysts_config.values()):
+        st.error("请至少选择一位分析师参与分析")
+        return False
+
+    normalized_stock_list = [str(symbol or "").strip().upper() for symbol in stock_list if str(symbol or "").strip()]
+    if not normalized_stock_list:
+        st.error("请输入有效的股票代码")
+        return False
+
+    selected_lightweight_model, selected_reasoning_model = get_selected_models()
+    is_batch_analysis = len(normalized_stock_list) > 1
+    try:
+        if is_batch_analysis:
+            if len(normalized_stock_list) > 20:
+                st.warning(f"检测到 {len(normalized_stock_list)} 只股票，建议一次分析不超过20只")
+
+            _clear_batch_analysis_state()
+            _clear_single_analysis_state()
+            batch_mode = st.session_state.get("batch_mode", "顺序分析")
+            start_ui_analysis_task(
+                task_type=HOME_ANALYSIS_TASK_TYPE,
+                label=f"批量深度分析 {len(normalized_stock_list)} 只股票",
+                runner=lambda _task_id, report_progress: _run_home_batch_analysis_task(
+                    stock_list=normalized_stock_list,
+                    period=period,
+                    batch_mode=batch_mode,
+                    enabled_analysts_config=enabled_analysts_config,
+                    selected_lightweight_model=selected_lightweight_model,
+                    selected_reasoning_model=selected_reasoning_model,
+                    report_progress=report_progress,
+                ),
+                metadata={
+                    "mode": "batch",
+                    "total": len(normalized_stock_list),
+                    "batch_mode": batch_mode,
+                },
+            )
+            st.info("已提交后台批量深度分析任务，可切换页面，返回后会自动同步进度和结果。")
+        else:
+            symbol = normalized_stock_list[0]
+            _clear_single_analysis_state()
+            _clear_batch_analysis_state()
+            start_ui_analysis_task(
+                task_type=HOME_ANALYSIS_TASK_TYPE,
+                label=f"深度分析 {symbol}",
+                runner=lambda _task_id, report_progress: _run_home_single_analysis_task(
+                    symbol=symbol,
+                    period=period,
+                    enabled_analysts_config=enabled_analysts_config,
+                    selected_lightweight_model=selected_lightweight_model,
+                    selected_reasoning_model=selected_reasoning_model,
+                    report_progress=report_progress,
+                ),
+                metadata={"mode": "single", "symbol": symbol, "period": period},
+            )
+            st.info("已提交后台深度分析任务，可切换到“分析历史”查看旧记录，结果完成后会自动同步。")
+    except RuntimeError as exc:
+        st.warning(str(exc))
+        return False
+
+    return True
+
+
+def _render_home_followup_assets_panel(*, api_key_status: bool, period: str) -> None:
+    st.markdown("---")
+    st.subheader("看过/关注列表")
+    st.caption("保留最近分析过但当前不在持仓中的股票，便于再次分析、加入盯盘和回看历史。")
+
+    filter_col1, filter_col2 = st.columns([1, 2])
+    with filter_col1:
+        status_filter = st.radio(
+            "列表范围",
+            ["全部", "仅关注", "仅看过"],
+            horizontal=True,
+            key="home_followup_status_filter",
+        )
+    with filter_col2:
+        search_term = st.text_input(
+            "搜索股票",
+            key="home_followup_search",
+            placeholder="代码 / 名称 / 账户 / 摘要",
+        )
+
+    status_map = {
+        "全部": (STATUS_WATCHLIST, STATUS_RESEARCH),
+        "仅关注": (STATUS_WATCHLIST,),
+        "仅看过": (STATUS_RESEARCH,),
+    }
+    followup_assets = asset_service.list_followup_assets(
+        statuses=status_map.get(status_filter, (STATUS_WATCHLIST, STATUS_RESEARCH)),
+        search_term=search_term,
+        limit=30,
+    )
+    if not followup_assets:
+        st.caption("暂无看过/关注股票。完成一次深度分析后，非持仓标的会自动保存在这里。")
+        return
+
+    _, analyze_disabled, analyze_help = get_ui_analysis_button_state(HOME_ANALYSIS_TASK_TYPE, "再次分析")
+    scope_labels = {"research": "深度分析", "portfolio": "持仓分析"}
+
+    st.caption(f"共 {len(followup_assets)} 条，按关注状态优先，其次按最新分析时间排序。")
+    for item in followup_assets:
+        status = item.get("status")
+        symbol = item.get("symbol") or ""
+        stock_name = item.get("name") or symbol
+        latest_analysis_time = item.get("latest_analysis_time") or item.get("updated_at") or "暂无时间"
+        latest_analysis_rating = item.get("latest_analysis_rating") or "未评级"
+        followup_label = item.get("followup_status_label") or ("关注中" if status == STATUS_WATCHLIST else "看过")
+        latest_scope_label = scope_labels.get(item.get("latest_analysis_scope"), "待补分析")
+        latest_summary = str(item.get("latest_analysis_summary") or "").strip()
+        latest_record_id = _normalize_history_record_id(item.get("latest_analysis_id"))
+        action_payload = _build_followup_asset_action_payload(item)
+
+        with st.expander(
+            f"{stock_name} ({symbol}) | {followup_label} | {latest_analysis_rating} | {latest_analysis_time}",
+            expanded=False,
+        ):
+            st.caption(
+                f"`{followup_label}`  `{latest_scope_label}`  账户: `{item.get('account_name') or DEFAULT_ACCOUNT_NAME}`"
+            )
+            if latest_summary:
+                st.write(latest_summary)
+            else:
+                st.caption("暂无最新分析摘要，建议重新分析。")
+
+            metric_col1, metric_col2, metric_col3, metric_col4 = st.columns(4)
+            with metric_col1:
+                st.metric("最新分析", latest_analysis_time)
+            with metric_col2:
+                st.metric("最新评级", latest_analysis_rating)
+            with metric_col3:
+                st.metric("当前状态", followup_label)
+            with metric_col4:
+                st.metric("监测开关", "开启" if item.get("monitor_enabled", True) else "关闭")
+
+            action_col1, action_col2, action_col3, action_col4, action_col5 = st.columns(5)
+            with action_col1:
+                if st.button(
+                    "再次分析",
+                    key=f"followup_reanalyze_{item.get('id')}",
+                    width="stretch",
+                    disabled=analyze_disabled,
+                    help=analyze_help,
+                ):
+                    if _submit_home_analysis_task(stock_list=[symbol], period=period, api_key_status=api_key_status):
+                        st.rerun()
+            with action_col2:
+                if st.button(
+                    "分析历史",
+                    key=f"followup_history_{item.get('id')}",
+                    width="stretch",
+                    disabled=latest_record_id is None,
+                ):
+                    _open_analysis_history_record(latest_record_id)
+            with action_col3:
+                if status == STATUS_WATCHLIST:
+                    if st.button("打开盯盘", key=f"followup_open_watchlist_{item.get('id')}", width="stretch"):
+                        open_investment_workspace("ai_monitor", "show_smart_monitor")
+                else:
+                    if st.button("加入盯盘", key=f"followup_join_watchlist_{item.get('id')}", width="stretch"):
+                        success, message, _ = asset_service.promote_to_watchlist(
+                            symbol=symbol,
+                            stock_name=stock_name,
+                            account_name=item.get("account_name") or DEFAULT_ACCOUNT_NAME,
+                            note=latest_summary or str(item.get("note") or ""),
+                            origin_analysis_id=latest_record_id,
+                            monitor_enabled=bool(item.get("monitor_enabled", True)),
+                        )
+                        if success:
+                            st.success(message)
+                            st.rerun()
+                        st.error("加入盯盘失败")
+            with action_col4:
+                if status == STATUS_WATCHLIST:
+                    if st.button("移回看过", key=f"followup_back_to_research_{item.get('id')}", width="stretch"):
+                        if asset_service.remove_from_watchlist(
+                            int(item.get("id")),
+                            note=latest_summary or str(item.get("note") or ""),
+                        ):
+                            st.success(f"已移回看过列表: {symbol}")
+                            st.rerun()
+                        st.error("移回看过失败")
+                elif st.button(
+                    "价格预警",
+                    key=f"followup_price_alert_{item.get('id')}",
+                    width="stretch",
+                    disabled=not action_payload,
+                ):
+                    _apply_price_alert_prefill(action_payload or {})
+                    open_investment_workspace("price_alert", "show_smart_monitor")
+            with action_col5:
+                if st.button(
+                    "设为持仓",
+                    key=f"followup_to_portfolio_{item.get('id')}",
+                    width="stretch",
+                    disabled=not action_payload,
+                ):
+                    _apply_portfolio_prefill(action_payload or {})
+                    open_investment_workspace("portfolio", "show_portfolio")
+
+
 def display_current_single_analysis_result(period: str) -> None:
     stock_info = st.session_state.get("stock_info") or {}
     agents_results = st.session_state.get("agents_results") or {}
@@ -2400,63 +2637,14 @@ def _render_home_analysis_workbench(api_key_status: bool, period: str) -> None:
             st.success("已清除分析结果")
 
     if analyze_button:
-        if not api_key_status:
-            st.error("请先配置 DeepSeek API Key")
-        elif not any(_build_enabled_analysts_config().values()):
-            st.error("请至少选择一位分析师参与分析")
-        elif not parsed_stock_list:
-            st.error("请输入有效的股票代码")
-        else:
-            enabled_analysts_config = _build_enabled_analysts_config()
-            selected_lightweight_model, selected_reasoning_model = get_selected_models()
-            try:
-                if is_batch_analysis:
-                    if stock_count > 20:
-                        st.warning(f"检测到 {stock_count} 只股票，建议一次分析不超过20只")
+        if _submit_home_analysis_task(
+            stock_list=parsed_stock_list,
+            period=period,
+            api_key_status=api_key_status,
+        ):
+            st.rerun()
 
-                    _clear_batch_analysis_state()
-                    _clear_single_analysis_state()
-                    batch_mode = st.session_state.get("batch_mode", "顺序分析")
-                    start_ui_analysis_task(
-                        task_type=HOME_ANALYSIS_TASK_TYPE,
-                        label=f"批量深度分析 {stock_count} 只股票",
-                        runner=lambda _task_id, report_progress: _run_home_batch_analysis_task(
-                            stock_list=parsed_stock_list,
-                            period=period,
-                            batch_mode=batch_mode,
-                            enabled_analysts_config=enabled_analysts_config,
-                            selected_lightweight_model=selected_lightweight_model,
-                            selected_reasoning_model=selected_reasoning_model,
-                            report_progress=report_progress,
-                        ),
-                        metadata={
-                            "mode": "batch",
-                            "total": stock_count,
-                            "batch_mode": batch_mode,
-                        },
-                    )
-                    st.info("已提交后台批量深度分析任务，可切换页面，返回后会自动同步进度和结果。")
-                else:
-                    symbol = parsed_stock_list[0]
-                    _clear_single_analysis_state()
-                    _clear_batch_analysis_state()
-                    start_ui_analysis_task(
-                        task_type=HOME_ANALYSIS_TASK_TYPE,
-                        label=f"深度分析 {symbol}",
-                        runner=lambda _task_id, report_progress: _run_home_single_analysis_task(
-                            symbol=symbol,
-                            period=period,
-                            enabled_analysts_config=enabled_analysts_config,
-                            selected_lightweight_model=selected_lightweight_model,
-                            selected_reasoning_model=selected_reasoning_model,
-                            report_progress=report_progress,
-                        ),
-                        metadata={"mode": "single", "symbol": symbol, "period": period},
-                    )
-                    st.info("已提交后台深度分析任务，可切换到“分析历史”查看旧记录，结果完成后会自动同步。")
-                st.rerun()
-            except RuntimeError as exc:
-                st.warning(str(exc))
+    _render_home_followup_assets_panel(api_key_status=api_key_status, period=period)
 
     if st.session_state.get("batch_analysis_results"):
         display_batch_analysis_results(st.session_state.batch_analysis_results, period)
