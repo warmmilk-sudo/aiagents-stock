@@ -404,6 +404,7 @@ st.markdown("""
     div[data-testid="stRadio"] > div[role="radiogroup"]:is(
         [aria-label="投资工作台"],
         [aria-label="智能盯盘视图"],
+        [aria-label="深度分析视图"],
         [aria-label="持仓分析视图"],
         [aria-label="持仓情况视图"],
         [aria-label="决策事件视图"]
@@ -421,6 +422,7 @@ st.markdown("""
     div[data-testid="stRadio"] > div[role="radiogroup"]:is(
         [aria-label="投资工作台"],
         [aria-label="智能盯盘视图"],
+        [aria-label="深度分析视图"],
         [aria-label="持仓分析视图"],
         [aria-label="持仓情况视图"],
         [aria-label="决策事件视图"]
@@ -445,6 +447,7 @@ st.markdown("""
     div[data-testid="stRadio"] > div[role="radiogroup"]:is(
         [aria-label="投资工作台"],
         [aria-label="智能盯盘视图"],
+        [aria-label="深度分析视图"],
         [aria-label="持仓分析视图"],
         [aria-label="持仓情况视图"],
         [aria-label="决策事件视图"]
@@ -454,6 +457,7 @@ st.markdown("""
     div[data-testid="stRadio"] > div[role="radiogroup"]:is(
         [aria-label="投资工作台"],
         [aria-label="智能盯盘视图"],
+        [aria-label="深度分析视图"],
         [aria-label="持仓分析视图"],
         [aria-label="持仓情况视图"],
         [aria-label="决策事件视图"]
@@ -469,6 +473,7 @@ st.markdown("""
     div[data-testid="stRadio"] > div[role="radiogroup"]:is(
         [aria-label="投资工作台"],
         [aria-label="智能盯盘视图"],
+        [aria-label="深度分析视图"],
         [aria-label="持仓分析视图"],
         [aria-label="持仓情况视图"],
         [aria-label="决策事件视图"]
@@ -485,6 +490,7 @@ st.markdown("""
     div[data-testid="stRadio"] > div[role="radiogroup"]:is(
         [aria-label="投资工作台"],
         [aria-label="智能盯盘视图"],
+        [aria-label="深度分析视图"],
         [aria-label="持仓分析视图"],
         [aria-label="持仓情况视图"],
         [aria-label="决策事件视图"]
@@ -501,6 +507,7 @@ st.markdown("""
     div[data-testid="stRadio"] > div[role="radiogroup"]:is(
         [aria-label="投资工作台"],
         [aria-label="智能盯盘视图"],
+        [aria-label="深度分析视图"],
         [aria-label="持仓分析视图"],
         [aria-label="持仓情况视图"],
         [aria-label="决策事件视图"]
@@ -508,6 +515,7 @@ st.markdown("""
     div[data-testid="stRadio"] > div[role="radiogroup"]:is(
         [aria-label="投资工作台"],
         [aria-label="智能盯盘视图"],
+        [aria-label="深度分析视图"],
         [aria-label="持仓分析视图"],
         [aria-label="持仓情况视图"],
         [aria-label="决策事件视图"]
@@ -517,6 +525,7 @@ st.markdown("""
     div[data-testid="stRadio"] > div[role="radiogroup"]:is(
         [aria-label="投资工作台"],
         [aria-label="智能盯盘视图"],
+        [aria-label="深度分析视图"],
         [aria-label="持仓分析视图"],
         [aria-label="持仓情况视图"],
         [aria-label="决策事件视图"]
@@ -524,6 +533,7 @@ st.markdown("""
     div[data-testid="stRadio"] > div[role="radiogroup"]:is(
         [aria-label="投资工作台"],
         [aria-label="智能盯盘视图"],
+        [aria-label="深度分析视图"],
         [aria-label="持仓分析视图"],
         [aria-label="持仓情况视图"],
         [aria-label="决策事件视图"]
@@ -534,6 +544,7 @@ st.markdown("""
     div[data-testid="stRadio"] > div[role="radiogroup"]:is(
         [aria-label="投资工作台"],
         [aria-label="智能盯盘视图"],
+        [aria-label="深度分析视图"],
         [aria-label="持仓分析视图"],
         [aria-label="持仓情况视图"],
         [aria-label="决策事件视图"]
@@ -2150,6 +2161,79 @@ def _build_enabled_analysts_config() -> Dict[str, bool]:
     }
 
 
+def _get_selected_analyst_labels() -> list[str]:
+    enabled_analysts = _build_enabled_analysts_config()
+    labels: list[str] = []
+    if enabled_analysts.get("technical"):
+        labels.append("技术分析师")
+    if enabled_analysts.get("fundamental"):
+        labels.append("基本面分析师")
+    if enabled_analysts.get("fund_flow"):
+        labels.append("资金面分析师")
+    if enabled_analysts.get("risk"):
+        labels.append("风险管理师")
+    if enabled_analysts.get("sentiment"):
+        labels.append("市场情绪分析师")
+    if enabled_analysts.get("news"):
+        labels.append("新闻分析师")
+    return labels
+
+
+def _render_home_analyst_team_panel() -> None:
+    st.markdown("---")
+    st.subheader("选择分析师团队")
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        enable_technical = st.checkbox(
+            "技术分析师",
+            value=st.session_state.get("enable_technical", True),
+            help="负责技术指标分析、图表形态识别、趋势判断",
+        )
+        enable_fundamental = st.checkbox(
+            "基本面分析师",
+            value=st.session_state.get("enable_fundamental", True),
+            help="负责公司财务分析、行业研究、估值分析",
+        )
+
+    with col2:
+        enable_fund_flow = st.checkbox(
+            "资金面分析师",
+            value=st.session_state.get("enable_fund_flow", True),
+            help="负责资金流向分析、主力行为研究",
+        )
+        enable_risk = st.checkbox(
+            "风险管理师",
+            value=st.session_state.get("enable_risk", True),
+            help="负责风险识别、风险评估、风险控制策略制定",
+        )
+
+    with col3:
+        enable_sentiment = st.checkbox(
+            "市场情绪分析师",
+            value=st.session_state.get("enable_sentiment", True),
+            help="负责市场情绪研究、ARBR指标分析（仅A股）",
+        )
+        enable_news = st.checkbox(
+            "新闻分析师",
+            value=st.session_state.get("enable_news", True),
+            help="负责新闻事件分析、舆情研究（仅A股，qstock数据源）",
+        )
+
+    st.session_state.enable_technical = enable_technical
+    st.session_state.enable_fundamental = enable_fundamental
+    st.session_state.enable_fund_flow = enable_fund_flow
+    st.session_state.enable_risk = enable_risk
+    st.session_state.enable_sentiment = enable_sentiment
+    st.session_state.enable_news = enable_news
+
+    selected_analysts = _get_selected_analyst_labels()
+    if selected_analysts:
+        st.info(f"已选择 {len(selected_analysts)} 位分析师: {', '.join(selected_analysts)}")
+    else:
+        st.warning("请至少选择一位分析师")
+
+
 def _run_home_single_analysis_task(
     *,
     symbol: str,
@@ -2515,73 +2599,28 @@ def display_current_single_analysis_result(period: str) -> None:
 
 def _render_home_analysis_workbench(api_key_status: bool, period: str) -> None:
     st.markdown("---")
+    selected_view = st.radio(
+        "深度分析视图",
+        ["深度分析", "看过/关注", "分析师团队"],
+        horizontal=True,
+        key="home_analysis_active_view",
+        label_visibility="collapsed",
+    )
 
-    st.subheader("选择分析师团队")
+    if selected_view == "分析师团队":
+        _render_home_analyst_team_panel()
+        return
 
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        enable_technical = st.checkbox(
-            "技术分析师",
-            value=st.session_state.get("enable_technical", True),
-            help="负责技术指标分析、图表形态识别、趋势判断",
-        )
-        enable_fundamental = st.checkbox(
-            "基本面分析师",
-            value=st.session_state.get("enable_fundamental", True),
-            help="负责公司财务分析、行业研究、估值分析",
-        )
-
-    with col2:
-        enable_fund_flow = st.checkbox(
-            "资金面分析师",
-            value=st.session_state.get("enable_fund_flow", True),
-            help="负责资金流向分析、主力行为研究",
-        )
-        enable_risk = st.checkbox(
-            "风险管理师",
-            value=st.session_state.get("enable_risk", True),
-            help="负责风险识别、风险评估、风险控制策略制定",
-        )
-
-    with col3:
-        enable_sentiment = st.checkbox(
-            "市场情绪分析师",
-            value=st.session_state.get("enable_sentiment", True),
-            help="负责市场情绪研究、ARBR指标分析（仅A股）",
-        )
-        enable_news = st.checkbox(
-            "新闻分析师",
-            value=st.session_state.get("enable_news", True),
-            help="负责新闻事件分析、舆情研究（仅A股，qstock数据源）",
-        )
-
-    selected_analysts = []
-    if enable_technical:
-        selected_analysts.append("技术分析师")
-    if enable_fundamental:
-        selected_analysts.append("基本面分析师")
-    if enable_fund_flow:
-        selected_analysts.append("资金面分析师")
-    if enable_risk:
-        selected_analysts.append("风险管理师")
-    if enable_sentiment:
-        selected_analysts.append("市场情绪分析师")
-    if enable_news:
-        selected_analysts.append("新闻分析师")
-
-    if selected_analysts:
-        st.info(f"已选择 {len(selected_analysts)} 位分析师: {', '.join(selected_analysts)}")
-    else:
-        st.warning("请至少选择一位分析师")
-
-    st.session_state.enable_technical = enable_technical
-    st.session_state.enable_fundamental = enable_fundamental
-    st.session_state.enable_fund_flow = enable_fund_flow
-    st.session_state.enable_risk = enable_risk
-    st.session_state.enable_sentiment = enable_sentiment
-    st.session_state.enable_news = enable_news
+    if selected_view == "看过/关注":
+        _render_home_followup_assets_panel(api_key_status=api_key_status, period=period)
+        return
 
     st.markdown("---")
+    selected_analysts = _get_selected_analyst_labels()
+    if selected_analysts:
+        st.caption(f"当前分析师团队：{', '.join(selected_analysts)}")
+    else:
+        st.warning("当前未选择分析师，请先在“分析师团队”页签中至少勾选一位分析师。")
 
     stock_input = st.text_area(
         "请输入股票代码或名称",
@@ -2643,8 +2682,6 @@ def _render_home_analysis_workbench(api_key_status: bool, period: str) -> None:
             api_key_status=api_key_status,
         ):
             st.rerun()
-
-    _render_home_followup_assets_panel(api_key_status=api_key_status, period=period)
 
     if st.session_state.get("batch_analysis_results"):
         display_batch_analysis_results(st.session_state.batch_analysis_results, period)
