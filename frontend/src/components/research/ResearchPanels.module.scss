@@ -1,0 +1,95 @@
+.headerGrid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  margin-bottom: 18px;
+}
+
+.metricCard {
+  padding: 16px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-lg);
+  background: var(--bg-panel-strong);
+}
+
+.metricCard span {
+  display: block;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.metricCard strong {
+  display: block;
+  margin-top: 8px;
+  font-size: 24px;
+}
+
+.contentGrid {
+  display: grid;
+  gap: 16px;
+}
+
+.block {
+  padding: 16px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-lg);
+  background: var(--bg-panel-strong);
+}
+
+.block h3 {
+  margin: 0 0 10px;
+}
+
+.actionRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.actionButton,
+.primaryAction {
+  border: 0;
+  border-radius: 999px;
+  padding: 10px 14px;
+  font-weight: 700;
+}
+
+.actionButton {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.primaryAction {
+  background: var(--accent);
+  color: #fff5eb;
+}
+
+.text {
+  margin: 0;
+  white-space: pre-wrap;
+  line-height: 1.6;
+}
+
+.details {
+  border: 1px solid var(--line-soft);
+  border-radius: 14px;
+  background: var(--bg-panel);
+}
+
+.details summary {
+  cursor: pointer;
+  padding: 14px 16px;
+  font-weight: 700;
+}
+
+.detailsContent {
+  padding: 0 16px 16px;
+}
+
+.code {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 12px;
+}

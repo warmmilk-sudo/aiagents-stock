@@ -58,14 +58,17 @@ RUN pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple/ &&
 # 复制项目文件
 COPY . .
 
+# 构建前端静态资源（生产模式由FastAPI托管frontend/dist）
+RUN cd frontend && npm install && npm run build
+
 # 创建必要的目录
 RUN mkdir -p /app/data && chmod 777 /app/data
 
-# 暴露Streamlit默认端口
+# 暴露FastAPI端口
 EXPOSE 8503
 
 # 设置健康检查
-HEALTHCHECK CMD curl --fail http://localhost:8503/_stcore/health || exit 1
+HEALTHCHECK CMD curl --fail http://localhost:8503/health || exit 1
 
 # 启动应用
-CMD ["streamlit", "run", "app.py", "--server.port=8503", "--server.address=0.0.0.0"]
+CMD ["python", "-m", "uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8503"]

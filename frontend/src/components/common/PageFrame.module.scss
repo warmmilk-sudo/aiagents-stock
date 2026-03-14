@@ -1,0 +1,43 @@
+.frame {
+  display: grid;
+  gap: 18px;
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.header h1 {
+  margin: 4px 0 8px;
+  font-family: var(--font-display);
+  font-size: clamp(28px, 3.8vw, 40px);
+  line-height: 1.05;
+}
+
+.eyebrow {
+  margin: 0;
+  letter-spacing: 0.24em;
+  font-size: 11px;
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.summary {
+  margin: 0;
+  max-width: 720px;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.body {
+  min-height: 0;
+}

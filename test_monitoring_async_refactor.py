@@ -10,16 +10,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 sys.modules.setdefault(
-    "streamlit",
-    types.SimpleNamespace(
-        info=lambda *args, **kwargs: None,
-        success=lambda *args, **kwargs: None,
-        warning=lambda *args, **kwargs: None,
-        error=lambda *args, **kwargs: None,
-        write=lambda *args, **kwargs: None,
-    ),
-)
-sys.modules.setdefault(
     "stock_data",
     types.SimpleNamespace(
         StockDataFetcher=type(

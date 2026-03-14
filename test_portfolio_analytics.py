@@ -2,14 +2,11 @@ import json
 import sys
 import tempfile
 import time
-import types
 import unittest
 from datetime import date, datetime
 from unittest.mock import patch
 
 import pandas as pd
-
-sys.modules.setdefault("streamlit", types.SimpleNamespace())
 
 from monitor_db import StockMonitorDatabase
 from portfolio_analysis_tasks import PortfolioAnalysisTaskManager

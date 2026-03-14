@@ -152,7 +152,7 @@ docker run --rm agentsstock1:latest python --version
 # 预期: Python 3.12.x
 
 # 检查已安装的Python包
-docker run --rm agentsstock1:latest pip list | grep streamlit
+docker run --rm agentsstock1:latest pip list | grep fastapi
 ```
 
 ## 🎯 性能对比

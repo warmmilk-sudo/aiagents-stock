@@ -2,7 +2,6 @@ import shutil
 import sys
 import time
 import threading
-import types
 import unittest
 import uuid
 from pathlib import Path
@@ -13,8 +12,6 @@ from portfolio_analysis_tasks import PortfolioAnalysisTaskManager
 from portfolio_db import PortfolioDB
 from portfolio_manager import PortfolioManager
 from smart_monitor_db import SmartMonitorDB
-
-sys.modules.setdefault("streamlit", types.SimpleNamespace())
 
 from ui_shared import (
     _format_display_value,

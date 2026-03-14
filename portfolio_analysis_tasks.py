@@ -15,7 +15,7 @@ PORTFOLIO_ANALYSIS_GLOBAL_SESSION_ID = "portfolio-analysis-global"
 
 
 class PortfolioAnalysisTaskManager:
-    """Keep portfolio analysis tasks alive across Streamlit reruns."""
+    """Keep portfolio analysis tasks alive across request/refresh cycles."""
 
     PENDING_STATUSES = {"queued", "running"}
 

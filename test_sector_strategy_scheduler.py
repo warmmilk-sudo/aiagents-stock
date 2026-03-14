@@ -1,9 +1,5 @@
 import unittest
-import sys
-import types
 from unittest.mock import patch
-
-sys.modules.setdefault("streamlit", types.SimpleNamespace())
 
 try:
     from sector_strategy_scheduler import (

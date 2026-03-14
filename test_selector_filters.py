@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import unittest
-from pathlib import Path
 from unittest.mock import patch
 
 import pandas as pd
@@ -117,13 +116,6 @@ class ValueStockSelectorTests(unittest.TestCase):
         self.assertIn("市盈率小于等于20.00", query)
         self.assertIn("市净率小于等于1.50", query)
         self.assertIn("按流通市值由小到大排名", query)
-
-
-class LowPriceBullUiTests(unittest.TestCase):
-    def test_low_price_explanation_restored(self):
-        text = Path("low_price_bull_ui.py").read_text(encoding="utf-8")
-        self.assertIn("股价 < 10元", text)
-        self.assertNotIn("默认聚焦低价、高增长", text)
 
 
 if __name__ == "__main__":

@@ -174,7 +174,7 @@ LOW_PRICE_BULL_HOLDING_DAYS=5            # 持股天数限制
 
 
 
-### 基于Python + Streamlit + DeepSeek的智能股票分析系统，模拟证券公司分析师团队，提供全方位的股票投资分析和决策建议。
+### 基于 Python + FastAPI + React 的智能股票分析系统，模拟证券公司分析师团队，提供全方位的股票投资分析和决策建议。
 <img width="1910" height="923" alt="image" src="https://github.com/user-attachments/assets/fe366e1d-2352-46db-a3cc-6f147ee6d9d9" />
 <img width="1910" height="923" alt="image" src="https://github.com/user-attachments/assets/112e9e34-381e-4e61-b7b6-6614260b2594" />
 <img width="1910" height="923" alt="image" src="https://github.com/user-attachments/assets/46e36075-2f08-4113-bd1d-913ef4dd279c" />
@@ -275,8 +275,8 @@ LOW_PRICE_BULL_HOLDING_DAYS=5            # 持股天数限制
 # 安装依赖
 pip install schedule
 
-# 启动应用
-streamlit run app.py
+# 启动后端
+python -m uvicorn backend.main:app --host 127.0.0.1 --port 8503
 
 # 点击侧边栏"📊 持仓分析"进入功能
 ```
@@ -676,16 +676,16 @@ WEBHOOK_KEYWORD=股票  # 钉钉自定义关键词，飞书可留空
 ### 4. 启动系统
 ```bash
 .\venv\Scripts\Activate.ps1
-python run.py
+python -m uvicorn backend.main:app --host 127.0.0.1 --port 8503
 ```
-或者直接运行：
+另开一个终端启动前端：
 ```bash
-.\venv\Scripts\Activate.ps1
-streamlit run app.py
+cd frontend
+npm run dev
 ```
 
 ### 5. 访问系统
-打开浏览器访问：http://localhost:8501
+打开浏览器访问：http://localhost:5173
 
 ---
 
@@ -1135,36 +1135,27 @@ WEBHOOK_KEYWORD=股票
 
 ```
 AI股票分析系统
-├── app.py                          # Streamlit主界面
+├── backend/main.py                 # FastAPI入口
+├── frontend/src                    # React前端源码
 ├── stock_data.py                   # 股票数据获取模块
+├── backend/                        # FastAPI 后端
+│   ├── main.py                     # 后端入口
+│   ├── app.py                      # 路由与生命周期装配
+│   ├── services.py                 # 应用服务层
+│   └── routers/                    # 分域 API 路由
+├── frontend/                       # React 前端
+│   ├── src/                        # 页面与组件源码
+│   └── dist/                       # 前端构建产物（生产由后端托管）
 ├── deepseek_client.py              # DeepSeek API客户端
 ├── ai_agents.py                    # AI智能体分析模块
-├── monitor_manager.py              # 监测管理界面
 ├── monitor_service.py              # 监测服务后台
 ├── monitor_db.py                   # 监测数据库管理
-├── notification_service.py         # 通知服务（邮件/Webhook/界面）⭐️
+├── notification_service.py         # 通知服务（邮件/Webhook）⭐️
 ├── config_manager.py               # 配置管理模块 ⭐️
-├── longhubang_data.py              # 智瞰龙虎数据获取模块 ⭐️ 1017新增
-├── longhubang_db.py                # 智瞰龙虎数据库管理 ⭐️ 1017新增
-├── longhubang_agents.py            # 智瞰龙虎AI分析师团队 ⭐️ 1017新增
-├── longhubang_engine.py            # 智瞰龙虎分析引擎 ⭐️ 1017新增
-├── longhubang_pdf.py               # 智瞰龙虎PDF报告生成 ⭐️ 1017新增
-├── longhubang_ui.py                # 智瞰龙虎界面模块 ⭐️ 1017新增
-├── sector_strategy_data.py         # 智策数据采集模块 ⭐️
-├── sector_strategy_agents.py       # 智策AI智能体团队 ⭐️
-├── sector_strategy_engine.py       # 智策分析引擎 ⭐️
-├── sector_strategy_scheduler.py    # 智策定时任务调度器 ⭐️
-├── sector_strategy_ui.py           # 智策界面模块 ⭐️
-├── sector_strategy_pdf.py          # 智策PDF报告生成 ⭐️
-├── main_force_selector.py          # 主力选股数据获取
-├── main_force_analysis.py          # 主力选股AI分析
-├── main_force_ui.py                # 主力选股界面
 ├── main_force_pdf_generator.py     # 主力选股报告生成
-├── pdf_generator.py                # PDF报告生成
 ├── database.py                     # 分析记录数据库
 ├── config.py                       # 配置文件
 ├── requirements.txt                # 依赖包列表
-├── run.py                          # 启动脚本
 ├── Dockerfile                      # Docker镜像构建文件 🐳
 ├── docker-compose.yml              # Docker编排配置文件 🐳
 ├── .dockerignore                   # Docker构建忽略文件 🐳
@@ -1256,13 +1247,12 @@ AI股票分析系统
 - 推荐股票提取和评级
 - 历史记录管理
 
-**longhubang_ui.py**
-- 智瞰龙虎主界面
+**frontend/src/pages/strategies/LonghubangPage.tsx**
+- 智瞰龙虎前端页面
 - 分析参数设置
-- 实时进度显示
-- 四个结果标签页（推荐/报告/数据/图表）
-- 历史报告查询
-- 数据统计展示
+- 任务进度轮询显示
+- 分析/历史/统计三大面板
+- 导出与联动动作入口
 
 **longhubang_pdf.py**
 - PDF报告生成（基于ReportLab）
@@ -1301,12 +1291,12 @@ AI股票分析系统
 - 邮件+Webhook自动推送
 - 错误通知处理
 
-**sector_strategy_ui.py**
-- 智策板块主界面
-- 分析进度显示
-- 四个结果标签页展示
+**frontend/src/pages/strategies/SectorStrategyPage.tsx**
+- 智策板块前端页面
+- 分析任务状态轮询
+- 历史报告展示
 - 定时分析设置面板
-- PDF报告导出功能
+- PDF/Markdown导出功能
 
 **sector_strategy_pdf.py**
 - PDF报告生成（基于ReportLab）
@@ -1329,16 +1319,15 @@ AI股票分析系统
 - 财务基本面分析
 - 资深研究员决策
 
-**main_force_ui.py**
-- 参数配置界面
+**frontend/src/pages/selectors/MainForcePage.tsx**
+- 参数配置与筛选界面
 - 分析进度显示
-- 结果可视化展示
+- 结果列表与详情展示
 - 报告导出功能
 
 **main_force_pdf_generator.py**
 - Markdown报告生成
-- HTML报告生成
-- CSV数据导出
+- PDF报告生成
 - 美观格式化输出
 
 #### 🤖 监控执行模块
@@ -1348,19 +1337,17 @@ AI股票分析系统
 - 手工登记成交回写
 - 通知发送与状态同步
 
-#### 📄 PDF生成模块 (pdf_generator.py)
-- 专业分析报告生成
+#### 📄 导出模块
+- 主力选股、智策板块、智瞰龙虎等报告导出
 - 中文字体支持
-- 完整分析内容
-- 一键下载功能
+- PDF/Markdown 一键下载
 
-#### 🎨 前端界面 (app.py)
-- 现代化渐变UI设计
+#### 🎨 前端界面 (frontend/src)
+- React + TypeScript + Vite 管理台
 - 响应式布局
-- 三大功能模块（分析/监测/历史）
-- 实时数据可视化
-- 交互式操作
-- 美观的动画效果
+- 研究/投资/策略/系统四大模块
+- 实时任务轮询与状态展示
+- 图表与交互式操作
 
 ## 📋 技术特性
 
@@ -1385,7 +1372,7 @@ AI股票分析系统
 - **指标图**：RSI、MACD、布林带等
 
 ### 性能优化
-- **数据缓存**：Streamlit缓存机制
+- **数据缓存**：多层缓存与数据库持久化
 - **异步处理**：并行分析提升效率
 - **错误处理**：完善的异常处理机制
 

@@ -3,12 +3,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import json
 import os
-from typing import Dict, List
-
-try:
-    import streamlit as st
-except ImportError:  # pragma: no cover - exercised in non-UI test environments
-    st = None
+from typing import Dict
 
 from monitor_db import monitor_db
 
@@ -166,45 +161,6 @@ class NotificationService:
         except Exception as e:
             print(f"邮件发送失败: {e}")
             return False
-    
-    def _show_streamlit_notification(self, notification: Dict):
-        """在Streamlit界面显示通知"""
-        if st is None:
-            return
-        # 使用session_state存储通知
-        if 'notifications' not in st.session_state:
-            st.session_state.notifications = []
-        
-        # 避免重复通知，使用symbol代替stock_id
-        notification_key = f"{notification['symbol']}_{notification['type']}_{notification['triggered_at']}"
-        if notification_key not in [n.get('key') for n in st.session_state.notifications]:
-            st.session_state.notifications.append({
-                'key': notification_key,
-                'symbol': notification['symbol'],
-                'name': notification['name'],
-                'type': notification['type'],
-                'message': notification['message'],
-                'timestamp': notification['triggered_at']
-            })
-    
-    def get_streamlit_notifications(self) -> List[Dict]:
-        """兼容旧接口，改为从数据库读取最近通知。"""
-        notifications = monitor_db.get_all_recent_notifications(limit=20)
-        return [
-            {
-                'key': f"{item['id']}_{item['triggered_at']}",
-                'symbol': item['symbol'],
-                'name': item['name'],
-                'type': item['type'],
-                'message': item['message'],
-                'timestamp': item['triggered_at'],
-            }
-            for item in notifications
-        ]
-    
-    def clear_streamlit_notifications(self):
-        """兼容旧接口，清空数据库中的待显示通知。"""
-        monitor_db.clear_all_notifications()
     
     def test_email_config(self) -> bool:
         """测试邮件配置"""

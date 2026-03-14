@@ -12,7 +12,7 @@ def _resolve_log_level(level_name: str) -> int:
 
 
 def configure_logging(default_level: str = "INFO") -> int:
-    """Ensure application logs are visible under Streamlit and similar runners."""
+    """Ensure application logs are visible in different process runners."""
     level = _resolve_log_level(os.getenv("APP_LOG_LEVEL", default_level))
     root_logger = logging.getLogger()
     changed = False

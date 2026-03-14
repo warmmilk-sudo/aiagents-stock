@@ -2325,7 +2325,7 @@ class PortfolioManager:
                             lightweight_model: str = None,
                             reasoning_model: str = None) -> Dict:
         """
-        分析单只股票（复用app.py中的分析逻辑）
+        分析单只股票（复用统一批量分析逻辑）
         
         Args:
             stock_code: 股票代码
@@ -2341,7 +2341,7 @@ class PortfolioManager:
         print(f"{'='*60}\n")
         
         try:
-            # 导入app.py中的分析函数
+            # 导入统一分析函数
             from batch_analysis_service import analyze_single_stock_for_batch
             
             # 构建分析师配置

@@ -54,7 +54,7 @@ def analyze_single_stock_for_batch(
     selected_reasoning_model=None,
     save_to_global_history: bool = True,
 ):
-    """Analyze one stock for batch mode; extracted from app.py to avoid cyclic imports."""
+    """Analyze one stock for batch mode via the shared backend analysis pipeline."""
     try:
         forced_model = selected_model
         if selected_lightweight_model or selected_reasoning_model:
