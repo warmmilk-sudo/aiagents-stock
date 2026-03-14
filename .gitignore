@@ -9,8 +9,12 @@
 .env
 /.cursor
 /openspec
+.vscode/
 TradEnv/
 *.log
 __pycache__/
 .codex_test_tmp/
 *.db
+/logs/
+frontend/node_modules/
+frontend/dist/

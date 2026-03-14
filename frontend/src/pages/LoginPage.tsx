@@ -49,7 +49,6 @@ export function LoginPage() {
         <p className={styles.eyebrow}>Control Center</p>
         <h1 className={styles.title}>aiagents stock</h1>
         <p className={styles.summary}>
-          统一控制台入口，认证后可直接进入研究、投资、策略与系统配置全功能页面。
         </p>
         <form onSubmit={handleSubmit}>
           <div className={styles.field}>
