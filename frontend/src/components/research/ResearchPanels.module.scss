@@ -21,7 +21,9 @@
 .metricCard strong {
   display: block;
   margin-top: 8px;
-  font-size: 24px;
+  font-size: clamp(20px, 4.8vw, 24px);
+  line-height: 1.2;
+  word-break: break-word;
 }
 
 .contentGrid {
@@ -44,6 +46,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
+  align-items: flex-start;
 }
 
 .actionButton,
@@ -92,4 +95,32 @@
   word-break: break-word;
   font-family: Consolas, "Courier New", monospace;
   font-size: 12px;
+}
+
+.actionRow > * {
+  max-width: 100%;
+}
+
+@media (max-width: 640px) {
+  .headerGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .metricCard,
+  .block {
+    padding: 14px;
+  }
+
+  .actionRow > * {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .details summary {
+    padding: 12px 14px;
+  }
+
+  .detailsContent {
+    padding: 0 14px 14px;
+  }
 }

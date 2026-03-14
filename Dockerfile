@@ -71,4 +71,4 @@ EXPOSE 8503
 HEALTHCHECK CMD curl --fail http://localhost:8503/health || exit 1
 
 # 启动应用
-CMD ["python", "-m", "uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8503"]
+CMD ["python", "-m", "uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8503", "--no-access-log"]

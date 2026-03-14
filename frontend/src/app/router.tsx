@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { Navigate, createBrowserRouter } from "react-router-dom";
+import { Navigate, createBrowserRouter, useLocation } from "react-router-dom";
 
 import { AppLayout } from "../components/layout/AppLayout";
 import { useAuthStore } from "../stores/authStore";
@@ -7,7 +7,6 @@ import { LoginPage } from "../pages/LoginPage";
 import { NotFoundPage } from "../pages/NotFoundPage";
 import { ActivityPage } from "../pages/investment/ActivityPage";
 import { PortfolioPage } from "../pages/investment/PortfolioPage";
-import { PriceAlertsPage } from "../pages/investment/PriceAlertsPage";
 import { SmartMonitorPage } from "../pages/investment/SmartMonitorPage";
 import { DeepAnalysisPage } from "../pages/research/DeepAnalysisPage";
 import { HistoryPage } from "../pages/research/HistoryPage";
@@ -59,6 +58,11 @@ function RequireAuth() {
   return <AppLayout />;
 }
 
+function RedirectToSmartMonitor() {
+  const location = useLocation();
+  return <Navigate replace to={`/investment/smart-monitor${location.search}`} />;
+}
+
 export const router = createBrowserRouter([
   {
     path: "/",
@@ -86,7 +90,7 @@ export const router = createBrowserRouter([
       },
       {
         path: "/investment/price-alerts",
-        element: <PriceAlertsPage />,
+        element: <RedirectToSmartMonitor />,
       },
       {
         path: "/investment/smart-monitor",

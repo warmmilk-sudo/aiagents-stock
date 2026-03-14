@@ -1,43 +1,95 @@
 .frame {
   display: grid;
-  gap: 18px;
+  gap: 12px;
+  min-width: 0;
 }
 
 .header {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.header h1 {
-  margin: 4px 0 8px;
-  font-family: var(--font-display);
-  font-size: clamp(28px, 3.8vw, 40px);
-  line-height: 1.05;
-}
-
-.eyebrow {
-  margin: 0;
-  letter-spacing: 0.24em;
-  font-size: 11px;
-  color: var(--accent);
-  font-weight: 700;
-}
-
-.summary {
-  margin: 0;
-  max-width: 720px;
-  color: var(--text-muted);
-  line-height: 1.6;
+  justify-content: flex-end;
+  gap: 12px;
 }
 
 .actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 8px;
+  max-width: 100%;
 }
 
 .body {
   min-height: 0;
+}
+
+.sectionTabsWrap {
+  position: sticky;
+  top: 88px;
+  z-index: 12;
+}
+
+.sectionTabs {
+  display: flex;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--line-soft);
+  border-radius: 20px;
+  background: color-mix(in srgb, var(--bg-panel) 94%, transparent);
+  box-shadow: var(--shadow-card);
+  backdrop-filter: blur(14px);
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.sectionTabButton {
+  flex: 0 0 auto;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--text-muted);
+  padding: 9px 14px;
+  font-weight: 700;
+  font-size: 13px;
+  white-space: nowrap;
+  transition:
+    background var(--shell-transition),
+    border-color var(--shell-transition),
+    color var(--shell-transition),
+    transform var(--shell-transition);
+}
+
+.sectionTabButton:hover {
+  transform: translateY(-1px);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-main);
+}
+
+.sectionTabButtonActive {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--line-soft));
+  color: var(--text-main);
+}
+
+.actions > * {
+  max-width: 100%;
+}
+
+@media (max-width: 760px) {
+  .frame {
+    gap: 10px;
+  }
+
+  .sectionTabsWrap {
+    top: 74px;
+  }
+
+  .sectionTabs {
+    padding: 7px;
+    border-radius: 18px;
+  }
+}
+
+@media (max-width: 520px) {
+  .sectionTabsWrap {
+    top: 70px;
+  }
 }

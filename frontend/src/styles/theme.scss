@@ -1,49 +1,28 @@
 :root {
   --font-sans: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
   --font-display: "Trebuchet MS", "Avenir Next", "PingFang SC", sans-serif;
-  --radius-xl: 24px;
-  --radius-lg: 18px;
+  --radius-xl: 22px;
+  --radius-lg: 16px;
   --radius-md: 14px;
-  --shadow-card: 0 20px 50px rgba(22, 30, 64, 0.12);
+  --shadow-card: 0 14px 36px rgba(4, 7, 11, 0.24);
   --shell-transition: 180ms ease;
-}
-
-:root[data-theme="dawn"] {
-  --bg-app: linear-gradient(180deg, #eef4ea 0%, #fbf6ef 38%, #f2ebe2 100%);
-  --bg-panel: rgba(255, 250, 243, 0.84);
-  --bg-panel-strong: #fffaf2;
-  --bg-sidebar: rgba(24, 39, 33, 0.92);
-  --bg-sidebar-soft: rgba(39, 63, 53, 0.84);
-  --text-main: #1d2a24;
-  --text-muted: #5e675e;
-  --text-invert: #f7f3eb;
-  --line-soft: rgba(46, 66, 58, 0.12);
-  --line-strong: rgba(46, 66, 58, 0.24);
-  --accent: #bf5b2c;
-  --accent-soft: rgba(191, 91, 44, 0.12);
-  --accent-strong: #8d3c17;
-  --success: #29785f;
-  --warning: #a05a16;
-  --danger: #b33f3f;
-  --info: #295f8a;
-}
-
-:root[data-theme="ink"] {
-  --bg-app: linear-gradient(180deg, #131722 0%, #161f2a 42%, #1c2530 100%);
-  --bg-panel: rgba(24, 31, 42, 0.88);
-  --bg-panel-strong: #1b2430;
-  --bg-sidebar: rgba(10, 13, 19, 0.96);
-  --bg-sidebar-soft: rgba(21, 29, 40, 0.92);
-  --text-main: #edf1eb;
-  --text-muted: #9eabb4;
-  --text-invert: #edf1eb;
-  --line-soft: rgba(237, 241, 235, 0.08);
-  --line-strong: rgba(237, 241, 235, 0.16);
-  --accent: #e5a94d;
-  --accent-soft: rgba(229, 169, 77, 0.12);
-  --accent-strong: #f3c679;
-  --success: #4fc39b;
-  --warning: #f0b554;
-  --danger: #ef7878;
-  --info: #73b2e6;
+  --bg-app:
+    radial-gradient(circle at top left, rgba(171, 156, 137, 0.08), transparent 24%),
+    linear-gradient(180deg, #101318 0%, #14181d 48%, #1a1e24 100%);
+  --bg-panel: rgba(21, 24, 29, 0.88);
+  --bg-panel-strong: #171b21;
+  --bg-sidebar: rgba(11, 13, 17, 0.97);
+  --bg-sidebar-soft: rgba(17, 20, 26, 0.95);
+  --text-main: #f1ece5;
+  --text-muted: #9f978e;
+  --text-invert: #f1ece5;
+  --line-soft: rgba(241, 236, 229, 0.07);
+  --line-strong: rgba(241, 236, 229, 0.15);
+  --accent: #8f7f6d;
+  --accent-soft: rgba(143, 127, 109, 0.18);
+  --accent-strong: #d7c6b2;
+  --success: #7baa90;
+  --warning: #c49b67;
+  --danger: #cb7b82;
+  --info: #9f8cc9;
 }

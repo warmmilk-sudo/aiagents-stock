@@ -1,20 +1,83 @@
-/*.rar
+# === Python ===
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# === Virtual Environment ===
+venv/
+ENV/
+env/
+.env
+.venv/
+
+# === Testing ===
+.codex_test_tmp/
+.pytest_cache/
+.tox/
+.nox/
+.coverage
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.run/
+
+# === IDEs / Editors ===
+.vscode/
+.cursor/
+.idea/
+*.swp
+*.swo
+.project
+.pydevproject
+.settings/
+
+# === Project specific ===
+*.db
+*.log
+/logs/
+TradEnv/
+*.rar
+risk_data_debug_output.txt
+trade_corrections.export.json
+/temp/
+/tmp/
+
+# Test scripts to ignore (from original)
 /test_akshare.py
 /test_fixed.py
 /test_pdf_export.py
 /test_pe_pb.py
-/venv
-/__pycache__
-# 环境变量文件
-.env
-/.cursor
-/openspec
-.vscode/
-TradEnv/
-*.log
-__pycache__/
-.codex_test_tmp/
-*.db
-/logs/
+
+# Frontend specific
 frontend/node_modules/
 frontend/dist/
+frontend/.env
+frontend/.env.local
+frontend/.env.development.local
+frontend/.env.test.local
+frontend/.env.production.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*

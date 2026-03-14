@@ -276,7 +276,7 @@ LOW_PRICE_BULL_HOLDING_DAYS=5            # 持股天数限制
 pip install schedule
 
 # 启动后端
-python -m uvicorn backend.main:app --host 127.0.0.1 --port 8503
+python -m uvicorn backend.main:app --host 127.0.0.1 --port 8503 --no-access-log
 
 # 点击侧边栏"📊 持仓分析"进入功能
 ```
@@ -676,7 +676,7 @@ WEBHOOK_KEYWORD=股票  # 钉钉自定义关键词，飞书可留空
 ### 4. 启动系统
 ```bash
 .\venv\Scripts\Activate.ps1
-python -m uvicorn backend.main:app --host 127.0.0.1 --port 8503
+python -m uvicorn backend.main:app --host 127.0.0.1 --port 8503 --no-access-log
 ```
 另开一个终端启动前端：
 ```bash

@@ -37,6 +37,12 @@ ChartJS.register(
 
 type Panel = "analysis" | "history" | "statistics";
 
+const sectionTabs = [
+  { key: "analysis", label: "龙虎榜分析" },
+  { key: "history", label: "历史报告" },
+  { key: "statistics", label: "数据统计" },
+];
+
 interface TaskDetail<T> {
   id: string;
   status: string;
@@ -425,6 +431,9 @@ export function LonghubangPage() {
     <PageFrame
       title="智瞰龙虎"
       summary="当前覆盖龙虎榜分析、TOP 批量深度分析、历史报告、统计与导出。"
+      sectionTabs={sectionTabs}
+      activeSectionKey={panel}
+      onSectionChange={(nextSection) => setPanel(nextSection as Panel)}
       actions={
         <>
           <StatusBadge label={task ? `分析 ${task.status} ${Math.round((task.progress ?? 0) * 100)}%` : "分析空闲"} tone={task?.status === "success" ? "success" : task?.status === "failed" ? "danger" : task?.status === "running" ? "warning" : "default"} />
@@ -434,11 +443,6 @@ export function LonghubangPage() {
     >
       <div className={styles.stack}>
         <section className={styles.card}>
-          <div className={styles.actions}>
-            <button className={panel === "analysis" ? styles.primaryButton : styles.secondaryButton} onClick={() => setPanel("analysis")} type="button">龙虎榜分析</button>
-            <button className={panel === "history" ? styles.primaryButton : styles.secondaryButton} onClick={() => setPanel("history")} type="button">历史报告</button>
-            <button className={panel === "statistics" ? styles.primaryButton : styles.secondaryButton} onClick={() => setPanel("statistics")} type="button">数据统计</button>
-          </div>
           <p className={styles.muted} style={{ marginTop: 12 }}>{SOURCE_TEXT}</p>
           {message ? <p className={styles.successText}>{message}</p> : null}
           {error ? <p className={styles.dangerText}>{error}</p> : null}
@@ -511,7 +515,12 @@ export function LonghubangPage() {
                         <option value="sequential">顺序分析</option>
                         <option value="parallel">并行分析</option>
                       </select>
-                      <input disabled={batchMode !== "parallel"} style={{ width: 96 }} value={maxWorkers} onChange={(event) => setMaxWorkers(event.target.value)} />
+                      <input
+                        className={styles.shortInput}
+                        disabled={batchMode !== "parallel"}
+                        value={maxWorkers}
+                        onChange={(event) => setMaxWorkers(event.target.value)}
+                      />
                       <button className={styles.primaryButton} onClick={() => void submitBatch()} type="button">开始批量分析</button>
                     </div>
                     <p className={styles.muted}>将按 AI 评分排序对前 {batchSymbols.length} 只股票执行完整深度分析：{batchSymbols.join(", ") || "暂无"}</p>

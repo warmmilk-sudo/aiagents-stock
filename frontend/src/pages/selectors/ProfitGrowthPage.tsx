@@ -59,6 +59,14 @@ interface RemovedItem {
   remove_reason?: string;
 }
 
+type SectionKey = "results" | "data" | "monitor";
+
+const sectionTabs = [
+  { key: "results", label: "选股结果" },
+  { key: "data", label: "完整数据" },
+  { key: "monitor", label: "监控中心" },
+];
+
 const defaultForm = {
   top_n: "5",
   min_profit_growth: "10",
@@ -98,6 +106,7 @@ export function ProfitGrowthPage() {
   const [pendingAlerts, setPendingAlerts] = useState<AlertItem[]>([]);
   const [alertHistory, setAlertHistory] = useState<AlertItem[]>([]);
   const [removedStocks, setRemovedStocks] = useState<RemovedItem[]>([]);
+  const [section, setSection] = useState<SectionKey>("results");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
@@ -167,6 +176,7 @@ export function ProfitGrowthPage() {
           filter_summary: filterSummary,
         }),
       });
+      setSection("results");
       setMessage(`净利增长选股任务已提交: ${data.task_id}`);
       await loadTask();
     } catch (requestError) {
@@ -182,6 +192,7 @@ export function ProfitGrowthPage() {
         method: "POST",
         body: JSON.stringify({ stocks, filter_summary: filterSummary }),
       });
+      setSection("results");
       setMessage("钉钉通知已发送");
     } catch (requestError) {
       setError(requestError instanceof ApiRequestError ? requestError.message : "发送通知失败");
@@ -199,6 +210,7 @@ export function ProfitGrowthPage() {
         method: "POST",
         body: JSON.stringify({ stock_code: code, stock_name: name, buy_price: price }),
       });
+      setSection("monitor");
       setMessage(`已加入策略监控: ${code}`);
       await loadMonitorData();
     } catch (requestError) {
@@ -211,6 +223,7 @@ export function ProfitGrowthPage() {
     setError("");
     try {
       await apiFetch(`/api/selectors/profit-growth/monitor/stocks/${stockCode}`, { method: "DELETE" });
+      setSection("monitor");
       setMessage(`已移出监控: ${stockCode}`);
       await loadMonitorData();
     } catch (requestError) {
@@ -224,9 +237,12 @@ export function ProfitGrowthPage() {
     <PageFrame
       title="净利增长"
       summary="覆盖净利增长选股、策略监控、卖出提醒和移除历史。"
+      sectionTabs={sectionTabs}
+      activeSectionKey={section}
+      onSectionChange={(nextSection) => setSection(nextSection as SectionKey)}
       actions={
         <>
-          <StatusBadge label={`结果 ${stocks.length}`} tone="info" />
+          <StatusBadge label={`结果 ${stocks.length}`} tone="default" />
           <StatusBadge label={`监控 ${monitorStatus?.monitored_count ?? 0}`} tone="success" />
           <StatusBadge
             label={task ? `选股 ${task.status} ${Math.round((task.progress ?? 0) * 100)}%` : "选股空闲"}
@@ -236,322 +252,332 @@ export function ProfitGrowthPage() {
       }
     >
       <div className={styles.stack}>
-        <section className={styles.card}>
-          <form className={styles.stack} onSubmit={submitSelection}>
-            <div className={styles.formGrid}>
-              <div className={styles.field}>
-                <label htmlFor="topN">筛选数量</label>
-                <input id="topN" value={form.top_n} onChange={(event) => setForm((current) => ({ ...current, top_n: event.target.value }))} />
-              </div>
-              <div className={styles.field}>
-                <label htmlFor="profitGrowth">最低净利增速(%)</label>
-                <input id="profitGrowth" value={form.min_profit_growth} onChange={(event) => setForm((current) => ({ ...current, min_profit_growth: event.target.value }))} />
-              </div>
-              <div className={styles.field}>
-                <label htmlFor="minTurnover">最低成交额(亿)</label>
-                <input id="minTurnover" value={form.min_turnover_yi} onChange={(event) => setForm((current) => ({ ...current, min_turnover_yi: event.target.value }))} />
-              </div>
-              <div className={styles.field}>
-                <label htmlFor="maxTurnover">最高成交额(亿)</label>
-                <input id="maxTurnover" value={form.max_turnover_yi} onChange={(event) => setForm((current) => ({ ...current, max_turnover_yi: event.target.value }))} />
-              </div>
-              <div className={styles.field}>
-                <label htmlFor="sortBy">排序方式</label>
-                <select id="sortBy" value={form.sort_by} onChange={(event) => setForm((current) => ({ ...current, sort_by: event.target.value }))}>
-                  <option value="成交额升序">成交额升序</option>
-                  <option value="成交额降序">成交额降序</option>
-                  <option value="净利润增长率降序">净利润增长率降序</option>
-                  <option value="股价升序">股价升序</option>
-                </select>
-              </div>
-            </div>
-            <div className={styles.compactGrid}>
-              <label className={styles.listItem}>
-                <input checked={form.exclude_st} onChange={(event) => setForm((current) => ({ ...current, exclude_st: event.target.checked }))} type="checkbox" /> 剔除 ST
-              </label>
-              <label className={styles.listItem}>
-                <input checked={form.exclude_kcb} onChange={(event) => setForm((current) => ({ ...current, exclude_kcb: event.target.checked }))} type="checkbox" /> 剔除科创板
-              </label>
-              <label className={styles.listItem}>
-                <input checked={form.exclude_cyb} onChange={(event) => setForm((current) => ({ ...current, exclude_cyb: event.target.checked }))} type="checkbox" /> 剔除创业板
-              </label>
-            </div>
-            <p className={styles.muted}>当前筛选: {filterSummary}</p>
-            <div className={styles.actions}>
-              <button className={styles.primaryButton} type="submit">
-                开始净利增长选股
-              </button>
-              <button
-                className={styles.secondaryButton}
-                onClick={() => downloadCsvRows(stocks, `profit_growth_${new Date().toISOString().slice(0, 10)}.csv`)}
-                type="button"
-              >
-                下载 CSV
-              </button>
-              {!!stocks.length ? (
-                <button className={styles.secondaryButton} onClick={() => void notifyWebhook()} type="button">
-                  发送钉钉通知
-                </button>
-              ) : null}
-              {message ? <span className={styles.successText}>{message}</span> : null}
-              {error ? <span className={styles.dangerText}>{error}</span> : null}
-            </div>
-          </form>
-        </section>
+        {section === "results" ? (
+          <>
+            <section className={styles.card}>
+              <form className={styles.stack} onSubmit={submitSelection}>
+                <div className={styles.formGrid}>
+                  <div className={styles.field}>
+                    <label htmlFor="topN">筛选数量</label>
+                    <input id="topN" value={form.top_n} onChange={(event) => setForm((current) => ({ ...current, top_n: event.target.value }))} />
+                  </div>
+                  <div className={styles.field}>
+                    <label htmlFor="profitGrowth">最低净利增速(%)</label>
+                    <input id="profitGrowth" value={form.min_profit_growth} onChange={(event) => setForm((current) => ({ ...current, min_profit_growth: event.target.value }))} />
+                  </div>
+                  <div className={styles.field}>
+                    <label htmlFor="minTurnover">最低成交额(亿)</label>
+                    <input id="minTurnover" value={form.min_turnover_yi} onChange={(event) => setForm((current) => ({ ...current, min_turnover_yi: event.target.value }))} />
+                  </div>
+                  <div className={styles.field}>
+                    <label htmlFor="maxTurnover">最高成交额(亿)</label>
+                    <input id="maxTurnover" value={form.max_turnover_yi} onChange={(event) => setForm((current) => ({ ...current, max_turnover_yi: event.target.value }))} />
+                  </div>
+                  <div className={styles.field}>
+                    <label htmlFor="sortBy">排序方式</label>
+                    <select id="sortBy" value={form.sort_by} onChange={(event) => setForm((current) => ({ ...current, sort_by: event.target.value }))}>
+                      <option value="成交额升序">成交额升序</option>
+                      <option value="成交额降序">成交额降序</option>
+                      <option value="净利润增长率降序">净利润增长率降序</option>
+                      <option value="股价升序">股价升序</option>
+                    </select>
+                  </div>
+                </div>
+                <div className={styles.compactGrid}>
+                  <label className={styles.listItem}>
+                    <input checked={form.exclude_st} onChange={(event) => setForm((current) => ({ ...current, exclude_st: event.target.checked }))} type="checkbox" /> 剔除 ST
+                  </label>
+                  <label className={styles.listItem}>
+                    <input checked={form.exclude_kcb} onChange={(event) => setForm((current) => ({ ...current, exclude_kcb: event.target.checked }))} type="checkbox" /> 剔除科创板
+                  </label>
+                  <label className={styles.listItem}>
+                    <input checked={form.exclude_cyb} onChange={(event) => setForm((current) => ({ ...current, exclude_cyb: event.target.checked }))} type="checkbox" /> 剔除创业板
+                  </label>
+                </div>
+                <p className={styles.muted}>当前筛选: {filterSummary}</p>
+                <div className={styles.actions}>
+                  <button className={styles.primaryButton} type="submit">
+                    开始净利增长选股
+                  </button>
+                  <button
+                    className={styles.secondaryButton}
+                    onClick={() => downloadCsvRows(stocks, `profit_growth_${new Date().toISOString().slice(0, 10)}.csv`)}
+                    type="button"
+                  >
+                    下载 CSV
+                  </button>
+                  {!!stocks.length ? (
+                    <button className={styles.secondaryButton} onClick={() => void notifyWebhook()} type="button">
+                      发送钉钉通知
+                    </button>
+                  ) : null}
+                  {message ? <span className={styles.successText}>{message}</span> : null}
+                  {error ? <span className={styles.dangerText}>{error}</span> : null}
+                </div>
+              </form>
+            </section>
 
-        {task ? (
+            {task ? (
+              <section className={styles.card}>
+                <h2>选股任务状态</h2>
+                <p>{task.message || "等待净利增长任务..."}</p>
+                <p className={styles.muted}>
+                  进度: {task.current ?? 0} / {task.total ?? 0}
+                </p>
+                {task.error ? <p className={styles.dangerText}>{task.error}</p> : null}
+              </section>
+            ) : null}
+
+            {stocks.length ? (
+              <>
+                <section className={styles.card}>
+                  <div className={styles.compactGrid}>
+                    <div className={styles.metric}>
+                      <span className={styles.muted}>筛选数量</span>
+                      <strong>{stocks.length}</strong>
+                    </div>
+                    <div className={styles.metric}>
+                      <span className={styles.muted}>平均净利增长率</span>
+                      <strong>
+                        {numberText(
+                          stocks.reduce((sum, row) => sum + (asNumber(row["净利润增长率"] ?? row["净利润同比增长率"]) ?? 0), 0) / Math.max(stocks.length, 1),
+                        )}
+                        %
+                      </strong>
+                    </div>
+                    <div className={styles.metric}>
+                      <span className={styles.muted}>平均成交额</span>
+                      <strong>
+                        {numberText(
+                          stocks.reduce((sum, row) => sum + (asNumber(row["成交额"]) ?? 0), 0) / Math.max(stocks.length, 1) / 100000000,
+                        )}
+                        亿
+                      </strong>
+                    </div>
+                    <div className={styles.metric}>
+                      <span className={styles.muted}>平均股价</span>
+                      <strong>
+                        {numberText(
+                          stocks.reduce((sum, row) => sum + (asNumber(row["股价"] ?? row["最新价"]) ?? 0), 0) / Math.max(stocks.length, 1),
+                        )}
+                        元
+                      </strong>
+                    </div>
+                  </div>
+                  <p className={styles.muted}>
+                    选股时间: {asText(task?.result?.selected_time, "-")} | 条件: {asText(task?.result?.filter_summary, "-")}
+                  </p>
+                </section>
+
+                <section className={styles.card}>
+                  <h2>精选股票列表</h2>
+                  <div className={styles.list}>
+                    {stocks.map((stock, index) => {
+                      const code = String(stock["股票代码"] ?? "").split(".")[0];
+                      const industryKey = findKey(stock, ["所属行业", "所属同花顺行业"]);
+                      return (
+                        <div className={styles.listItem} key={`${code}-${index}`}>
+                          <strong>
+                            第 {index + 1} 名 · {code} - {asText(stock["股票简称"] ?? stock["股票名称"], code)}
+                          </strong>
+                          <div className={styles.compactGrid} style={{ marginTop: 12 }}>
+                            <div className={styles.metric}>
+                              <span className={styles.muted}>净利增速</span>
+                              <strong>{numberText(stock["净利润增长率"] ?? stock["净利润同比增长率"])}%</strong>
+                            </div>
+                            <div className={styles.metric}>
+                              <span className={styles.muted}>成交额</span>
+                              <strong>{numberText((asNumber(stock["成交额"]) ?? 0) / 100000000)}亿</strong>
+                            </div>
+                            <div className={styles.metric}>
+                              <span className={styles.muted}>当前价格</span>
+                              <strong>{numberText(stock["股价"] ?? stock["最新价"])}元</strong>
+                            </div>
+                            <div className={styles.metric}>
+                              <span className={styles.muted}>所属行业</span>
+                              <strong>{industryKey ? asText(stock[industryKey]) : "N/A"}</strong>
+                            </div>
+                          </div>
+                          <div className={styles.actions} style={{ marginTop: 12 }}>
+                            {monitoredCodes.has(code) ? (
+                              <button className={styles.dangerButton} onClick={() => void removeFromMonitor(code)} type="button">
+                                移出监控
+                              </button>
+                            ) : (
+                              <button className={styles.primaryButton} onClick={() => void addToMonitor(stock)} type="button">
+                                加入策略监控
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+              </>
+            ) : null}
+          </>
+        ) : null}
+
+        {section === "data" && stocks.length ? (
           <section className={styles.card}>
-            <h2>选股任务状态</h2>
-            <p>{task.message || "等待净利增长任务..."}</p>
-            <p className={styles.muted}>
-              进度: {task.current ?? 0} / {task.total ?? 0}
-            </p>
-            {task.error ? <p className={styles.dangerText}>{task.error}</p> : null}
+            <h2>完整数据表格</h2>
+            <div className={styles.tableWrap}>
+              <table className={styles.table}>
+                <thead>
+                  <tr>
+                    {displayKeys.map((key) => (
+                      <th key={key}>{key}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {stocks.map((row, index) => (
+                    <tr key={`${String(row["股票代码"] ?? "row")}-${index}`}>
+                      {displayKeys.map((key) => (
+                        <td key={key}>{asText(row[key])}</td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </section>
         ) : null}
 
-        {stocks.length ? (
+        {section === "monitor" ? (
           <>
             <section className={styles.card}>
+              <h2>策略监控中心</h2>
               <div className={styles.compactGrid}>
                 <div className={styles.metric}>
-                  <span className={styles.muted}>筛选数量</span>
-                  <strong>{stocks.length}</strong>
+                  <span className={styles.muted}>监控股票</span>
+                  <strong>{monitorStatus?.monitored_count ?? 0} 只</strong>
                 </div>
                 <div className={styles.metric}>
-                  <span className={styles.muted}>平均净利增长率</span>
-                  <strong>
-                    {numberText(
-                      stocks.reduce((sum, row) => sum + (asNumber(row["净利润增长率"] ?? row["净利润同比增长率"]) ?? 0), 0) / Math.max(stocks.length, 1),
-                    )}
-                    %
-                  </strong>
+                  <span className={styles.muted}>待处理提醒</span>
+                  <strong>{monitorStatus?.pending_alerts ?? 0} 条</strong>
                 </div>
                 <div className={styles.metric}>
-                  <span className={styles.muted}>平均成交额</span>
-                  <strong>
-                    {numberText(
-                      stocks.reduce((sum, row) => sum + (asNumber(row["成交额"]) ?? 0), 0) / Math.max(stocks.length, 1) / 100000000,
-                    )}
-                    亿
-                  </strong>
+                  <span className={styles.muted}>移除历史</span>
+                  <strong>{monitorStatus?.removed_count ?? 0} 条</strong>
                 </div>
-                <div className={styles.metric}>
-                  <span className={styles.muted}>平均股价</span>
-                  <strong>
-                    {numberText(
-                      stocks.reduce((sum, row) => sum + (asNumber(row["股价"] ?? row["最新价"]) ?? 0), 0) / Math.max(stocks.length, 1),
-                    )}
-                    元
-                  </strong>
-                </div>
-              </div>
-              <p className={styles.muted}>
-                选股时间: {asText(task?.result?.selected_time, "-")} | 条件: {asText(task?.result?.filter_summary, "-")}
-              </p>
-            </section>
-
-            <section className={styles.card}>
-              <h2>精选股票列表</h2>
-              <div className={styles.list}>
-                {stocks.map((stock, index) => {
-                  const code = String(stock["股票代码"] ?? "").split(".")[0];
-                  const industryKey = findKey(stock, ["所属行业", "所属同花顺行业"]);
-                  return (
-                    <div className={styles.listItem} key={`${code}-${index}`}>
-                      <strong>
-                        第 {index + 1} 名 · {code} - {asText(stock["股票简称"] ?? stock["股票名称"], code)}
-                      </strong>
-                      <div className={styles.compactGrid} style={{ marginTop: 12 }}>
-                        <div className={styles.metric}>
-                          <span className={styles.muted}>净利增速</span>
-                          <strong>{numberText(stock["净利润增长率"] ?? stock["净利润同比增长率"])}%</strong>
-                        </div>
-                        <div className={styles.metric}>
-                          <span className={styles.muted}>成交额</span>
-                          <strong>{numberText((asNumber(stock["成交额"]) ?? 0) / 100000000)}亿</strong>
-                        </div>
-                        <div className={styles.metric}>
-                          <span className={styles.muted}>当前价格</span>
-                          <strong>{numberText(stock["股价"] ?? stock["最新价"])}元</strong>
-                        </div>
-                        <div className={styles.metric}>
-                          <span className={styles.muted}>所属行业</span>
-                          <strong>{industryKey ? asText(stock[industryKey]) : "N/A"}</strong>
-                        </div>
-                      </div>
-                      <div className={styles.actions} style={{ marginTop: 12 }}>
-                        {monitoredCodes.has(code) ? (
-                          <button className={styles.dangerButton} onClick={() => void removeFromMonitor(code)} type="button">
-                            移出监控
-                          </button>
-                        ) : (
-                          <button className={styles.primaryButton} onClick={() => void addToMonitor(stock)} type="button">
-                            加入策略监控
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
               </div>
             </section>
 
             <section className={styles.card}>
-              <h2>完整数据表格</h2>
+              <h2>监控列表</h2>
               <div className={styles.tableWrap}>
                 <table className={styles.table}>
                   <thead>
                     <tr>
-                      {displayKeys.map((key) => (
-                        <th key={key}>{key}</th>
-                      ))}
+                      <th>股票</th>
+                      <th>买入价格 / 日期</th>
+                      <th>持股天数</th>
+                      <th>加入时间</th>
+                      <th>操作</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {stocks.map((row, index) => (
-                      <tr key={`${String(row["股票代码"] ?? "row")}-${index}`}>
-                        {displayKeys.map((key) => (
-                          <td key={key}>{asText(row[key])}</td>
-                        ))}
+                    {monitoredStocks.map((item) => (
+                      <tr key={item.stock_code}>
+                        <td>
+                          <strong>{item.stock_name}</strong>
+                          <div className={styles.muted}>{item.stock_code}</div>
+                        </td>
+                        <td>
+                          {numberText(item.buy_price)} / {asText(item.buy_date)}
+                        </td>
+                        <td>{item.holding_days}</td>
+                        <td>{asText(item.add_time, "-")}</td>
+                        <td>
+                          <button className={styles.dangerButton} onClick={() => void removeFromMonitor(item.stock_code)} type="button">
+                            移除
+                          </button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
+              {!monitoredStocks.length ? <div className={styles.muted}>暂无监控中的股票。</div> : null}
+            </section>
+
+            <section className={styles.card}>
+              <h2>卖出提醒</h2>
+              <div className={styles.list}>
+                {pendingAlerts.map((alert) => (
+                  <div className={styles.listItem} key={alert.id}>
+                    <strong>
+                      {alert.stock_code} {alert.stock_name}
+                    </strong>
+                    <div style={{ marginTop: 10 }}>{asText(alert.alert_type)} - {asText(alert.alert_reason)}</div>
+                    <div className={styles.muted} style={{ marginTop: 8 }}>
+                      当前价格 {numberText(alert.current_price)} | 持有天数 {asText(alert.holding_days)} | 时间 {asText(alert.alert_time)}
+                    </div>
+                  </div>
+                ))}
+                {!pendingAlerts.length ? <div className={styles.muted}>暂无新的卖出提醒。</div> : null}
+              </div>
+            </section>
+
+            <section className={styles.card}>
+              <h2>提醒历史</h2>
+              <div className={styles.tableWrap}>
+                <table className={styles.table}>
+                  <thead>
+                    <tr>
+                      <th>股票</th>
+                      <th>提醒类型</th>
+                      <th>提醒原因</th>
+                      <th>提醒时间</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {alertHistory.map((item) => (
+                      <tr key={item.id}>
+                        <td>
+                          {item.stock_code} {item.stock_name}
+                        </td>
+                        <td>{item.alert_type}</td>
+                        <td>{item.alert_reason}</td>
+                        <td>{asText(item.alert_time)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {!alertHistory.length ? <div className={styles.muted}>暂无提醒历史。</div> : null}
+            </section>
+
+            <section className={styles.card}>
+              <h2>移除历史</h2>
+              <div className={styles.tableWrap}>
+                <table className={styles.table}>
+                  <thead>
+                    <tr>
+                      <th>股票</th>
+                      <th>移除时间</th>
+                      <th>移除原因</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {removedStocks.map((item) => (
+                      <tr key={`${item.stock_code}-${item.remove_time}`}>
+                        <td>
+                          {item.stock_code} {item.stock_name}
+                        </td>
+                        <td>{asText(item.remove_time)}</td>
+                        <td>{asText(item.remove_reason)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {!removedStocks.length ? <div className={styles.muted}>暂无移除历史。</div> : null}
             </section>
           </>
         ) : null}
-
-        <section className={styles.card}>
-          <h2>策略监控中心</h2>
-          <div className={styles.compactGrid}>
-            <div className={styles.metric}>
-              <span className={styles.muted}>监控股票</span>
-              <strong>{monitorStatus?.monitored_count ?? 0} 只</strong>
-            </div>
-            <div className={styles.metric}>
-              <span className={styles.muted}>待处理提醒</span>
-              <strong>{monitorStatus?.pending_alerts ?? 0} 条</strong>
-            </div>
-            <div className={styles.metric}>
-              <span className={styles.muted}>移除历史</span>
-              <strong>{monitorStatus?.removed_count ?? 0} 条</strong>
-            </div>
-          </div>
-        </section>
-
-        <section className={styles.card}>
-          <h2>监控列表</h2>
-          <div className={styles.tableWrap}>
-            <table className={styles.table}>
-              <thead>
-                <tr>
-                  <th>股票</th>
-                  <th>买入价格 / 日期</th>
-                  <th>持股天数</th>
-                  <th>加入时间</th>
-                  <th>操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {monitoredStocks.map((item) => (
-                  <tr key={item.stock_code}>
-                    <td>
-                      <strong>{item.stock_name}</strong>
-                      <div className={styles.muted}>{item.stock_code}</div>
-                    </td>
-                    <td>
-                      {numberText(item.buy_price)} / {asText(item.buy_date)}
-                    </td>
-                    <td>{item.holding_days}</td>
-                    <td>{asText(item.add_time, "-")}</td>
-                    <td>
-                      <button className={styles.dangerButton} onClick={() => void removeFromMonitor(item.stock_code)} type="button">
-                        移除
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          {!monitoredStocks.length ? <div className={styles.muted}>暂无监控中的股票。</div> : null}
-        </section>
-
-        <section className={styles.card}>
-          <h2>卖出提醒</h2>
-          <div className={styles.list}>
-            {pendingAlerts.map((alert) => (
-              <div className={styles.listItem} key={alert.id}>
-                <strong>
-                  {alert.stock_code} {alert.stock_name}
-                </strong>
-                <div style={{ marginTop: 10 }}>{asText(alert.alert_type)} - {asText(alert.alert_reason)}</div>
-                <div className={styles.muted} style={{ marginTop: 8 }}>
-                  当前价格 {numberText(alert.current_price)} | 持有天数 {asText(alert.holding_days)} | 时间 {asText(alert.alert_time)}
-                </div>
-              </div>
-            ))}
-            {!pendingAlerts.length ? <div className={styles.muted}>暂无新的卖出提醒。</div> : null}
-          </div>
-        </section>
-
-        <section className={styles.card}>
-          <h2>提醒历史</h2>
-          <div className={styles.tableWrap}>
-            <table className={styles.table}>
-              <thead>
-                <tr>
-                  <th>股票</th>
-                  <th>提醒类型</th>
-                  <th>提醒原因</th>
-                  <th>提醒时间</th>
-                </tr>
-              </thead>
-              <tbody>
-                {alertHistory.map((item) => (
-                  <tr key={item.id}>
-                    <td>
-                      {item.stock_code} {item.stock_name}
-                    </td>
-                    <td>{item.alert_type}</td>
-                    <td>{item.alert_reason}</td>
-                    <td>{asText(item.alert_time)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          {!alertHistory.length ? <div className={styles.muted}>暂无提醒历史。</div> : null}
-        </section>
-
-        <section className={styles.card}>
-          <h2>移除历史</h2>
-          <div className={styles.tableWrap}>
-            <table className={styles.table}>
-              <thead>
-                <tr>
-                  <th>股票</th>
-                  <th>移除时间</th>
-                  <th>移除原因</th>
-                </tr>
-              </thead>
-              <tbody>
-                {removedStocks.map((item) => (
-                  <tr key={`${item.stock_code}-${item.remove_time}`}>
-                    <td>
-                      {item.stock_code} {item.stock_name}
-                    </td>
-                    <td>{asText(item.remove_time)}</td>
-                    <td>{asText(item.remove_reason)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          {!removedStocks.length ? <div className={styles.muted}>暂无移除历史。</div> : null}
-        </section>
       </div>
     </PageFrame>
   );

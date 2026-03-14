@@ -342,6 +342,9 @@ export function NewsFlowPage() {
     <PageFrame
       title="新闻流量"
       summary="覆盖仪表盘、实时分析、预警、趋势、历史和调度设置。"
+      sectionTabs={panelOptions}
+      activeSectionKey={panel}
+      onSectionChange={(nextSection) => setPanel(nextSection as Panel)}
       actions={
         <>
           <StatusBadge label={scheduler?.running ? "调度器运行中" : "调度器已停止"} tone={scheduler?.running ? "success" : "warning"} />
@@ -355,11 +358,6 @@ export function NewsFlowPage() {
       <div className={styles.stack}>
         <section className={styles.card}>
           <div className={styles.actions}>
-            {panelOptions.map((item) => (
-              <button className={panel === item.key ? styles.primaryButton : styles.secondaryButton} key={item.key} onClick={() => setPanel(item.key)} type="button">
-                {item.label}
-              </button>
-            ))}
             {message ? <span className={styles.successText}>{message}</span> : null}
             {error ? <span className={styles.dangerText}>{error}</span> : null}
           </div>
@@ -378,7 +376,7 @@ export function NewsFlowPage() {
           <>
             <section className={styles.card}>
               <div className={styles.actions}>
-                <div className={styles.field} style={{ minWidth: 220 }}>
+                <div className={`${styles.field} ${styles.actionField}`}>
                   <label htmlFor="dashboardCategory">平台类别</label>
                   <select id="dashboardCategory" value={category} onChange={(event) => setCategory(event.target.value)}>
                     {categoryOptions.map((item) => (
@@ -450,7 +448,7 @@ export function NewsFlowPage() {
           <>
             <section className={styles.card}>
               <div className={styles.actions}>
-                <div className={styles.field} style={{ minWidth: 220 }}>
+                <div className={`${styles.field} ${styles.actionField}`}>
                   <label htmlFor="analysisCategory">平台类别</label>
                   <select id="analysisCategory" value={category} onChange={(event) => setCategory(event.target.value)}>
                     {categoryOptions.map((item) => (
@@ -770,7 +768,12 @@ export function NewsFlowPage() {
             <section className={styles.card}>
               <h2>股票相关新闻检索</h2>
               <div className={styles.actions}>
-                <input placeholder="输入股票名、代码或关键词" value={searchKeyword} onChange={(event) => setSearchKeyword(event.target.value)} style={{ minWidth: 260 }} />
+                <input
+                  className={styles.actionInput}
+                  placeholder="输入股票名、代码或关键词"
+                  value={searchKeyword}
+                  onChange={(event) => setSearchKeyword(event.target.value)}
+                />
                 <button className={styles.primaryButton} onClick={() => void searchStockNews()} type="button">
                   搜索
                 </button>
@@ -832,10 +835,14 @@ export function NewsFlowPage() {
                 ].map(([key, label]) => (
                   <div className={styles.listItem} key={key}>
                     <div className={styles.actions}>
-                      <label className={styles.listItem} style={{ minWidth: 180 }}>
+                      <label className={`${styles.listItem} ${styles.actionToggle}`}>
                         <input checked={Boolean(taskEnabled[key])} onChange={(event) => setTaskEnabled((current) => ({ ...current, [key]: event.target.checked }))} type="checkbox" /> {label}
                       </label>
-                      <input style={{ width: 120 }} value={taskIntervals[key] ?? ""} onChange={(event) => setTaskIntervals((current) => ({ ...current, [key]: event.target.value }))} />
+                      <input
+                        className={styles.shortInput}
+                        value={taskIntervals[key] ?? ""}
+                        onChange={(event) => setTaskIntervals((current) => ({ ...current, [key]: event.target.value }))}
+                      />
                       <span className={styles.muted}>分钟</span>
                       <button className={styles.secondaryButton} onClick={() => void runSchedulerTask(key)} type="button">
                         立即执行

@@ -92,6 +92,15 @@ interface TaskDetail<TPayload> {
   result?: TPayload | null;
 }
 
+type SectionKey = "selection" | "candidates" | "batch" | "history";
+
+const sectionTabs = [
+  { key: "selection", label: "主筛选" },
+  { key: "candidates", label: "候选明细" },
+  { key: "batch", label: "批量深度分析" },
+  { key: "history", label: "批量历史" },
+];
+
 const dateOptions = [
   { label: "最近 3 个月", value: "90" },
   { label: "最近 6 个月", value: "180" },
@@ -221,6 +230,7 @@ export function MainForcePage() {
   const [batchTask, setBatchTask] = useState<TaskDetail<MainForceBatchResults> | null>(null);
   const [history, setHistory] = useState<MainForceHistoryResponse | null>(null);
   const [loadedHistoryRecord, setLoadedHistoryRecord] = useState<MainForceHistoryRecord | null>(null);
+  const [section, setSection] = useState<SectionKey>("selection");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
@@ -311,6 +321,7 @@ export function MainForcePage() {
         method: "POST",
         body: JSON.stringify(payload),
       });
+      setSection("selection");
       setMessage(`主力选股任务已提交: ${data.task_id}`);
       await loadSelectionTask();
     } catch (requestError) {
@@ -335,6 +346,7 @@ export function MainForcePage() {
         }),
       });
       setLoadedHistoryRecord(null);
+      setSection("batch");
       setMessage(`主力 TOP 批量分析任务已提交: ${data.task_id}`);
       await loadBatchTask();
     } catch (requestError) {
@@ -348,6 +360,7 @@ export function MainForcePage() {
     try {
       const data = await apiFetch<MainForceHistoryRecord>(`/api/selectors/main-force/history/${recordId}`);
       setLoadedHistoryRecord(data);
+      setSection("batch");
       setMessage(`已加载历史记录 #${recordId}`);
     } catch (requestError) {
       setError(requestError instanceof ApiRequestError ? requestError.message : "加载历史记录失败");
@@ -393,9 +406,12 @@ export function MainForcePage() {
     <PageFrame
       title="主力选股"
       summary="当前支持主筛选、TOP 批量深度分析和批量历史管理。"
+      sectionTabs={sectionTabs}
+      activeSectionKey={section}
+      onSectionChange={(nextSection) => setSection(nextSection as SectionKey)}
       actions={
         <>
-          <StatusBadge label={`候选 ${rawStocks.length}`} tone="info" />
+          <StatusBadge label={`候选 ${rawStocks.length}`} tone="default" />
           <StatusBadge
             label={
               selectionTask
@@ -428,68 +444,70 @@ export function MainForcePage() {
       }
     >
       <div className={styles.stack}>
-        <section className={styles.card}>
-          <form className={styles.stack} onSubmit={submitSelection}>
-            <div className={styles.formGrid}>
-              <div className={styles.field}>
-                <label htmlFor="dateMode">选择时间区间</label>
-                <select id="dateMode" value={dateMode} onChange={(event) => setDateMode(event.target.value)}>
-                  {dateOptions.map((item) => (
-                    <option key={item.value} value={item.value}>
-                      {item.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className={styles.field}>
-                <label htmlFor="finalN">最终精选数量</label>
-                <input id="finalN" value={finalN} onChange={(event) => setFinalN(event.target.value)} />
-              </div>
-              <div className={styles.field}>
-                <label htmlFor="maxChange">最大涨跌幅(%)</label>
-                <input id="maxChange" value={maxChange} onChange={(event) => setMaxChange(event.target.value)} />
-              </div>
-              <div className={styles.field}>
-                <label htmlFor="minCap">最小市值(亿)</label>
-                <input id="minCap" value={minCap} onChange={(event) => setMinCap(event.target.value)} />
-              </div>
-              <div className={styles.field}>
-                <label htmlFor="maxCap">最大市值(亿)</label>
-                <input id="maxCap" value={maxCap} onChange={(event) => setMaxCap(event.target.value)} />
-              </div>
-              {dateMode === "custom" ? (
-                <div className={styles.field}>
-                  <label htmlFor="customDate">开始日期</label>
-                  <input id="customDate" type="date" value={customDate} onChange={(event) => setCustomDate(event.target.value)} />
-                </div>
-              ) : null}
-            </div>
-            <div className={styles.actions}>
-              <button className={styles.primaryButton} type="submit">
-                开始主力选股
-              </button>
-              <button className={styles.secondaryButton} onClick={() => void loadHistory()} type="button">
-                刷新历史
-              </button>
-              {message ? <span className={styles.successText}>{message}</span> : null}
-              {error ? <span className={styles.dangerText}>{error}</span> : null}
-            </div>
-          </form>
-        </section>
-
-        {selectionTask ? (
-          <section className={styles.card}>
-            <h2>筛选任务状态</h2>
-            <p>{selectionTask.message || "等待主力选股任务..."}</p>
-            <p className={styles.muted}>
-              进度: {selectionTask.current ?? 0} / {selectionTask.total ?? 0}
-            </p>
-            {selectionTask.error ? <p className={styles.dangerText}>{selectionTask.error}</p> : null}
-          </section>
-        ) : null}
-
-        {selectionResult?.success ? (
+        {section === "selection" ? (
           <>
+            <section className={styles.card}>
+              <form className={styles.stack} onSubmit={submitSelection}>
+                <div className={styles.formGrid}>
+                  <div className={styles.field}>
+                    <label htmlFor="dateMode">选择时间区间</label>
+                    <select id="dateMode" value={dateMode} onChange={(event) => setDateMode(event.target.value)}>
+                      {dateOptions.map((item) => (
+                        <option key={item.value} value={item.value}>
+                          {item.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className={styles.field}>
+                    <label htmlFor="finalN">最终精选数量</label>
+                    <input id="finalN" value={finalN} onChange={(event) => setFinalN(event.target.value)} />
+                  </div>
+                  <div className={styles.field}>
+                    <label htmlFor="maxChange">最大涨跌幅(%)</label>
+                    <input id="maxChange" value={maxChange} onChange={(event) => setMaxChange(event.target.value)} />
+                  </div>
+                  <div className={styles.field}>
+                    <label htmlFor="minCap">最小市值(亿)</label>
+                    <input id="minCap" value={minCap} onChange={(event) => setMinCap(event.target.value)} />
+                  </div>
+                  <div className={styles.field}>
+                    <label htmlFor="maxCap">最大市值(亿)</label>
+                    <input id="maxCap" value={maxCap} onChange={(event) => setMaxCap(event.target.value)} />
+                  </div>
+                  {dateMode === "custom" ? (
+                    <div className={styles.field}>
+                      <label htmlFor="customDate">开始日期</label>
+                      <input id="customDate" type="date" value={customDate} onChange={(event) => setCustomDate(event.target.value)} />
+                    </div>
+                  ) : null}
+                </div>
+                <div className={styles.actions}>
+                  <button className={styles.primaryButton} type="submit">
+                    开始主力选股
+                  </button>
+                  <button className={styles.secondaryButton} onClick={() => void loadHistory()} type="button">
+                    刷新历史
+                  </button>
+                  {message ? <span className={styles.successText}>{message}</span> : null}
+                  {error ? <span className={styles.dangerText}>{error}</span> : null}
+                </div>
+              </form>
+            </section>
+
+            {selectionTask ? (
+              <section className={styles.card}>
+                <h2>筛选任务状态</h2>
+                <p>{selectionTask.message || "等待主力选股任务..."}</p>
+                <p className={styles.muted}>
+                  进度: {selectionTask.current ?? 0} / {selectionTask.total ?? 0}
+                </p>
+                {selectionTask.error ? <p className={styles.dangerText}>{selectionTask.error}</p> : null}
+              </section>
+            ) : null}
+
+            {selectionResult?.success ? (
+              <>
             <section className={styles.card}>
               <div className={styles.compactGrid}>
                 <div className={styles.metric}>
@@ -559,8 +577,13 @@ export function MainForcePage() {
                 })}
               </div>
             </section>
+              </>
+            ) : null}
+          </>
+        ) : null}
 
-            <section className={styles.card}>
+        {section === "candidates" ? (
+          <section className={styles.card}>
               <div className={styles.actions}>
                 <h2>候选股票列表</h2>
                 <button className={styles.secondaryButton} onClick={() => void exportSelection("pdf")} type="button">
@@ -599,7 +622,10 @@ export function MainForcePage() {
               </div>
               <p className={styles.muted}>共 {rawStocks.length} 只候选股票。</p>
             </section>
+        ) : null}
 
+        {section === "batch" ? (
+          <>
             <section className={styles.card}>
               <h2>TOP 股票批量深度分析</h2>
               <div className={styles.formGrid}>
@@ -657,7 +683,7 @@ export function MainForcePage() {
           </>
         ) : null}
 
-        {batchTask ? (
+        {section === "batch" && batchTask ? (
           <section className={styles.card}>
             <h2>批量分析任务状态</h2>
             <p>{batchTask.message || "等待批量分析任务..."}</p>
@@ -668,7 +694,7 @@ export function MainForcePage() {
           </section>
         ) : null}
 
-        {activeBatchResults ? (
+        {section === "batch" && activeBatchResults ? (
           <section className={styles.card}>
             <div className={styles.actions}>
               <h2>{loadedHistoryRecord ? `批量历史 #${loadedHistoryRecord.id}` : "当前批量分析结果"}</h2>
@@ -771,44 +797,46 @@ export function MainForcePage() {
           </section>
         ) : null}
 
-        <section className={styles.card}>
-          <h2>批量分析历史</h2>
-          <div className={styles.compactGrid}>
-            <div className={styles.metric}>
-              <span className={styles.muted}>总记录数</span>
-              <strong>{history?.stats.total_records ?? 0}</strong>
-            </div>
-            <div className={styles.metric}>
-              <span className={styles.muted}>分析股票总数</span>
-              <strong>{history?.stats.total_stocks_analyzed ?? 0}</strong>
-            </div>
-            <div className={styles.metric}>
-              <span className={styles.muted}>成功率</span>
-              <strong>{numberText(history?.stats.success_rate)}%</strong>
-            </div>
-            <div className={styles.metric}>
-              <span className={styles.muted}>平均耗时(秒)</span>
-              <strong>{numberText(history?.stats.average_time)}</strong>
-            </div>
-          </div>
-          <div className={styles.list} style={{ marginTop: 18 }}>
-            {(history?.records ?? []).map((item) => (
-              <div className={styles.listItem} key={item.id}>
-                <strong>{asText(item.analysis_date, "未知时间")}</strong>
-                <div style={{ marginTop: 8 }}>{asText(item.summary, "无摘要")}</div>
-                <div className={styles.actions} style={{ marginTop: 12 }}>
-                  <button className={styles.secondaryButton} onClick={() => void loadHistoryRecord(item.id)} type="button">
-                    加载到当前结果
-                  </button>
-                  <button className={styles.dangerButton} onClick={() => void deleteHistoryRecord(item.id)} type="button">
-                    删除
-                  </button>
-                </div>
+        {section === "history" ? (
+          <section className={styles.card}>
+            <h2>批量分析历史</h2>
+            <div className={styles.compactGrid}>
+              <div className={styles.metric}>
+                <span className={styles.muted}>总记录数</span>
+                <strong>{history?.stats.total_records ?? 0}</strong>
               </div>
-            ))}
-            {!(history?.records.length ?? 0) ? <div className={styles.muted}>暂无批量分析历史记录。</div> : null}
-          </div>
-        </section>
+              <div className={styles.metric}>
+                <span className={styles.muted}>分析股票总数</span>
+                <strong>{history?.stats.total_stocks_analyzed ?? 0}</strong>
+              </div>
+              <div className={styles.metric}>
+                <span className={styles.muted}>成功率</span>
+                <strong>{numberText(history?.stats.success_rate)}%</strong>
+              </div>
+              <div className={styles.metric}>
+                <span className={styles.muted}>平均耗时(秒)</span>
+                <strong>{numberText(history?.stats.average_time)}</strong>
+              </div>
+            </div>
+            <div className={styles.list} style={{ marginTop: 18 }}>
+              {(history?.records ?? []).map((item) => (
+                <div className={styles.listItem} key={item.id}>
+                  <strong>{asText(item.analysis_date, "未知时间")}</strong>
+                  <div style={{ marginTop: 8 }}>{asText(item.summary, "无摘要")}</div>
+                  <div className={styles.actions} style={{ marginTop: 12 }}>
+                    <button className={styles.secondaryButton} onClick={() => void loadHistoryRecord(item.id)} type="button">
+                      加载到当前结果
+                    </button>
+                    <button className={styles.dangerButton} onClick={() => void deleteHistoryRecord(item.id)} type="button">
+                      删除
+                    </button>
+                  </div>
+                </div>
+              ))}
+              {!(history?.records.length ?? 0) ? <div className={styles.muted}>暂无批量分析历史记录。</div> : null}
+            </div>
+          </section>
+        ) : null}
       </div>
     </PageFrame>
   );

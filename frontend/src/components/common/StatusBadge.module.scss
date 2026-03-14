@@ -2,35 +2,43 @@
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 10px;
+  padding: 6px 11px;
   border-radius: 999px;
   border: 1px solid var(--line-soft);
-  background: var(--bg-panel);
+  background: color-mix(in srgb, var(--bg-panel) 92%, transparent);
   color: var(--text-main);
   font-size: 12px;
   font-weight: 600;
+  max-width: 100%;
+  line-height: 1.35;
+  white-space: normal;
+  word-break: break-word;
 }
 
 .default {
-  background: var(--bg-panel);
+  background: color-mix(in srgb, var(--bg-panel) 92%, transparent);
 }
 
 .success {
   color: var(--success);
+  border-color: color-mix(in srgb, var(--success) 34%, var(--line-soft));
   background: color-mix(in srgb, var(--success) 12%, transparent);
 }
 
 .warning {
   color: var(--warning);
+  border-color: color-mix(in srgb, var(--warning) 34%, var(--line-soft));
   background: color-mix(in srgb, var(--warning) 12%, transparent);
 }
 
 .danger {
   color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 34%, var(--line-soft));
   background: color-mix(in srgb, var(--danger) 12%, transparent);
 }
 
 .info {
   color: var(--info);
+  border-color: color-mix(in srgb, var(--info) 34%, var(--line-soft));
   background: color-mix(in srgb, var(--info) 12%, transparent);
 }

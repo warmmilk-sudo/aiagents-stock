@@ -46,7 +46,6 @@ export function LoginPage() {
   return (
     <div className={styles.page}>
       <div className={styles.panel}>
-        <p className={styles.eyebrow}>Control Center</p>
         <h1 className={styles.title}>aiagents stock</h1>
         <p className={styles.summary}>
         </p>

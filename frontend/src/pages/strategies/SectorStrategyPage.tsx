@@ -124,6 +124,14 @@ interface SchedulerStatus {
   };
 }
 
+type SectionKey = "overview" | "history" | "scheduler";
+
+const sectionTabs = [
+  { key: "overview", label: "分析总览" },
+  { key: "history", label: "历史报告" },
+  { key: "scheduler", label: "定时设置" },
+];
+
 function asText(value: unknown, fallback = "N/A"): string {
   if (value === null || value === undefined || value === "") {
     return fallback;
@@ -178,6 +186,7 @@ export function SectorStrategyPage() {
   const [selectedReport, setSelectedReport] = useState<SectorHistoryRecord | null>(null);
   const [scheduler, setScheduler] = useState<SchedulerStatus | null>(null);
   const [scheduleTime, setScheduleTime] = useState("09:00");
+  const [section, setSection] = useState<SectionKey>("overview");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
@@ -287,6 +296,7 @@ export function SectorStrategyPage() {
     try {
       const data = await apiFetch<SectorHistoryRecord>(`/api/strategies/sector-strategy/history/${reportId}`);
       setSelectedReport(data);
+      setSection("overview");
       setMessage(`已加载历史报告 #${reportId}`);
     } catch (requestError) {
       setError(requestError instanceof ApiRequestError ? requestError.message : "加载智策历史报告失败");
@@ -329,6 +339,9 @@ export function SectorStrategyPage() {
     <PageFrame
       title="智策板块"
       summary="当前支持分析任务、历史报告和定时任务控制。"
+      sectionTabs={sectionTabs}
+      activeSectionKey={section}
+      onSectionChange={(nextSection) => setSection(nextSection as SectionKey)}
       actions={
         <>
           <StatusBadge label={scheduler?.running ? `定时 ${scheduler.schedule_time}` : "定时空闲"} tone={scheduler?.running ? "success" : "default"} />
@@ -349,45 +362,6 @@ export function SectorStrategyPage() {
     >
       <div className={styles.stack}>
         <section className={styles.card}>
-          <h2>定时分析设置</h2>
-          <div className={styles.formGrid}>
-            <div className={styles.field}>
-              <label htmlFor="scheduleTime">定时时间</label>
-              <input id="scheduleTime" type="time" value={scheduleTime} onChange={(event) => setScheduleTime(event.target.value)} />
-            </div>
-            <div className={styles.metric}>
-              <span className={styles.muted}>当前状态</span>
-              <strong>{scheduler?.running ? "运行中" : "未运行"}</strong>
-              <div className={styles.muted}>下次运行: {asText(scheduler?.next_run_time, "-")}</div>
-              <div className={styles.muted}>上次运行: {asText(scheduler?.last_run_time, "-")}</div>
-            </div>
-            <div className={styles.metric}>
-              <span className={styles.muted}>邮件配置</span>
-              <strong>{scheduler?.email_config?.configured ? "完整" : "未完成"}</strong>
-              <div className={styles.muted}>启用: {scheduler?.email_config?.enabled ? "是" : "否"}</div>
-              <div className={styles.muted}>SMTP: {asText(scheduler?.email_config?.smtp_server, "未配置")}</div>
-              <div className={styles.muted}>发件箱: {asText(scheduler?.email_config?.email_from, "未配置")}</div>
-            </div>
-          </div>
-          <div className={styles.actions} style={{ marginTop: 16 }}>
-            <button className={styles.primaryButton} onClick={() => void saveScheduler(true)} type="button">
-              启动 / 更新
-            </button>
-            <button className={styles.secondaryButton} onClick={() => void runOnce()} type="button">
-              立即运行
-            </button>
-            <button className={styles.secondaryButton} onClick={() => void testEmail()} type="button">
-              测试邮件
-            </button>
-            <button className={styles.dangerButton} onClick={() => void saveScheduler(false)} type="button">
-              停止
-            </button>
-            {message ? <span className={styles.successText}>{message}</span> : null}
-            {error ? <span className={styles.dangerText}>{error}</span> : null}
-          </div>
-        </section>
-
-        <section className={styles.card}>
           <div className={styles.actions}>
             <button className={styles.primaryButton} onClick={() => void submitAnalysis()} type="button">
               开始智策分析
@@ -397,10 +371,12 @@ export function SectorStrategyPage() {
                 返回最新结果
               </button>
             ) : null}
+            {message ? <span className={styles.successText}>{message}</span> : null}
+            {error ? <span className={styles.dangerText}>{error}</span> : null}
           </div>
         </section>
 
-        {task ? (
+        {section === "overview" && task ? (
           <section className={styles.card}>
             <h2>任务状态</h2>
             <p>{task.message || "等待智策任务状态..."}</p>
@@ -411,7 +387,7 @@ export function SectorStrategyPage() {
           </section>
         ) : null}
 
-        {currentResult ? (
+        {section === "overview" && currentResult ? (
           <>
             <section className={styles.card}>
               <div className={styles.actions}>
@@ -531,26 +507,67 @@ export function SectorStrategyPage() {
           </>
         ) : null}
 
-        <section className={styles.card}>
-          <h2>历史报告</h2>
-          <div className={styles.list}>
-            {history.map((item) => (
-              <div className={styles.listItem} key={item.id}>
-                <strong>{asText(item.analysis_date ?? item.created_at, "未知时间")}</strong>
-                <div style={{ marginTop: 8 }}>{asText(item.summary_data?.headline ?? item.summary, "无摘要")}</div>
-                <div className={styles.actions} style={{ marginTop: 12 }}>
-                  <button className={styles.secondaryButton} onClick={() => void openHistory(item.id)} type="button">
-                    查看
-                  </button>
-                  <button className={styles.dangerButton} onClick={() => void deleteHistory(item.id)} type="button">
-                    删除
-                  </button>
+        {section === "history" ? (
+          <section className={styles.card}>
+            <h2>历史报告</h2>
+            <div className={styles.list}>
+              {history.map((item) => (
+                <div className={styles.listItem} key={item.id}>
+                  <strong>{asText(item.analysis_date ?? item.created_at, "未知时间")}</strong>
+                  <div style={{ marginTop: 8 }}>{asText(item.summary_data?.headline ?? item.summary, "无摘要")}</div>
+                  <div className={styles.actions} style={{ marginTop: 12 }}>
+                    <button className={styles.secondaryButton} onClick={() => void openHistory(item.id)} type="button">
+                      查看
+                    </button>
+                    <button className={styles.dangerButton} onClick={() => void deleteHistory(item.id)} type="button">
+                      删除
+                    </button>
+                  </div>
                 </div>
+              ))}
+              {!history.length ? <div className={styles.muted}>暂无智策历史报告。</div> : null}
+            </div>
+          </section>
+        ) : null}
+
+        {section === "scheduler" ? (
+          <section className={styles.card}>
+            <h2>定时分析设置</h2>
+            <div className={styles.formGrid}>
+              <div className={styles.field}>
+                <label htmlFor="scheduleTime">定时时间</label>
+                <input id="scheduleTime" type="time" value={scheduleTime} onChange={(event) => setScheduleTime(event.target.value)} />
               </div>
-            ))}
-            {!history.length ? <div className={styles.muted}>暂无智策历史报告。</div> : null}
-          </div>
-        </section>
+              <div className={styles.metric}>
+                <span className={styles.muted}>当前状态</span>
+                <strong>{scheduler?.running ? "运行中" : "未运行"}</strong>
+                <div className={styles.muted}>下次运行: {asText(scheduler?.next_run_time, "-")}</div>
+                <div className={styles.muted}>上次运行: {asText(scheduler?.last_run_time, "-")}</div>
+              </div>
+              <div className={styles.metric}>
+                <span className={styles.muted}>邮件配置</span>
+                <strong>{scheduler?.email_config?.configured ? "完整" : "未完成"}</strong>
+                <div className={styles.muted}>启用: {scheduler?.email_config?.enabled ? "是" : "否"}</div>
+                <div className={styles.muted}>SMTP: {asText(scheduler?.email_config?.smtp_server, "未配置")}</div>
+                <div className={styles.muted}>发件箱: {asText(scheduler?.email_config?.email_from, "未配置")}</div>
+              </div>
+            </div>
+            <div className={styles.actions} style={{ marginTop: 16 }}>
+              <button className={styles.primaryButton} onClick={() => void saveScheduler(true)} type="button">
+                启动 / 更新
+              </button>
+              <button className={styles.secondaryButton} onClick={() => void runOnce()} type="button">
+                立即运行
+              </button>
+              <button className={styles.secondaryButton} onClick={() => void testEmail()} type="button">
+                测试邮件
+              </button>
+              <button className={styles.dangerButton} onClick={() => void saveScheduler(false)} type="button">
+                停止
+              </button>
+            </div>
+          </section>
+        ) : null}
       </div>
     </PageFrame>
   );

@@ -3,14 +3,14 @@ import { useNavigate } from "react-router-dom";
 
 import { PageFrame } from "../../components/common/PageFrame";
 import { StatusBadge } from "../../components/common/StatusBadge";
-import { AnalysisActionButtons, type ActionPayload } from "../../components/research/AnalysisActionButtons";
+import type { ActionPayload } from "../../components/research/AnalysisActionButtons";
 import {
   AnalysisDetailPanel,
   type AnalysisRecordDetail,
 } from "../../components/research/AnalysisDetailPanel";
 import { ApiRequestError, apiFetch, buildQuery } from "../../lib/api";
+import { encodeIntent } from "../../lib/intents";
 import styles from "../ConsolePage.module.scss";
-
 
 interface AnalystConfig {
   technical: boolean;
@@ -62,6 +62,15 @@ interface FollowupAsset {
   action_payload?: ActionPayload | null;
 }
 
+const analystLabels: Record<keyof AnalystConfig, string> = {
+  technical: "技术分析师",
+  fundamental: "基本面分析师",
+  fund_flow: "资金流分析师",
+  risk: "风险控制分析师",
+  sentiment: "市场情绪分析师",
+  news: "新闻事件分析师",
+};
+
 const defaultAnalysts: AnalystConfig = {
   technical: true,
   fundamental: true,
@@ -83,6 +92,10 @@ function buildSingleRecordFromTask(task: TaskDetail | null): AnalysisRecordDetai
   };
 }
 
+function isWatchlistAsset(asset: FollowupAsset) {
+  return asset.followup_status_label === "关注中" || asset.status === "watchlist";
+}
+
 export function DeepAnalysisPage() {
   const navigate = useNavigate();
   const [stockInput, setStockInput] = useState("");
@@ -92,7 +105,6 @@ export function DeepAnalysisPage() {
   const [task, setTask] = useState<TaskDetail | null>(null);
   const [singleRecord, setSingleRecord] = useState<AnalysisRecordDetail | null>(null);
   const [followupAssets, setFollowupAssets] = useState<FollowupAsset[]>([]);
-  const [followupFilter, setFollowupFilter] = useState("全部");
   const [followupSearch, setFollowupSearch] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -113,7 +125,6 @@ export function DeepAnalysisPage() {
   const loadFollowupAssets = async () => {
     const data = await apiFetch<FollowupAsset[]>(
       `/api/followup-assets${buildQuery({
-        status_filter: followupFilter,
         search_term: followupSearch,
       })}`,
     );
@@ -128,7 +139,7 @@ export function DeepAnalysisPage() {
 
   useEffect(() => {
     void loadFollowupAssets();
-  }, [followupFilter, followupSearch]);
+  }, [followupSearch]);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -144,7 +155,7 @@ export function DeepAnalysisPage() {
           analysts,
         }),
       });
-      setMessage(`分析任务已提交: ${data.task_id}`);
+      setMessage(`分析任务已提交 ${data.task_id}`);
       await loadTask();
     } catch (requestError) {
       setError(requestError instanceof ApiRequestError ? requestError.message : "提交任务失败");
@@ -165,7 +176,7 @@ export function DeepAnalysisPage() {
           analysts,
         }),
       });
-      setMessage(`已重新提交 ${symbol} 的分析任务: ${data.task_id}`);
+      setMessage(`已重新提交 ${symbol} 的分析任务 ${data.task_id}`);
       await loadTask();
     } catch (requestError) {
       setError(requestError instanceof ApiRequestError ? requestError.message : "再次分析失败");
@@ -177,26 +188,87 @@ export function DeepAnalysisPage() {
     await loadFollowupAssets();
   };
 
-  const handleBackToResearch = async (assetId: number, note: string) => {
-    await apiFetch(`/api/followup-assets/${assetId}/research`, {
-      method: "POST",
-      body: JSON.stringify({ note }),
-    });
-    await loadFollowupAssets();
-  };
-
   const activeAnalystCount = useMemo(
     () => Object.values(analysts).filter(Boolean).length,
     [analysts],
   );
 
+  const watchlistAssets = useMemo(
+    () => followupAssets.filter((asset) => isWatchlistAsset(asset)),
+    [followupAssets],
+  );
+  const viewedAssets = useMemo(
+    () => followupAssets.filter((asset) => !isWatchlistAsset(asset)),
+    [followupAssets],
+  );
+
+  const buildMonitorPath = (payload?: ActionPayload | null) =>
+    payload
+      ? `/investment/smart-monitor?intent=${encodeIntent({ type: "watchlist", payload })}`
+      : "/investment/smart-monitor";
+
+  const handleOpenMonitor = async (asset: FollowupAsset) => {
+    setMessage("");
+    setError("");
+    try {
+      if (!isWatchlistAsset(asset)) {
+        await handlePromoteWatchlist(asset.id);
+        setMessage(`${asset.symbol} 已加入智能盯盘`);
+      }
+      navigate(buildMonitorPath(asset.action_payload));
+    } catch (requestError) {
+      setError(requestError instanceof ApiRequestError ? requestError.message : "加入盯盘失败");
+    }
+  };
+
+  const renderAssetCard = (title: string, assets: FollowupAsset[], emptyText: string) => (
+    <section className={`${styles.card} ${styles.span6}`}>
+      <div className={styles.cardHeader}>
+        <div>
+          <h2>{title}</h2>
+          <p className={styles.helperText}>只保留盯盘、再次分析和历史回看三类高频操作。</p>
+        </div>
+      </div>
+      <div className={styles.list}>
+        {assets.map((asset) => (
+          <div className={styles.listItem} key={asset.id}>
+            <strong>
+              {asset.name} ({asset.symbol})
+            </strong>
+            <p className={styles.muted}>
+              {asset.followup_status_label || asset.status} | {asset.latest_analysis_rating || "未评级"} |{" "}
+              {asset.latest_analysis_time || "暂无时间"}
+            </p>
+            <p>{asset.latest_analysis_summary || "暂无摘要"}</p>
+            <div className={styles.actions}>
+              <button className={styles.secondaryButton} onClick={() => void handleOpenMonitor(asset)} type="button">
+                加入盯盘
+              </button>
+              <button className={styles.secondaryButton} onClick={() => void handleReAnalyze(asset.symbol)} type="button">
+                再次分析
+              </button>
+              {asset.latest_analysis_id ? (
+                <button
+                  className={styles.secondaryButton}
+                  onClick={() => navigate(`/research/history?recordId=${asset.latest_analysis_id}`)}
+                  type="button"
+                >
+                  分析历史
+                </button>
+              ) : null}
+            </div>
+          </div>
+        ))}
+        {assets.length === 0 ? <div className={styles.muted}>{emptyText}</div> : null}
+      </div>
+    </section>
+  );
+
   return (
     <PageFrame
-      title="深度分析"
-      summary="这里直接提交后台分析任务、轮询状态并展示结果，同时保留看过/关注链路。"
       actions={
         <>
-          <StatusBadge label={`分析师 ${activeAnalystCount}/6`} tone="info" />
+          <StatusBadge label={`分析师 ${activeAnalystCount}/6`} tone="default" />
           {task ? (
             <StatusBadge
               label={`${task.status} ${Math.round((task.progress ?? 0) * 100)}%`}
@@ -205,24 +277,49 @@ export function DeepAnalysisPage() {
           ) : null}
         </>
       }
+      title="深度分析"
     >
-      <div className={styles.stack}>
-        <section className={styles.card}>
+      <div className={styles.grid}>
+        <section className={`${styles.card} ${styles.span6}`}>
+          <div className={styles.cardHeader}>
+            <div>
+              <h2>开始分析</h2>
+              <p className={styles.helperText}>录入股票后直接提交任务，结果和任务状态会保留在当前页。</p>
+            </div>
+          </div>
           <form className={styles.stack} onSubmit={handleSubmit}>
+            <div className={styles.field}>
+              <label htmlFor="stockInput">股票代码</label>
+              <textarea
+                id="stockInput"
+                onChange={(event) => setStockInput(event.target.value)}
+                placeholder={"000001\n600519\nAAPL"}
+                rows={8}
+                value={stockInput}
+              />
+            </div>
+            <div className={styles.actions}>
+              <button className={styles.primaryButton} type="submit">
+                开始深度分析
+              </button>
+            </div>
+            {message ? <span className={styles.successText}>{message}</span> : null}
+            {error ? <span className={styles.dangerText}>{error}</span> : null}
+          </form>
+        </section>
+
+        <section className={`${styles.card} ${styles.span6}`}>
+          <div className={styles.cardHeader}>
+            <div>
+              <h2>设置</h2>
+              <p className={styles.helperText}>周期、批量模式和分析师选择独立放在这里，避免和输入区混在一起。</p>
+            </div>
+          </div>
+          <div className={styles.stack}>
             <div className={styles.formGrid}>
               <div className={styles.field}>
-                <label htmlFor="stockInput">股票代码</label>
-                <textarea
-                  id="stockInput"
-                  rows={5}
-                  value={stockInput}
-                  onChange={(event) => setStockInput(event.target.value)}
-                  placeholder={"000001\n600519\nAAPL"}
-                />
-              </div>
-              <div className={styles.field}>
                 <label htmlFor="period">周期</label>
-                <select id="period" value={period} onChange={(event) => setPeriod(event.target.value)}>
+                <select id="period" onChange={(event) => setPeriod(event.target.value)} value={period}>
                   <option value="6mo">6 个月</option>
                   <option value="1y">1 年</option>
                   <option value="2y">2 年</option>
@@ -233,15 +330,23 @@ export function DeepAnalysisPage() {
                 <label htmlFor="batchMode">批量模式</label>
                 <select
                   id="batchMode"
-                  value={batchMode}
                   onChange={(event) => setBatchMode(event.target.value as "顺序分析" | "多线程并行")}
+                  value={batchMode}
                 >
                   <option value="顺序分析">顺序分析</option>
                   <option value="多线程并行">多线程并行</option>
                 </select>
               </div>
+              <div className={styles.field}>
+                <label htmlFor="followupSearch">跟进检索</label>
+                <input
+                  id="followupSearch"
+                  onChange={(event) => setFollowupSearch(event.target.value)}
+                  placeholder="搜索代码 / 名称 / 账户"
+                  value={followupSearch}
+                />
+              </div>
             </div>
-
             <div className={styles.compactGrid}>
               {Object.entries(analysts).map(([key, enabled]) => (
                 <label className={styles.listItem} key={key}>
@@ -255,23 +360,18 @@ export function DeepAnalysisPage() {
                     }
                     type="checkbox"
                   />{" "}
-                  {key}
+                  {analystLabels[key as keyof AnalystConfig] || key}
                 </label>
               ))}
             </div>
-
-            <div className={styles.actions}>
-              <button className={styles.primaryButton} type="submit">
-                开始深度分析
-              </button>
-              {message ? <span className={styles.successText}>{message}</span> : null}
-              {error ? <span className={styles.dangerText}>{error}</span> : null}
-            </div>
-          </form>
+          </div>
         </section>
 
+        {renderAssetCard("关注中", watchlistAssets, "暂无关注中的股票")}
+        {renderAssetCard("看过", viewedAssets, "暂无看过的股票")}
+
         {task ? (
-          <section className={styles.card}>
+          <section className={`${styles.card} ${styles.span12}`}>
             <h2>任务状态</h2>
             <p>{task.message || "等待任务状态..."}</p>
             <p className={styles.muted}>
@@ -316,90 +416,11 @@ export function DeepAnalysisPage() {
         ) : null}
 
         {singleRecord ? (
-          <section className={styles.card}>
+          <section className={`${styles.card} ${styles.span12}`}>
             <h2>最新分析结果</h2>
             <AnalysisDetailPanel record={singleRecord} />
           </section>
         ) : null}
-
-        <section className={styles.card}>
-          <h2>看过 / 关注</h2>
-          <div className={styles.formGrid}>
-            <div className={styles.field}>
-              <label htmlFor="followupFilter">范围</label>
-              <select id="followupFilter" value={followupFilter} onChange={(event) => setFollowupFilter(event.target.value)}>
-                <option value="全部">全部</option>
-                <option value="仅关注">仅关注</option>
-                <option value="仅看过">仅看过</option>
-              </select>
-            </div>
-            <div className={styles.field}>
-              <label htmlFor="followupSearch">搜索</label>
-              <input
-                id="followupSearch"
-                value={followupSearch}
-                onChange={(event) => setFollowupSearch(event.target.value)}
-                placeholder="代码 / 名称 / 账户"
-              />
-            </div>
-          </div>
-          <div className={styles.list}>
-            {followupAssets.map((asset) => (
-              <div className={styles.listItem} key={asset.id}>
-                <strong>
-                  {asset.name} ({asset.symbol})
-                </strong>
-                <p className={styles.muted}>
-                  {asset.followup_status_label || asset.status} | {asset.latest_analysis_rating || "未评级"} |{" "}
-                  {asset.latest_analysis_time || "暂无时间"}
-                </p>
-                <p>{asset.latest_analysis_summary || "暂无摘要"}</p>
-                <div className={styles.actions}>
-                  <button className={styles.secondaryButton} onClick={() => void handleReAnalyze(asset.symbol)} type="button">
-                    再次分析
-                  </button>
-                  {asset.latest_analysis_id ? (
-                    <button
-                      className={styles.secondaryButton}
-                      onClick={() => navigate(`/research/history?recordId=${asset.latest_analysis_id}`)}
-                      type="button"
-                    >
-                      分析历史
-                    </button>
-                  ) : null}
-                  {asset.followup_status_label === "关注中" ? (
-                    <>
-                      <button
-                        className={styles.secondaryButton}
-                        onClick={() => navigate("/investment/smart-monitor")}
-                        type="button"
-                      >
-                        打开盯盘
-                      </button>
-                      <button
-                        className={styles.secondaryButton}
-                        onClick={() => void handleBackToResearch(asset.id, asset.latest_analysis_summary || "")}
-                        type="button"
-                      >
-                        移回看过
-                      </button>
-                    </>
-                  ) : (
-                    <button
-                      className={styles.secondaryButton}
-                      onClick={() => void handlePromoteWatchlist(asset.id)}
-                      type="button"
-                    >
-                      加入盯盘
-                    </button>
-                  )}
-                  <AnalysisActionButtons actionPayload={asset.action_payload} />
-                </div>
-              </div>
-            ))}
-            {followupAssets.length === 0 ? <div className={styles.muted}>暂无看过/关注股票</div> : null}
-          </div>
-        </section>
       </div>
     </PageFrame>
   );

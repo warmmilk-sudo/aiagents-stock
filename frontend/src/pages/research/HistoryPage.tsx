@@ -11,13 +11,19 @@ import { AnalysisActionButtons } from "../../components/research/AnalysisActionB
 import { apiFetch, buildQuery } from "../../lib/api";
 import styles from "../ConsolePage.module.scss";
 
-
 interface AnalysisHistoryItem extends AnalysisRecordDetail {
   id: number;
   symbol: string;
   stock_name: string;
   analysis_source_label?: string;
 }
+
+type SectionKey = "list" | "detail";
+
+const sectionTabs = [
+  { key: "list", label: "历史记录" },
+  { key: "detail", label: "记录详情" },
+];
 
 export function HistoryPage() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -26,6 +32,7 @@ export function HistoryPage() {
   const [portfolioState, setPortfolioState] = useState("全部");
   const [accountName, setAccountName] = useState("全部账户");
   const [searchTerm, setSearchTerm] = useState("");
+  const [section, setSection] = useState<SectionKey>("list");
 
   const selectedRecordId = Number(searchParams.get("recordId") || 0);
 
@@ -55,9 +62,11 @@ export function HistoryPage() {
 
   useEffect(() => {
     if (selectedRecordId) {
+      setSection("detail");
       void loadDetail(selectedRecordId);
     } else {
       setSelectedRecord(null);
+      setSection("list");
     }
   }, [selectedRecordId]);
 
@@ -77,85 +86,96 @@ export function HistoryPage() {
 
   return (
     <PageFrame
+      actions={<StatusBadge label={`记录 ${records.length}`} tone="default" />}
+      activeSectionKey={section}
+      onSectionChange={(nextSection) => setSection(nextSection as SectionKey)}
+      sectionTabs={sectionTabs}
       title="分析历史"
-      summary="统一查看深度分析与持仓分析历史，并从历史详情直接进入盯盘、持仓和价格预警。"
-      actions={<StatusBadge label={`记录 ${records.length}`} tone="info" />}
     >
       <div className={styles.stack}>
-        <section className={styles.card}>
-          <div className={styles.formGrid}>
-            <div className={styles.field}>
-              <label htmlFor="portfolioState">持仓状态</label>
-              <select id="portfolioState" value={portfolioState} onChange={(event) => setPortfolioState(event.target.value)}>
-                <option value="全部">全部</option>
-                <option value="在持仓">在持仓</option>
-                <option value="未持仓">未持仓</option>
-              </select>
-            </div>
-            <div className={styles.field}>
-              <label htmlFor="accountName">账户</label>
-              <select id="accountName" value={accountName} onChange={(event) => setAccountName(event.target.value)}>
-                {accounts.map((item) => (
-                  <option key={item} value={item}>
-                    {item}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className={styles.field}>
-              <label htmlFor="searchTerm">搜索</label>
-              <input
-                id="searchTerm"
-                value={searchTerm}
-                onChange={(event) => setSearchTerm(event.target.value)}
-                placeholder="股票代码 / 名称"
-              />
-            </div>
-          </div>
-        </section>
-
-        {selectedRecord ? (
-          <section className={styles.card}>
-            <h2>记录详情</h2>
-            <AnalysisDetailPanel record={selectedRecord} />
-          </section>
-        ) : null}
-
-        <section className={styles.card}>
-          <h2>历史记录</h2>
-          <div className={styles.list}>
-            {records.map((record) => (
-              <div className={styles.listItem} key={record.id}>
-                <strong>
-                  {record.stock_name} ({record.symbol})
-                </strong>
-                <p className={styles.muted}>
-                  {record.analysis_time_text || "暂无时间"} | {record.analysis_source_label || "历史分析"} |{" "}
-                  {record.portfolio_state_label || "未持仓"}
-                </p>
-                <p>{record.summary || "暂无摘要"}</p>
-                <div className={styles.actions}>
-                  <button
-                    className={styles.secondaryButton}
-                    onClick={() => setSearchParams({ recordId: String(record.id) })}
-                    type="button"
-                  >
-                    {selectedRecordId === record.id ? "已展开" : "查看详情"}
-                  </button>
-                  <AnalysisActionButtons
-                    actionPayload={record.action_payload}
-                    isInPortfolio={Boolean(record.is_in_portfolio)}
-                    portfolioLabel={record.portfolio_action_label}
+        {section === "list" ? (
+          <>
+            <section className={styles.card}>
+              <div className={styles.formGrid}>
+                <div className={styles.field}>
+                  <label htmlFor="portfolioState">持仓状态</label>
+                  <select id="portfolioState" value={portfolioState} onChange={(event) => setPortfolioState(event.target.value)}>
+                    <option value="全部">全部</option>
+                    <option value="在持仓">在持仓</option>
+                    <option value="未持仓">未持仓</option>
+                  </select>
+                </div>
+                <div className={styles.field}>
+                  <label htmlFor="accountName">账户</label>
+                  <select id="accountName" value={accountName} onChange={(event) => setAccountName(event.target.value)}>
+                    {accounts.map((item) => (
+                      <option key={item} value={item}>
+                        {item}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className={styles.field}>
+                  <label htmlFor="searchTerm">搜索</label>
+                  <input
+                    id="searchTerm"
+                    onChange={(event) => setSearchTerm(event.target.value)}
+                    placeholder="股票代码 / 名称"
+                    value={searchTerm}
                   />
-                  <button className={styles.dangerButton} onClick={() => void handleDelete(record.id)} type="button">
-                    删除
-                  </button>
                 </div>
               </div>
-            ))}
-            {records.length === 0 ? <div className={styles.muted}>暂无匹配记录</div> : null}
-          </div>
-        </section>
+            </section>
+
+            <section className={styles.card}>
+              <h2>历史记录</h2>
+              <div className={styles.list}>
+                {records.map((record) => (
+                  <div className={styles.listItem} key={record.id}>
+                    <strong>
+                      {record.stock_name} ({record.symbol})
+                    </strong>
+                    <p className={styles.muted}>
+                      {record.analysis_time_text || "暂无时间"} | {record.analysis_source_label || "历史分析"} |{" "}
+                      {record.portfolio_state_label || "未持仓"}
+                    </p>
+                    <p>{record.summary || "暂无摘要"}</p>
+                    <div className={styles.actions}>
+                      <button
+                        className={styles.secondaryButton}
+                        onClick={() => setSearchParams({ recordId: String(record.id) })}
+                        type="button"
+                      >
+                        查看详情
+                      </button>
+                      <AnalysisActionButtons
+                        actionPayload={record.action_payload}
+                        isInPortfolio={Boolean(record.is_in_portfolio)}
+                        portfolioLabel={record.portfolio_action_label}
+                        showPortfolioAction={false}
+                      />
+                      <button className={styles.dangerButton} onClick={() => void handleDelete(record.id)} type="button">
+                        删除
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                {records.length === 0 ? <div className={styles.muted}>暂无匹配记录</div> : null}
+              </div>
+            </section>
+          </>
+        ) : null}
+
+        {section === "detail" ? (
+          <section className={styles.card}>
+            <h2>记录详情</h2>
+            {selectedRecord ? (
+              <AnalysisDetailPanel record={selectedRecord} showPortfolioAction={false} />
+            ) : (
+              <div className={styles.muted}>请选择一条历史记录查看详情。</div>
+            )}
+          </section>
+        ) : null}
       </div>
     </PageFrame>
   );

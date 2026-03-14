@@ -4,7 +4,6 @@ import { encodeIntent, type TypedIntent } from "../../lib/intents";
 import { useResearchStore } from "../../stores/researchStore";
 import styles from "./ResearchPanels.module.scss";
 
-
 export interface ActionPayload {
   symbol: string;
   stock_name: string;
@@ -20,6 +19,7 @@ interface AnalysisActionButtonsProps {
   recordId?: number;
   portfolioLabel?: string;
   isInPortfolio?: boolean;
+  showPortfolioAction?: boolean;
 }
 
 export function AnalysisActionButtons({
@@ -27,6 +27,7 @@ export function AnalysisActionButtons({
   recordId,
   portfolioLabel,
   isInPortfolio = false,
+  showPortfolioAction = true,
 }: AnalysisActionButtonsProps) {
   const navigate = useNavigate();
   const setIntent = useResearchStore((state) => state.setIntent);
@@ -52,24 +53,19 @@ export function AnalysisActionButtons({
           >
             加入盯盘
           </button>
-          <button
-            className={styles.actionButton}
-            onClick={() => openIntent("/investment/price-alerts", { type: "price_alert", payload: actionPayload })}
-            type="button"
-          >
-            加入价格预警
-          </button>
-          <button
-            className={styles.primaryAction}
-            onClick={() =>
-              isInPortfolio
-                ? navigate("/investment/portfolio")
-                : openIntent("/investment/portfolio", { type: "portfolio", payload: actionPayload })
-            }
-            type="button"
-          >
-            {portfolioLabel || (isInPortfolio ? "跳转持仓" : "设为持仓")}
-          </button>
+          {showPortfolioAction ? (
+            <button
+              className={styles.primaryAction}
+              onClick={() =>
+                isInPortfolio
+                  ? navigate("/investment/portfolio")
+                  : openIntent("/investment/portfolio", { type: "portfolio", payload: actionPayload })
+              }
+              type="button"
+            >
+              {portfolioLabel || (isInPortfolio ? "跳转持仓" : "设为持仓")}
+            </button>
+          ) : null}
         </>
       ) : null}
     </div>

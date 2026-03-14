@@ -1,7 +1,6 @@
 import { AnalysisActionButtons, type ActionPayload } from "./AnalysisActionButtons";
 import styles from "./ResearchPanels.module.scss";
 
-
 export interface AnalysisRecordDetail {
   id?: number;
   symbol?: string;
@@ -38,7 +37,15 @@ function metricValue(value: unknown): string {
   return String(value);
 }
 
-export function AnalysisDetailPanel({ record }: { record: AnalysisRecordDetail }) {
+interface AnalysisDetailPanelProps {
+  record: AnalysisRecordDetail;
+  showPortfolioAction?: boolean;
+}
+
+export function AnalysisDetailPanel({
+  record,
+  showPortfolioAction = true,
+}: AnalysisDetailPanelProps) {
   const finalDecision = record.final_decision ?? {};
   const stockInfo = record.stock_info ?? {};
   const agentsResults = record.agents_results ?? {};
@@ -66,9 +73,10 @@ export function AnalysisDetailPanel({ record }: { record: AnalysisRecordDetail }
 
       <AnalysisActionButtons
         actionPayload={record.action_payload}
-        recordId={record.id}
-        portfolioLabel={record.portfolio_action_label}
         isInPortfolio={Boolean(record.is_in_portfolio)}
+        portfolioLabel={record.portfolio_action_label}
+        recordId={record.id}
+        showPortfolioAction={showPortfolioAction}
       />
 
       <section className={styles.block}>
@@ -79,7 +87,11 @@ export function AnalysisDetailPanel({ record }: { record: AnalysisRecordDetail }
       <section className={styles.block}>
         <h3>关键位置</h3>
         <p className={styles.text}>
-          进场区间: {metricValue(finalDecision.entry_range || `${metricValue(finalDecision.entry_min)} - ${metricValue(finalDecision.entry_max)}`)}
+          进场区间:{" "}
+          {metricValue(
+            finalDecision.entry_range ||
+              `${metricValue(finalDecision.entry_min)} - ${metricValue(finalDecision.entry_max)}`,
+          )}
           {"\n"}止盈位: {metricValue(finalDecision.take_profit)}
           {"\n"}止损位: {metricValue(finalDecision.stop_loss)}
           {"\n"}持有周期: {metricValue(finalDecision.holding_period)}

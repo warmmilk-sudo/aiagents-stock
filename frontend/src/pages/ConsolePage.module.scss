@@ -1,56 +1,65 @@
 .stack {
   display: grid;
-  gap: 18px;
+  gap: 14px;
+  min-width: 0;
 }
 
 .grid {
   display: grid;
-  gap: 18px;
+  gap: 14px;
   grid-template-columns: repeat(12, minmax(0, 1fr));
+  min-width: 0;
 }
 
 .card {
   grid-column: span 12;
-  padding: 20px;
+  padding: 16px;
   border: 1px solid var(--line-soft);
-  border-radius: var(--radius-xl);
-  background: var(--bg-panel);
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--bg-panel) 96%, transparent);
   box-shadow: var(--shadow-card);
+  min-width: 0;
+  backdrop-filter: blur(14px);
 }
 
 .card h2,
 .card h3 {
-  margin: 0 0 14px;
+  margin: 0 0 10px;
 }
 
 .compactGrid {
   display: grid;
-  gap: 14px;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+  min-width: 0;
 }
 
 .metric {
-  padding: 16px;
-  border-radius: var(--radius-lg);
+  padding: 13px;
+  border-radius: 14px;
   border: 1px solid var(--line-soft);
-  background: var(--bg-panel-strong);
+  background: color-mix(in srgb, var(--bg-panel-strong) 94%, transparent);
 }
 
 .metric strong {
   display: block;
-  margin-top: 8px;
-  font-size: 26px;
+  margin-top: 6px;
+  font-size: clamp(20px, 4vw, 24px);
+  line-height: 1.15;
+  word-break: break-word;
 }
 
 .formGrid {
   display: grid;
-  gap: 14px;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+  min-width: 0;
 }
 
 .field {
   display: grid;
-  gap: 8px;
+  gap: 6px;
+  min-width: 0;
 }
 
 .field label {
@@ -61,71 +70,233 @@
 .field select,
 .field textarea {
   width: 100%;
-  padding: 12px 14px;
+  max-width: 100%;
+  padding: 10px 12px;
   border: 1px solid var(--line-strong);
-  border-radius: 14px;
-  background: var(--bg-panel-strong);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.025);
   color: var(--text-main);
+  outline: 0;
+  transition:
+    border-color var(--shell-transition),
+    background var(--shell-transition),
+    box-shadow var(--shell-transition);
+}
+
+.field input:focus,
+.field select:focus,
+.field textarea:focus,
+.actions > input:focus,
+.actions > select:focus,
+.actions > textarea:focus {
+  border-color: color-mix(in srgb, var(--accent) 48%, var(--line-strong));
+  background: rgba(255, 255, 255, 0.04);
+  box-shadow: 0 0 0 3px rgba(143, 127, 109, 0.12);
+}
+
+.field textarea {
+  resize: vertical;
 }
 
 .actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.actions > * {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.actions > .field {
+  flex: 1 1 220px;
+}
+
+.actions > input,
+.actions > select,
+.actions > textarea {
+  flex: 1 1 220px;
+}
+
+.actions > .listItem {
+  flex: 1 1 220px;
+}
+
+.actions > .successText,
+.actions > .dangerText,
+.actions > .muted {
+  flex: 1 1 100%;
 }
 
 .primaryButton,
 .secondaryButton,
-.dangerButton {
-  border: 0;
+.dangerButton,
+.tertiaryButton {
+  border: 1px solid var(--line-strong);
   border-radius: 999px;
-  padding: 11px 16px;
+  padding: 9px 14px;
   font-weight: 700;
+  max-width: 100%;
+  transition:
+    background var(--shell-transition),
+    border-color var(--shell-transition),
+    color var(--shell-transition),
+    transform var(--shell-transition);
 }
 
 .primaryButton {
-  background: var(--accent);
-  color: #fff4e8;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--line-soft));
+  color: var(--text-main);
 }
 
 .secondaryButton {
-  background: var(--accent-soft);
-  color: var(--accent-strong);
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--text-main);
 }
 
 .dangerButton {
   background: color-mix(in srgb, var(--danger) 12%, transparent);
+  border-color: color-mix(in srgb, var(--danger) 40%, var(--line-soft));
   color: var(--danger);
+}
+
+.tertiaryButton {
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.primaryButton:hover,
+.secondaryButton:hover,
+.dangerButton:hover,
+.tertiaryButton:hover {
+  transform: translateY(-1px);
+}
+
+.primaryButton:hover {
+  background: color-mix(in srgb, var(--accent) 26%, transparent);
+}
+
+.secondaryButton:hover,
+.tertiaryButton:hover {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-main);
 }
 
 .tableWrap {
   overflow: auto;
+  max-width: 100%;
+  -webkit-overflow-scrolling: touch;
 }
 
 .table {
   width: 100%;
-  min-width: 720px;
+  min-width: 640px;
   border-collapse: collapse;
+}
+
+.table thead th {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .table th,
 .table td {
-  padding: 12px 10px;
+  padding: 10px 8px;
   border-bottom: 1px solid var(--line-soft);
   text-align: left;
   vertical-align: top;
+  word-break: break-word;
 }
 
 .list {
   display: grid;
-  gap: 12px;
+  gap: 10px;
+  min-width: 0;
 }
 
 .listItem {
-  padding: 14px 16px;
+  padding: 12px 14px;
   border: 1px solid var(--line-soft);
-  border-radius: var(--radius-lg);
-  background: var(--bg-panel-strong);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--bg-panel-strong) 94%, transparent);
+  min-width: 0;
+  word-break: break-word;
+}
+
+.cardHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.cardHeader > * {
+  min-width: 0;
+}
+
+.helperText {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.noticeCard {
+  position: relative;
+  display: grid;
+  gap: 8px;
+  padding: 14px 16px 14px 20px;
+  border: 1px solid var(--line-soft);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--bg-panel-strong) 95%, transparent);
+  min-width: 0;
+}
+
+.noticeCard::before {
+  content: "";
+  position: absolute;
+  inset: 12px auto 12px 10px;
+  width: 3px;
+  border-radius: 999px;
+  background: var(--notice-color, var(--accent));
+}
+
+.noticeSuccess {
+  --notice-color: var(--success);
+}
+
+.noticeWarning {
+  --notice-color: var(--warning);
+}
+
+.noticeDanger {
+  --notice-color: var(--danger);
+}
+
+.noticeInfo {
+  --notice-color: var(--info);
+}
+
+.noticeMeta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.code {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 12px;
+  color: color-mix(in srgb, var(--text-main) 92%, var(--text-muted));
 }
 
 .muted {
@@ -148,9 +319,109 @@
   grid-column: span 12;
 }
 
+.actionField {
+  flex: 1 1 220px;
+}
+
+.actionInput {
+  flex: 1 1 260px;
+}
+
+.actionToggle {
+  flex: 1 1 180px;
+}
+
+.shortInput {
+  flex: 0 1 120px;
+  width: 120px;
+}
+
 @media (max-width: 900px) {
   .span6,
   .span12 {
     grid-column: span 12;
+  }
+}
+
+@media (max-width: 720px) {
+  .stack,
+  .grid {
+    gap: 12px;
+  }
+
+  .card {
+    padding: 14px;
+    border-radius: 16px;
+  }
+
+  .compactGrid,
+  .formGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .metric {
+    padding: 12px;
+  }
+
+  .metric strong {
+    font-size: 20px;
+  }
+
+  .listItem {
+    padding: 11px 12px;
+  }
+
+  .noticeCard {
+    padding: 12px 12px 12px 18px;
+  }
+
+  .table {
+    min-width: 560px;
+  }
+
+  .table th,
+  .table td {
+    padding: 9px 7px;
+    font-size: 13px;
+  }
+
+  .actionField,
+  .actionInput,
+  .actionToggle {
+    flex-basis: 100%;
+  }
+}
+
+@media (max-width: 560px) {
+  .card {
+    padding: 12px;
+  }
+
+  .actions {
+    gap: 8px;
+  }
+
+  .actions > .primaryButton,
+  .actions > .secondaryButton,
+  .actions > .dangerButton,
+  .actions > .tertiaryButton,
+  .actionField,
+  .actionInput,
+  .actionToggle,
+  .shortInput {
+    width: 100%;
+    flex-basis: 100%;
+  }
+
+  .actions > .primaryButton,
+  .actions > .secondaryButton,
+  .actions > .dangerButton,
+  .actions > .tertiaryButton {
+    display: inline-flex;
+    justify-content: center;
+  }
+
+  .table {
+    min-width: 520px;
   }
 }

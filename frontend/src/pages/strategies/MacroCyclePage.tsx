@@ -9,6 +9,12 @@ import styles from "../ConsolePage.module.scss";
 
 type Panel = "analysis" | "history" | "theory";
 
+const sectionTabs = [
+  { key: "analysis", label: "周期分析" },
+  { key: "history", label: "历史报告" },
+  { key: "theory", label: "理论介绍" },
+];
+
 interface TaskDetail<T> {
   id: string;
   status: string;
@@ -160,9 +166,12 @@ export function MacroCyclePage() {
     <PageFrame
       title="宏观周期"
       summary="保留宏观周期分析、历史报告和理论介绍三大模块。"
+      sectionTabs={sectionTabs}
+      activeSectionKey={panel}
+      onSectionChange={(nextSection) => setPanel(nextSection as Panel)}
       actions={
         <>
-          <StatusBadge label={selectedReport ? `历史 #${selectedReport.id}` : "最新分析"} tone={selectedReport ? "info" : "default"} />
+          <StatusBadge label={selectedReport ? `历史 #${selectedReport.id}` : "最新分析"} tone="default" />
           <StatusBadge
             label={task ? `分析 ${task.status} ${Math.round((task.progress ?? 0) * 100)}%` : "分析空闲"}
             tone={task?.status === "success" ? "success" : task?.status === "failed" ? "danger" : task ? "warning" : "default"}
@@ -173,15 +182,6 @@ export function MacroCyclePage() {
       <div className={styles.stack}>
         <section className={styles.card}>
           <div className={styles.actions}>
-            <button className={panel === "analysis" ? styles.primaryButton : styles.secondaryButton} onClick={() => setPanel("analysis")} type="button">
-              周期分析
-            </button>
-            <button className={panel === "history" ? styles.primaryButton : styles.secondaryButton} onClick={() => setPanel("history")} type="button">
-              历史报告
-            </button>
-            <button className={panel === "theory" ? styles.primaryButton : styles.secondaryButton} onClick={() => setPanel("theory")} type="button">
-              理论介绍
-            </button>
             <button className={styles.secondaryButton} onClick={() => void submitAnalysis()} type="button">
               开始宏观周期分析
             </button>
