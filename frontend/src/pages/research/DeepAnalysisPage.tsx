@@ -3,23 +3,20 @@ import { useNavigate } from "react-router-dom";
 
 import { PageFrame } from "../../components/common/PageFrame";
 import { StatusBadge } from "../../components/common/StatusBadge";
+import { TaskProgressBar } from "../../components/common/TaskProgressBar";
 import type { ActionPayload } from "../../components/research/AnalysisActionButtons";
 import {
   AnalysisDetailPanel,
   type AnalysisRecordDetail,
 } from "../../components/research/AnalysisDetailPanel";
-import { ApiRequestError, apiFetch, buildQuery } from "../../lib/api";
+import { ApiRequestError, apiFetch, apiFetchCached, buildQuery } from "../../lib/api";
+import { formatDateTime } from "../../lib/datetime";
 import { encodeIntent } from "../../lib/intents";
+import {
+  useDeepAnalysisStore,
+  type DeepAnalysisAnalystConfig,
+} from "../../stores/deepAnalysisStore";
 import styles from "../ConsolePage.module.scss";
-
-interface AnalystConfig {
-  technical: boolean;
-  fundamental: boolean;
-  fund_flow: boolean;
-  risk: boolean;
-  sentiment: boolean;
-  news: boolean;
-}
 
 interface TaskResultRow {
   symbol: string;
@@ -33,6 +30,7 @@ interface TaskResult {
   record_id?: number;
   symbol?: string;
   period?: string;
+  max_workers?: number;
   results?: TaskResultRow[];
 }
 
@@ -62,22 +60,22 @@ interface FollowupAsset {
   action_payload?: ActionPayload | null;
 }
 
-const analystLabels: Record<keyof AnalystConfig, string> = {
+type SectionKey = "start" | "watchlist" | "viewed" | "settings";
+
+const sectionTabs = [
+  { key: "start", label: "开始分析" },
+  { key: "watchlist", label: "关注中" },
+  { key: "viewed", label: "看过" },
+  { key: "settings", label: "设置" },
+];
+
+const analystLabels: Record<keyof DeepAnalysisAnalystConfig, string> = {
   technical: "技术分析师",
   fundamental: "基本面分析师",
   fund_flow: "资金流分析师",
   risk: "风险控制分析师",
   sentiment: "市场情绪分析师",
   news: "新闻事件分析师",
-};
-
-const defaultAnalysts: AnalystConfig = {
-  technical: true,
-  fundamental: true,
-  fund_flow: true,
-  risk: true,
-  sentiment: false,
-  news: false,
 };
 
 function buildSingleRecordFromTask(task: TaskDetail | null): AnalysisRecordDetail | null {
@@ -96,12 +94,45 @@ function isWatchlistAsset(asset: FollowupAsset) {
   return asset.followup_status_label === "关注中" || asset.status === "watchlist";
 }
 
+function taskBadge(task: TaskDetail | null): { label: string; tone: "warning" | "success" | "danger" } | null {
+  if (!task) {
+    return null;
+  }
+  if (task.status === "success") {
+    return { label: "分析完成", tone: "success" };
+  }
+  if (task.status === "failed" || task.status === "cancelled") {
+    return { label: "分析失败", tone: "danger" };
+  }
+  return { label: "分析中", tone: "warning" };
+}
+
+function taskProgressTone(task: TaskDetail | null): "running" | "success" | "danger" {
+  if (!task) {
+    return "running";
+  }
+  if (task.status === "success") {
+    return "success";
+  }
+  if (task.status === "failed" || task.status === "cancelled") {
+    return "danger";
+  }
+  return "running";
+}
+
 export function DeepAnalysisPage() {
   const navigate = useNavigate();
+  const period = useDeepAnalysisStore((state) => state.period);
+  const setPeriod = useDeepAnalysisStore((state) => state.setPeriod);
+  const batchMode = useDeepAnalysisStore((state) => state.batchMode);
+  const setBatchMode = useDeepAnalysisStore((state) => state.setBatchMode);
+  const maxWorkers = useDeepAnalysisStore((state) => state.maxWorkers);
+  const setMaxWorkers = useDeepAnalysisStore((state) => state.setMaxWorkers);
+  const analysts = useDeepAnalysisStore((state) => state.analysts);
+  const setAnalysts = useDeepAnalysisStore((state) => state.setAnalysts);
+
   const [stockInput, setStockInput] = useState("");
-  const [period, setPeriod] = useState("1y");
-  const [batchMode, setBatchMode] = useState<"顺序分析" | "多线程并行">("顺序分析");
-  const [analysts, setAnalysts] = useState<AnalystConfig>(defaultAnalysts);
+  const [section, setSection] = useState<SectionKey>("start");
   const [task, setTask] = useState<TaskDetail | null>(null);
   const [singleRecord, setSingleRecord] = useState<AnalysisRecordDetail | null>(null);
   const [followupAssets, setFollowupAssets] = useState<FollowupAsset[]>([]);
@@ -119,11 +150,13 @@ export function DeepAnalysisPage() {
     }
     if (latest?.status === "success") {
       setSingleRecord(buildSingleRecordFromTask(latest));
+      return;
     }
+    setSingleRecord(null);
   };
 
   const loadFollowupAssets = async () => {
-    const data = await apiFetch<FollowupAsset[]>(
+    const data = await apiFetchCached<FollowupAsset[]>(
       `/api/followup-assets${buildQuery({
         search_term: followupSearch,
       })}`,
@@ -152,6 +185,7 @@ export function DeepAnalysisPage() {
           stock_input: stockInput,
           period,
           batch_mode: batchMode,
+          max_workers: maxWorkers,
           analysts,
         }),
       });
@@ -173,10 +207,12 @@ export function DeepAnalysisPage() {
           stock_input: symbol,
           period,
           batch_mode: "顺序分析",
+          max_workers: maxWorkers,
           analysts,
         }),
       });
       setMessage(`已重新提交 ${symbol} 的分析任务 ${data.task_id}`);
+      setSection("start");
       await loadTask();
     } catch (requestError) {
       setError(requestError instanceof ApiRequestError ? requestError.message : "再次分析失败");
@@ -188,8 +224,11 @@ export function DeepAnalysisPage() {
     await loadFollowupAssets();
   };
 
-  const activeAnalystCount = useMemo(
-    () => Object.values(analysts).filter(Boolean).length,
+  const selectedAnalystLabels = useMemo(
+    () =>
+      Object.entries(analysts)
+        .filter(([, enabled]) => enabled)
+        .map(([key]) => analystLabels[key as keyof DeepAnalysisAnalystConfig] || key),
     [analysts],
   );
 
@@ -221,14 +260,26 @@ export function DeepAnalysisPage() {
     }
   };
 
-  const renderAssetCard = (title: string, assets: FollowupAsset[], emptyText: string) => (
-    <section className={`${styles.card} ${styles.span6}`}>
+  const renderAssetSection = (assets: FollowupAsset[], emptyText: string) => (
+    <section className={styles.card}>
       <div className={styles.cardHeader}>
-        <div>
-          <h2>{title}</h2>
-          <p className={styles.helperText}>只保留盯盘、再次分析和历史回看三类高频操作。</p>
+        <div className={styles.field}>
+          <label htmlFor="followupSearch">搜索</label>
+          <input
+            id="followupSearch"
+            onChange={(event) => setFollowupSearch(event.target.value)}
+            placeholder="搜索代码 / 名称 / 账户"
+            value={followupSearch}
+          />
+        </div>
+        <div className={styles.actions}>
+          <button className={styles.secondaryButton} onClick={() => void loadFollowupAssets()} type="button">
+            刷新
+          </button>
         </div>
       </div>
+      {message ? <p className={styles.successText}>{message}</p> : null}
+      {error ? <p className={styles.dangerText}>{error}</p> : null}
       <div className={styles.list}>
         {assets.map((asset) => (
           <div className={styles.listItem} key={asset.id}>
@@ -237,7 +288,7 @@ export function DeepAnalysisPage() {
             </strong>
             <p className={styles.muted}>
               {asset.followup_status_label || asset.status} | {asset.latest_analysis_rating || "未评级"} |{" "}
-              {asset.latest_analysis_time || "暂无时间"}
+              {formatDateTime(asset.latest_analysis_time, "暂无时间")}
             </p>
             <p>{asset.latest_analysis_summary || "暂无摘要"}</p>
             <div className={styles.actions}>
@@ -264,58 +315,130 @@ export function DeepAnalysisPage() {
     </section>
   );
 
+  const currentTaskBadge = taskBadge(task);
+
   return (
     <PageFrame
       actions={
-        <>
-          <StatusBadge label={`分析师 ${activeAnalystCount}/6`} tone="default" />
-          {task ? (
-            <StatusBadge
-              label={`${task.status} ${Math.round((task.progress ?? 0) * 100)}%`}
-              tone={task.status === "success" ? "success" : task.status === "failed" ? "danger" : "warning"}
-            />
-          ) : null}
-        </>
+        currentTaskBadge ? (
+          <StatusBadge label={currentTaskBadge.label} tone={currentTaskBadge.tone} />
+        ) : undefined
       }
+      sectionTabs={sectionTabs}
+      activeSectionKey={section}
+      onSectionChange={(nextSection) => setSection(nextSection as SectionKey)}
       title="深度分析"
     >
-      <div className={styles.grid}>
-        <section className={`${styles.card} ${styles.span6}`}>
-          <div className={styles.cardHeader}>
-            <div>
-              <h2>开始分析</h2>
-              <p className={styles.helperText}>录入股票后直接提交任务，结果和任务状态会保留在当前页。</p>
-            </div>
-          </div>
-          <form className={styles.stack} onSubmit={handleSubmit}>
-            <div className={styles.field}>
-              <label htmlFor="stockInput">股票代码</label>
-              <textarea
-                id="stockInput"
-                onChange={(event) => setStockInput(event.target.value)}
-                placeholder={"000001\n600519\nAAPL"}
-                rows={8}
-                value={stockInput}
-              />
-            </div>
-            <div className={styles.actions}>
-              <button className={styles.primaryButton} type="submit">
-                开始深度分析
-              </button>
-            </div>
-            {message ? <span className={styles.successText}>{message}</span> : null}
-            {error ? <span className={styles.dangerText}>{error}</span> : null}
-          </form>
-        </section>
+      <div className={styles.stack}>
+        {section === "start" ? (
+          <>
+            <section className={styles.card}>
+              <div className={styles.cardHeader}>
+                <p className={styles.helperText}>录入股票后直接提交任务，设置里的分析师与并行参数会自动保留。</p>
+                <div className={styles.actions}>
+                  <button className={styles.primaryButton} form="deep-analysis-form" type="submit">
+                    开始深度分析
+                  </button>
+                </div>
+              </div>
+              {message ? <p className={styles.successText}>{message}</p> : null}
+              {error ? <p className={styles.dangerText}>{error}</p> : null}
+              <form className={styles.stack} id="deep-analysis-form" onSubmit={handleSubmit}>
+                <div className={styles.field}>
+                  <label htmlFor="stockInput">股票代码</label>
+                  <textarea
+                    id="stockInput"
+                    onChange={(event) => setStockInput(event.target.value)}
+                    placeholder={"000001\n600519\nAAPL"}
+                    rows={8}
+                    value={stockInput}
+                  />
+                </div>
+                <div className={styles.field}>
+                  <label>已选分析师</label>
+                  <div className={styles.actions}>
+                    {selectedAnalystLabels.map((label) => (
+                      <StatusBadge key={label} label={label} tone="default" />
+                    ))}
+                    {!selectedAnalystLabels.length ? (
+                      <span className={styles.muted}>请先在设置中选择至少一位分析师。</span>
+                    ) : null}
+                  </div>
+                </div>
+              </form>
+            </section>
 
-        <section className={`${styles.card} ${styles.span6}`}>
-          <div className={styles.cardHeader}>
-            <div>
-              <h2>设置</h2>
-              <p className={styles.helperText}>周期、批量模式和分析师选择独立放在这里，避免和输入区混在一起。</p>
-            </div>
-          </div>
-          <div className={styles.stack}>
+            {task ? (
+              <section className={styles.card}>
+                <div className={styles.cardHeader}>
+                  <div>
+                    <h2>任务状态</h2>
+                    <p className={styles.helperText}>进度实时刷新，批量任务完成后可直接跳转对应历史记录。</p>
+                  </div>
+                </div>
+                <TaskProgressBar
+                  current={task.current ?? (task.status === "success" ? task.total ?? 1 : 0)}
+                  total={task.total ?? 1}
+                  message={task.message || "等待任务状态..."}
+                  tone={taskProgressTone(task)}
+                />
+                {task.error ? <p className={styles.dangerText}>{task.error}</p> : null}
+                {task.status === "success" && task.result?.mode === "batch" ? (
+                  <div className={styles.tableWrap}>
+                    <table className={styles.table}>
+                      <thead>
+                        <tr>
+                          <th>股票</th>
+                          <th>结果</th>
+                          <th>历史</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(task.result.results ?? []).map((item) => (
+                          <tr key={`${item.symbol}-${item.record_id ?? "na"}`}>
+                            <td>{item.symbol}</td>
+                            <td>{item.success ? "成功" : item.error || "失败"}</td>
+                            <td>
+                              {item.record_id ? (
+                                <button
+                                  className={styles.secondaryButton}
+                                  onClick={() => navigate(`/research/history?recordId=${item.record_id}`)}
+                                  type="button"
+                                >
+                                  查看
+                                </button>
+                              ) : (
+                                <span className={styles.muted}>无</span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : null}
+              </section>
+            ) : null}
+
+            {singleRecord ? (
+              <section className={styles.card}>
+                <div className={styles.cardHeader}>
+                  <div>
+                    <h2>最新分析结果</h2>
+                  </div>
+                </div>
+                <AnalysisDetailPanel record={singleRecord} />
+              </section>
+            ) : null}
+          </>
+        ) : null}
+
+        {section === "watchlist" ? renderAssetSection(watchlistAssets, "暂无关注中的股票") : null}
+
+        {section === "viewed" ? renderAssetSection(viewedAssets, "暂无看过的股票") : null}
+
+        {section === "settings" ? (
+          <section className={styles.card}>
             <div className={styles.formGrid}>
               <div className={styles.field}>
                 <label htmlFor="period">周期</label>
@@ -337,88 +460,40 @@ export function DeepAnalysisPage() {
                   <option value="多线程并行">多线程并行</option>
                 </select>
               </div>
-              <div className={styles.field}>
-                <label htmlFor="followupSearch">跟进检索</label>
-                <input
-                  id="followupSearch"
-                  onChange={(event) => setFollowupSearch(event.target.value)}
-                  placeholder="搜索代码 / 名称 / 账户"
-                  value={followupSearch}
-                />
-              </div>
+              {batchMode === "多线程并行" ? (
+                <div className={styles.field}>
+                  <label htmlFor="maxWorkers">并行线程数</label>
+                  <select
+                    id="maxWorkers"
+                    onChange={(event) => setMaxWorkers(Number(event.target.value) || 3)}
+                    value={maxWorkers}
+                  >
+                    {[1, 2, 3, 4, 5].map((value) => (
+                      <option key={value} value={value}>
+                        {value}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : null}
             </div>
-            <div className={styles.compactGrid}>
+            <div className={styles.compactGrid} style={{ marginTop: 14 }}>
               {Object.entries(analysts).map(([key, enabled]) => (
                 <label className={styles.listItem} key={key}>
                   <input
                     checked={enabled}
                     onChange={(event) =>
-                      setAnalysts((current) => ({
-                        ...current,
+                      setAnalysts({
+                        ...analysts,
                         [key]: event.target.checked,
-                      }))
+                      })
                     }
                     type="checkbox"
                   />{" "}
-                  {analystLabels[key as keyof AnalystConfig] || key}
+                  {analystLabels[key as keyof DeepAnalysisAnalystConfig] || key}
                 </label>
               ))}
             </div>
-          </div>
-        </section>
-
-        {renderAssetCard("关注中", watchlistAssets, "暂无关注中的股票")}
-        {renderAssetCard("看过", viewedAssets, "暂无看过的股票")}
-
-        {task ? (
-          <section className={`${styles.card} ${styles.span12}`}>
-            <h2>任务状态</h2>
-            <p>{task.message || "等待任务状态..."}</p>
-            <p className={styles.muted}>
-              进度: {task.current ?? 0} / {task.total ?? 0}
-            </p>
-            {task.error ? <p className={styles.dangerText}>{task.error}</p> : null}
-            {task.status === "success" && task.result?.mode === "batch" ? (
-              <div className={styles.tableWrap}>
-                <table className={styles.table}>
-                  <thead>
-                    <tr>
-                      <th>股票</th>
-                      <th>结果</th>
-                      <th>历史</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(task.result.results ?? []).map((item) => (
-                      <tr key={`${item.symbol}-${item.record_id ?? "na"}`}>
-                        <td>{item.symbol}</td>
-                        <td>{item.success ? "成功" : item.error || "失败"}</td>
-                        <td>
-                          {item.record_id ? (
-                            <button
-                              className={styles.secondaryButton}
-                              onClick={() => navigate(`/research/history?recordId=${item.record_id}`)}
-                              type="button"
-                            >
-                              查看
-                            </button>
-                          ) : (
-                            <span className={styles.muted}>无</span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : null}
-          </section>
-        ) : null}
-
-        {singleRecord ? (
-          <section className={`${styles.card} ${styles.span12}`}>
-            <h2>最新分析结果</h2>
-            <AnalysisDetailPanel record={singleRecord} />
           </section>
         ) : null}
       </div>

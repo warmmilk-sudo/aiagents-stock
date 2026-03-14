@@ -55,6 +55,15 @@ class StockMonitorDatabase:
         except (TypeError, ValueError):
             return None
 
+    def _default_check_interval_minutes(self) -> int:
+        raw = self.repository.get_metadata("smart_monitor_realtime_monitor_interval_minutes")
+        try:
+            if raw is not None:
+                return max(1, min(10, int(raw)))
+        except (TypeError, ValueError):
+            pass
+        return 3
+
     @classmethod
     def _normalize_monitor_levels(cls, payload: Optional[Dict]) -> Optional[Dict]:
         if not isinstance(payload, dict):
@@ -160,7 +169,7 @@ class StockMonitorDatabase:
         entry_range: Dict,
         take_profit: float,
         stop_loss: float,
-        check_interval: int = 30,
+        check_interval: Optional[int] = None,
         notification_enabled: bool = True,
         trading_hours_only: bool = True,
         managed_by_portfolio: bool = False,
@@ -175,7 +184,7 @@ class StockMonitorDatabase:
             "monitor_type": "price_alert",
             "source": "portfolio" if managed_by_portfolio else "manual",
             "enabled": True,
-            "interval_minutes": check_interval,
+            "interval_minutes": int(check_interval or self._default_check_interval_minutes()),
             "trading_hours_only": trading_hours_only,
             "notification_enabled": notification_enabled,
             "managed_by_portfolio": managed_by_portfolio,
@@ -231,6 +240,9 @@ class StockMonitorDatabase:
     def mark_notification_sent(self, notification_id: int):
         self.repository.mark_notification_sent(notification_id)
 
+    def ignore_notification(self, event_id: int):
+        self.repository.ignore_notification(event_id)
+
     def mark_all_notifications_sent(self):
         return self.repository.mark_all_notifications_sent()
 
@@ -247,7 +259,7 @@ class StockMonitorDatabase:
         entry_range: Dict,
         take_profit: float,
         stop_loss: float,
-        check_interval: int,
+        check_interval: Optional[int],
         notification_enabled: bool,
         trading_hours_only: bool = None,
         managed_by_portfolio: Optional[bool] = None,
@@ -257,7 +269,7 @@ class StockMonitorDatabase:
             return False
 
         updates = {
-            "interval_minutes": check_interval,
+            "interval_minutes": int(check_interval or self._default_check_interval_minutes()),
             "notification_enabled": notification_enabled,
             "config": self._build_config(
                 rating,
@@ -429,4 +441,3 @@ class StockMonitorDatabase:
 
 
 monitor_db = StockMonitorDatabase()
-

@@ -330,15 +330,15 @@ export function AppLayout() {
           <div className={styles.topbarLeft}>
             <button
               aria-label={isMobile ? LABELS.openMenu : sidebarCollapsed ? LABELS.expandNav : LABELS.collapseNav}
-              className={styles.iconButton}
+              className={`${styles.iconButton} ${styles.menuToggleButton}`}
               onClick={handleSidebarToggle}
               type="button"
             >
               ≡
             </button>
-            <div className={styles.topbarTitleWrap}>
-              <strong className={styles.topbarTitle}>{currentPageLabel}</strong>
-            </div>
+          </div>
+          <div className={styles.topbarTitleWrap}>
+            <strong className={styles.topbarTitle}>{currentPageLabel}</strong>
           </div>
           <div className={styles.topbarRight}>
             {activeTask ? (

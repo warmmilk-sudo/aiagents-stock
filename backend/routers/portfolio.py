@@ -7,7 +7,6 @@ from fastapi import APIRouter, Request
 from backend.api import ApiError, success_payload
 from backend.auth import require_session
 from backend.dto import (
-    PortfolioReviewRequest,
     PortfolioSchedulerConfigRequest,
     PortfolioStockCreateRequest,
     PortfolioStockUpdateRequest,
@@ -74,48 +73,28 @@ def record_trade(request: Request, stock_id: int, payload: TradeRecordCreateRequ
 
 
 @router.get("/trades")
-def list_trades(request: Request, account_name: Optional[str] = None, limit: int = 120) -> dict:
+def list_trades(
+    request: Request,
+    account_name: Optional[str] = None,
+    limit: Optional[int] = 120,
+    page: Optional[int] = None,
+    page_size: Optional[int] = None,
+) -> dict:
     require_session(request)
-    return success_payload(services.list_portfolio_trade_records(account_name=account_name, limit=limit))
+    return success_payload(
+        services.list_portfolio_trade_records(
+            account_name=account_name,
+            limit=limit,
+            page=page,
+            page_size=page_size,
+        )
+    )
 
 
 @router.get("/risk")
 def get_risk(request: Request, account_name: Optional[str] = None) -> dict:
     require_session(request)
     return success_payload(services.get_portfolio_risk(account_name=account_name))
-
-
-@router.post("/reviews")
-def create_review(request: Request, payload: PortfolioReviewRequest) -> dict:
-    require_session(request)
-    return success_payload(
-        services.generate_portfolio_review(
-            account_name=payload.account_name,
-            period_type=payload.period_type,
-        ),
-        message="复盘报告已生成",
-    )
-
-
-@router.get("/reviews")
-def list_reviews(
-    request: Request,
-    account_name: Optional[str] = None,
-    period_type: Optional[str] = None,
-) -> dict:
-    require_session(request)
-    return success_payload(
-        services.list_portfolio_reviews(account_name=account_name, period_type=period_type)
-    )
-
-
-@router.delete("/reviews/{report_id}")
-def delete_review(request: Request, report_id: int, account_name: Optional[str] = None) -> dict:
-    require_session(request)
-    success, message = services.delete_portfolio_review(report_id, account_name=account_name)
-    if not success:
-        raise ApiError(400, message, error_code="portfolio_review_delete_failed")
-    return success_payload({"report_id": report_id}, message=message)
 
 
 @router.get("/stocks/{stock_id}/history")

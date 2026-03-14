@@ -8,6 +8,17 @@ html,
 body,
 #root {
   min-height: 100%;
+  width: 100%;
+}
+
+html,
+body {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+#root {
+  overflow-x: clip;
 }
 
 body {
@@ -35,4 +46,12 @@ a {
 
 iframe {
   border: 0;
+}
+
+img,
+svg,
+canvas,
+video {
+  max-width: 100%;
+  height: auto;
 }

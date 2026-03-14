@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Dict, List, Optional
 
@@ -41,6 +42,68 @@ def _format_analysis_date(value: object) -> str:
         except ValueError:
             continue
     return text
+
+
+def _normalize_decision_label(value: object) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    aliases = {
+        "买入": "买入",
+        "强烈买入": "买入",
+        "增持": "买入",
+        "buy": "买入",
+        "持有": "持有",
+        "中性": "持有",
+        "观望": "观望",
+        "hold": "持有",
+        "neutral": "持有",
+        "卖出": "卖出",
+        "减持": "卖出",
+        "sell": "卖出",
+    }
+    lowered = text.lower()
+    if lowered in aliases:
+        return aliases[lowered]
+    if text in aliases:
+        return aliases[text]
+    if any(token in text for token in ("买入", "强烈买入", "增持")) or any(
+        token in lowered for token in ("buy", "add")
+    ):
+        return "买入"
+    if any(token in text for token in ("卖出", "减持")) or any(
+        token in lowered for token in ("sell", "reduce")
+    ):
+        return "卖出"
+    if "观望" in text or "watch" in lowered:
+        return "观望"
+    if any(token in text for token in ("持有", "中性")) or any(
+        token in lowered for token in ("hold", "neutral", "watch")
+    ):
+        return "持有"
+    return text
+
+
+def _extract_decision_label(record: Dict) -> str:
+    final_decision = record.get("final_decision") or {}
+    if isinstance(final_decision, dict):
+        for key in ("rating", "investment_rating"):
+            decision = _normalize_decision_label(final_decision.get(key))
+            if decision:
+                return decision
+    decision = _normalize_decision_label(record.get("rating"))
+    if decision:
+        return decision
+    summary = str(record.get("summary") or "").strip()
+    if not summary:
+        return ""
+    match = re.search(r"(?:投资)?评级\s*[:：]\s*([^\s；;，,。]+)", summary)
+    if match:
+        return _normalize_decision_label(match.group(1))
+    for token in ("买入", "持有", "观望", "卖出", "增持", "减持"):
+        if token in summary:
+            return _normalize_decision_label(token)
+    return ""
 
 
 class AnalysisHistoryService:
@@ -157,6 +220,7 @@ class AnalysisHistoryService:
             "历史分析",
         )
         normalized["analysis_time_text"] = _format_analysis_date(normalized.get("analysis_date"))
+        normalized["decision_label"] = _extract_decision_label(normalized)
         normalized["stock_name"] = (
             normalized.get("stock_name")
             or normalized.get("name")
@@ -222,7 +286,7 @@ class AnalysisHistoryService:
         normalized_account = None if account_name in (None, "", "全部账户") else account_name
         normalized_search = str(search_term or "").strip()
 
-        records = self.repository.list_records(full_report_only=full_report_only, limit=limit)
+        records = self.repository.list_record_summaries(full_report_only=full_report_only, limit=limit)
         assets_by_id, assets_by_symbol_account = self._build_asset_indexes()
         result: List[Dict] = []
         seen_keys = set()

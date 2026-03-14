@@ -1,4 +1,7 @@
 import { AnalysisActionButtons, type ActionPayload } from "./AnalysisActionButtons";
+import { formatDateTime } from "../../lib/datetime";
+import { AgentReportBrowser } from "./AgentReportBrowser";
+import { FormattedReport } from "./FormattedReport";
 import styles from "./ResearchPanels.module.scss";
 
 export interface AnalysisRecordDetail {
@@ -81,7 +84,7 @@ export function AnalysisDetailPanel({
 
       <section className={styles.block}>
         <h3>核心建议</h3>
-        <p className={styles.text}>{prettyText(finalDecision.operation_advice || record.summary)}</p>
+        <FormattedReport content={finalDecision.operation_advice || record.summary} emptyText="暂无建议" />
       </section>
 
       <section className={styles.block}>
@@ -97,14 +100,14 @@ export function AnalysisDetailPanel({
           {"\n"}持有周期: {metricValue(finalDecision.holding_period)}
           {"\n"}当前状态: {metricValue(record.linked_asset_status_label || record.portfolio_state_label)}
           {"\n"}账户: {metricValue(record.account_name)}
-          {"\n"}分析时间: {metricValue(record.analysis_time_text)}
+          {"\n"}分析时间: {metricValue(formatDateTime(record.analysis_time_text, "N/A"))}
           {"\n"}周期: {metricValue(record.period)}
         </p>
       </section>
 
       <section className={styles.block}>
         <h3>风险提示</h3>
-        <p className={styles.text}>{prettyText(finalDecision.risk_warning)}</p>
+        <FormattedReport content={finalDecision.risk_warning} emptyText="暂无风险提示" />
       </section>
 
       <details className={styles.details}>
@@ -114,23 +117,14 @@ export function AnalysisDetailPanel({
         </div>
       </details>
 
-      {Object.entries(agentsResults).map(([name, payload]) => (
-        <details className={styles.details} key={name}>
-          <summary>{name}</summary>
-          <div className={styles.detailsContent}>
-            <pre className={styles.code}>{prettyText(payload)}</pre>
-          </div>
-        </details>
-      ))}
-
-      {record.discussion_result ? (
-        <details className={styles.details}>
-          <summary>团队讨论</summary>
-          <div className={styles.detailsContent}>
-            <pre className={styles.code}>{prettyText(record.discussion_result)}</pre>
-          </div>
-        </details>
-      ) : null}
+      <AgentReportBrowser
+        agentsResults={
+          agentsResults && typeof agentsResults === "object" && !Array.isArray(agentsResults)
+            ? (agentsResults as Record<string, unknown>)
+            : {}
+        }
+        discussionResult={record.discussion_result}
+      />
     </div>
   );
 }

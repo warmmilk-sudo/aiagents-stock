@@ -259,7 +259,6 @@ class MonitoringRepositoryTests(unittest.TestCase):
 
         due_items = self.repo.get_due_items(now=now, service_running=True)
         self.assertEqual([item["id"] for item in due_items], [item_id])
-
         self.repo.update_runtime(
             item_id,
             last_checked=now.strftime("%Y-%m-%d %H:%M:%S"),
@@ -269,6 +268,38 @@ class MonitoringRepositoryTests(unittest.TestCase):
 
         due_later = self.repo.get_due_items(now=now + timedelta(minutes=4), service_running=True)
         self.assertEqual([item["id"] for item in due_later], [item_id])
+
+    def test_runtime_metadata_and_bulk_interval_updates(self):
+        ai_task_id = self.repo.create_item(
+            {
+                "symbol": "600519",
+                "name": "贵州茅台",
+                "monitor_type": "ai_task",
+                "interval_minutes": 60,
+                "account_name": "默认账户",
+                "config": {"position_size_pct": 20},
+            }
+        )
+        alert_id = self.repo.create_item(
+            {
+                "symbol": "300750",
+                "name": "宁德时代",
+                "monitor_type": "price_alert",
+                "interval_minutes": 3,
+                "config": {"entry_range": {"min": 200, "max": 210}},
+            }
+        )
+
+        self.repo.set_metadata("smart_monitor_intraday_decision_interval_minutes", "30")
+        self.repo.set_metadata("smart_monitor_realtime_monitor_interval_minutes", "2")
+        self.assertEqual(self.repo.get_metadata("smart_monitor_intraday_decision_interval_minutes"), "30")
+        self.assertEqual(self.repo.get_metadata("smart_monitor_realtime_monitor_interval_minutes"), "2")
+
+        self.assertEqual(self.repo.bulk_set_interval_minutes("ai_task", 30), 1)
+        self.assertEqual(self.repo.bulk_set_interval_minutes("price_alert", 2), 1)
+
+        self.assertEqual(self.repo.get_item(ai_task_id)["interval_minutes"], 30)
+        self.assertEqual(self.repo.get_item(alert_id)["interval_minutes"], 2)
 
     def test_mark_notification_read_preserves_delivery_state_and_records_timestamp(self):
         item_id = self.repo.create_item(
@@ -305,6 +336,34 @@ class MonitoringRepositoryTests(unittest.TestCase):
         self.assertTrue(latest["is_read"])
         self.assertTrue(bool(latest["read_at"]))
         self.assertFalse(latest["sent"])
+
+    def test_ignore_notification_hides_it_from_current_notification_list(self):
+        item_id = self.repo.create_item(
+            {
+                "symbol": "000001",
+                "name": "平安银行",
+                "monitor_type": "price_alert",
+                "account_name": "默认账户",
+            }
+        )
+        event_id = self.repo.record_event(
+            item_id=item_id,
+            event_type="entry_zone",
+            message="进入预警区间",
+            notification_pending=True,
+            sent=False,
+            created_at="2026-03-12 10:31:00",
+        )
+
+        self.assertEqual(len(self.repo.get_all_recent_notifications(limit=10)), 1)
+
+        self.repo.ignore_notification(event_id)
+
+        self.assertEqual(self.repo.get_all_recent_notifications(limit=10), [])
+        events = self.repo.get_recent_events(limit=10)
+        self.assertEqual(events[0]["id"], event_id)
+        self.assertEqual(int(events[0]["notification_pending"] or 0), 0)
+        self.assertEqual(int(events[0]["is_read"] or 0), 1)
 
     def test_price_alert_upsert_reuses_existing_asset_record_when_managed_state_changes(self):
         first_id = self.repo.create_item(

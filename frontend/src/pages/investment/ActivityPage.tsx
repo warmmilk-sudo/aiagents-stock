@@ -2,7 +2,9 @@ import { useEffect, useState } from "react";
 
 import { PageFrame } from "../../components/common/PageFrame";
 import { StatusBadge } from "../../components/common/StatusBadge";
-import { apiFetch } from "../../lib/api";
+import { FormattedReport } from "../../components/research/FormattedReport";
+import { apiFetchCached } from "../../lib/api";
+import { formatDateTime } from "../../lib/datetime";
 import styles from "../ConsolePage.module.scss";
 
 interface ActivitySnapshot {
@@ -35,7 +37,7 @@ export function ActivityPage() {
   const [section, setSection] = useState<SectionKey>("overview");
 
   const load = async () => {
-    const data = await apiFetch<ActivitySnapshot>("/api/investment-activity/snapshot");
+    const data = await apiFetchCached<ActivitySnapshot>("/api/investment-activity/snapshot");
     setSnapshot(data);
   };
 
@@ -89,13 +91,12 @@ export function ActivityPage() {
 
         {section === "events" ? (
           <section className={styles.card}>
-            <h2>最近事件</h2>
             <div className={styles.list}>
               {(snapshot?.recent_events ?? []).map((item, index) => (
                 <div className={styles.listItem} key={`${String(item.id ?? index)}-${index}`}>
                   <strong>{asText(item.symbol ?? item.stock_code)}</strong>
                   <p>{asText(item.message ?? item.event_type, "暂无描述")}</p>
-                  <small className={styles.muted}>{asText(item.created_at ?? item.triggered_at, "暂无时间")}</small>
+                  <small className={styles.muted}>{formatDateTime(item.created_at ?? item.triggered_at, "暂无时间")}</small>
                 </div>
               ))}
               {!snapshot?.recent_events.length ? <div className={styles.muted}>暂无事件</div> : null}
@@ -105,15 +106,14 @@ export function ActivityPage() {
 
         {section === "decisions" ? (
           <section className={styles.card}>
-            <h2>AI 决策</h2>
             <div className={styles.list}>
               {(snapshot?.ai_decisions ?? []).map((item, index) => (
                 <div className={styles.listItem} key={`${String(item.id ?? index)}-${index}`}>
                   <strong>
                     {asText(item.stock_code)} · {asText(item.action)}
                   </strong>
-                  <p>{asText(item.reasoning, "无推理摘要")}</p>
-                  <small className={styles.muted}>{asText(item.decision_time ?? item.created_at, "暂无时间")}</small>
+                  <FormattedReport content={asText(item.reasoning, "无推理摘要")} />
+                  <small className={styles.muted}>{formatDateTime(item.decision_time ?? item.created_at, "暂无时间")}</small>
                 </div>
               ))}
               {!snapshot?.ai_decisions.length ? <div className={styles.muted}>暂无 AI 决策</div> : null}
@@ -123,7 +123,6 @@ export function ActivityPage() {
 
         {section === "pending" ? (
           <section className={styles.card}>
-            <h2>待办动作</h2>
             <div className={styles.list}>
               {(snapshot?.pending_actions ?? []).map((item, index) => (
                 <div className={styles.listItem} key={`${String(item.id ?? index)}-${index}`}>
@@ -132,7 +131,7 @@ export function ActivityPage() {
                     股票: {asText(item.stock_code ?? item.symbol, "未指定")} | 账户: {asText(item.account_name, "默认账户")}
                   </p>
                   <small className={styles.muted}>
-                    {asText(item.created_at ?? item.triggered_at, "暂无时间")} | 状态: {asText(item.status, "待处理")}
+                    {formatDateTime(item.created_at ?? item.triggered_at, "暂无时间")} | 状态: {asText(item.status, "待处理")}
                   </small>
                 </div>
               ))}
@@ -143,7 +142,6 @@ export function ActivityPage() {
 
         {section === "trades" ? (
           <section className={styles.card}>
-            <h2>成交记录</h2>
             <div className={styles.list}>
               {(snapshot?.trade_records ?? []).map((item, index) => (
                 <div className={styles.listItem} key={`${String(item.id ?? index)}-${index}`}>
@@ -153,7 +151,7 @@ export function ActivityPage() {
                   <p>
                     {asText(item.trade_type, "未知类型")} | 数量 {asText(item.quantity, "0")} | 价格 {asText(item.price, "0")}
                   </p>
-                  <small className={styles.muted}>{asText(item.trade_time ?? item.created_at, "暂无时间")}</small>
+                  <small className={styles.muted}>{formatDateTime(item.trade_time ?? item.created_at, "暂无时间")}</small>
                 </div>
               ))}
               {!snapshot?.trade_records.length ? <div className={styles.muted}>暂无成交记录</div> : null}

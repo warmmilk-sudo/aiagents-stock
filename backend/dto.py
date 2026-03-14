@@ -23,6 +23,7 @@ class AnalysisTaskRequest(BaseModel):
     symbols: list[str] = Field(default_factory=list)
     period: str = "1y"
     batch_mode: Literal["顺序分析", "多线程并行"] = "顺序分析"
+    max_workers: int = 3
     analysts: AnalystConfig = Field(default_factory=AnalystConfig)
     lightweight_model: Optional[str] = None
     reasoning_model: Optional[str] = None
@@ -237,11 +238,6 @@ class TradeRecordCreateRequest(BaseModel):
     note: str = ""
 
 
-class PortfolioReviewRequest(BaseModel):
-    account_name: Optional[str] = None
-    period_type: Literal["week", "month", "quarter"] = "month"
-
-
 class PortfolioSchedulerConfigRequest(BaseModel):
     schedule_times: list[str] = Field(default_factory=list)
     analysis_mode: Optional[str] = None
@@ -259,7 +255,7 @@ class PriceAlertCreateRequest(BaseModel):
     entry_max: float
     take_profit: Optional[float] = None
     stop_loss: Optional[float] = None
-    check_interval: int = 30
+    check_interval: Optional[int] = None
     notification_enabled: bool = True
     trading_hours_only: bool = True
     account_name: str = "默认账户"
@@ -272,7 +268,7 @@ class PriceAlertUpdateRequest(BaseModel):
     entry_max: float
     take_profit: Optional[float] = None
     stop_loss: Optional[float] = None
-    check_interval: int = 30
+    check_interval: Optional[int] = None
     notification_enabled: bool = True
     trading_hours_only: Optional[bool] = None
     managed_by_portfolio: Optional[bool] = None
@@ -282,7 +278,7 @@ class SmartMonitorTaskRequest(BaseModel):
     stock_code: str
     stock_name: Optional[str] = None
     enabled: bool = True
-    check_interval: int = 3600
+    check_interval: Optional[int] = None
     trading_hours_only: bool = True
     position_size_pct: int = 20
     stop_loss_pct: int = 5
@@ -305,6 +301,11 @@ class SmartMonitorAnalyzeRequest(BaseModel):
     account_name: str = "默认账户"
     asset_id: Optional[int] = None
     portfolio_stock_id: Optional[int] = None
+
+
+class SmartMonitorRuntimeConfigRequest(BaseModel):
+    intraday_decision_interval_minutes: int = 60
+    realtime_monitor_interval_minutes: int = 3
 
 
 class PendingActionResolveRequest(BaseModel):

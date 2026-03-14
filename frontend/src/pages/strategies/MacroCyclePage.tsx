@@ -2,7 +2,9 @@ import { useEffect, useMemo, useState } from "react";
 
 import { PageFrame } from "../../components/common/PageFrame";
 import { StatusBadge } from "../../components/common/StatusBadge";
-import { ApiRequestError, apiFetch, downloadApiFile } from "../../lib/api";
+import { AgentReportBrowser } from "../../components/research/AgentReportBrowser";
+import { ApiRequestError, apiFetch, apiFetchCached, downloadApiFile } from "../../lib/api";
+import { formatDateTime } from "../../lib/datetime";
 import { asText } from "../../lib/market";
 import styles from "../ConsolePage.module.scss";
 
@@ -58,15 +60,6 @@ interface MacroHistoryRecord {
   result_parsed?: MacroResult;
 }
 
-function renderReportCard(title: string, body: string | undefined) {
-  return (
-    <div className={styles.listItem}>
-      <strong>{title}</strong>
-      <div style={{ marginTop: 12, whiteSpace: "pre-wrap" }}>{body || "暂无分析结果"}</div>
-    </div>
-  );
-}
-
 export function MacroCyclePage() {
   const [panel, setPanel] = useState<Panel>("analysis");
   const [task, setTask] = useState<TaskDetail<MacroTaskPayload> | null>(null);
@@ -81,7 +74,7 @@ export function MacroCyclePage() {
   };
 
   const loadHistory = async () => {
-    const data = await apiFetch<MacroHistoryRecord[]>("/api/strategies/macro-cycle/history");
+    const data = await apiFetchCached<MacroHistoryRecord[]>("/api/strategies/macro-cycle/history");
     setHistory(data);
   };
 
@@ -92,6 +85,12 @@ export function MacroCyclePage() {
   }, []);
 
   const currentResult = selectedReport?.result_parsed ?? (task?.status === "success" ? task.result?.result ?? null : null);
+  const macroAgentReports = useMemo(() => ({
+    chief: { agent_name: "首席宏观策略师", analysis: currentResult?.agents_analysis?.chief?.analysis },
+    kondratieff: { agent_name: "康波周期分析师", analysis: currentResult?.agents_analysis?.kondratieff?.analysis },
+    merrill: { agent_name: "美林时钟分析师", analysis: currentResult?.agents_analysis?.merrill?.analysis },
+    policy: { agent_name: "中国政策分析师", analysis: currentResult?.agents_analysis?.policy?.analysis },
+  }), [currentResult]);
   const headline = useMemo(() => {
     const source = selectedReport?.summary || selectedReport?.chief_summary;
     if (source) {
@@ -121,7 +120,7 @@ export function MacroCyclePage() {
     setMessage("");
     setError("");
     try {
-      const data = await apiFetch<MacroHistoryRecord>(`/api/strategies/macro-cycle/history/${reportId}`);
+      const data = await apiFetchCached<MacroHistoryRecord>(`/api/strategies/macro-cycle/history/${reportId}`);
       setSelectedReport(data);
       setPanel("analysis");
       setMessage(`已加载历史报告 #${reportId}`);
@@ -220,7 +219,7 @@ export function MacroCyclePage() {
                   <div className={styles.listItem}>
                     <strong>{headline}</strong>
                     <div className={styles.muted} style={{ marginTop: 8 }}>
-                      分析时间: {asText(currentResult.timestamp ?? selectedReport?.analysis_date, "-")}
+                      分析时间: {formatDateTime(currentResult.timestamp ?? selectedReport?.analysis_date, "-")}
                     </div>
                   </div>
                   {(currentResult.data_errors?.length ?? 0) ? (
@@ -236,12 +235,7 @@ export function MacroCyclePage() {
 
                 <section className={styles.card}>
                   <h2>AI 分析师报告</h2>
-                  <div className={styles.list}>
-                    {renderReportCard("首席宏观策略师", currentResult.agents_analysis?.chief?.analysis)}
-                    {renderReportCard("康波周期分析师", currentResult.agents_analysis?.kondratieff?.analysis)}
-                    {renderReportCard("美林时钟分析师", currentResult.agents_analysis?.merrill?.analysis)}
-                    {renderReportCard("中国政策分析师", currentResult.agents_analysis?.policy?.analysis)}
-                  </div>
+                  <AgentReportBrowser agentsResults={macroAgentReports} />
                 </section>
               </>
             ) : (
@@ -258,7 +252,7 @@ export function MacroCyclePage() {
             <div className={styles.list}>
               {history.map((item) => (
                 <div className={styles.listItem} key={item.id}>
-                  <strong>{asText(item.analysis_date ?? item.created_at, "未知时间")}</strong>
+                  <strong>{formatDateTime(item.analysis_date ?? item.created_at, "未知时间")}</strong>
                   <div style={{ marginTop: 8 }}>{asText(item.summary ?? item.chief_summary, "宏观周期分析报告")}</div>
                   <div className={styles.actions} style={{ marginTop: 12 }}>
                     <button className={styles.secondaryButton} onClick={() => void openHistory(item.id)} type="button">

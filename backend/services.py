@@ -4,6 +4,7 @@ import concurrent.futures
 import logging
 import time
 from datetime import date, datetime, timedelta
+from functools import lru_cache
 from types import SimpleNamespace
 from typing import Any, Optional
 
@@ -34,6 +35,11 @@ from sector_strategy_pdf import SectorStrategyPDFGenerator
 from sector_strategy_data import SectorStrategyDataFetcher
 from sector_strategy_db import SectorStrategyDatabase
 from sector_strategy_engine import SectorStrategyEngine
+from sector_strategy_normalization import (
+    build_sector_strategy_summary,
+    normalize_sector_strategy_export_payload,
+    normalize_sector_strategy_result,
+)
 from sector_strategy_scheduler import sector_strategy_scheduler
 from smart_monitor_db import SmartMonitorDB
 from stock_data import StockDataFetcher
@@ -70,6 +76,24 @@ PROFIT_GROWTH_TASK_TYPE = "profit_growth_selection"
 VALUE_STOCK_TASK_TYPE = "value_stock_selection"
 MACRO_CYCLE_TASK_TYPE = "macro_cycle_analysis"
 NEWS_FLOW_TASK_TYPE = "news_flow_analysis"
+SMART_MONITOR_INTRADAY_INTERVAL_KEY = "smart_monitor_intraday_decision_interval_minutes"
+SMART_MONITOR_REALTIME_INTERVAL_KEY = "smart_monitor_realtime_monitor_interval_minutes"
+
+
+def _clamp_int(value: Any, minimum: int, maximum: int, default: int) -> int:
+    try:
+        numeric = int(value)
+    except (TypeError, ValueError):
+        numeric = default
+    return max(minimum, min(maximum, numeric))
+
+
+def _default_intraday_decision_interval_minutes() -> int:
+    return _clamp_int(getattr(config, "SMART_MONITOR_AI_INTERVAL_MINUTES", 60), 10, 120, 60)
+
+
+def _default_realtime_monitor_interval_minutes() -> int:
+    return _clamp_int(getattr(config, "SMART_MONITOR_PRICE_ALERT_INTERVAL_MINUTES", 3), 1, 10, 3)
 
 
 def ensure_runtime_started() -> None:
@@ -196,6 +220,7 @@ def submit_research_analysis_task(
     symbols: list[str],
     period: str,
     batch_mode: str,
+    max_workers: int,
     analysts: dict[str, bool],
     lightweight_model: Optional[str],
     reasoning_model: Optional[str],
@@ -248,10 +273,11 @@ def submit_research_analysis_task(
             task_type="home_stock_analysis",
             label=f"深度分析 {symbol}",
             runner=runner,
-            metadata={"mode": "single", "symbol": symbol, "period": period},
+            metadata={"mode": "single", "symbol": symbol, "period": period, "max_workers": 1},
         )
 
     total = len(normalized_symbols)
+    worker_count = _clamp_int(max_workers, 1, 5, 3)
 
     def batch_runner(_task_id: str, report_progress) -> dict[str, Any]:
         results_by_symbol: dict[str, dict[str, Any]] = {}
@@ -268,7 +294,7 @@ def submit_research_analysis_task(
             )
 
         if batch_mode == "多线程并行":
-            with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=worker_count) as executor:
                 future_to_symbol = {
                     executor.submit(analyze_one, symbol): symbol
                     for symbol in normalized_symbols
@@ -312,6 +338,7 @@ def submit_research_analysis_task(
             "mode": "batch",
             "results": ordered_results,
             "batch_mode": batch_mode,
+            "max_workers": worker_count if batch_mode == "多线程并行" else 1,
             "success_count": success_count,
             "failed_count": total - success_count,
             "saved_count": saved_count,
@@ -323,7 +350,12 @@ def submit_research_analysis_task(
         task_type="home_stock_analysis",
         label=f"批量深度分析 {total} 只股票",
         runner=batch_runner,
-        metadata={"mode": "batch", "total": total, "batch_mode": batch_mode},
+        metadata={
+            "mode": "batch",
+            "total": total,
+            "batch_mode": batch_mode,
+            "max_workers": worker_count if batch_mode == "多线程并行" else 1,
+        },
     )
 
 
@@ -652,17 +684,18 @@ def submit_sector_strategy_task(
             raise RuntimeError(result.get("error") or "智策分析失败")
 
         report_progress(current=3, total=3, message="智策分析完成，正在同步结果...")
+        data_summary = {
+            "from_cache": bool(data.get("from_cache")),
+            "cache_warning": data.get("cache_warning", ""),
+            "data_timestamp": data.get("timestamp"),
+            "market_overview": data.get("market_overview", {}),
+            "sectors": data.get("sectors", {}) or {},
+            "concepts": data.get("concepts", {}) or {},
+        }
         return {
             "result": _json_safe(result),
-            "data_summary": _json_safe(
-                {
-                    "from_cache": bool(data.get("from_cache")),
-                    "cache_warning": data.get("cache_warning", ""),
-                    "market_overview": data.get("market_overview", {}),
-                    "sectors": data.get("sectors", {}) or {},
-                    "concepts": data.get("concepts", {}) or {},
-                }
-            ),
+            "report_view": _json_safe(normalize_sector_strategy_result(result, data_summary=data_summary)),
+            "data_summary": _json_safe(data_summary),
             "message": "智策分析完成。",
         }
 
@@ -676,37 +709,24 @@ def submit_sector_strategy_task(
 
 def _extract_sector_strategy_summary(source: dict[str, Any]) -> dict[str, Any]:
     payload = source or {}
-    if isinstance(payload.get("analysis_content_parsed"), dict):
-        payload = payload["analysis_content_parsed"]
-    predictions = payload.get("final_predictions", {}) if isinstance(payload, dict) else {}
-    summary = predictions.get("summary", {}) if isinstance(predictions, dict) else {}
-    long_short = predictions.get("long_short", {}) if isinstance(predictions, dict) else {}
-    bullish_items = long_short.get("bullish", []) if isinstance(long_short, dict) else []
-    bearish_items = long_short.get("bearish", []) if isinstance(long_short, dict) else []
-    bullish = [
-        item.get("sector")
-        for item in bullish_items
-        if isinstance(item, dict) and item.get("sector")
-    ]
-    bearish = [
-        item.get("sector")
-        for item in bearish_items
-        if isinstance(item, dict) and item.get("sector")
-    ]
-    market_view = summary.get("market_view") if isinstance(summary, dict) else ""
-    key_opportunity = summary.get("key_opportunity") if isinstance(summary, dict) else ""
-    headline_parts = [part for part in [market_view, key_opportunity] if part]
+    if (
+        isinstance(payload.get("analysis_content_parsed"), dict)
+        or isinstance(payload.get("final_predictions"), dict)
+        or (isinstance(payload.get("summary"), dict) and "predictions" in payload)
+    ):
+        return build_sector_strategy_summary(normalize_sector_strategy_result(source))
     return {
-        "headline": "；".join(headline_parts) or payload.get("summary") or "智策板块分析报告",
-        "market_view": market_view,
-        "key_opportunity": key_opportunity,
-        "major_risk": summary.get("major_risk") if isinstance(summary, dict) else "",
-        "strategy": summary.get("strategy") if isinstance(summary, dict) else "",
-        "bullish": bullish[:3],
-        "bearish": bearish[:3],
-        "risk_level": predictions.get("risk_level") or payload.get("risk_level") or "中等",
-        "market_outlook": predictions.get("market_outlook") or payload.get("market_outlook") or "谨慎乐观",
-        "confidence_score": predictions.get("confidence_score") or payload.get("confidence_score") or 0,
+        "headline": payload.get("summary") or "智策板块分析报告",
+        "market_view": payload.get("summary") or "暂无",
+        "key_opportunity": "暂无",
+        "major_risk": "暂无",
+        "strategy": "暂无",
+        "bullish": [],
+        "neutral": [],
+        "bearish": [],
+        "risk_level": payload.get("risk_level") or "中等",
+        "market_outlook": payload.get("market_outlook") or "中性",
+        "confidence_score": int(payload.get("confidence_score") or 0),
     }
 
 
@@ -729,9 +749,11 @@ def get_sector_strategy_report(report_id: int) -> Optional[dict[str, Any]]:
     report = sector_strategy_db.get_analysis_report(report_id)
     if not report:
         return None
+    report_view = normalize_sector_strategy_result(report)
     return {
         **_json_safe(report),
-        "summary_data": _extract_sector_strategy_summary(report),
+        "summary_data": _extract_sector_strategy_summary(report_view),
+        "report_view": _json_safe(report_view),
     }
 
 
@@ -802,6 +824,7 @@ def _create_longhubang_engine(
     )
 
 
+@lru_cache(maxsize=1)
 def _create_longhubang_database():
     from longhubang_db import LonghubangDatabase
 
@@ -1083,14 +1106,14 @@ def export_main_force_pdf(
 
 
 def export_sector_strategy_markdown(result: dict[str, Any]) -> tuple[bytes, str, str]:
-    markdown = generate_sector_markdown_report(result or {})
+    markdown = generate_sector_markdown_report(normalize_sector_strategy_export_payload(result or {}))
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     return markdown.encode("utf-8"), f"智策报告_{timestamp}.md", "text/markdown; charset=utf-8"
 
 
 def export_sector_strategy_pdf(result: dict[str, Any]) -> tuple[bytes, str, str]:
     generator = SectorStrategyPDFGenerator()
-    pdf_path = generator.generate_pdf(result or {})
+    pdf_path = generator.generate_pdf(normalize_sector_strategy_export_payload(result or {}))
     with open(pdf_path, "rb") as file_obj:
         data = file_obj.read()
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -2119,25 +2142,25 @@ def record_portfolio_trade(stock_id: int, payload: dict[str, Any]) -> tuple[bool
     )
 
 
-def list_portfolio_trade_records(account_name: Optional[str] = None, limit: int = 120) -> list[dict[str, Any]]:
-    return portfolio_manager.get_trade_records(account_name=account_name, limit=limit)
+def list_portfolio_trade_records(
+    account_name: Optional[str] = None,
+    limit: Optional[int] = 120,
+    page: Optional[int] = None,
+    page_size: Optional[int] = None,
+) -> Any:
+    if page is not None or page_size is not None:
+        resolved_page = max(1, int(page or 1))
+        resolved_page_size = _clamp_int(page_size, 1, 100, 20)
+        return portfolio_manager.get_trade_records_paginated(
+            account_name=account_name,
+            page=resolved_page,
+            page_size=resolved_page_size,
+        )
+    return portfolio_manager.get_trade_records(account_name=account_name, limit=int(limit or 120))
 
 
 def get_portfolio_risk(account_name: Optional[str] = None) -> dict[str, Any]:
     return portfolio_manager.calculate_portfolio_risk(account_name=account_name)
-
-
-def generate_portfolio_review(account_name: Optional[str], period_type: str) -> dict[str, Any]:
-    return portfolio_manager.generate_review_report(account_name=account_name, period_type=period_type)
-
-
-def list_portfolio_reviews(account_name: Optional[str], period_type: Optional[str]) -> list[dict[str, Any]]:
-    return portfolio_manager.get_review_reports(account_name=account_name, period_type=period_type)
-
-
-def delete_portfolio_review(report_id: int, account_name: Optional[str]) -> tuple[bool, str]:
-    return portfolio_manager.delete_review_report(report_id, account_name=account_name)
-
 
 def list_portfolio_analysis_history(stock_id: int, limit: int = 10) -> list[dict[str, Any]]:
     return portfolio_manager.get_analysis_history(stock_id, limit=limit)
@@ -2169,6 +2192,7 @@ def list_price_alerts() -> list[dict[str, Any]]:
 
 
 def create_price_alert(payload: dict[str, Any]) -> int:
+    runtime_config = get_smart_monitor_runtime_config()
     return monitor_db.add_monitored_stock(
         symbol=str(payload.get("symbol") or "").strip().upper(),
         name=payload.get("name") or payload.get("symbol"),
@@ -2176,7 +2200,10 @@ def create_price_alert(payload: dict[str, Any]) -> int:
         entry_range={"min": float(payload.get("entry_min") or 0), "max": float(payload.get("entry_max") or 0)},
         take_profit=payload.get("take_profit"),
         stop_loss=payload.get("stop_loss"),
-        check_interval=int(payload.get("check_interval") or 30),
+        check_interval=int(
+            payload.get("check_interval")
+            or runtime_config["realtime_monitor_interval_minutes"]
+        ),
         notification_enabled=bool(payload.get("notification_enabled", True)),
         trading_hours_only=bool(payload.get("trading_hours_only", True)),
         account_name=str(payload.get("account_name") or DEFAULT_ACCOUNT_NAME).strip() or DEFAULT_ACCOUNT_NAME,
@@ -2185,6 +2212,7 @@ def create_price_alert(payload: dict[str, Any]) -> int:
 
 
 def update_price_alert(stock_id: int, payload: dict[str, Any]) -> bool:
+    runtime_config = get_smart_monitor_runtime_config()
     return bool(
         monitor_db.update_monitored_stock(
             stock_id,
@@ -2192,7 +2220,10 @@ def update_price_alert(stock_id: int, payload: dict[str, Any]) -> bool:
             entry_range={"min": float(payload.get("entry_min") or 0), "max": float(payload.get("entry_max") or 0)},
             take_profit=payload.get("take_profit"),
             stop_loss=payload.get("stop_loss"),
-            check_interval=int(payload.get("check_interval") or 30),
+            check_interval=int(
+                payload.get("check_interval")
+                or runtime_config["realtime_monitor_interval_minutes"]
+            ),
             notification_enabled=bool(payload.get("notification_enabled", True)),
             trading_hours_only=payload.get("trading_hours_only"),
             managed_by_portfolio=payload.get("managed_by_portfolio"),
@@ -2208,12 +2239,70 @@ def mark_monitor_notification_read(event_id: int) -> None:
     monitor_db.repository.mark_notification_read(event_id)
 
 
+def ignore_monitor_notification(event_id: int) -> None:
+    monitor_db.ignore_notification(event_id)
+
+
+def get_smart_monitor_runtime_config() -> dict[str, int]:
+    intraday_value = monitoring_repository.get_metadata(SMART_MONITOR_INTRADAY_INTERVAL_KEY)
+    realtime_value = monitoring_repository.get_metadata(SMART_MONITOR_REALTIME_INTERVAL_KEY)
+    return {
+        "intraday_decision_interval_minutes": _clamp_int(
+            intraday_value,
+            10,
+            120,
+            _default_intraday_decision_interval_minutes(),
+        ),
+        "realtime_monitor_interval_minutes": _clamp_int(
+            realtime_value,
+            1,
+            10,
+            _default_realtime_monitor_interval_minutes(),
+        ),
+    }
+
+
+def update_smart_monitor_runtime_config(payload: dict[str, Any]) -> dict[str, int]:
+    intraday_minutes = _clamp_int(
+        payload.get("intraday_decision_interval_minutes"),
+        10,
+        120,
+        _default_intraday_decision_interval_minutes(),
+    )
+    realtime_minutes = _clamp_int(
+        payload.get("realtime_monitor_interval_minutes"),
+        1,
+        10,
+        _default_realtime_monitor_interval_minutes(),
+    )
+    monitoring_repository.set_metadata(
+        SMART_MONITOR_INTRADAY_INTERVAL_KEY,
+        str(intraday_minutes),
+    )
+    monitoring_repository.set_metadata(
+        SMART_MONITOR_REALTIME_INTERVAL_KEY,
+        str(realtime_minutes),
+    )
+    monitoring_repository.bulk_set_interval_minutes("ai_task", intraday_minutes)
+    monitoring_repository.bulk_set_interval_minutes("price_alert", realtime_minutes)
+    return {
+        "intraday_decision_interval_minutes": intraday_minutes,
+        "realtime_monitor_interval_minutes": realtime_minutes,
+    }
+
+
 def list_smart_monitor_tasks(enabled_only: bool = False) -> list[dict[str, Any]]:
     return smart_monitor_db.get_monitor_tasks(enabled_only=enabled_only)
 
 
 def upsert_smart_monitor_task(payload: dict[str, Any]) -> int:
-    return smart_monitor_db.upsert_monitor_task(payload)
+    runtime_config = get_smart_monitor_runtime_config()
+    normalized_payload = dict(payload)
+    normalized_payload.setdefault(
+        "check_interval",
+        int(runtime_config["intraday_decision_interval_minutes"]) * 60,
+    )
+    return smart_monitor_db.upsert_monitor_task(normalized_payload)
 
 
 def update_smart_monitor_task(task_id: int, payload: dict[str, Any]) -> bool:
@@ -2221,6 +2310,11 @@ def update_smart_monitor_task(task_id: int, payload: dict[str, Any]) -> bool:
     if not item:
         return False
     task_payload = dict(payload)
+    runtime_config = get_smart_monitor_runtime_config()
+    task_payload.setdefault(
+        "check_interval",
+        int(runtime_config["intraday_decision_interval_minutes"]) * 60,
+    )
     task_payload.setdefault("account_name", item.get("account_name") or DEFAULT_ACCOUNT_NAME)
     task_payload.setdefault("asset_id", item.get("asset_id"))
     task_payload.setdefault("portfolio_stock_id", item.get("portfolio_stock_id"))

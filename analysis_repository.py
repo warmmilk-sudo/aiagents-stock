@@ -30,6 +30,7 @@ class AnalysisRepository:
         self._stock_info_industry_cache: Dict[str, str] = {}
         self._init_database()
         self.migrate_legacy_analysis_db(self.legacy_analysis_db_path)
+        self.backfill_full_report_flags()
         self.cleanup_duplicate_records()
         self.migrate_stock_info_schema()
 
@@ -69,6 +70,23 @@ class AnalysisRepository:
         return json.dumps(value, ensure_ascii=False, default=str)
 
     @staticmethod
+    def _coerce_optional_bool(value: Any) -> Optional[bool]:
+        if value in (None, ""):
+            return None
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return bool(value)
+        text = str(value).strip().lower()
+        if not text:
+            return None
+        if text in {"1", "true", "yes", "y", "on"}:
+            return True
+        if text in {"0", "false", "no", "n", "off"}:
+            return False
+        return True
+
+    @staticmethod
     def _safe_json_loads(raw_value, default):
         if raw_value in (None, ""):
             return default
@@ -80,6 +98,25 @@ class AnalysisRepository:
             if isinstance(default, str) and isinstance(raw_value, str):
                 return raw_value
             return default
+
+    @classmethod
+    def _payload_has_content(cls, value: Any) -> bool:
+        if value in (None, ""):
+            return False
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped or stripped.lower() in {"null", "none", "nan"}:
+                return False
+            try:
+                parsed = json.loads(stripped)
+            except json.JSONDecodeError:
+                return True
+            return cls._payload_has_content(parsed)
+        if isinstance(value, dict):
+            return any(cls._payload_has_content(item) for item in value.values())
+        if isinstance(value, list):
+            return any(cls._payload_has_content(item) for item in value)
+        return True
 
     @staticmethod
     def _extract_first_number(value, allow_zero: bool = False) -> Optional[float]:
@@ -587,8 +624,8 @@ class AnalysisRepository:
             summary = resolved_summary
         if has_full_report is None:
             has_full_report = any(
-                value not in (None, "", {}, [])
-                for value in (stock_info, agents_results, discussion_result, final_decision)
+                self._payload_has_content(value)
+                for value in (agents_results, discussion_result, final_decision)
             )
 
         if asset_id is None and symbol:
@@ -745,6 +782,59 @@ class AnalysisRepository:
         rows = cursor.fetchall()
         conn.close()
         return [self._deserialize_row(row) for row in rows]
+
+    def list_record_summaries(
+        self,
+        *,
+        analysis_scope: Optional[str] = None,
+        symbol: Optional[str] = None,
+        asset_id: Optional[int] = None,
+        portfolio_stock_id: Optional[int] = None,
+        limit: Optional[int] = None,
+        full_report_only: bool = False,
+    ) -> List[Dict]:
+        conn = self._connect()
+        cursor = conn.cursor()
+        clauses = ["1 = 1"]
+        params: List[Any] = []
+        if analysis_scope:
+            clauses.append("analysis_scope = ?")
+            params.append(analysis_scope)
+        if symbol:
+            clauses.append("symbol = ?")
+            params.append(symbol)
+        if asset_id is not None:
+            clauses.append("asset_id = ?")
+            params.append(asset_id)
+        if portfolio_stock_id is not None:
+            clauses.append("portfolio_stock_id = ?")
+            params.append(portfolio_stock_id)
+        if full_report_only:
+            clauses.append("COALESCE(has_full_report, 0) = 1")
+
+        sql = (
+            "SELECT "
+            "id, symbol, stock_name, account_name, asset_id, portfolio_stock_id, "
+            "analysis_scope, analysis_source, analysis_date, period, rating, summary, "
+            "final_decision_json, has_full_report, asset_status_snapshot "
+            f"FROM analysis_records WHERE {' AND '.join(clauses)} "
+            "ORDER BY datetime(analysis_date) DESC, id DESC"
+        )
+        if limit:
+            sql += " LIMIT ?"
+            params.append(limit)
+
+        cursor.execute(sql, tuple(params))
+        rows = cursor.fetchall()
+        conn.close()
+
+        result: List[Dict] = []
+        for row in rows:
+            item = dict(row)
+            item["final_decision"] = self._safe_json_loads(item.pop("final_decision_json", None), {})
+            item["has_full_report"] = bool(item.get("has_full_report"))
+            result.append(item)
+        return result
 
     def get_record(self, record_id: int) -> Optional[Dict]:
         conn = self._connect()
@@ -1007,7 +1097,7 @@ class AnalysisRepository:
                 agents_results=self._safe_json_loads(record.get("agents_results_json"), {}),
                 discussion_result=self._safe_json_loads(record.get("discussion_result"), ""),
                 final_decision=self._safe_json_loads(record.get("final_decision_json"), {}),
-                has_full_report=bool(record.get("has_full_report", 0)),
+                has_full_report=self._coerce_optional_bool(record.get("has_full_report")),
                 asset_status_snapshot="portfolio",
             )
             migrated += 1
@@ -1017,7 +1107,37 @@ class AnalysisRepository:
         set_metadata(conn, key, str(migrated))
         conn.commit()
         conn.close()
+        self.backfill_full_report_flags()
         return migrated
+
+    def backfill_full_report_flags(self) -> int:
+        conn = self._connect()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT id, stock_info_json, agents_results_json, discussion_result, final_decision_json
+            FROM analysis_records
+            WHERE COALESCE(has_full_report, 0) = 0
+            ORDER BY id ASC
+            """
+        )
+        record_ids: List[int] = []
+        for row in cursor.fetchall():
+            if any(
+                self._payload_has_content(row[column])
+                for column in ("agents_results_json", "discussion_result", "final_decision_json")
+            ):
+                record_ids.append(int(row["id"]))
+
+        if record_ids:
+            placeholders = ",".join("?" for _ in record_ids)
+            cursor.execute(
+                f"UPDATE analysis_records SET has_full_report = 1 WHERE id IN ({placeholders})",
+                tuple(record_ids),
+            )
+            conn.commit()
+        conn.close()
+        return len(record_ids)
 
     def migrate_stock_info_schema(self) -> int:
         conn = self._connect()

@@ -3,9 +3,11 @@ import { useSearchParams } from "react-router-dom";
 
 import { PageFrame } from "../../components/common/PageFrame";
 import { StatusBadge } from "../../components/common/StatusBadge";
+import { FormattedReport } from "../../components/research/FormattedReport";
 import { ApiRequestError, apiFetch, buildQuery } from "../../lib/api";
+import { formatDateTime } from "../../lib/datetime";
 import { decodeIntent } from "../../lib/intents";
-import { useSmartMonitorStore } from "../../stores/smartMonitorStore";
+import { useSmartMonitorStore, type SmartMonitorPageCache } from "../../stores/smartMonitorStore";
 import styles from "../ConsolePage.module.scss";
 
 interface SmartMonitorTask {
@@ -19,34 +21,46 @@ interface SmartMonitorTask {
   stop_loss_pct: number;
   take_profit_pct: number;
   account_name?: string;
+  asset_id?: number | null;
+  portfolio_stock_id?: number | null;
+  has_position?: number;
+  asset_status?: string | null;
+  strategy_context?: {
+    analysis_date?: string;
+    entry_min?: number;
+    entry_max?: number;
+    take_profit?: number;
+    stop_loss?: number;
+  };
 }
 
 interface DecisionItem {
   id: number;
   stock_code: string;
   stock_name?: string;
+  account_name?: string;
+  asset_id?: number | null;
+  portfolio_stock_id?: number | null;
   action?: string;
   decision_time?: string;
   reasoning?: string;
-  action_status?: string;
-}
-
-interface PendingAction {
-  id: number;
-  action_type?: string;
-  status?: string;
-  account_name?: string;
-  payload?: Record<string, unknown>;
-  created_at?: string;
+  monitor_levels?: {
+    entry_min?: number;
+    entry_max?: number;
+    take_profit?: number;
+    stop_loss?: number;
+  };
 }
 
 interface SystemStatus {
   monitor_service?: {
     running?: boolean;
-    total_items?: number;
-    ai_tasks?: number;
-    pending_notifications?: number;
   };
+}
+
+interface RuntimeConfig {
+  intraday_decision_interval_minutes: number;
+  realtime_monitor_interval_minutes: number;
 }
 
 interface PriceAlert {
@@ -64,8 +78,10 @@ interface PriceAlert {
 interface PriceAlertNotification {
   id: number;
   symbol: string;
+  name?: string;
   message: string;
   triggered_at: string;
+  account_name?: string;
 }
 
 interface AlertFormState {
@@ -86,14 +102,12 @@ interface MonitorIntentPayload {
 }
 
 type ComposerPanel = "task" | "analysis" | "alert" | null;
-type NoticeTone = "default" | "success" | "warning" | "danger";
 type NotificationTone = "danger" | "success" | "warning" | "info";
-type SectionKey = "overview" | "pending" | "decisions" | "tasks" | "controls";
+type SectionKey = "alerts" | "decisions" | "tasks" | "controls";
 
 const sectionTabs: Array<{ key: SectionKey; label: string }> = [
-  { key: "overview", label: "监控总览" },
-  { key: "pending", label: "待办动作" },
-  { key: "decisions", label: "AI决策" },
+  { key: "alerts", label: "当前预警" },
+  { key: "decisions", label: "盘中决策" },
   { key: "tasks", label: "任务列表" },
   { key: "controls", label: "运行控制" },
 ];
@@ -103,7 +117,6 @@ const defaultTaskForm = {
   stock_name: "",
   account_name: "默认账户",
   task_name: "",
-  check_interval: "3600",
   position_size_pct: "20",
   stop_loss_pct: "5",
   take_profit_pct: "10",
@@ -121,10 +134,9 @@ const defaultAlertForm: AlertFormState = {
   stop_loss: "",
 };
 
-const noticeToneClass: Record<Exclude<NoticeTone, "default">, string> = {
-  success: styles.noticeSuccess,
-  warning: styles.noticeWarning,
-  danger: styles.noticeDanger,
+const defaultRuntimeConfig: RuntimeConfig = {
+  intraday_decision_interval_minutes: 60,
+  realtime_monitor_interval_minutes: 3,
 };
 
 const notificationToneClass: Record<NotificationTone, string> = {
@@ -134,38 +146,65 @@ const notificationToneClass: Record<NotificationTone, string> = {
   info: styles.noticeInfo,
 };
 
-const pendingMeta = (status?: string): { tone: NoticeTone; label: string } => {
-  const normalized = String(status || "pending").toLowerCase();
-  if (normalized === "accepted" || normalized === "done") return { tone: "success", label: "已处理" };
-  if (normalized === "rejected") return { tone: "danger", label: "已拒绝" };
-  if (normalized === "ignored") return { tone: "default", label: "已忽略" };
-  return { tone: "warning", label: "待处理" };
-};
-
-const decisionMeta = (status?: string): { tone: NoticeTone; label: string } => {
-  const normalized = String(status || "suggested").toLowerCase();
-  if (normalized === "success" || normalized === "executed") return { tone: "success", label: "已执行" };
-  if (normalized === "failed" || normalized === "rejected") return { tone: "danger", label: "执行失败" };
-  if (normalized === "running" || normalized === "pending" || normalized === "suggested") return { tone: "warning", label: "待确认" };
-  return { tone: "default", label: normalized || "状态未知" };
-};
-
-const decisionAction = (value?: string) =>
-  ({ buy: "买入建议", sell: "卖出建议", hold: "继续观察" }[String(value || "").toLowerCase()] || value || "策略建议");
-
-const readPayloadText = (payload: Record<string, unknown> | undefined, ...keys: string[]) => {
-  for (const key of keys) {
-    const value = payload?.[key];
-    if (typeof value === "string" && value.trim()) return value.trim();
-    if (typeof value === "number") return String(value);
-  }
-  return "";
-};
+function decisionBadge(value?: string): { label: string; tone: "success" | "danger" | "warning" | "default" } {
+  const normalized = String(value || "").toLowerCase();
+  if (normalized === "buy") return { label: "买入", tone: "success" };
+  if (normalized === "sell") return { label: "卖出", tone: "danger" };
+  if (normalized === "hold") return { label: "观望", tone: "warning" };
+  return { label: value || "未知", tone: "default" };
+}
 
 const formatNumber = (value?: number) => {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric.toLocaleString("zh-CN", { maximumFractionDigits: 2 }) : "-";
 };
+
+const formatLevelNumber = (value?: unknown) => {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric.toLocaleString("zh-CN", { maximumFractionDigits: 2 }) : "-";
+};
+
+const formatThresholdSummary = (
+  label: string,
+  levels?: {
+    entry_min?: unknown;
+    entry_max?: unknown;
+    take_profit?: unknown;
+    stop_loss?: unknown;
+  } | null,
+) => {
+  if (!levels) {
+    return `${label}：暂无关键指标`;
+  }
+  const entryMin = formatLevelNumber(levels.entry_min);
+  const entryMax = formatLevelNumber(levels.entry_max);
+  const takeProfit = formatLevelNumber(levels.take_profit);
+  const stopLoss = formatLevelNumber(levels.stop_loss);
+  if ([entryMin, entryMax, takeProfit, stopLoss].every((value) => value === "-")) {
+    return `${label}：暂无关键指标`;
+  }
+  return `${label}：入场[${entryMin}-${entryMax}] | 止盈:${takeProfit} | 止损:${stopLoss}`;
+};
+
+const taskPortfolioLabel = (task: SmartMonitorTask) =>
+  Boolean(task.has_position) || task.asset_status === "portfolio" ? task.account_name || "在持仓" : "未持仓";
+
+const matchesTaskDecision = (task: SmartMonitorTask, decision: DecisionItem) => {
+  if (task.stock_code !== decision.stock_code) {
+    return false;
+  }
+  if (task.asset_id != null && decision.asset_id != null) {
+    return Number(task.asset_id) === Number(decision.asset_id);
+  }
+  if (task.portfolio_stock_id != null && decision.portfolio_stock_id != null) {
+    return Number(task.portfolio_stock_id) === Number(decision.portfolio_stock_id);
+  }
+  return (task.account_name || "默认账户") === (decision.account_name || "默认账户");
+};
+
+const findLatestDecisionForTask = (task: SmartMonitorTask, decisions: DecisionItem[]) =>
+  decisions.find((decision) => matchesTaskDecision(task, decision))
+  || decisions.find((decision) => decision.stock_code === task.stock_code);
 
 const notificationMeta = (message: string): { tone: NotificationTone; label: string } => {
   if (/(止损|跌破|下破|失守|回撤)/.test(message)) return { tone: "danger", label: "风险预警" };
@@ -174,45 +213,88 @@ const notificationMeta = (message: string): { tone: NotificationTone; label: str
   return { tone: "warning", label: "价格提醒" };
 };
 
+const PAGE_CACHE_TTL_MS = 20_000;
+
+function stockDisplayName(name?: string, code?: string): string {
+  if (name && code) {
+    return `${name}（${code}）`;
+  }
+  return name || code || "未知标的";
+}
+
 export function SmartMonitorPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const enabledOnly = useSmartMonitorStore((state) => state.enabledOnly);
   const setEnabledOnly = useSmartMonitorStore((state) => state.setEnabledOnly);
-  const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
-  const [tasks, setTasks] = useState<SmartMonitorTask[]>([]);
-  const [decisions, setDecisions] = useState<DecisionItem[]>([]);
-  const [pendingActions, setPendingActions] = useState<PendingAction[]>([]);
-  const [alerts, setAlerts] = useState<PriceAlert[]>([]);
-  const [notifications, setNotifications] = useState<PriceAlertNotification[]>([]);
+  const cacheModeKey = enabledOnly ? "enabled" : "all";
+  const cachedPage = useSmartMonitorStore((state) => state.pageCacheByMode[cacheModeKey] ?? null);
+  const setPageCache = useSmartMonitorStore((state) => state.setPageCache);
+  const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(() => (cachedPage?.systemStatus as SystemStatus | null) ?? null);
+  const [tasks, setTasks] = useState<SmartMonitorTask[]>(() => (cachedPage?.tasks as SmartMonitorTask[]) ?? []);
+  const [decisions, setDecisions] = useState<DecisionItem[]>(() => (cachedPage?.decisions as DecisionItem[]) ?? []);
+  const [alerts, setAlerts] = useState<PriceAlert[]>(() => (cachedPage?.alerts as PriceAlert[]) ?? []);
+  const [notifications, setNotifications] = useState<PriceAlertNotification[]>(() => (cachedPage?.notifications as PriceAlertNotification[]) ?? []);
+  const [runtimeConfig, setRuntimeConfig] = useState<RuntimeConfig>(() => (cachedPage?.runtimeConfig as RuntimeConfig | null) ?? defaultRuntimeConfig);
   const [taskForm, setTaskForm] = useState(defaultTaskForm);
   const [alertForm, setAlertForm] = useState<AlertFormState>(defaultAlertForm);
   const [analysisCode, setAnalysisCode] = useState("");
   const [analysisResult, setAnalysisResult] = useState<unknown>(null);
   const [activePanel, setActivePanel] = useState<ComposerPanel>(null);
-  const [section, setSection] = useState<SectionKey>("overview");
+  const [section, setSection] = useState<SectionKey>("alerts");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
-  const loadAll = async () => {
-    const [statusData, taskData, decisionData, pendingData, alertData, notificationData] = await Promise.all([
+  const applyPageCache = (cache: SmartMonitorPageCache | null) => {
+    if (!cache) {
+      return;
+    }
+    setSystemStatus((cache.systemStatus as SystemStatus | null) ?? null);
+    setTasks(cache.tasks as SmartMonitorTask[]);
+    setDecisions(cache.decisions as DecisionItem[]);
+    setAlerts(cache.alerts as PriceAlert[]);
+    setNotifications(cache.notifications as PriceAlertNotification[]);
+    setRuntimeConfig((cache.runtimeConfig as RuntimeConfig | null) ?? defaultRuntimeConfig);
+  };
+
+  const loadAll = async (force = false) => {
+    if (!force && cachedPage && Date.now() - cachedPage.updatedAt < PAGE_CACHE_TTL_MS) {
+      applyPageCache(cachedPage);
+      return;
+    }
+    const [statusData, taskData, decisionData, alertData, notificationData, runtimeData] = await Promise.all([
       apiFetch<SystemStatus>("/api/system/status"),
       apiFetch<SmartMonitorTask[]>(`/api/smart-monitor/tasks${buildQuery({ enabled_only: enabledOnly })}`),
       apiFetch<DecisionItem[]>("/api/smart-monitor/decisions?limit=30"),
-      apiFetch<PendingAction[]>("/api/smart-monitor/pending-actions?limit=30"),
       apiFetch<PriceAlert[]>("/api/price-alerts"),
       apiFetch<PriceAlertNotification[]>("/api/price-alerts/notifications?limit=12"),
+      apiFetch<RuntimeConfig>("/api/smart-monitor/runtime-config"),
     ]);
     setSystemStatus(statusData);
     setTasks(taskData);
     setDecisions(decisionData);
-    setPendingActions(pendingData);
     setAlerts(alertData);
     setNotifications(notificationData);
+    setRuntimeConfig(runtimeData);
+    setPageCache(cacheModeKey, {
+      systemStatus: statusData,
+      tasks: taskData,
+      decisions: decisionData,
+      alerts: alertData,
+      notifications: notificationData,
+      runtimeConfig: runtimeData,
+      updatedAt: Date.now(),
+    });
   };
 
   useEffect(() => {
-    void loadAll();
-  }, [enabledOnly]);
+    if (cachedPage) {
+      applyPageCache(cachedPage);
+    }
+    if (cachedPage && Date.now() - cachedPage.updatedAt < PAGE_CACHE_TTL_MS) {
+      return;
+    }
+    void loadAll(Boolean(cachedPage));
+  }, [cacheModeKey, cachedPage?.updatedAt]);
 
   useEffect(() => {
     const intent = decodeIntent<MonitorIntentPayload>(searchParams.get("intent"));
@@ -229,7 +311,7 @@ export function SmartMonitorPage() {
         stop_loss: String(context.stop_loss ?? ""),
       });
       setActivePanel("alert");
-      setSection("overview");
+      setSection("tasks");
     } else {
       setTaskForm((current) => ({
         ...current,
@@ -264,7 +346,6 @@ export function SmartMonitorPage() {
           stock_name: taskForm.stock_name || taskForm.stock_code,
           account_name: taskForm.account_name,
           task_name: taskForm.task_name || `${taskForm.stock_name || taskForm.stock_code}盯盘`,
-          check_interval: Number(taskForm.check_interval),
           position_size_pct: Number(taskForm.position_size_pct),
           stop_loss_pct: Number(taskForm.stop_loss_pct),
           take_profit_pct: Number(taskForm.take_profit_pct),
@@ -276,7 +357,7 @@ export function SmartMonitorPage() {
       setTaskForm(defaultTaskForm);
       setActivePanel(null);
       withFeedback(`盯盘任务已保存 ${taskForm.stock_code}`);
-      await loadAll();
+      await loadAll(true);
     } catch (requestError) {
       withFeedback("", requestError instanceof ApiRequestError ? requestError.message : "保存任务失败");
     }
@@ -304,9 +385,24 @@ export function SmartMonitorPage() {
       setAlertForm(defaultAlertForm);
       setActivePanel(null);
       withFeedback("价格预警已创建");
-      await loadAll();
+      await loadAll(true);
     } catch (requestError) {
       withFeedback("", requestError instanceof ApiRequestError ? requestError.message : "创建预警失败");
+    }
+  };
+
+  const saveRuntimeConfig = async () => {
+    withFeedback();
+    try {
+      const next = await apiFetch<RuntimeConfig>("/api/smart-monitor/runtime-config", {
+        method: "PUT",
+        body: JSON.stringify(runtimeConfig),
+      });
+      setRuntimeConfig(next);
+      withFeedback("运行控制已更新");
+      await loadAll(true);
+    } catch (requestError) {
+      withFeedback("", requestError instanceof ApiRequestError ? requestError.message : "保存运行控制失败");
     }
   };
 
@@ -315,7 +411,7 @@ export function SmartMonitorPage() {
     try {
       await apiFetch(path, { method });
       withFeedback(successText);
-      await loadAll();
+      await loadAll(true);
     } catch (requestError) {
       withFeedback("", requestError instanceof ApiRequestError ? requestError.message : "操作失败");
     }
@@ -341,50 +437,22 @@ export function SmartMonitorPage() {
     }
   };
 
-  const resolvePendingAction = async (actionId: number) => {
+  const ignoreNotification = async (eventId: number) => {
     withFeedback();
     try {
-      await apiFetch(`/api/smart-monitor/pending-actions/${actionId}/resolve`, {
-        method: "POST",
-        body: JSON.stringify({ status: "ignored", resolution_note: "ignored" }),
-      });
-      withFeedback("待办动作已忽略");
-      await loadAll();
+      await apiFetch(`/api/price-alerts/notifications/${eventId}/ignore`, { method: "POST" });
+      withFeedback("预警通知已忽略");
+      await loadAll(true);
     } catch (requestError) {
-      withFeedback("", requestError instanceof ApiRequestError ? requestError.message : "更新待办动作失败");
+      withFeedback("", requestError instanceof ApiRequestError ? requestError.message : "忽略预警通知失败");
     }
   };
-
-  const openTaskEditor = (task: SmartMonitorTask) => {
-    setTaskForm({
-      stock_code: task.stock_code,
-      stock_name: task.stock_name || "",
-      account_name: task.account_name || "默认账户",
-      task_name: task.task_name,
-      check_interval: String(task.check_interval),
-      position_size_pct: String(task.position_size_pct),
-      stop_loss_pct: String(task.stop_loss_pct),
-      take_profit_pct: String(task.take_profit_pct),
-      trading_hours_only: true,
-      enabled: Boolean(task.enabled),
-      origin_analysis_id: undefined,
-    });
-    setAnalysisCode(task.stock_code);
-    setActivePanel("task");
-    setSection("tasks");
-  };
-
-  const activeTaskCount = tasks.filter((item) => Boolean(item.enabled)).length;
-  const enabledAlerts = alerts.filter((item) => item.notification_enabled).length;
-  const protectedAlerts = alerts.filter((item) => item.take_profit || item.stop_loss).length;
-  const latestPendingActions = pendingActions.slice(0, 8);
-  const latestDecisions = decisions.slice(0, 12);
 
   const renderTaskComposer = () =>
     activePanel !== "task" ? null : (
       <section className={styles.card}>
         <div className={styles.cardHeader}>
-          <h2>新增盯盘任务</h2>
+          <p className={styles.helperText}>新任务默认继承运行控制中的盘中决策间隔，不再单独设置秒数。</p>
           <button className={styles.tertiaryButton} onClick={() => setActivePanel(null)} type="button">收起</button>
         </div>
         <form className={styles.stack} onSubmit={submitTask}>
@@ -393,7 +461,6 @@ export function SmartMonitorPage() {
             <div className={styles.field}><label htmlFor="task-name">股票名称</label><input id="task-name" onChange={(event) => setTaskForm((current) => ({ ...current, stock_name: event.target.value }))} value={taskForm.stock_name} /></div>
             <div className={styles.field}><label htmlFor="task-account">账户</label><input id="task-account" onChange={(event) => setTaskForm((current) => ({ ...current, account_name: event.target.value }))} value={taskForm.account_name} /></div>
             <div className={styles.field}><label htmlFor="task-title">任务名称</label><input id="task-title" onChange={(event) => setTaskForm((current) => ({ ...current, task_name: event.target.value }))} value={taskForm.task_name} /></div>
-            <div className={styles.field}><label htmlFor="task-interval">检查间隔(秒)</label><input id="task-interval" onChange={(event) => setTaskForm((current) => ({ ...current, check_interval: event.target.value }))} value={taskForm.check_interval} /></div>
             <div className={styles.field}><label htmlFor="task-position">仓位占比(%)</label><input id="task-position" onChange={(event) => setTaskForm((current) => ({ ...current, position_size_pct: event.target.value }))} value={taskForm.position_size_pct} /></div>
             <div className={styles.field}><label htmlFor="task-stop">止损(%)</label><input id="task-stop" onChange={(event) => setTaskForm((current) => ({ ...current, stop_loss_pct: event.target.value }))} value={taskForm.stop_loss_pct} /></div>
             <div className={styles.field}><label htmlFor="task-profit">止盈(%)</label><input id="task-profit" onChange={(event) => setTaskForm((current) => ({ ...current, take_profit_pct: event.target.value }))} value={taskForm.take_profit_pct} /></div>
@@ -410,7 +477,7 @@ export function SmartMonitorPage() {
     activePanel !== "alert" ? null : (
       <section className={styles.card}>
         <div className={styles.cardHeader}>
-          <h2>新增预警</h2>
+          <p className={styles.helperText}>新预警默认继承运行控制中的实时监测间隔，不再单独设置间隔字段。</p>
           <button className={styles.tertiaryButton} onClick={() => setActivePanel(null)} type="button">收起</button>
         </div>
         <form className={styles.stack} onSubmit={submitAlert}>
@@ -434,56 +501,167 @@ export function SmartMonitorPage() {
     activePanel !== "analysis" ? null : (
       <section className={styles.card}>
         <div className={styles.cardHeader}>
-          <h2>手动分析</h2>
+          <p className={styles.helperText}>手动分析不会改动运行间隔，仅立即触发一次盘中决策。</p>
           <button className={styles.tertiaryButton} onClick={() => setActivePanel(null)} type="button">收起</button>
         </div>
         <div className={styles.actions}>
           <input onChange={(event) => setAnalysisCode(event.target.value)} placeholder="股票代码" value={analysisCode} />
           <button className={styles.primaryButton} onClick={() => void runAnalysis()} type="button">立即分析</button>
         </div>
-        {analysisResult ? <pre className={styles.code}>{JSON.stringify(analysisResult, null, 2)}</pre> : null}
+        {analysisResult ? (
+          typeof analysisResult === "string" ? (
+            <FormattedReport content={analysisResult} />
+          ) : (
+            <pre className={styles.code}>{JSON.stringify(analysisResult, null, 2)}</pre>
+          )
+        ) : null}
       </section>
     );
 
-  const renderOverviewSection = () => (
+  const renderAlertsSection = () => (
     <>
-      {renderAnalysisComposer()}
-      {renderAlertComposer()}
+      {message || error ? (
+        <section className={styles.card}>
+          {message ? <p className={styles.successText}>{message}</p> : null}
+          {error ? <p className={styles.dangerText}>{error}</p> : null}
+        </section>
+      ) : null}
       <section className={styles.card}>
-        <div className={styles.compactGrid}>
-          <div className={styles.metric}><span className={styles.muted}>监控总数</span><strong>{systemStatus?.monitor_service?.total_items ?? 0}</strong></div>
-          <div className={styles.metric}><span className={styles.muted}>启用任务</span><strong>{activeTaskCount}</strong></div>
-          <div className={styles.metric}><span className={styles.muted}>AI任务</span><strong>{systemStatus?.monitor_service?.ai_tasks ?? 0}</strong></div>
-          <div className={styles.metric}><span className={styles.muted}>当前预警</span><strong>{alerts.length}</strong></div>
-          <div className={styles.metric}><span className={styles.muted}>通知已开启</span><strong>{enabledAlerts}</strong></div>
-          <div className={styles.metric}><span className={styles.muted}>带止盈止损</span><strong>{protectedAlerts}</strong></div>
-        </div>
-      </section>
-      <section className={styles.card}>
-        <div className={styles.cardHeader}><h2>预警通知</h2></div>
         <div className={styles.list}>
           {notifications.map((item) => {
             const meta = notificationMeta(item.message);
             return (
               <div className={`${styles.noticeCard} ${notificationToneClass[meta.tone]}`} key={item.id}>
-                <div className={styles.noticeMeta}><StatusBadge label={meta.label} tone={meta.tone} /><strong>{item.symbol}</strong></div>
+                <div className={styles.noticeMeta}>
+                  <StatusBadge label={meta.label} tone={meta.tone} />
+                  <strong>{stockDisplayName(item.name, item.symbol)}</strong>
+                </div>
                 <div>{item.message}</div>
-                <small className={styles.muted}>{item.triggered_at}</small>
+                <small className={styles.muted}>
+                  {formatDateTime(item.triggered_at, "暂无时间")} | {item.account_name || "默认账户"}
+                </small>
+                <div className={styles.actions}>
+                  <button className={styles.secondaryButton} onClick={() => void ignoreNotification(item.id)} type="button">
+                    忽略
+                  </button>
+                </div>
               </div>
             );
           })}
-          {notifications.length === 0 ? <div className={styles.noticeCard}><div>最近还没有新的价格通知。</div></div> : null}
+          {notifications.length === 0 ? <div className={styles.noticeCard}><div>当前没有需要处理的预警通知。</div></div> : null}
+        </div>
+      </section>
+    </>
+  );
+
+  const renderDecisionsSection = () => (
+    <section className={styles.card}>
+      <div className={styles.list}>
+        {decisions.map((item) => {
+          const badge = decisionBadge(item.action);
+          const toneClass =
+            badge.tone === "success"
+              ? styles.noticeSuccess
+              : badge.tone === "danger"
+                ? styles.noticeDanger
+                : badge.tone === "warning"
+                  ? styles.noticeWarning
+                  : styles.noticeInfo;
+          return (
+            <div className={`${styles.noticeCard} ${toneClass}`} key={item.id}>
+              <div className={styles.noticeMeta}>
+                <StatusBadge label={badge.label} tone={badge.tone} />
+              </div>
+              <strong>{stockDisplayName(item.stock_name, item.stock_code)}</strong>
+              <small className={styles.muted}>{formatDateTime(item.decision_time, "暂无时间")}</small>
+              <FormattedReport content={item.reasoning || "暂无盘中决策内容"} />
+            </div>
+          );
+        })}
+        {decisions.length === 0 ? <div className={styles.muted}>暂无盘中决策</div> : null}
+      </div>
+    </section>
+  );
+
+  const renderTasksSection = () => (
+    <>
+      <section className={styles.card}>
+        <div className={styles.cardHeader}>
+          <div className={styles.actions}>
+            <button
+              className={activePanel === "analysis" ? styles.primaryButton : styles.secondaryButton}
+              onClick={() => setActivePanel((current) => current === "analysis" ? null : "analysis")}
+              type="button"
+            >
+              手动分析
+            </button>
+            <button className={styles.secondaryButton} onClick={() => setEnabledOnly(!enabledOnly)} type="button">
+              {enabledOnly ? "显示全部" : "仅看启用"}
+            </button>
+          </div>
+        </div>
+        {message ? <p className={styles.successText}>{message}</p> : null}
+        {error ? <p className={styles.dangerText}>{error}</p> : null}
+      </section>
+      {renderAnalysisComposer()}
+      {renderTaskComposer()}
+      {renderAlertComposer()}
+      <section className={styles.card}>
+        <div className={styles.cardHeader}>
+          <p className={styles.helperText}>启用状态切换后会立即影响当前任务列表。</p>
+          <div className={styles.actions}>
+            <button
+              className={activePanel === "task" ? styles.primaryButton : styles.secondaryButton}
+              onClick={() => setActivePanel((current) => current === "task" ? null : "task")}
+              type="button"
+            >
+              新增任务
+            </button>
+          </div>
+        </div>
+        <div className={styles.list}>
+          {tasks.map((task) => {
+            const latestDecision = findLatestDecisionForTask(task, decisions);
+            return (
+              <div className={styles.smartMonitorTaskCard} key={task.id}>
+                <div className={styles.noticeMeta}>
+                  <strong className={styles.smartMonitorTaskTitle}>
+                    {`${stockDisplayName(task.stock_name, task.stock_code)} | ${taskPortfolioLabel(task)}`}
+                  </strong>
+                  <StatusBadge label={Boolean(task.enabled) ? "启用" : "停用"} tone={Boolean(task.enabled) ? "success" : "default"} />
+                </div>
+                <p className={styles.taskIndicatorText}>{formatThresholdSummary("分析基线", task.strategy_context)}</p>
+                <p className={styles.taskIndicatorText}>{formatThresholdSummary("盘中决策", latestDecision?.monitor_levels)}</p>
+                <div className={styles.actions}>
+                  <button className={styles.secondaryButton} onClick={() => void runMonitorCommand(`/api/smart-monitor/tasks/${task.id}/enable?enabled=${String(!task.enabled)}`, task.enabled ? "任务已停用" : "任务已启用")} type="button">{task.enabled ? "停用" : "启用"}</button>
+                  <button className={styles.dangerButton} onClick={() => void runMonitorCommand(`/api/smart-monitor/tasks/${task.id}`, "任务已删除", "DELETE")} type="button">删除</button>
+                </div>
+              </div>
+            );
+          })}
+          {tasks.length === 0 ? <div className={styles.muted}>暂无智能盯盘任务</div> : null}
         </div>
       </section>
       <section className={styles.card}>
-        <div className={styles.cardHeader}><h2>当前预警</h2></div>
+        <div className={styles.cardHeader}>
+          <p className={styles.helperText}>价格预警仍保留独立列表，但监控间隔统一由运行控制管理。</p>
+          <div className={styles.actions}>
+            <button
+              className={activePanel === "alert" ? styles.primaryButton : styles.secondaryButton}
+              onClick={() => setActivePanel((current) => current === "alert" ? null : "alert")}
+              type="button"
+            >
+              新增预警
+            </button>
+          </div>
+        </div>
         <div className={styles.tableWrap}>
           <table className={styles.table}>
             <thead><tr><th>股票</th><th>入场区间</th><th>止盈 / 止损</th><th>通知</th><th>账户</th><th>操作</th></tr></thead>
             <tbody>
               {alerts.map((alert) => (
                 <tr key={alert.id}>
-                  <td><strong>{alert.symbol}</strong><div className={styles.muted}>{alert.name}</div></td>
+                  <td><strong>{stockDisplayName(alert.name, alert.symbol)}</strong></td>
                   <td>{formatNumber(alert.entry_range?.min)} - {formatNumber(alert.entry_range?.max)}</td>
                   <td>{formatNumber(alert.take_profit)} / {formatNumber(alert.stop_loss)}</td>
                   <td><StatusBadge label={alert.notification_enabled ? "开启" : "关闭"} tone={alert.notification_enabled ? "default" : "warning"} /></td>
@@ -498,78 +676,58 @@ export function SmartMonitorPage() {
       </section>
     </>
   );
-  const renderPendingSection = () => (
-    <section className={styles.card}>
-      <div className={styles.cardHeader}><h2>待办动作</h2></div>
-      <div className={styles.list}>
-        {latestPendingActions.map((item) => {
-          const meta = pendingMeta(item.status);
-          const toneClass = meta.tone === "default" ? "" : noticeToneClass[meta.tone];
-          const symbol = readPayloadText(item.payload, "stock_code", "symbol", "code", "ticker");
-          const stockName = readPayloadText(item.payload, "stock_name", "name");
-          return (
-            <div className={`${styles.noticeCard} ${toneClass}`.trim()} key={item.id}>
-              <div className={styles.noticeMeta}><StatusBadge label={meta.label} tone={meta.tone} /><strong>{item.action_type || "待办动作"}</strong></div>
-              <p className={styles.muted}>股票: {stockName ? `${stockName}${symbol ? ` (${symbol})` : ""}` : symbol || "未指定"}</p>
-              <p className={styles.muted}>账户: {item.account_name || "默认账户"} | 时间: {item.created_at || "暂无"}</p>
-              <div className={styles.actions}>{String(item.status || "").toLowerCase() === "ignored" ? <span className={styles.muted}>已忽略</span> : <button className={styles.secondaryButton} onClick={() => void resolvePendingAction(item.id)} type="button">忽略</button>}</div>
-            </div>
-          );
-        })}
-        {latestPendingActions.length === 0 ? <div className={styles.noticeCard}><div>当前没有需要人工确认的动作。</div></div> : null}
-      </div>
-    </section>
-  );
-  const renderDecisionsSection = () => (
-    <section className={styles.card}>
-      <div className={styles.cardHeader}><h2>AI决策</h2></div>
-      <div className={styles.list}>
-        {latestDecisions.map((item) => {
-          const meta = decisionMeta(item.action_status);
-          return (
-            <div className={styles.listItem} key={item.id}>
-              <div className={styles.noticeMeta}><StatusBadge label={decisionAction(item.action)} tone="default" /><StatusBadge label={meta.label} tone={meta.tone} /></div>
-              <strong>{item.stock_code}</strong>
-              <p className={styles.muted}>{item.stock_name || item.stock_code} | {item.decision_time || "暂无时间"}</p>
-              <p>{item.reasoning || "暂无推理说明"}</p>
-            </div>
-          );
-        })}
-        {latestDecisions.length === 0 ? <div className={styles.muted}>暂无 AI 决策</div> : null}
-      </div>
-    </section>
-  );
-  const renderTasksSection = () => (
-    <>
-      {renderTaskComposer()}
-      <section className={styles.card}>
-        <div className={styles.cardHeader}><h2>任务列表</h2></div>
-        <div className={styles.list}>
-          {tasks.map((task) => (
-            <div className={styles.listItem} key={task.id}>
-              <div className={styles.noticeMeta}><strong>{task.task_name}</strong><StatusBadge label={Boolean(task.enabled) ? "启用" : "停用"} tone={Boolean(task.enabled) ? "success" : "default"} /></div>
-              <p className={styles.muted}>{task.stock_name || task.stock_code} | {task.account_name || "默认账户"} | 间隔 {task.check_interval}s</p>
-              <div className={styles.actions}>
-                <button className={styles.secondaryButton} onClick={() => openTaskEditor(task)} type="button">带入表单</button>
-                <button className={styles.secondaryButton} onClick={() => void runMonitorCommand(`/api/smart-monitor/tasks/${task.id}/enable?enabled=${String(!task.enabled)}`, task.enabled ? "任务已停用" : "任务已启用")} type="button">{task.enabled ? "停用" : "启用"}</button>
-                <button className={styles.dangerButton} onClick={() => void runMonitorCommand(`/api/smart-monitor/tasks/${task.id}`, "任务已删除", "DELETE")} type="button">删除</button>
-              </div>
-            </div>
-          ))}
-          {tasks.length === 0 ? <div className={styles.muted}>暂无智能盯盘任务</div> : null}
-        </div>
-      </section>
-    </>
-  );
+
   const renderControlsSection = () => (
     <section className={styles.card}>
-      <div className={styles.cardHeader}><h2>运行控制</h2></div>
       <div className={styles.actions}>
         <button className={styles.secondaryButton} onClick={() => void runMonitorCommand("/api/system/monitor-service/start", "监控服务已启动")} type="button">启动服务</button>
         <button className={styles.secondaryButton} onClick={() => void runMonitorCommand("/api/system/monitor-service/stop", "监控服务已停止")} type="button">停止服务</button>
         <button className={styles.secondaryButton} onClick={() => void runMonitorCommand("/api/smart-monitor/tasks/enable-all?enabled=true", "全部任务已启用")} type="button">全部启用</button>
         <button className={styles.secondaryButton} onClick={() => void runMonitorCommand("/api/smart-monitor/tasks/enable-all?enabled=false", "全部任务已停用")} type="button">全部停用</button>
       </div>
+      <div className={styles.stack} style={{ marginTop: 14 }}>
+        <div className={styles.field}>
+          <label htmlFor="decision-interval">盘中决策间隔：{runtimeConfig.intraday_decision_interval_minutes} 分钟</label>
+          <input
+            id="decision-interval"
+            className={styles.slider}
+            max="120"
+            min="10"
+            onChange={(event) =>
+              setRuntimeConfig((current) => ({
+                ...current,
+                intraday_decision_interval_minutes: Number(event.target.value) || 60,
+              }))
+            }
+            step="10"
+            type="range"
+            value={runtimeConfig.intraday_decision_interval_minutes}
+          />
+        </div>
+        <div className={styles.field}>
+          <label htmlFor="realtime-interval">实时监测间隔：{runtimeConfig.realtime_monitor_interval_minutes} 分钟</label>
+          <input
+            id="realtime-interval"
+            className={styles.slider}
+            max="10"
+            min="1"
+            onChange={(event) =>
+              setRuntimeConfig((current) => ({
+                ...current,
+                realtime_monitor_interval_minutes: Number(event.target.value) || 3,
+              }))
+            }
+            step="1"
+            type="range"
+            value={runtimeConfig.realtime_monitor_interval_minutes}
+          />
+        </div>
+      </div>
+      <div className={styles.actions} style={{ marginTop: 14 }}>
+        <button className={styles.primaryButton} onClick={() => void saveRuntimeConfig()} type="button">保存运行控制</button>
+      </div>
+      {message ? <p className={styles.successText}>{message}</p> : null}
+      {error ? <p className={styles.dangerText}>{error}</p> : null}
     </section>
   );
 
@@ -577,32 +735,14 @@ export function SmartMonitorPage() {
     <PageFrame
       title="智能盯盘"
       actions={
-        <>
-          <StatusBadge label={systemStatus?.monitor_service?.running ? "监控服务运行中" : "监控服务未启动"} tone={systemStatus?.monitor_service?.running ? "success" : "warning"} />
-          <StatusBadge label={`启用任务 ${activeTaskCount}/${tasks.length}`} tone="default" />
-        </>
+        <StatusBadge label={systemStatus?.monitor_service?.running ? `监控服务运行中` : "监控服务未启动"} tone={systemStatus?.monitor_service?.running ? "success" : "warning"} />
       }
       activeSectionKey={section}
       onSectionChange={(nextSection) => setSection(nextSection as SectionKey)}
       sectionTabs={sectionTabs}
     >
       <div className={styles.stack}>
-        <section className={styles.card}>
-          <div className={styles.cardHeader}>
-            <h2>页面操作</h2>
-            <div className={styles.actions}>
-              <button className={styles.secondaryButton} onClick={() => void loadAll()} type="button">刷新</button>
-              <button className={section === "overview" && activePanel === "alert" ? styles.primaryButton : styles.secondaryButton} onClick={() => { setSection("overview"); setActivePanel((current) => current === "alert" ? null : "alert"); }} type="button">新增预警</button>
-              <button className={section === "tasks" && activePanel === "task" ? styles.primaryButton : styles.secondaryButton} onClick={() => { setSection("tasks"); setActivePanel((current) => current === "task" ? null : "task"); }} type="button">新增任务</button>
-              <button className={section === "overview" && activePanel === "analysis" ? styles.primaryButton : styles.secondaryButton} onClick={() => { setSection("overview"); setActivePanel((current) => current === "analysis" ? null : "analysis"); }} type="button">手动分析</button>
-              <button className={styles.secondaryButton} onClick={() => setEnabledOnly(!enabledOnly)} type="button">{enabledOnly ? "显示全部" : "仅看启用"}</button>
-            </div>
-          </div>
-          {message ? <p className={styles.successText}>{message}</p> : null}
-          {error ? <p className={styles.dangerText}>{error}</p> : null}
-        </section>
-        {section === "overview" ? renderOverviewSection() : null}
-        {section === "pending" ? renderPendingSection() : null}
+        {section === "alerts" ? renderAlertsSection() : null}
         {section === "decisions" ? renderDecisionsSection() : null}
         {section === "tasks" ? renderTasksSection() : null}
         {section === "controls" ? renderControlsSection() : null}

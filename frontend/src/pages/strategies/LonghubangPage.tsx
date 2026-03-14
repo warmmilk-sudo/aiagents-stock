@@ -18,7 +18,7 @@ import { Bar, Pie, Radar } from "react-chartjs-2";
 import { PageFrame } from "../../components/common/PageFrame";
 import { StatusBadge } from "../../components/common/StatusBadge";
 import { AnalysisActionButtons, type ActionPayload } from "../../components/research/AnalysisActionButtons";
-import { ApiRequestError, apiFetch, downloadApiFile } from "../../lib/api";
+import { ApiRequestError, apiFetch, apiFetchCached, downloadApiFile } from "../../lib/api";
 import styles from "../ConsolePage.module.scss";
 
 
@@ -267,9 +267,9 @@ export function LonghubangPage() {
   const loadTask = async () => setTask(await apiFetch<TaskDetail<LonghubangTaskPayload> | null>("/api/strategies/longhubang/tasks/latest"));
   const loadBatchTask = async () =>
     setBatchTask(await apiFetch<TaskDetail<BatchResult> | null>("/api/strategies/longhubang/batch-tasks/latest"));
-  const loadHistory = async () => setHistory(await apiFetch<HistoryRecord[]>("/api/strategies/longhubang/history"));
+  const loadHistory = async () => setHistory(await apiFetchCached<HistoryRecord[]>("/api/strategies/longhubang/history"));
   const loadStatistics = async () =>
-    setStatistics(await apiFetch<StatisticsPayload>("/api/strategies/longhubang/statistics?days=30"));
+    setStatistics(await apiFetchCached<StatisticsPayload>("/api/strategies/longhubang/statistics?days=30"));
 
   useEffect(() => {
     void Promise.all([loadTask(), loadBatchTask(), loadHistory(), loadStatistics()]);
@@ -390,7 +390,7 @@ export function LonghubangPage() {
 
   const openHistory = async (reportId: number, loadIntoAnalysis = false) =>
     withRequest(async () => {
-      const data = await apiFetch<HistoryRecord>(`/api/strategies/longhubang/history/${reportId}`);
+      const data = await apiFetchCached<HistoryRecord>(`/api/strategies/longhubang/history/${reportId}`);
       setSelectedReport(data);
       if (loadIntoAnalysis) {
         setLoadedResult(data.result_payload ?? null);

@@ -7,12 +7,21 @@ from sector_strategy_agents import SectorStrategyAgents
 from sector_strategy_db import SectorStrategyDatabase
 from deepseek_client import DeepSeekClient
 from model_routing import ModelTier
+from sector_strategy_normalization import (
+    DEFAULT_INVESTMENT_HORIZON,
+    build_sector_strategy_summary,
+    derive_sector_strategy_investment_horizon,
+    derive_sector_strategy_recommended_sectors,
+    normalize_sector_strategy_predictions,
+    normalize_sector_strategy_result,
+)
 from time_utils import local_now_str, local_today_str
 from typing import Dict, Any
 import time
 import json
 import pandas as pd
 import logging
+import re
 
 
 class SectorStrategyEngine:
@@ -276,11 +285,16 @@ class SectorStrategyEngine:
    - 应该重点参考哪个维度的建议？
    - 需要警惕哪个维度的风险？
 
+输出要求：
+1. 最终答案必须使用简体中文。
+2. 不要输出英文标题、英文标签、英文解释。
+3. 结论要清晰分段，便于后续解析展示。
+
 请给出专业、全面的综合研判报告，体现多维度分析的价值。
 """
         
         messages = [
-            {"role": "system", "content": "你是智策系统的首席策略官，需要整合多维度分析，形成全面的投资策略。"},
+            {"role": "system", "content": "你是智策系统的首席策略官，需要整合多维度分析，形成全面的投资策略。最终输出必须使用简体中文。"},
             {"role": "user", "content": prompt}
         ]
         
@@ -399,7 +413,10 @@ class SectorStrategyEngine:
         "key_opportunity": "核心机会",
         "major_risk": "主要风险",
         "strategy": "整体策略建议"
-    }}
+    }},
+    "confidence_score": 78,
+    "risk_level": "中等",
+    "market_outlook": "中性"
 }}
 
 注意：
@@ -407,10 +424,14 @@ class SectorStrategyEngine:
 2. 分析要基于前期的多维度研判
 3. 给出的建议要具体、可操作
 4. 预测要客观、理性，避免过度乐观或悲观
+5. 只输出一个 JSON 对象，不要输出 Markdown、代码块、额外说明文字
+6. JSON key 必须严格使用上述英文 schema
+7. 所有 value 必须使用简体中文，不能出现英文标题、英文解释
+8. confidence_score 使用 0-100 的整数
 """
         
         messages = [
-            {"role": "system", "content": "你是智策系统的预测引擎，需要生成专业、精准的板块预测报告。"},
+            {"role": "system", "content": "你是智策系统的预测引擎，需要输出严格可解析的 JSON。JSON key 使用英文，所有 value 必须使用简体中文。禁止输出代码块和额外说明。"},
             {"role": "user", "content": prompt}
         ]
         
@@ -421,20 +442,97 @@ class SectorStrategyEngine:
             tier=ModelTier.REASONING,
         )
         
-        # 尝试解析JSON
+        parsed = self._parse_prediction_json(response)
+        if self._prediction_payload_is_valid(parsed):
+            print("  ✓ 预测报告生成成功（JSON格式）")
+            return self._build_prediction_storage_payload(parsed)
+
+        print("  ⚠ 初次预测结构不完整，尝试修复输出")
+        repaired_response = self._repair_prediction_response(
+            raw_response=response,
+            comprehensive_report=comprehensive_report,
+            sectors_str=sectors_str,
+        )
+        repaired = self._parse_prediction_json(repaired_response)
+        if self._prediction_payload_is_valid(repaired):
+            print("  ✓ 修复后的预测报告解析成功")
+            return self._build_prediction_storage_payload(repaired)
+
+        print("  ⚠ 预测结构仍不完整，回退到默认结构")
+        return self._build_prediction_storage_payload({}, raw_text=response)
+
+    def _parse_prediction_json(self, response_text: Any) -> Dict[str, Any]:
+        text = str(response_text or "").strip()
+        if not text:
+            return {}
+        json_match = re.search(r"\{[\s\S]*\}", text)
+        if not json_match:
+            return {}
         try:
-            import re
-            json_match = re.search(r'\{.*\}', response, re.DOTALL)
-            if json_match:
-                predictions = json.loads(json_match.group())
-                print("  ✓ 预测报告生成成功（JSON格式）")
-                return predictions
-            else:
-                print("  ⚠ 未能解析JSON，返回文本格式")
-                return {"prediction_text": response}
-        except Exception as e:
-            print(f"  ⚠ JSON解析失败: {e}，返回文本格式")
-            return {"prediction_text": response}
+            parsed = json.loads(json_match.group(0))
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+
+    def _prediction_payload_is_valid(self, payload: Dict[str, Any]) -> bool:
+        if not isinstance(payload, dict) or not payload:
+            return False
+        normalized = normalize_sector_strategy_predictions(payload)
+        return not normalized.get("warnings", {}).get("missing_fields")
+
+    def _repair_prediction_response(self, raw_response: str, comprehensive_report: str, sectors_str: str) -> str:
+        repair_prompt = f"""
+你需要把下面这段输出修复成一个严格合法的 JSON 对象。
+
+【综合研判结论】
+{comprehensive_report}
+
+【参考板块列表】
+{sectors_str}
+
+【原始输出】
+{raw_response}
+
+要求：
+1. 只输出一个 JSON 对象，不要输出 Markdown、代码块或任何解释。
+2. JSON 顶层必须包含：long_short, rotation, heat, summary, confidence_score, risk_level, market_outlook。
+3. long_short 必须包含：bullish, neutral, bearish。
+4. rotation 必须包含：current_strong, potential, declining。
+5. heat 必须包含：hottest, heating, cooling。
+6. summary 必须包含：market_view, key_opportunity, major_risk, strategy。
+7. JSON key 保持英文，所有 value 必须是简体中文。
+8. confidence_score 使用 0-100 的整数。
+9. 如果某个字段无法确定，请使用空数组或“暂无”补齐，不要省略字段。
+"""
+        messages = [
+            {"role": "system", "content": "你是 JSON 修复助手，只输出严格合法的 JSON 对象。所有 value 必须使用简体中文。"},
+            {"role": "user", "content": repair_prompt},
+        ]
+        return self.deepseek_client.call_api(
+            messages,
+            temperature=0.1,
+            max_tokens=5000,
+            tier=ModelTier.REASONING,
+        )
+
+    def _build_prediction_storage_payload(self, payload: Dict[str, Any], raw_text: str = "") -> Dict[str, Any]:
+        normalized = normalize_sector_strategy_predictions(payload)
+        storage_payload = {
+            "long_short": normalized.get("long_short", {}),
+            "rotation": normalized.get("rotation", {}),
+            "heat": normalized.get("heat", {}),
+            "summary": normalized.get("summary", {}),
+            "confidence_score": normalized.get("confidence_score", 0),
+            "risk_level": normalized.get("risk_level", "中等"),
+            "market_outlook": normalized.get("market_outlook", "中性"),
+        }
+        warnings = normalized.get("warnings", {})
+        if warnings.get("missing_fields") or warnings.get("language_warning") or warnings.get("parse_warning"):
+            storage_payload["warnings"] = warnings
+        fallback_text = raw_text.strip() or normalized.get("raw_fallback_text", "")
+        if fallback_text:
+            storage_payload["prediction_text"] = fallback_text
+        return storage_payload
     
     def save_analysis_report(self, results: Dict, original_data: Dict) -> int:
         """
@@ -450,42 +548,15 @@ class SectorStrategyEngine:
         try:
             # 提取数据日期范围
             data_date_range = f"{local_today_str()} 数据分析"
-            
-            # 提取推荐板块
-            recommended_sectors = []
-            predictions = results.get("final_predictions", {})
-            
-            if isinstance(predictions, dict):
-                # 从预测结果中提取推荐板块
-                hot_sectors = predictions.get("hot_sectors", [])
-                rotation_sectors = predictions.get("rotation_opportunities", [])
-                
-                for sector in hot_sectors[:5]:  # 取前5个热门板块
-                    if isinstance(sector, dict):
-                        recommended_sectors.append({
-                            "sector_name": sector.get("name", ""),
-                            "reason": sector.get("reason", ""),
-                            "confidence": sector.get("confidence", ""),
-                            "type": "热门板块"
-                        })
-                
-                for sector in rotation_sectors[:3]:  # 取前3个轮动机会
-                    if isinstance(sector, dict):
-                        recommended_sectors.append({
-                            "sector_name": sector.get("name", ""),
-                            "reason": sector.get("reason", ""),
-                            "confidence": sector.get("confidence", ""),
-                            "type": "轮动机会"
-                        })
-            
-            # 生成摘要
-            summary = self._generate_report_summary(results)
-            
-            # 提取其他信息
-            confidence_score = self._extract_confidence_score(results)
-            risk_level = self._extract_risk_level(results)
-            investment_horizon = self._extract_investment_horizon(results)
-            market_outlook = self._extract_market_outlook(results)
+
+            report_view = normalize_sector_strategy_result(results)
+            summary_data = build_sector_strategy_summary(report_view)
+            recommended_sectors = derive_sector_strategy_recommended_sectors(report_view)
+            summary = summary_data.get("headline", "智策板块分析报告")
+            confidence_score = summary_data.get("confidence_score", 0)
+            risk_level = summary_data.get("risk_level", "中等")
+            investment_horizon = derive_sector_strategy_investment_horizon(report_view)
+            market_outlook = summary_data.get("market_outlook", "中性")
             
             # 保存到数据库
             report_id = self.database.save_analysis_report(
@@ -508,78 +579,37 @@ class SectorStrategyEngine:
     def _generate_report_summary(self, results: Dict) -> str:
         """生成报告摘要"""
         try:
-            predictions = results.get("final_predictions", {})
-            if isinstance(predictions, dict):
-                summary_info = predictions.get("summary", {})
-                market_trend = summary_info.get("market_view", "") if isinstance(summary_info, dict) else ""
-                key_opportunity = summary_info.get("key_opportunity", "") if isinstance(summary_info, dict) else ""
-                long_short_info = predictions.get("long_short", {})
-                bullish_sectors = long_short_info.get("bullish", []) if isinstance(long_short_info, dict) else []
-                bearish_sectors = long_short_info.get("bearish", []) if isinstance(long_short_info, dict) else []
-
-                bullish_names = [
-                    sector.get("sector", "")
-                    for sector in bullish_sectors[:3]
-                    if isinstance(sector, dict) and sector.get("sector")
-                ]
-                bearish_names = [
-                    sector.get("sector", "")
-                    for sector in bearish_sectors[:2]
-                    if isinstance(sector, dict) and sector.get("sector")
-                ]
-
-                summary_parts = [part for part in [market_trend, key_opportunity] if part]
-                if bullish_names:
-                    summary_parts.append(f"看多板块: {'、'.join(bullish_names)}")
-                if bearish_names:
-                    summary_parts.append(f"关注风险板块: {'、'.join(bearish_names)}")
-
-                if summary_parts:
-                    return "；".join(summary_parts)
-            else:
-                return "智策板块分析报告"
-        except:
+            return build_sector_strategy_summary(normalize_sector_strategy_result(results)).get("headline", "智策板块分析报告")
+        except Exception:
             return "智策板块分析报告"
     
     def _extract_confidence_score(self, results: Dict) -> float:
         """提取置信度分数"""
         try:
-            predictions = results.get("final_predictions", {})
-            if isinstance(predictions, dict):
-                return predictions.get("confidence_score", 0.75)
-            return 0.75
-        except:
-            return 0.75
+            return float(build_sector_strategy_summary(normalize_sector_strategy_result(results)).get("confidence_score", 0))
+        except Exception:
+            return 0.0
     
     def _extract_risk_level(self, results: Dict) -> str:
         """提取风险等级"""
         try:
-            predictions = results.get("final_predictions", {})
-            if isinstance(predictions, dict):
-                return predictions.get("risk_level", "中等")
-            return "中等"
-        except:
+            return build_sector_strategy_summary(normalize_sector_strategy_result(results)).get("risk_level", "中等")
+        except Exception:
             return "中等"
     
     def _extract_investment_horizon(self, results: Dict) -> str:
         """提取投资周期"""
         try:
-            predictions = results.get("final_predictions", {})
-            if isinstance(predictions, dict):
-                return predictions.get("investment_horizon", "短期")
-            return "短期"
-        except:
-            return "短期"
+            return derive_sector_strategy_investment_horizon(normalize_sector_strategy_result(results))
+        except Exception:
+            return DEFAULT_INVESTMENT_HORIZON
     
     def _extract_market_outlook(self, results: Dict) -> str:
         """提取市场展望"""
         try:
-            predictions = results.get("final_predictions", {})
-            if isinstance(predictions, dict):
-                return predictions.get("market_outlook", "谨慎乐观")
-            return "谨慎乐观"
-        except:
-            return "谨慎乐观"
+            return build_sector_strategy_summary(normalize_sector_strategy_result(results)).get("market_outlook", "中性")
+        except Exception:
+            return "中性"
     
     def get_historical_reports(self, limit=10):
         """获取历史报告"""
@@ -633,4 +663,3 @@ if __name__ == "__main__":
     # 注意：这只是测试框架，实际运行需要真实数据和API key
     # results = engine.run_comprehensive_analysis(test_data)
     # print(f"\n分析结果: {results.get('success')}")
-

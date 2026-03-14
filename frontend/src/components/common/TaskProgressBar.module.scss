@@ -1,0 +1,38 @@
+.wrap {
+  display: grid;
+  gap: 8px;
+}
+
+.track {
+  width: 100%;
+  height: 10px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--line-soft) 74%, transparent);
+}
+
+.fill {
+  height: 100%;
+  border-radius: inherit;
+  transition: width var(--shell-transition), background var(--shell-transition);
+}
+
+.running {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 72%, transparent), var(--accent));
+}
+
+.success {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--success) 72%, transparent), var(--success));
+}
+
+.danger {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--danger) 72%, transparent), var(--danger));
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  color: var(--text-muted);
+  font-size: 12px;
+}

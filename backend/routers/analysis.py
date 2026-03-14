@@ -21,6 +21,7 @@ def submit_analysis_task(request: Request, payload: AnalysisTaskRequest) -> dict
             symbols=symbols,
             period=payload.period,
             batch_mode=payload.batch_mode,
+            max_workers=payload.max_workers,
             analysts=services.build_analyst_config(payload.analysts),
             lightweight_model=payload.lightweight_model,
             reasoning_model=payload.reasoning_model,

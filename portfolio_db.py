@@ -98,12 +98,6 @@ class PortfolioDB:
         record.pop("holdings_json", None)
         return record
 
-    def _deserialize_review_report_row(self, row) -> Dict:
-        record = dict(row)
-        report_json = self._deserialize_flexible_value(record.get("report_json"), default={})
-        record["report_json"] = report_json if isinstance(report_json, dict) else {}
-        return record
-
     def _deserialize_trade_row(self, row) -> Dict:
         return dict(row)
 
@@ -218,31 +212,6 @@ class PortfolioDB:
                             snapshot.get("data_source", "manual"),
                             snapshot.get("created_at") or datetime.now(),
                             snapshot.get("updated_at") or datetime.now(),
-                        ),
-                    )
-
-            if "portfolio_review_reports" in legacy_tables:
-                legacy_cursor.execute("SELECT * FROM portfolio_review_reports ORDER BY id ASC")
-                for row in legacy_cursor.fetchall():
-                    report = dict(row)
-                    cursor.execute(
-                        """
-                        INSERT OR IGNORE INTO portfolio_review_reports (
-                            id, account_name, period_type, period_start, period_end,
-                            data_mode, report_markdown, report_json, created_at
-                        )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        (
-                            report.get("id"),
-                            report.get("account_name", "默认账户"),
-                            report.get("period_type"),
-                            report.get("period_start"),
-                            report.get("period_end"),
-                            report.get("data_mode", "estimated"),
-                            report.get("report_markdown"),
-                            report.get("report_json"),
-                            report.get("created_at") or datetime.now(),
                         ),
                     )
 
@@ -434,28 +403,9 @@ class PortfolioDB:
                 CREATE INDEX IF NOT EXISTS idx_portfolio_snapshots_account_date
                 ON portfolio_daily_snapshots(account_name, snapshot_date DESC)
             ''')
-
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS portfolio_review_reports (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    account_name TEXT NOT NULL,
-                    period_type TEXT NOT NULL,
-                    period_start TEXT NOT NULL,
-                    period_end TEXT NOT NULL,
-                    data_mode TEXT DEFAULT 'estimated',
-                    report_markdown TEXT NOT NULL,
-                    report_json TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
-            cursor.execute('''
-                CREATE INDEX IF NOT EXISTS idx_portfolio_review_reports_created_at
-                ON portfolio_review_reports(created_at DESC)
-            ''')
-            cursor.execute('''
-                CREATE INDEX IF NOT EXISTS idx_portfolio_review_reports_account_period
-                ON portfolio_review_reports(account_name, period_type, period_end DESC)
-            ''')
+            cursor.execute('DROP INDEX IF EXISTS idx_portfolio_review_reports_created_at')
+            cursor.execute('DROP INDEX IF EXISTS idx_portfolio_review_reports_account_period')
+            cursor.execute('DROP TABLE IF EXISTS portfolio_review_reports')
 
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS portfolio_settings (
@@ -761,6 +711,69 @@ class PortfolioDB:
         conn.close()
         return [dict(row) for row in rows]
 
+    def get_trade_records_page(
+        self,
+        account_name: Optional[str] = None,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> Dict[str, Any]:
+        """分页获取账户范围内的交易流水。"""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        clauses = ["a.deleted_at IS NULL"]
+        params: List[Any] = []
+        if account_name:
+            clauses.append("a.account_name = ?")
+            params.append(account_name)
+
+        where_clause = " AND ".join(clauses)
+        cursor.execute(
+            f"""
+            SELECT COUNT(*) AS total
+            FROM asset_trade_history t
+            INNER JOIN assets a
+                ON a.id = t.asset_id
+            WHERE {where_clause}
+            """,
+            tuple(params),
+        )
+        total_row = cursor.fetchone()
+        total = int(total_row["total"]) if total_row else 0
+        offset = max(0, (max(1, int(page)) - 1) * max(1, int(page_size)))
+        query_params = list(params)
+        query_params.extend([max(1, int(page_size)), offset])
+        cursor.execute(
+            f"""
+            SELECT
+                t.id,
+                a.account_name,
+                a.symbol AS stock_code,
+                a.name AS stock_name,
+                LOWER(t.trade_type) AS trade_type,
+                t.quantity,
+                t.price,
+                t.price * t.quantity AS amount,
+                t.note,
+                t.trade_source,
+                t.trade_date AS trade_time
+            FROM asset_trade_history t
+            INNER JOIN assets a
+                ON a.id = t.asset_id
+            WHERE {where_clause}
+            ORDER BY t.trade_date DESC, t.id DESC
+            LIMIT ? OFFSET ?
+            """,
+            tuple(query_params),
+        )
+        rows = cursor.fetchall()
+        conn.close()
+        return {
+            "items": [dict(row) for row in rows],
+            "total": total,
+            "page": max(1, int(page)),
+            "page_size": max(1, int(page_size)),
+        }
+
     def get_account_trade_history(
         self,
         account_name: Optional[str] = None,
@@ -867,8 +880,8 @@ class PortfolioDB:
         full_report_flag = has_full_report
         if full_report_flag is None:
             full_report_flag = any(
-                value not in (None, "", {}, [])
-                for value in (stock_info, agents_results, discussion_result, final_decision)
+                self.analysis_repository._payload_has_content(value)
+                for value in (agents_results, discussion_result, final_decision)
             )
 
         analysis_id = self.analysis_repository.save_record(
@@ -1192,109 +1205,6 @@ class PortfolioDB:
         finally:
             conn.close()
 
-    def save_review_report(
-        self,
-        account_name: str,
-        period_type: str,
-        period_start: str,
-        period_end: str,
-        data_mode: str,
-        report_markdown: str,
-        report_json: Optional[Dict] = None,
-    ) -> int:
-        """保存周期复盘报告。"""
-        conn = self._get_connection()
-        cursor = conn.cursor()
-
-        try:
-            cursor.execute(
-                '''
-                INSERT INTO portfolio_review_reports (
-                    account_name, period_type, period_start, period_end,
-                    data_mode, report_markdown, report_json, created_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ''',
-                (
-                    account_name,
-                    period_type,
-                    period_start,
-                    period_end,
-                    data_mode,
-                    report_markdown,
-                    self._serialize_json(report_json or {}),
-                    datetime.now(),
-                ),
-            )
-            conn.commit()
-            return cursor.lastrowid
-        except Exception:
-            conn.rollback()
-            raise
-        finally:
-            conn.close()
-
-    def get_review_reports(
-        self,
-        account_name: Optional[str] = None,
-        limit: int = 20,
-        period_type: Optional[str] = None,
-    ) -> List[Dict]:
-        """查询已保存的复盘报告。"""
-        conn = self._get_connection()
-        cursor = conn.cursor()
-
-        try:
-            query = ['SELECT * FROM portfolio_review_reports WHERE 1 = 1']
-            params: List[Any] = []
-            if account_name:
-                query.append('AND account_name = ?')
-                params.append(account_name)
-            if period_type:
-                query.append('AND period_type = ?')
-                params.append(period_type)
-            query.append('ORDER BY created_at DESC LIMIT ?')
-            params.append(limit)
-            cursor.execute(' '.join(query), params)
-            rows = cursor.fetchall()
-            return [self._deserialize_review_report_row(row) for row in rows]
-        finally:
-            conn.close()
-
-    def get_review_report(self, report_id: int) -> Optional[Dict]:
-        """根据 ID 获取复盘报告详情。"""
-        conn = self._get_connection()
-        cursor = conn.cursor()
-
-        try:
-            cursor.execute(
-                'SELECT * FROM portfolio_review_reports WHERE id = ?',
-                (report_id,),
-            )
-            row = cursor.fetchone()
-            return self._deserialize_review_report_row(row) if row else None
-        finally:
-            conn.close()
-
-    def delete_review_report(self, report_id: int, account_name: Optional[str] = None) -> bool:
-        """删除指定复盘报告，可按账户约束删除范围。"""
-        conn = self._get_connection()
-        cursor = conn.cursor()
-
-        try:
-            query = ["DELETE FROM portfolio_review_reports WHERE id = ?"]
-            params: List[Any] = [report_id]
-            if account_name:
-                query.append("AND account_name = ?")
-                params.append(account_name)
-            cursor.execute(" ".join(query), tuple(params))
-            conn.commit()
-            return cursor.rowcount > 0
-        except Exception:
-            conn.rollback()
-            raise
-        finally:
-            conn.close()
 
     def set_setting(self, key: str, value: Any) -> None:
         """写入持仓域设置。"""

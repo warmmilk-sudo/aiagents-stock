@@ -31,6 +31,10 @@
   gap: 16px;
 }
 
+.muted {
+  color: var(--text-muted);
+}
+
 .block {
   padding: 16px;
   border: 1px solid var(--line-soft);
@@ -51,8 +55,8 @@
 
 .actionButton,
 .primaryAction {
-  border: 0;
-  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
   padding: 10px 14px;
   font-weight: 700;
 }
@@ -97,6 +101,137 @@
   font-size: 12px;
 }
 
+.reportRichText {
+  display: grid;
+  gap: 12px;
+}
+
+.reportHeadingPrimary,
+.reportHeadingSecondary {
+  margin: 0;
+  line-height: 1.35;
+}
+
+.reportHeadingPrimary {
+  font-size: 18px;
+}
+
+.reportHeadingSecondary {
+  font-size: 15px;
+  color: var(--text-main);
+}
+
+.reportParagraph {
+  margin: 0;
+  line-height: 1.75;
+  color: var(--text-main);
+}
+
+.reportList {
+  margin: 0;
+  padding-left: 20px;
+  display: grid;
+  gap: 8px;
+  line-height: 1.7;
+}
+
+.reportTableWrap {
+  overflow-x: auto;
+}
+
+.reportTable {
+  width: 100%;
+  min-width: 480px;
+  border-collapse: collapse;
+  border: 1px solid var(--line-soft);
+  border-radius: 12px;
+}
+
+.reportTable th,
+.reportTable td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line-soft);
+  text-align: left;
+  vertical-align: top;
+  line-height: 1.6;
+}
+
+.reportTable th {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 700;
+  background: color-mix(in srgb, var(--bg-panel-strong) 96%, transparent);
+}
+
+.reportMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin-top: 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.reportSection {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--line-soft);
+  border-radius: 16px;
+  background: var(--bg-panel);
+}
+
+.reportSectionHeader {
+  display: grid;
+  gap: 6px;
+}
+
+.reportBrowserGrid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+  margin-bottom: 14px;
+}
+
+.reportBrowserCard {
+  display: grid;
+  gap: 6px;
+  padding: 14px;
+  border: 1px solid var(--line-soft);
+  border-radius: 14px;
+  background: var(--bg-panel);
+  text-align: left;
+  transition:
+    border-color var(--shell-transition),
+    background var(--shell-transition),
+    transform var(--shell-transition);
+}
+
+.reportBrowserCard:hover {
+  transform: translateY(-1px);
+}
+
+.reportBrowserCardActive {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--line-soft));
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-panel));
+}
+
+.reportBrowserMeta {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.reportBrowserSummary {
+  margin: 0;
+  color: var(--text-main);
+  line-height: 1.6;
+}
+
+.reportReasoningSummary {
+  cursor: pointer;
+  font-weight: 700;
+}
+
 .actionRow > * {
   max-width: 100%;
 }
@@ -122,5 +257,13 @@
 
   .detailsContent {
     padding: 0 14px 14px;
+  }
+
+  .reportSection {
+    padding: 14px;
+  }
+
+  .reportTable {
+    min-width: 420px;
   }
 }

@@ -3,7 +3,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { PageFrame } from "../../components/common/PageFrame";
 import { StatusBadge } from "../../components/common/StatusBadge";
 import { AnalysisActionButtons, type ActionPayload } from "../../components/research/AnalysisActionButtons";
-import { ApiRequestError, apiFetch, downloadApiFile } from "../../lib/api";
+import { ApiRequestError, apiFetch, apiFetchCached, downloadApiFile } from "../../lib/api";
 import styles from "../ConsolePage.module.scss";
 
 
@@ -248,7 +248,7 @@ export function MainForcePage() {
   };
 
   const loadHistory = async () => {
-    const data = await apiFetch<MainForceHistoryResponse>("/api/selectors/main-force/history");
+    const data = await apiFetchCached<MainForceHistoryResponse>("/api/selectors/main-force/history");
     setHistory(data);
   };
 
@@ -358,7 +358,7 @@ export function MainForcePage() {
     setMessage("");
     setError("");
     try {
-      const data = await apiFetch<MainForceHistoryRecord>(`/api/selectors/main-force/history/${recordId}`);
+      const data = await apiFetchCached<MainForceHistoryRecord>(`/api/selectors/main-force/history/${recordId}`);
       setLoadedHistoryRecord(data);
       setSection("batch");
       setMessage(`已加载历史记录 #${recordId}`);

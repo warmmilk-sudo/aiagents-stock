@@ -1,4 +1,5 @@
 import os
+import sqlite3
 import tempfile
 import unittest
 
@@ -97,8 +98,10 @@ class AnalysisHistoryServiceTests(unittest.TestCase):
         lookup = {record["id"]: record for record in records}
         self.assertFalse(lookup[self.research_id]["is_in_portfolio"])
         self.assertEqual(lookup[self.research_id]["portfolio_state_label"], "未持仓")
+        self.assertEqual(lookup[self.research_id]["decision_label"], "买入")
         self.assertTrue(lookup[self.portfolio_id]["is_in_portfolio"])
         self.assertEqual(lookup[self.portfolio_id]["portfolio_state_label"], "在持仓")
+        self.assertEqual(lookup[self.portfolio_id]["decision_label"], "持有")
 
     def test_filters_by_scope_portfolio_state_account_and_search_term(self):
         research_only = self.service.list_records(scope="深度分析")
@@ -139,6 +142,78 @@ class AnalysisHistoryServiceTests(unittest.TestCase):
         self.assertEqual(len(remaining), 1)
         self.assertEqual(remaining[0]["id"], self.research_id)
         self.assertIsNone(self.service.get_record(self.portfolio_id))
+
+    def test_backfills_legacy_full_report_flag_for_existing_records(self):
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO analysis_records (
+                symbol, stock_name, account_name, analysis_scope, analysis_source,
+                analysis_date, period, summary, stock_info_json, agents_results_json,
+                discussion_result, final_decision_json, has_full_report, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "000001",
+                "平安银行",
+                "账户A",
+                "research",
+                "legacy_home_analysis",
+                "2026-03-09 10:00:00",
+                "1y",
+                "旧记录未回填完整报告标记",
+                '{"symbol":"000001","name":"平安银行"}',
+                '{"technical":{"analysis":"趋势改善"}}',
+                "团队讨论认为可以继续跟踪。",
+                '{"rating":"买入","operation_advice":"分批低吸。"}',
+                0,
+                "2026-03-09T10:00:00",
+            ),
+        )
+        legacy_id = int(cursor.lastrowid)
+        conn.commit()
+        conn.close()
+
+        reloaded_repository = AnalysisRepository(
+            self.db_path,
+            legacy_analysis_db_path=self.legacy_db_path,
+        )
+        reloaded_service = AnalysisHistoryService(repository=reloaded_repository, asset_store=self.asset_store)
+
+        record = reloaded_repository.get_record(legacy_id)
+        self.assertIsNotNone(record)
+        self.assertTrue(record["has_full_report"])
+        self.assertIn(legacy_id, [item["id"] for item in reloaded_service.list_records()])
+
+    def test_decision_label_falls_back_to_rating_and_summary(self):
+        summary_only_id = self.repository.save_record(
+            symbol="300475",
+            stock_name="香农芯创",
+            period="1y",
+            summary="评级: 卖出；等待反弹减仓。",
+            final_decision={},
+            account_name="账户A",
+            analysis_scope="research",
+            analysis_source="home_single_analysis",
+            has_full_report=True,
+        )
+        rating_only_id = self.repository.save_record(
+            symbol="000001",
+            stock_name="平安银行",
+            period="1y",
+            summary="等待后续确认。",
+            final_decision={},
+            rating="买入",
+            account_name="账户A",
+            analysis_scope="research",
+            analysis_source="home_single_analysis",
+            has_full_report=True,
+        )
+
+        records = {record["id"]: record for record in self.service.list_records()}
+        self.assertEqual(records[summary_only_id]["decision_label"], "卖出")
+        self.assertEqual(records[rating_only_id]["decision_label"], "买入")
 
 
 if __name__ == "__main__":

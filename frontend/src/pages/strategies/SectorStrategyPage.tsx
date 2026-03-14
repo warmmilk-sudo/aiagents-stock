@@ -1,76 +1,21 @@
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 
 import { PageFrame } from "../../components/common/PageFrame";
 import { StatusBadge } from "../../components/common/StatusBadge";
-import { ApiRequestError, apiFetch, downloadApiFile } from "../../lib/api";
+import {
+  SectorReportDetailView,
+  type SectorStrategyReportView,
+  type SectorStrategySummaryView,
+} from "../../components/research/SectorReportDetailView";
+import { ApiRequestError, apiFetch, apiFetchCached, downloadApiFile } from "../../lib/api";
+import { formatDateTime } from "../../lib/datetime";
 import styles from "../ConsolePage.module.scss";
 
-
-interface SectorPredictionItem {
-  sector?: string;
-  confidence?: number;
-  reason?: string;
-  risk?: string;
-  logic?: string;
-  time_window?: string;
-  advice?: string;
-  score?: number;
-  trend?: string;
-  sustainability?: string;
-}
-
-interface SectorPredictions {
-  long_short?: {
-    bullish?: SectorPredictionItem[];
-    bearish?: SectorPredictionItem[];
-  };
-  rotation?: {
-    current_strong?: SectorPredictionItem[];
-    potential?: SectorPredictionItem[];
-    declining?: SectorPredictionItem[];
-  };
-  heat?: {
-    hottest?: SectorPredictionItem[];
-    heating?: SectorPredictionItem[];
-    cooling?: SectorPredictionItem[];
-  };
-  summary?: {
-    market_view?: string;
-    key_opportunity?: string;
-    major_risk?: string;
-    strategy?: string;
-  };
-  confidence_score?: number;
-  risk_level?: string;
-  market_outlook?: string;
-}
-
-interface SectorResult {
-  success?: boolean;
-  timestamp?: string;
-  final_predictions?: SectorPredictions;
-  agents_analysis?: Record<string, { agent_name?: string; agent_role?: string; focus_areas?: string[]; analysis?: string }>;
-  comprehensive_report?: string;
-  cache_meta?: {
-    from_cache?: boolean;
-    cache_warning?: string;
-    data_timestamp?: string;
-  };
-}
-
 interface SectorTaskPayload {
-  result?: SectorResult;
-  data_summary?: {
-    from_cache?: boolean;
-    cache_warning?: string;
-    market_overview?: {
-      sh_index?: { close?: number; change_pct?: number };
-      up_count?: number;
-      up_ratio?: number;
-    };
-    sectors?: Record<string, unknown>;
-    concepts?: Record<string, unknown>;
-  };
+  result?: Record<string, unknown>;
+  report_view?: SectorStrategyReportView | null;
+  data_summary?: Record<string, unknown> | null;
   message?: string;
 }
 
@@ -85,27 +30,22 @@ interface TaskDetail<TPayload> {
   result?: TPayload | null;
 }
 
-interface SectorSummaryData {
-  headline?: string;
-  market_view?: string;
-  key_opportunity?: string;
-  major_risk?: string;
-  strategy?: string;
-  bullish?: string[];
-  bearish?: string[];
-  risk_level?: string;
-  market_outlook?: string;
-  confidence_score?: number;
-}
-
 interface SectorHistoryRecord {
   id: number;
   analysis_date?: string;
   created_at?: string;
   data_date_range?: string;
   summary?: string;
-  analysis_content_parsed?: SectorResult;
-  summary_data?: SectorSummaryData;
+  summary_data?: SectorStrategySummaryView & {
+    bullish?: string[];
+    neutral?: string[];
+    bearish?: string[];
+  };
+}
+
+interface SectorHistoryDetail extends SectorHistoryRecord {
+  analysis_content_parsed?: Record<string, unknown>;
+  report_view?: SectorStrategyReportView | null;
 }
 
 interface SchedulerStatus {
@@ -132,74 +72,42 @@ const sectionTabs = [
   { key: "scheduler", label: "定时设置" },
 ];
 
-function asText(value: unknown, fallback = "N/A"): string {
+function asText(value: unknown, fallback = "暂无"): string {
   if (value === null || value === undefined || value === "") {
     return fallback;
   }
   return String(value);
 }
 
-function percentText(value: unknown): string {
-  const number = Number(value);
-  return Number.isFinite(number) ? `${(number * 100).toFixed(1)}%` : "N/A";
-}
-
-function renderPredictionGroup(title: string, items: SectorPredictionItem[] | undefined) {
-  if (!(items?.length ?? 0)) {
-    return null;
-  }
-  return (
-    <div className={styles.listItem}>
-      <strong>{title}</strong>
-      <div className={styles.list} style={{ marginTop: 12 }}>
-        {items?.map((item, index) => (
-          <div className={styles.listItem} key={`${title}-${item.sector ?? "item"}-${index}`}>
-            <strong>{asText(item.sector)}</strong>
-            <div className={styles.compactGrid} style={{ marginTop: 10 }}>
-              <div>
-                <div className={styles.muted}>理由 / 逻辑</div>
-                <div>{asText(item.reason ?? item.logic)}</div>
-              </div>
-              <div>
-                <div className={styles.muted}>风险 / 趋势</div>
-                <div>{asText(item.risk ?? item.trend)}</div>
-              </div>
-              <div>
-                <div className={styles.muted}>时间窗口 / 持续性</div>
-                <div>{asText(item.time_window ?? item.sustainability)}</div>
-              </div>
-              <div>
-                <div className={styles.muted}>建议 / 评分</div>
-                <div>{asText(item.advice ?? item.score)}</div>
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
+function formatConfidence(value: unknown): string {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? `${Math.round(numeric)}分` : "0分";
 }
 
 export function SectorStrategyPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [task, setTask] = useState<TaskDetail<SectorTaskPayload> | null>(null);
   const [history, setHistory] = useState<SectorHistoryRecord[]>([]);
-  const [selectedReport, setSelectedReport] = useState<SectorHistoryRecord | null>(null);
+  const [historyDetails, setHistoryDetails] = useState<Record<number, SectorHistoryDetail>>({});
   const [scheduler, setScheduler] = useState<SchedulerStatus | null>(null);
   const [scheduleTime, setScheduleTime] = useState("09:00");
   const [section, setSection] = useState<SectionKey>("overview");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
+  const detailView = searchParams.get("view") === "detail";
+  const detailSource = searchParams.get("source");
+  const detailReportId = Number(searchParams.get("reportId") || 0);
+  const historyDetail = detailReportId ? (historyDetails[detailReportId] ?? null) : null;
+  const latestReportView = task?.result?.report_view ?? null;
+
   const loadTask = async () => {
     const data = await apiFetch<TaskDetail<SectorTaskPayload> | null>("/api/strategies/sector-strategy/tasks/latest");
     setTask(data);
-    if (data?.status === "success" && data.result?.result) {
-      setSelectedReport(null);
-    }
   };
 
   const loadHistory = async () => {
-    const data = await apiFetch<SectorHistoryRecord[]>("/api/strategies/sector-strategy/history");
+    const data = await apiFetchCached<SectorHistoryRecord[]>("/api/strategies/sector-strategy/history");
     setHistory(data);
   };
 
@@ -207,6 +115,14 @@ export function SectorStrategyPage() {
     const data = await apiFetch<SchedulerStatus>("/api/strategies/sector-strategy/scheduler");
     setScheduler(data);
     setScheduleTime(data.schedule_time || "09:00");
+  };
+
+  const loadHistoryDetail = async (reportId: number) => {
+    if (!reportId) {
+      return;
+    }
+    const data = await apiFetchCached<SectorHistoryDetail>(`/api/strategies/sector-strategy/history/${reportId}`);
+    setHistoryDetails((current) => ({ ...current, [reportId]: data }));
   };
 
   useEffect(() => {
@@ -219,19 +135,50 @@ export function SectorStrategyPage() {
     };
   }, []);
 
-  const currentResult = selectedReport?.analysis_content_parsed ?? task?.result?.result ?? null;
-  const currentSummary = selectedReport?.summary_data ?? null;
-  const dataSummary = selectedReport ? null : task?.result?.data_summary ?? null;
-  const predictions = currentResult?.final_predictions;
-
-  const headline = useMemo(() => {
-    if (currentSummary?.headline) {
-      return currentSummary.headline;
+  useEffect(() => {
+    if (!detailReportId || historyDetails[detailReportId]) {
+      return;
     }
-    const summary = predictions?.summary;
-    const parts = [summary?.market_view, summary?.key_opportunity].filter(Boolean);
-    return parts.join("；") || "智策板块分析报告";
-  }, [currentSummary, predictions]);
+    void loadHistoryDetail(detailReportId);
+  }, [detailReportId, historyDetails]);
+
+  useEffect(() => {
+    if (!detailView) {
+      return;
+    }
+    if (detailReportId) {
+      setSection("history");
+      return;
+    }
+    if (detailSource === "latest") {
+      setSection("overview");
+    }
+  }, [detailReportId, detailSource, detailView]);
+
+  const latestSummary = latestReportView?.summary ?? null;
+  const detailReportView = detailSource === "latest" ? latestReportView : historyDetail?.report_view ?? null;
+  const detailRawResult = detailSource === "latest" ? task?.result?.result ?? null : historyDetail?.analysis_content_parsed ?? null;
+
+  const detailTitle = useMemo(() => {
+    if (detailSource === "latest") {
+      return latestSummary?.headline || "最新智策报告";
+    }
+    return historyDetail?.summary_data?.headline || historyDetail?.summary || "历史智策报告";
+  }, [detailSource, historyDetail, latestSummary]);
+
+  const closeDetail = () => {
+    setSearchParams({});
+  };
+
+  const openLatestDetail = () => {
+    setSection("overview");
+    setSearchParams({ view: "detail", source: "latest" });
+  };
+
+  const openHistoryDetail = (reportId: number) => {
+    setSection("history");
+    setSearchParams({ view: "detail", reportId: String(reportId) });
+  };
 
   const submitAnalysis = async () => {
     setMessage("");
@@ -241,7 +188,8 @@ export function SectorStrategyPage() {
         method: "POST",
         body: JSON.stringify({}),
       });
-      setSelectedReport(null);
+      closeDetail();
+      setSection("overview");
       setMessage(`智策分析任务已提交: ${data.task_id}`);
       await loadTask();
     } catch (requestError) {
@@ -269,7 +217,8 @@ export function SectorStrategyPage() {
     setError("");
     try {
       await apiFetch("/api/strategies/sector-strategy/scheduler/run-once", { method: "POST" });
-      setSelectedReport(null);
+      setSection("overview");
+      closeDetail();
       setMessage("已提交一次智策后台分析");
       await loadTask();
     } catch (requestError) {
@@ -290,26 +239,19 @@ export function SectorStrategyPage() {
     }
   };
 
-  const openHistory = async (reportId: number) => {
-    setMessage("");
-    setError("");
-    try {
-      const data = await apiFetch<SectorHistoryRecord>(`/api/strategies/sector-strategy/history/${reportId}`);
-      setSelectedReport(data);
-      setSection("overview");
-      setMessage(`已加载历史报告 #${reportId}`);
-    } catch (requestError) {
-      setError(requestError instanceof ApiRequestError ? requestError.message : "加载智策历史报告失败");
-    }
-  };
-
   const deleteHistory = async (reportId: number) => {
     setMessage("");
     setError("");
     try {
       await apiFetch(`/api/strategies/sector-strategy/history/${reportId}`, { method: "DELETE" });
-      if (selectedReport?.id === reportId) {
-        setSelectedReport(null);
+      setHistoryDetails((current) => {
+        const next = { ...current };
+        delete next[reportId];
+        return next;
+      });
+      if (detailReportId === reportId) {
+        closeDetail();
+        setSection("history");
       }
       setMessage(`历史报告 #${reportId} 已删除`);
       await loadHistory();
@@ -319,7 +261,7 @@ export function SectorStrategyPage() {
   };
 
   const exportCurrentResult = async (kind: "pdf" | "markdown") => {
-    if (!currentResult) {
+    if (!detailRawResult) {
       return;
     }
     setMessage("");
@@ -327,7 +269,7 @@ export function SectorStrategyPage() {
     try {
       await downloadApiFile(`/api/exports/sector-strategy/${kind}`, {
         method: "POST",
-        body: JSON.stringify({ result: currentResult }),
+        body: JSON.stringify({ result: detailRawResult }),
       });
       setMessage(kind === "pdf" ? "智策 PDF 已开始下载" : "智策 Markdown 已开始下载");
     } catch (requestError) {
@@ -337,11 +279,7 @@ export function SectorStrategyPage() {
 
   return (
     <PageFrame
-      title="智策板块"
-      summary="当前支持分析任务、历史报告和定时任务控制。"
-      sectionTabs={sectionTabs}
-      activeSectionKey={section}
-      onSectionChange={(nextSection) => setSection(nextSection as SectionKey)}
+      activeSectionKey={detailView ? undefined : section}
       actions={
         <>
           <StatusBadge label={scheduler?.running ? `定时 ${scheduler.schedule_time}` : "定时空闲"} tone={scheduler?.running ? "success" : "default"} />
@@ -359,216 +297,193 @@ export function SectorStrategyPage() {
           />
         </>
       }
+      onSectionChange={(nextSection) => setSection(nextSection as SectionKey)}
+      sectionTabs={detailView ? undefined : sectionTabs}
+      summary="智策板块分析支持最新报告、历史报告与定时任务。"
+      title="智策板块"
     >
-      <div className={styles.stack}>
-        <section className={styles.card}>
-          <div className={styles.actions}>
-            <button className={styles.primaryButton} onClick={() => void submitAnalysis()} type="button">
-              开始智策分析
-            </button>
-            {selectedReport ? (
-              <button className={styles.secondaryButton} onClick={() => setSelectedReport(null)} type="button">
-                返回最新结果
-              </button>
-            ) : null}
-            {message ? <span className={styles.successText}>{message}</span> : null}
-            {error ? <span className={styles.dangerText}>{error}</span> : null}
-          </div>
-        </section>
-
-        {section === "overview" && task ? (
+      {detailView ? (
+        <SectorReportDetailView
+          backLabel={section === "history" ? "返回历史报告" : "返回分析总览"}
+          onBack={closeDetail}
+          onExport={(kind) => void exportCurrentResult(kind)}
+          reportView={detailReportView}
+          title={detailTitle}
+        />
+      ) : (
+        <div className={styles.stack}>
           <section className={styles.card}>
-            <h2>任务状态</h2>
-            <p>{task.message || "等待智策任务状态..."}</p>
-            <p className={styles.muted}>
-              进度: {task.current ?? 0} / {task.total ?? 0}
-            </p>
-            {task.error ? <p className={styles.dangerText}>{task.error}</p> : null}
+            <div className={styles.actions}>
+              <button className={styles.primaryButton} onClick={() => void submitAnalysis()} type="button">
+                开始智策分析
+              </button>
+              {latestReportView ? (
+                <button className={styles.secondaryButton} onClick={openLatestDetail} type="button">
+                  查看最新报告
+                </button>
+              ) : null}
+              {message ? <span className={styles.successText}>{message}</span> : null}
+              {error ? <span className={styles.dangerText}>{error}</span> : null}
+            </div>
           </section>
-        ) : null}
 
-        {section === "overview" && currentResult ? (
-          <>
-            <section className={styles.card}>
-              <div className={styles.actions}>
-                <h2>报告摘要</h2>
-                <button className={styles.secondaryButton} onClick={() => void exportCurrentResult("pdf")} type="button">
-                  导出 PDF
-                </button>
-                <button className={styles.secondaryButton} onClick={() => void exportCurrentResult("markdown")} type="button">
-                  导出 Markdown
-                </button>
-              </div>
-              <div className={styles.listItem}>
-                <strong>{headline}</strong>
-                {(currentSummary?.bullish?.length ?? 0) ? (
-                  <div style={{ marginTop: 10 }}>看多板块: {currentSummary?.bullish?.join("、")}</div>
-                ) : null}
-                {(currentSummary?.bearish?.length ?? 0) ? (
-                  <div style={{ marginTop: 6 }}>关注风险板块: {currentSummary?.bearish?.join("、")}</div>
-                ) : null}
-              </div>
-              <div className={styles.compactGrid} style={{ marginTop: 16 }}>
-                <div className={styles.metric}>
-                  <span className={styles.muted}>置信度</span>
-                  <strong>{percentText(currentSummary?.confidence_score ?? predictions?.confidence_score)}</strong>
-                </div>
-                <div className={styles.metric}>
-                  <span className={styles.muted}>风险等级</span>
-                  <strong>{asText(currentSummary?.risk_level ?? predictions?.risk_level)}</strong>
-                </div>
-                <div className={styles.metric}>
-                  <span className={styles.muted}>市场展望</span>
-                  <strong>{asText(currentSummary?.market_outlook ?? predictions?.market_outlook)}</strong>
-                </div>
-                <div className={styles.metric}>
-                  <span className={styles.muted}>分析时间</span>
-                  <strong>{asText(currentResult.timestamp ?? selectedReport?.analysis_date, "-")}</strong>
-                </div>
-              </div>
-              {dataSummary ? (
-                <div className={styles.compactGrid} style={{ marginTop: 16 }}>
-                  <div className={styles.metric}>
-                    <span className={styles.muted}>上证指数</span>
-                    <strong>{asText(dataSummary.market_overview?.sh_index?.close, "N/A")}</strong>
-                    <div className={styles.muted}>{asText(dataSummary.market_overview?.sh_index?.change_pct, "N/A")}%</div>
+          {section === "overview" ? (
+            <>
+              <section className={styles.card}>
+                <div className={styles.cardHeader}>
+                  <div>
+                    <h2>任务状态</h2>
+                    <p className={styles.helperText}>{task?.message || "等待智策任务状态..."}</p>
                   </div>
-                  <div className={styles.metric}>
-                    <span className={styles.muted}>上涨股票</span>
-                    <strong>{asText(dataSummary.market_overview?.up_count, "N/A")}</strong>
-                    <div className={styles.muted}>占比 {asText(dataSummary.market_overview?.up_ratio, "N/A")}%</div>
-                  </div>
-                  <div className={styles.metric}>
-                    <span className={styles.muted}>行业板块</span>
-                    <strong>{Object.keys(dataSummary.sectors ?? {}).length}</strong>
-                  </div>
-                  <div className={styles.metric}>
-                    <span className={styles.muted}>概念板块</span>
-                    <strong>{Object.keys(dataSummary.concepts ?? {}).length}</strong>
+                  <div className={styles.historyMeta}>
+                    进度: {task?.current ?? 0} / {task?.total ?? 0}
                   </div>
                 </div>
-              ) : null}
-              {currentResult.cache_meta?.cache_warning ? (
-                <div className={styles.dangerText} style={{ marginTop: 12 }}>
-                  {currentResult.cache_meta.cache_warning}
-                </div>
-              ) : null}
-            </section>
+                {task?.error ? <div className={styles.dangerText}>{task.error}</div> : null}
+              </section>
 
-            <section className={styles.card}>
-              <h2>核心预测</h2>
-              <div className={styles.stack}>
-                {renderPredictionGroup("看多板块", predictions?.long_short?.bullish)}
-                {renderPredictionGroup("看空板块", predictions?.long_short?.bearish)}
-                {renderPredictionGroup("当前强势板块", predictions?.rotation?.current_strong)}
-                {renderPredictionGroup("潜力接力板块", predictions?.rotation?.potential)}
-                {renderPredictionGroup("衰退板块", predictions?.rotation?.declining)}
-                {renderPredictionGroup("最热板块", predictions?.heat?.hottest)}
-                {renderPredictionGroup("升温板块", predictions?.heat?.heating)}
-                {renderPredictionGroup("降温板块", predictions?.heat?.cooling)}
-                {predictions?.summary ? (
-                  <div className={styles.listItem}>
-                    <strong>策略总结</strong>
-                    <div style={{ marginTop: 10, whiteSpace: "pre-wrap" }}>
-                      市场观点：{asText(predictions.summary.market_view)}
-                      {"\n"}核心机会：{asText(predictions.summary.key_opportunity)}
-                      {"\n"}主要风险：{asText(predictions.summary.major_risk)}
-                      {"\n"}整体策略：{asText(predictions.summary.strategy)}
+              <section className={styles.card}>
+                <div className={styles.cardHeader}>
+                  <div>
+                    <h2>最新报告摘要</h2>
+                    <p className={styles.helperText}>{formatDateTime(latestReportView?.meta?.timestamp, "暂无时间")}</p>
+                  </div>
+                  {latestReportView ? (
+                    <button className={styles.secondaryButton} onClick={openLatestDetail} type="button">
+                      查看最新报告
+                    </button>
+                  ) : null}
+                </div>
+
+                {latestSummary ? (
+                  <div className={styles.historyRecordCard}>
+                    <div className={styles.historyListBody}>
+                      <strong className={styles.historyRecordTitle}>{latestSummary.headline || "智策板块分析报告"}</strong>
+                      <div className={styles.historyListMetrics}>
+                        <span className={styles.historyListMetric}>
+                          风险等级：<strong>{asText(latestSummary.risk_level)}</strong>
+                        </span>
+                        <span className={styles.historyListMetric}>
+                          市场展望：<strong>{asText(latestSummary.market_outlook)}</strong>
+                        </span>
+                        <span className={styles.historyListMetric}>
+                          信心度：<strong>{formatConfidence(latestSummary.confidence_score)}</strong>
+                        </span>
+                      </div>
+                      <div className={styles.strategySummaryGrid}>
+                        <div className={styles.historySummaryCell}>
+                          <span>市场观点</span>
+                          <strong>{asText(latestSummary.market_view)}</strong>
+                        </div>
+                        <div className={styles.historySummaryCell}>
+                          <span>核心机会</span>
+                          <strong>{asText(latestSummary.key_opportunity)}</strong>
+                        </div>
+                        <div className={styles.historySummaryCell}>
+                          <span>主要风险</span>
+                          <strong>{asText(latestSummary.major_risk)}</strong>
+                        </div>
+                        <div className={styles.historySummaryCell}>
+                          <span>整体策略</span>
+                          <strong>{asText(latestSummary.strategy)}</strong>
+                        </div>
+                      </div>
                     </div>
                   </div>
-                ) : null}
-              </div>
-            </section>
+                ) : (
+                  <div className={styles.muted}>暂无最新智策报告。</div>
+                )}
+              </section>
+            </>
+          ) : null}
 
+          {section === "history" ? (
             <section className={styles.card}>
-              <h2>AI 智能体分析</h2>
+              <h2>历史报告</h2>
               <div className={styles.list}>
-                {Object.entries(currentResult.agents_analysis ?? {}).map(([key, agent]) => (
-                  <div className={styles.listItem} key={key}>
-                    <strong>{asText(agent.agent_name, key)}</strong>
-                    <div className={styles.muted} style={{ marginTop: 8 }}>
-                      职责: {asText(agent.agent_role)} | 关注领域: {(agent.focus_areas ?? []).join("、") || "N/A"}
+                {history.map((item) => (
+                  <div className={styles.historyRecordCard} key={item.id}>
+                    <div className={styles.historyRecordTop}>
+                      <div>
+                        <strong className={styles.historyRecordTitle}>
+                          {item.summary_data?.headline || item.summary || "智策板块分析报告"}
+                        </strong>
+                        <p className={styles.historyMeta}>
+                          {formatDateTime(item.analysis_date ?? item.created_at, "未知时间")}
+                          {item.data_date_range ? ` | ${item.data_date_range}` : ""}
+                        </p>
+                      </div>
+                      <div className={`${styles.historyActionRow} ${styles.historyListActionRow}`}>
+                        <button className={styles.secondaryButton} onClick={() => openHistoryDetail(item.id)} type="button">
+                          查看报告
+                        </button>
+                        <button className={styles.dangerButton} onClick={() => void deleteHistory(item.id)} type="button">
+                          删除
+                        </button>
+                      </div>
                     </div>
-                    <div style={{ marginTop: 12, whiteSpace: "pre-wrap" }}>{asText(agent.analysis)}</div>
+
+                    <div className={styles.historyListBody}>
+                      <div className={styles.historyListMetrics}>
+                        <span className={styles.historyListMetric}>
+                          风险等级：<strong>{asText(item.summary_data?.risk_level)}</strong>
+                        </span>
+                        <span className={styles.historyListMetric}>
+                          市场展望：<strong>{asText(item.summary_data?.market_outlook)}</strong>
+                        </span>
+                        <span className={styles.historyListMetric}>
+                          信心度：<strong>{formatConfidence(item.summary_data?.confidence_score)}</strong>
+                        </span>
+                      </div>
+                      <p className={styles.historyListSummary}>{item.summary_data?.market_view || item.summary || "暂无摘要"}</p>
+                    </div>
                   </div>
                 ))}
-                {!Object.keys(currentResult.agents_analysis ?? {}).length ? (
-                  <div className={styles.muted}>暂无智能体分析内容。</div>
-                ) : null}
+                {!history.length ? <div className={styles.muted}>暂无智策历史报告。</div> : null}
               </div>
             </section>
+          ) : null}
 
+          {section === "scheduler" ? (
             <section className={styles.card}>
-              <h2>综合研判</h2>
-              <div className={styles.listItem} style={{ whiteSpace: "pre-wrap" }}>
-                {asText(currentResult.comprehensive_report, "暂无综合研判")}
+              <h2>定时分析设置</h2>
+              <div className={styles.formGrid}>
+                <div className={styles.field}>
+                  <label htmlFor="scheduleTime">定时时间</label>
+                  <input id="scheduleTime" onChange={(event) => setScheduleTime(event.target.value)} type="time" value={scheduleTime} />
+                </div>
+                <div className={styles.metric}>
+                  <span className={styles.muted}>当前状态</span>
+                  <strong>{scheduler?.running ? "运行中" : "未运行"}</strong>
+                  <div className={styles.muted}>下次运行: {formatDateTime(scheduler?.next_run_time, "-")}</div>
+                  <div className={styles.muted}>上次运行: {formatDateTime(scheduler?.last_run_time, "-")}</div>
+                </div>
+                <div className={styles.metric}>
+                  <span className={styles.muted}>邮件配置</span>
+                  <strong>{scheduler?.email_config?.configured ? "完整" : "未完成"}</strong>
+                  <div className={styles.muted}>启用: {scheduler?.email_config?.enabled ? "是" : "否"}</div>
+                  <div className={styles.muted}>SMTP: {asText(scheduler?.email_config?.smtp_server, "未配置")}</div>
+                  <div className={styles.muted}>发件箱: {asText(scheduler?.email_config?.email_from, "未配置")}</div>
+                </div>
+              </div>
+              <div className={styles.actions} style={{ marginTop: 16 }}>
+                <button className={styles.primaryButton} onClick={() => void saveScheduler(true)} type="button">
+                  启动 / 更新
+                </button>
+                <button className={styles.secondaryButton} onClick={() => void runOnce()} type="button">
+                  立即运行
+                </button>
+                <button className={styles.secondaryButton} onClick={() => void testEmail()} type="button">
+                  测试邮件
+                </button>
+                <button className={styles.dangerButton} onClick={() => void saveScheduler(false)} type="button">
+                  停止
+                </button>
               </div>
             </section>
-          </>
-        ) : null}
-
-        {section === "history" ? (
-          <section className={styles.card}>
-            <h2>历史报告</h2>
-            <div className={styles.list}>
-              {history.map((item) => (
-                <div className={styles.listItem} key={item.id}>
-                  <strong>{asText(item.analysis_date ?? item.created_at, "未知时间")}</strong>
-                  <div style={{ marginTop: 8 }}>{asText(item.summary_data?.headline ?? item.summary, "无摘要")}</div>
-                  <div className={styles.actions} style={{ marginTop: 12 }}>
-                    <button className={styles.secondaryButton} onClick={() => void openHistory(item.id)} type="button">
-                      查看
-                    </button>
-                    <button className={styles.dangerButton} onClick={() => void deleteHistory(item.id)} type="button">
-                      删除
-                    </button>
-                  </div>
-                </div>
-              ))}
-              {!history.length ? <div className={styles.muted}>暂无智策历史报告。</div> : null}
-            </div>
-          </section>
-        ) : null}
-
-        {section === "scheduler" ? (
-          <section className={styles.card}>
-            <h2>定时分析设置</h2>
-            <div className={styles.formGrid}>
-              <div className={styles.field}>
-                <label htmlFor="scheduleTime">定时时间</label>
-                <input id="scheduleTime" type="time" value={scheduleTime} onChange={(event) => setScheduleTime(event.target.value)} />
-              </div>
-              <div className={styles.metric}>
-                <span className={styles.muted}>当前状态</span>
-                <strong>{scheduler?.running ? "运行中" : "未运行"}</strong>
-                <div className={styles.muted}>下次运行: {asText(scheduler?.next_run_time, "-")}</div>
-                <div className={styles.muted}>上次运行: {asText(scheduler?.last_run_time, "-")}</div>
-              </div>
-              <div className={styles.metric}>
-                <span className={styles.muted}>邮件配置</span>
-                <strong>{scheduler?.email_config?.configured ? "完整" : "未完成"}</strong>
-                <div className={styles.muted}>启用: {scheduler?.email_config?.enabled ? "是" : "否"}</div>
-                <div className={styles.muted}>SMTP: {asText(scheduler?.email_config?.smtp_server, "未配置")}</div>
-                <div className={styles.muted}>发件箱: {asText(scheduler?.email_config?.email_from, "未配置")}</div>
-              </div>
-            </div>
-            <div className={styles.actions} style={{ marginTop: 16 }}>
-              <button className={styles.primaryButton} onClick={() => void saveScheduler(true)} type="button">
-                启动 / 更新
-              </button>
-              <button className={styles.secondaryButton} onClick={() => void runOnce()} type="button">
-                立即运行
-              </button>
-              <button className={styles.secondaryButton} onClick={() => void testEmail()} type="button">
-                测试邮件
-              </button>
-              <button className={styles.dangerButton} onClick={() => void saveScheduler(false)} type="button">
-                停止
-              </button>
-            </div>
-          </section>
-        ) : null}
-      </div>
+          ) : null}
+        </div>
+      )}
     </PageFrame>
   );
 }

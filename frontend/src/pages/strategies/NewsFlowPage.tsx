@@ -15,6 +15,7 @@ import { Bar, Line } from "react-chartjs-2";
 import { PageFrame } from "../../components/common/PageFrame";
 import { StatusBadge } from "../../components/common/StatusBadge";
 import { ApiRequestError, apiFetch, buildQuery, downloadApiFile } from "../../lib/api";
+import { formatDateTime } from "../../lib/datetime";
 import { asNumber, asText, integerText, numberText } from "../../lib/market";
 import styles from "../ConsolePage.module.scss";
 
@@ -435,7 +436,7 @@ export function NewsFlowPage() {
                   <div className={styles.listItem} key={String(item.id ?? item.title)}>
                     <strong>[{asText(item.alert_level, "info")}] {asText(item.title)}</strong>
                     <div style={{ marginTop: 8 }}>{asText(item.content, "")}</div>
-                    <div className={styles.muted} style={{ marginTop: 8 }}>{asText(item.created_at, "")}</div>
+                    <div className={styles.muted} style={{ marginTop: 8 }}>{formatDateTime(item.created_at, "")}</div>
                   </div>
                 ))}
                 {!(dashboard?.recent_alerts ?? []).length ? <div className={styles.muted}>暂无预警。</div> : null}
@@ -491,7 +492,7 @@ export function NewsFlowPage() {
                     <div className={styles.metric}>
                       <span className={styles.muted}>分析耗时</span>
                       <strong>{numberText(currentResult.duration, 1)} 秒</strong>
-                      <div className={styles.muted}>{asText(currentResult.fetch_time, "-")}</div>
+                      <div className={styles.muted}>{formatDateTime(currentResult.fetch_time, "-")}</div>
                     </div>
                   </div>
                   {currentResult.trading_signals?.key_message ? (
@@ -546,7 +547,7 @@ export function NewsFlowPage() {
                       <div className={styles.listItem} key={`news-${index}`}>
                         <strong>[{asText(item.platform_name, "平台")}] {asText(item.title)}</strong>
                         <div className={styles.muted} style={{ marginTop: 8 }}>
-                          {((item.matched_keywords as string[] | undefined) ?? []).join("、") || "无关键词"} | {asText(item.publish_time, "")}
+                          {((item.matched_keywords as string[] | undefined) ?? []).join("、") || "无关键词"} | {formatDateTime(item.publish_time, "")}
                         </div>
                       </div>
                     ))}
@@ -604,7 +605,7 @@ export function NewsFlowPage() {
                     <strong>[{asText(item.alert_level, "info")}] {asText(item.title)}</strong>
                     <div style={{ marginTop: 10 }}>{asText(item.content, "")}</div>
                     <div className={styles.muted} style={{ marginTop: 8 }}>
-                      类型: {asText(item.alert_type, "")} | 相关话题: {((item.related_topics as string[] | undefined) ?? []).join("、") || "N/A"} | 时间 {asText(item.created_at, "")}
+                      类型: {asText(item.alert_type, "")} | 相关话题: {((item.related_topics as string[] | undefined) ?? []).join("、") || "N/A"} | 时间 {formatDateTime(item.created_at, "")}
                     </div>
                   </div>
                 ))}
@@ -700,7 +701,7 @@ export function NewsFlowPage() {
               <div className={styles.list}>
                 {history.map((item) => (
                   <div className={styles.listItem} key={String(item.id)}>
-                    <strong>{asText(item.fetch_time, "")} - 流量得分 {integerText(item.total_score)} ({asText(item.flow_level, "中")})</strong>
+                    <strong>{formatDateTime(item.fetch_time, "")} - 流量得分 {integerText(item.total_score)} ({asText(item.flow_level, "中")})</strong>
                     <div style={{ marginTop: 8 }}>{asText(item.analysis, "")}</div>
                     <div className={styles.actions} style={{ marginTop: 12 }}>
                       <button className={styles.secondaryButton} onClick={() => void openHistoryDetail(Number(item.id))} type="button">
@@ -753,7 +754,7 @@ export function NewsFlowPage() {
                   <tbody>
                     {aiHistory.map((item) => (
                       <tr key={String(item.id ?? item.created_at)}>
-                        <td>{asText(item.created_at ?? item.fetch_time, "").slice(0, 16)}</td>
+                        <td>{formatDateTime(item.created_at ?? item.fetch_time, "")}</td>
                         <td>{asText(item.advice, "N/A")}</td>
                         <td>{integerText(item.confidence)}%</td>
                         <td>{asText(item.risk_level, "N/A")}</td>
@@ -783,7 +784,7 @@ export function NewsFlowPage() {
                   <div className={styles.listItem} key={`search-${index}`}>
                     <strong>[{asText(item.platform_name, "平台")}] {asText(item.title)}</strong>
                     <div className={styles.muted} style={{ marginTop: 8 }}>
-                      {((item.matched_keywords as string[] | undefined) ?? []).join("、") || "无关键词"} | {asText(item.fetch_time ?? item.publish_time, "")}
+                      {((item.matched_keywords as string[] | undefined) ?? []).join("、") || "无关键词"} | {formatDateTime(item.fetch_time ?? item.publish_time, "")}
                     </div>
                   </div>
                 ))}
@@ -804,15 +805,15 @@ export function NewsFlowPage() {
                 </div>
                 <div className={styles.metric}>
                   <span className={styles.muted}>热点同步</span>
-                  <strong>{asText(scheduler?.next_run_times?.sync_hotspots, "N/A").slice(0, 16)}</strong>
+                  <strong>{formatDateTime(scheduler?.next_run_times?.sync_hotspots, "N/A")}</strong>
                 </div>
                 <div className={styles.metric}>
                   <span className={styles.muted}>预警生成</span>
-                  <strong>{asText(scheduler?.next_run_times?.generate_alerts, "N/A").slice(0, 16)}</strong>
+                  <strong>{formatDateTime(scheduler?.next_run_times?.generate_alerts, "N/A")}</strong>
                 </div>
                 <div className={styles.metric}>
                   <span className={styles.muted}>深度分析</span>
-                  <strong>{asText(scheduler?.next_run_times?.deep_analysis, "N/A").slice(0, 16)}</strong>
+                  <strong>{formatDateTime(scheduler?.next_run_times?.deep_analysis, "N/A")}</strong>
                 </div>
               </div>
               <div className={styles.actions} style={{ marginTop: 16 }}>

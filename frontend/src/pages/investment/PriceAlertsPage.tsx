@@ -4,6 +4,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { PageFrame } from "../../components/common/PageFrame";
 import { StatusBadge } from "../../components/common/StatusBadge";
 import { ApiRequestError, apiFetch } from "../../lib/api";
+import { formatDateTime } from "../../lib/datetime";
 import { decodeIntent } from "../../lib/intents";
 import styles from "../ConsolePage.module.scss";
 
@@ -373,7 +374,7 @@ export function PriceAlertsPage() {
                       <strong>{item.symbol}</strong>
                     </div>
                     <div>{item.message}</div>
-                    <small className={styles.muted}>{item.triggered_at}</small>
+                    <small className={styles.muted}>{formatDateTime(item.triggered_at, "暂无时间")}</small>
                   </div>
                 );
               })}

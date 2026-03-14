@@ -85,6 +85,7 @@ class SmartMonitorDB:
                 take_profit_pct REAL,
                 risk_level TEXT,
                 key_price_levels TEXT,
+                monitor_levels TEXT,
                 market_data TEXT,
                 account_info TEXT,
                 execution_mode TEXT DEFAULT 'manual_only',
@@ -117,6 +118,7 @@ class SmartMonitorDB:
         self._ensure_column(cursor, "ai_decisions", "asset_id", "INTEGER")
         self._ensure_column(cursor, "ai_decisions", "execution_mode", "TEXT DEFAULT 'manual_only'")
         self._ensure_column(cursor, "ai_decisions", "action_status", "TEXT DEFAULT 'suggested'")
+        self._ensure_column(cursor, "ai_decisions", "monitor_levels", "TEXT")
         conn.commit()
         conn.close()
 
@@ -270,10 +272,10 @@ class SmartMonitorDB:
             INSERT INTO ai_decisions (
                 stock_code, stock_name, account_name, asset_id, portfolio_stock_id, origin_analysis_id,
                 decision_time, trading_session, action, confidence, reasoning, position_size_pct,
-                stop_loss_pct, take_profit_pct, risk_level, key_price_levels, market_data,
+                stop_loss_pct, take_profit_pct, risk_level, key_price_levels, monitor_levels, market_data,
                 account_info, execution_mode, action_status, executed, execution_result, created_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 payload.get("stock_code"),
@@ -292,6 +294,7 @@ class SmartMonitorDB:
                 payload.get("take_profit_pct"),
                 payload.get("risk_level"),
                 self._serialize_json_field(payload.get("key_price_levels"), {}),
+                self._serialize_json_field(payload.get("monitor_levels"), {}),
                 self._serialize_json_field(payload.get("market_data"), {}),
                 self._serialize_json_field(payload.get("account_info"), {}),
                 payload.get("execution_mode", "manual_only"),
@@ -335,6 +338,7 @@ class SmartMonitorDB:
             "take_profit_pct",
             "risk_level",
             "key_price_levels",
+            "monitor_levels",
             "market_data",
             "account_info",
             "execution_mode",
@@ -615,6 +619,15 @@ class SmartMonitorDB:
         seconds = int(check_interval or 300)
         return max(1, (seconds + 59) // 60)
 
+    def _default_check_interval_seconds(self) -> int:
+        raw = self.monitoring_repository.get_metadata("smart_monitor_intraday_decision_interval_minutes")
+        try:
+            if raw is not None:
+                return max(10, min(120, int(raw))) * 60
+        except (TypeError, ValueError):
+            pass
+        return 3600
+
     def _task_config_from_data(self, task_data: Dict) -> Dict:
         return {
             "task_name": task_data.get("task_name"),
@@ -686,7 +699,9 @@ class SmartMonitorDB:
                 "monitor_type": "ai_task",
                 "source": "portfolio" if task_data.get("managed_by_portfolio") else "ai_monitor",
                 "enabled": bool(task_data.get("enabled", 1)),
-                "interval_minutes": self._seconds_to_interval_minutes(task_data.get("check_interval", 300)),
+                "interval_minutes": self._seconds_to_interval_minutes(
+                    task_data.get("check_interval", self._default_check_interval_seconds())
+                ),
                 "trading_hours_only": bool(task_data.get("trading_hours_only", 1)),
                 "notification_enabled": True,
                 "managed_by_portfolio": bool(task_data.get("managed_by_portfolio", 0)),
@@ -875,7 +890,9 @@ class SmartMonitorDB:
                 "monitor_type": "ai_task",
                 "source": "portfolio" if managed_sync else "ai_monitor",
                 "enabled": target_enabled,
-                "interval_minutes": self._seconds_to_interval_minutes(task_data.get("check_interval", 300)),
+                "interval_minutes": self._seconds_to_interval_minutes(
+                    task_data.get("check_interval", self._default_check_interval_seconds())
+                ),
                 "trading_hours_only": bool(task_data.get("trading_hours_only", 1)),
                 "notification_enabled": True,
                 "managed_by_portfolio": managed_sync,

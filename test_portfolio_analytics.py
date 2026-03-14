@@ -227,19 +227,6 @@ class PortfolioAnalyticsTests(unittest.TestCase):
         self.assertTrue(calendar_result["records"])
         self.assertEqual(calendar_result["records"][0]["month_label"], "2026-01")
 
-    def test_generate_review_report_persists_saved_markdown(self):
-        self._add_stock()
-        self.manager._resolve_review_period = lambda period_type, reference=None: (date(2026, 1, 5), date(2026, 1, 30))
-
-        result = self.manager.generate_review_report(account_name="默认账户", period_type="month")
-
-        self.assertEqual(result["status"], "success")
-        self.assertIn("投资复盘报告", result["report_markdown"])
-        saved_reports = self.portfolio_db.get_review_reports(account_name="默认账户", limit=5)
-        self.assertEqual(len(saved_reports), 1)
-        self.assertEqual(saved_reports[0]["id"], result["report_id"])
-
-
     def test_seed_initial_trade_creates_opening_record_and_summary(self):
         stock_id = self._add_stock()
 

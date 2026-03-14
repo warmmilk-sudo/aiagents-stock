@@ -107,11 +107,13 @@ class SectorStrategyAgents:
    - 建议规避的板块（2-3个）
    - 仓位管理建议
 
+输出要求：最终答案必须使用简体中文，不要输出英文标题、英文标签或英文解释。
+
 请给出专业、深入的宏观策略分析报告。
 """
         
         messages = [
-            {"role": "system", "content": "你是一名资深的宏观策略分析师，擅长从宏观经济、政策和新闻事件中把握市场脉搏。"},
+            {"role": "system", "content": "你是一名资深的宏观策略分析师，擅长从宏观经济、政策和新闻事件中把握市场脉搏。最终输出必须使用简体中文。"},
             {"role": "user", "content": prompt}
         ]
         
@@ -223,11 +225,13 @@ class SectorStrategyAgents:
    - 给出每个板块的投资逻辑和风险提示
    - 建议配置比例和持有周期
 
+输出要求：最终答案必须使用简体中文，不要输出英文标题、英文标签或英文解释。
+
 请给出专业、详细的板块诊断报告。
 """
         
         messages = [
-            {"role": "system", "content": "你是一名资深的板块分析师，擅长板块趋势判断和投资价值评估。"},
+            {"role": "system", "content": "你是一名资深的板块分析师，擅长板块趋势判断和投资价值评估。最终输出必须使用简体中文。"},
             {"role": "user", "content": prompt}
         ]
         
@@ -354,11 +358,13 @@ class SectorStrategyAgents:
    - 提示可能的资金陷阱
    - 评估市场流动性状况
 
+输出要求：最终答案必须使用简体中文，不要输出英文标题、英文标签或英文解释。
+
 请给出专业、深度的资金流向分析报告。
 """
         
         messages = [
-            {"role": "system", "content": "你是一名资深的资金流向分析师，擅长从资金数据中洞察主力意图和市场趋势。"},
+            {"role": "system", "content": "你是一名资深的资金流向分析师，擅长从资金数据中洞察主力意图和市场趋势。最终输出必须使用简体中文。"},
             {"role": "user", "content": prompt}
         ]
         
@@ -498,11 +504,13 @@ class SectorStrategyAgents:
    - 提示情绪透支的风险板块（1-2个）
    - 给出仓位管理建议
 
+输出要求：最终答案必须使用简体中文，不要输出英文标题、英文标签或英文解释。
+
 请给出专业、客观的市场情绪分析报告，避免主观臆测。
 """
         
         messages = [
-            {"role": "system", "content": "你是一名资深的市场情绪分析师，擅长从市场数据中解读投资者情绪和市场心理。"},
+            {"role": "system", "content": "你是一名资深的市场情绪分析师，擅长从市场数据中解读投资者情绪和市场心理。最终输出必须使用简体中文。"},
             {"role": "user", "content": prompt}
         ]
         
@@ -567,4 +575,3 @@ if __name__ == "__main__":
     result = agents.macro_strategist_agent(test_market_data, test_news)
     print(f"分析师: {result['agent_name']}")
     print(f"分析内容长度: {len(result['analysis'])} 字符")
-

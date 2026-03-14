@@ -2,12 +2,15 @@
   display: grid;
   gap: 12px;
   min-width: 0;
+  width: 100%;
+  max-width: 100%;
 }
 
 .header {
   display: flex;
-  justify-content: flex-end;
+  justify-content: center;
   gap: 12px;
+  min-width: 0;
 }
 
 .actions {
@@ -15,10 +18,13 @@
   flex-wrap: wrap;
   gap: 8px;
   max-width: 100%;
+  min-width: 0;
 }
 
 .body {
   min-height: 0;
+  width: 100%;
+  max-width: 100%;
 }
 
 .sectionTabsWrap {
@@ -31,24 +37,25 @@
   display: flex;
   gap: 8px;
   padding: 8px;
-  border: 1px solid var(--line-soft);
-  border-radius: 20px;
-  background: color-mix(in srgb, var(--bg-panel) 94%, transparent);
-  box-shadow: var(--shadow-card);
-  backdrop-filter: blur(14px);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
   overflow-x: auto;
   scrollbar-width: thin;
 }
 
 .sectionTabButton {
   flex: 0 0 auto;
-  border: 1px solid var(--line-strong);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.02);
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
   color: var(--text-muted);
-  padding: 9px 14px;
+  padding: 10px 16px;
   font-weight: 700;
-  font-size: 13px;
+  font-size: 15px;
+  line-height: 1.35;
   white-space: nowrap;
   transition:
     background var(--shell-transition),
@@ -65,7 +72,6 @@
 
 .sectionTabButtonActive {
   background: color-mix(in srgb, var(--accent) 18%, transparent);
-  border-color: color-mix(in srgb, var(--accent) 40%, var(--line-soft));
   color: var(--text-main);
 }
 
@@ -89,6 +95,18 @@
 }
 
 @media (max-width: 520px) {
+  .header {
+    justify-content: stretch;
+  }
+
+  .actions {
+    width: 100%;
+  }
+
+  .actions > * {
+    width: 100%;
+  }
+
   .sectionTabsWrap {
     top: 70px;
   }

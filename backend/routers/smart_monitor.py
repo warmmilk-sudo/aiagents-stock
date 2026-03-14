@@ -9,6 +9,7 @@ from backend.auth import require_session
 from backend.dto import (
     PendingActionResolveRequest,
     SmartMonitorAnalyzeRequest,
+    SmartMonitorRuntimeConfigRequest,
     SmartMonitorTaskRequest,
 )
 from backend import services
@@ -21,6 +22,21 @@ router = APIRouter(prefix="/api/smart-monitor", tags=["smart-monitor"])
 def list_tasks(request: Request, enabled_only: bool = False) -> dict:
     require_session(request)
     return success_payload(services.list_smart_monitor_tasks(enabled_only=enabled_only))
+
+
+@router.get("/runtime-config")
+def get_runtime_config(request: Request) -> dict:
+    require_session(request)
+    return success_payload(services.get_smart_monitor_runtime_config())
+
+
+@router.put("/runtime-config")
+def update_runtime_config(request: Request, payload: SmartMonitorRuntimeConfigRequest) -> dict:
+    require_session(request)
+    return success_payload(
+        services.update_smart_monitor_runtime_config(payload.model_dump()),
+        message="智能盯盘运行配置已更新",
+    )
 
 
 @router.post("/tasks")

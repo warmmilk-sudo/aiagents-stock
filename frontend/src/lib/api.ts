@@ -20,7 +20,47 @@ export class ApiRequestError extends Error {
   }
 }
 
-export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
+interface ApiFetchCacheEntry {
+  expiresAt: number;
+  data: unknown;
+}
+
+interface ApiFetchCachedOptions {
+  ttlMs?: number;
+}
+
+const DEFAULT_CACHE_TTL_MS = 15_000;
+const apiResponseCache = new Map<string, ApiFetchCacheEntry>();
+const inFlightRequests = new Map<string, Promise<unknown>>();
+
+function buildRequestKey(path: string, method: string) {
+  return `${method.toUpperCase()} ${path}`;
+}
+
+function getCachedResponse<T>(key: string): T | null {
+  const cached = apiResponseCache.get(key);
+  if (!cached) {
+    return null;
+  }
+  if (cached.expiresAt <= Date.now()) {
+    apiResponseCache.delete(key);
+    return null;
+  }
+  return cached.data as T;
+}
+
+function setCachedResponse<T>(key: string, data: T, ttlMs: number) {
+  apiResponseCache.set(key, {
+    expiresAt: Date.now() + Math.max(0, ttlMs),
+    data,
+  });
+}
+
+function clearApiCache() {
+  apiResponseCache.clear();
+}
+
+async function requestJson<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers ?? {});
   const isJsonBody = init.body !== undefined && !(init.body instanceof FormData);
   if (isJsonBody && !headers.has("Content-Type")) {
@@ -50,6 +90,62 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
   }
 
   return payload.data;
+}
+
+export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const method = (init.method ?? "GET").toUpperCase();
+  const requestKey = buildRequestKey(path, method);
+
+  if (method === "GET") {
+    const inFlight = inFlightRequests.get(requestKey);
+    if (inFlight) {
+      return inFlight as Promise<T>;
+    }
+    const request = requestJson<T>(path, init).finally(() => {
+      inFlightRequests.delete(requestKey);
+    });
+    inFlightRequests.set(requestKey, request);
+    return request;
+  }
+
+  const result = await requestJson<T>(path, init);
+  clearApiCache();
+  return result;
+}
+
+export async function apiFetchCached<T>(
+  path: string,
+  init: RequestInit = {},
+  options: ApiFetchCachedOptions = {},
+): Promise<T> {
+  const method = (init.method ?? "GET").toUpperCase();
+  if (method !== "GET") {
+    return apiFetch<T>(path, init);
+  }
+
+  const ttlMs = options.ttlMs ?? DEFAULT_CACHE_TTL_MS;
+  const requestKey = buildRequestKey(path, method);
+  const cached = getCachedResponse<T>(requestKey);
+  if (cached !== null) {
+    return cached;
+  }
+
+  const inFlight = inFlightRequests.get(requestKey);
+  if (inFlight) {
+    return inFlight as Promise<T>;
+  }
+
+  const request = requestJson<T>(path, init)
+    .then((data) => {
+      setCachedResponse(requestKey, data, ttlMs);
+      return data;
+    })
+    .finally(() => {
+      inFlightRequests.delete(requestKey);
+    });
+
+  inFlightRequests.set(requestKey, request);
+  return request;
 }
 
 export async function downloadApiFile(path: string, init: RequestInit = {}): Promise<void> {

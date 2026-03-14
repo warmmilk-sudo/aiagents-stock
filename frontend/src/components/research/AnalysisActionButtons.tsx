@@ -20,6 +20,8 @@ interface AnalysisActionButtonsProps {
   portfolioLabel?: string;
   isInPortfolio?: boolean;
   showPortfolioAction?: boolean;
+  watchlistButtonClassName?: string;
+  className?: string;
 }
 
 export function AnalysisActionButtons({
@@ -28,6 +30,8 @@ export function AnalysisActionButtons({
   portfolioLabel,
   isInPortfolio = false,
   showPortfolioAction = true,
+  watchlistButtonClassName,
+  className,
 }: AnalysisActionButtonsProps) {
   const navigate = useNavigate();
   const setIntent = useResearchStore((state) => state.setIntent);
@@ -38,7 +42,7 @@ export function AnalysisActionButtons({
   };
 
   return (
-    <div className={styles.actionRow}>
+    <div className={className ? `${styles.actionRow} ${className}` : styles.actionRow}>
       {recordId ? (
         <button className={styles.actionButton} onClick={() => navigate(`/research/history?recordId=${recordId}`)} type="button">
           查看历史
@@ -47,7 +51,7 @@ export function AnalysisActionButtons({
       {actionPayload ? (
         <>
           <button
-            className={styles.actionButton}
+            className={watchlistButtonClassName || styles.actionButton}
             onClick={() => openIntent("/investment/smart-monitor", { type: "watchlist", payload: actionPayload })}
             type="button"
           >

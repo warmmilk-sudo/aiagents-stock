@@ -7,7 +7,7 @@
 import time
 import re
 import math
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time as daytime, timedelta
 from typing import Any, Callable, Dict, List, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -29,6 +29,7 @@ class PortfolioManager:
     DEFAULT_RISK_FREE_RATE = 0.015
     AGGREGATE_ACCOUNT_NAME = "全部账户"
     DEFAULT_ANALYSIS_AGENTS = ["technical", "fundamental", "fund_flow", "risk"]
+    REALTIME_QUOTE_CACHE_SECONDS = 60
     
     def __init__(self, model=None, lightweight_model=None, reasoning_model=None,
                  portfolio_store=None,
@@ -55,13 +56,32 @@ class PortfolioManager:
         self._stock_data_fetcher = None
         self._basic_stock_info_cache: Dict[str, Dict[str, Any]] = {}
         self._realtime_quote_fetcher = None
+        self._realtime_quote_cache: Dict[str, Dict[str, Any]] = {}
 
-    @staticmethod
-    def get_default_smart_monitor_check_interval() -> int:
+    def get_default_smart_monitor_check_interval(self) -> int:
+        metadata_value = getattr(self.smart_monitor_db, "monitoring_repository", None)
+        if metadata_value is not None:
+            raw = self.smart_monitor_db.monitoring_repository.get_metadata(
+                "smart_monitor_intraday_decision_interval_minutes"
+            )
+            try:
+                if raw is not None:
+                    return max(10, min(120, int(raw))) * 60
+            except (TypeError, ValueError):
+                pass
         return max(60, int(getattr(config, "SMART_MONITOR_AI_INTERVAL_MINUTES", 60) or 60) * 60)
 
-    @staticmethod
-    def get_default_realtime_monitor_check_interval() -> int:
+    def get_default_realtime_monitor_check_interval(self) -> int:
+        metadata_value = getattr(self.smart_monitor_db, "monitoring_repository", None)
+        if metadata_value is not None:
+            raw = self.smart_monitor_db.monitoring_repository.get_metadata(
+                "smart_monitor_realtime_monitor_interval_minutes"
+            )
+            try:
+                if raw is not None:
+                    return max(1, min(10, int(raw)))
+            except (TypeError, ValueError):
+                pass
         return max(3, int(getattr(config, "SMART_MONITOR_PRICE_ALERT_INTERVAL_MINUTES", 3) or 3))
 
     def _mark_integrations_reconcile_pending(self) -> None:
@@ -630,6 +650,19 @@ class PortfolioManager:
         """获取账户范围内的交易流水。"""
         return self.db.get_trade_records(account_name=account_name, limit=limit)
 
+    def get_trade_records_paginated(
+        self,
+        account_name: Optional[str] = None,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> Dict[str, Any]:
+        """分页获取账户范围内的交易流水。"""
+        return self.db.get_trade_records_page(
+            account_name=account_name,
+            page=page,
+            page_size=page_size,
+        )
+
     def get_trade_summary_map(self, stock_ids: List[int]) -> Dict[int, Dict]:
         """批量获取持仓交易摘要。"""
         if not stock_ids:
@@ -735,10 +768,53 @@ class PortfolioManager:
         self._basic_stock_info_cache[normalized_code] = info
         return info
 
+    @staticmethod
+    def _is_a_share_trading_time(now: Optional[datetime] = None) -> bool:
+        current = now or datetime.now()
+        if current.weekday() >= 5:
+            return False
+
+        current_time = current.time()
+        morning_open = daytime(9, 30)
+        morning_close = daytime(11, 30)
+        afternoon_open = daytime(13, 0)
+        afternoon_close = daytime(15, 0)
+        return (
+            morning_open <= current_time <= morning_close
+            or afternoon_open <= current_time <= afternoon_close
+        )
+
+    def _get_cached_realtime_quote(self, normalized_code: str, allow_stale: bool = False) -> Dict[str, Any]:
+        entry = self._realtime_quote_cache.get(normalized_code)
+        if not entry:
+            return {}
+
+        quote = entry.get("quote")
+        if not isinstance(quote, dict):
+            return {}
+
+        if allow_stale:
+            return dict(quote)
+
+        cached_at = float(entry.get("cached_at") or 0)
+        if time.time() - cached_at <= self.REALTIME_QUOTE_CACHE_SECONDS:
+            return dict(quote)
+        return {}
+
     def _get_realtime_quote(self, code: Optional[str]) -> Dict[str, Any]:
         normalized_code = self._normalize_stock_code(code or "")
         if not normalized_code:
             return {}
+
+        if not self._is_a_share(normalized_code):
+            return {}
+
+        if not self._is_a_share_trading_time():
+            return self._get_cached_realtime_quote(normalized_code, allow_stale=True)
+
+        cached_quote = self._get_cached_realtime_quote(normalized_code)
+        if cached_quote:
+            return cached_quote
 
         try:
             if self._realtime_quote_fetcher is None:
@@ -746,10 +822,36 @@ class PortfolioManager:
 
                 self._realtime_quote_fetcher = SmartMonitorDataFetcher()
             quote = self._realtime_quote_fetcher.get_realtime_quote(normalized_code, retry=1)
-            return quote if isinstance(quote, dict) else {}
+            if not isinstance(quote, dict):
+                return self._get_cached_realtime_quote(normalized_code, allow_stale=True)
+
+            cached_entry = self._realtime_quote_cache.get(normalized_code)
+            cached_payload = cached_entry.get("quote") if isinstance(cached_entry, dict) else None
+            if isinstance(cached_payload, dict):
+                cached_price = self._extract_first_number(
+                    cached_payload.get("current_price", cached_payload.get("price")),
+                    allow_zero=True,
+                )
+                next_price = self._extract_first_number(
+                    quote.get("current_price", quote.get("price")),
+                    allow_zero=True,
+                )
+                if (
+                    cached_payload.get("update_time")
+                    and cached_payload.get("update_time") == quote.get("update_time")
+                    and cached_price == next_price
+                ):
+                    self._realtime_quote_cache[normalized_code]["cached_at"] = time.time()
+                    return dict(cached_payload)
+
+            self._realtime_quote_cache[normalized_code] = {
+                "quote": dict(quote),
+                "cached_at": time.time(),
+            }
+            return dict(quote)
         except Exception as e:
             print(f"[WARN] 实时行情回补失败 ({normalized_code}): {e}")
-            return {}
+            return self._get_cached_realtime_quote(normalized_code, allow_stale=True)
 
     def _get_latest_price_and_industry(self, stock: Dict) -> Tuple[float, str]:
         current_price = self._safe_float(stock.get("current_price"))
@@ -1451,288 +1553,6 @@ class PortfolioManager:
             "data_mode": series.attrs.get("data_mode", "estimated"),
             "available_days": len(daily.index),
         }
-
-    def _resolve_review_period(self, period_type: str, reference: Optional[date] = None) -> Tuple[date, date]:
-        today = reference or datetime.now().date()
-        if period_type == "week":
-            end_date = today
-            start_date = end_date - timedelta(days=6)
-            return start_date, end_date
-        if period_type == "quarter":
-            end_date = today
-            start_date = (pd.Timestamp(end_date) - pd.DateOffset(months=3) + pd.Timedelta(days=1)).date()
-            return start_date, end_date
-
-        end_date = today
-        start_date = (pd.Timestamp(end_date) - pd.DateOffset(months=1) + pd.Timedelta(days=1)).date()
-        return start_date, end_date
-
-    def _calculate_stock_contributions(
-        self,
-        stocks: List[Dict],
-        start_date: str,
-        end_date: str,
-    ) -> List[Dict]:
-        contributions = []
-        history_start = (pd.to_datetime(start_date) - timedelta(days=10)).strftime("%Y-%m-%d")
-        for stock in stocks:
-            quantity = self._safe_int(stock.get("quantity"))
-            if quantity <= 0:
-                continue
-            series = self._fetch_price_series(stock.get("code", ""), start_date=history_start, end_date=end_date)
-            if series.empty:
-                continue
-            period_series = series[series.index >= pd.to_datetime(start_date)]
-            if period_series.empty:
-                continue
-            start_price = self._safe_float(period_series.iloc[0])
-            end_price = self._safe_float(period_series.iloc[-1])
-            pnl = (end_price - start_price) * quantity
-            return_pct = ((end_price - start_price) / start_price) if start_price > 0 else 0.0
-            contributions.append(
-                {
-                    "code": stock.get("code"),
-                    "name": stock.get("name"),
-                    "pnl": pnl,
-                    "return_pct": return_pct,
-                }
-            )
-        contributions.sort(key=lambda item: item["pnl"], reverse=True)
-        return contributions
-
-    def _build_review_markdown(
-        self,
-        account_label: str,
-        period_type: str,
-        start_date: str,
-        end_date: str,
-        summary: Dict,
-    ) -> str:
-        top_contributors = summary.get("top_contributors", [])
-        worst_contributors = summary.get("worst_contributors", [])
-        risk_metrics = summary.get("risk_metrics", {})
-        concentration = summary.get("concentration_summary", {})
-
-        lines = [
-            f"# {account_label} {period_type.upper()} 投资复盘报告",
-            "",
-            f"- 周期: {start_date} 至 {end_date}",
-            f"- 数据口径: {summary.get('data_mode_label', '估算')}",
-            f"- 参考基准: {risk_metrics.get('benchmark_label', '沪深300')}",
-            "",
-            "## 组合表现",
-            "",
-            f"- 期初组合市值: ¥{summary.get('start_market_value', 0):,.2f}",
-            f"- 期末组合市值: ¥{summary.get('end_market_value', 0):,.2f}",
-            f"- 周期累计盈亏: ¥{summary.get('cumulative_pnl', 0):,.2f}",
-            f"- 周期收益率: {summary.get('cumulative_return_pct', 0):.2f}%",
-            f"- 已实现盈亏变动: ¥{summary.get('realized_pnl_change', 0):,.2f}",
-            f"- 期末未实现盈亏: ¥{summary.get('end_unrealized_pnl', 0):,.2f}",
-            f"- 盈利天数 / 亏损天数: {summary.get('winning_days', 0)} / {summary.get('losing_days', 0)}",
-            f"- 胜率: {summary.get('win_rate_pct', 0):.2f}%",
-            f"- 最大单日盈利: ¥{summary.get('best_day_pnl', 0):,.2f}",
-            f"- 最大单日亏损: ¥{summary.get('worst_day_pnl', 0):,.2f}",
-            "",
-            "## 风险指标",
-            "",
-            f"- 年化波动率: {summary.get('annual_volatility_text', 'N/A')}",
-            f"- Beta(沪深300): {summary.get('beta_text', 'N/A')}",
-            f"- 夏普比率: {summary.get('sharpe_text', 'N/A')}",
-            "",
-            "## 持仓结构",
-            "",
-            f"- 期末持仓数量: {summary.get('position_count', 0)}",
-            f"- 最大单票权重: {concentration.get('top_stock', 'N/A')}",
-            f"- 最大行业权重: {concentration.get('top_industry', 'N/A')}",
-            "",
-            "## 最佳贡献",
-            "",
-        ]
-
-        if top_contributors:
-            for item in top_contributors:
-                lines.append(
-                    f"- {item.get('code')} {item.get('name')}: ¥{item.get('pnl', 0):,.2f} ({item.get('return_pct', 0) * 100:.2f}%)"
-                )
-        else:
-            lines.append("- 暂无可计算的持仓贡献数据")
-
-        lines.extend(["", "## 最差贡献", ""])
-        if worst_contributors:
-            for item in worst_contributors:
-                lines.append(
-                    f"- {item.get('code')} {item.get('name')}: ¥{item.get('pnl', 0):,.2f} ({item.get('return_pct', 0) * 100:.2f}%)"
-                )
-        else:
-            lines.append("- 暂无可计算的持仓贡献数据")
-
-        metric_warnings = risk_metrics.get("metric_warnings", [])
-        if metric_warnings:
-            lines.extend(["", "## 数据提示", ""])
-            for warning in metric_warnings:
-                lines.append(f"- {warning}")
-
-        return "\n".join(lines).strip()
-
-    def generate_review_report(
-        self,
-        account_name: Optional[str] = None,
-        period_type: str = "month",
-    ) -> Dict:
-        """生成并保存周/月/季持仓复盘报告。"""
-        start_dt, end_dt = self._resolve_review_period(period_type)
-        account_label = self._get_account_display_name(account_name)
-        start_str = start_dt.strftime("%Y-%m-%d")
-        end_str = end_dt.strftime("%Y-%m-%d")
-
-        series = self._build_trade_reconstructed_series(
-            account_name=account_name,
-            start_date=start_str,
-            end_date=end_str,
-        )
-        if series.empty:
-            history_start = (pd.Timestamp(start_dt) - timedelta(days=10)).strftime("%Y-%m-%d")
-            series = self.build_portfolio_return_series(
-                account_name=account_name,
-                start_date=history_start,
-                end_date=end_str,
-                prefer_snapshots=True,
-            )
-        if series.empty:
-            return {"status": "error", "message": "暂无足够的组合历史数据生成复盘报告。"}
-
-        window = series[(series.index >= pd.Timestamp(start_str)) & (series.index <= pd.Timestamp(end_str))].copy()
-        if window.empty:
-            return {"status": "error", "message": "所选周期内没有可用的组合数据。"}
-
-        risk_metrics = self._calculate_quantitative_risk_metrics(window, start_date=start_str, end_date=end_str)
-        start_total_pnl = self._safe_float(window["total_pnl"].iloc[0])
-        end_total_pnl = self._safe_float(window["total_pnl"].iloc[-1])
-        cumulative_pnl = end_total_pnl - start_total_pnl
-        cumulative_return = (
-            cumulative_pnl / self._safe_float(window["total_market_value"].iloc[0])
-            if self._safe_float(window["total_market_value"].iloc[0]) > 0
-            else 0.0
-        )
-        daily_changes = pd.to_numeric(window["daily_pnl_change"], errors="coerce").fillna(0.0)
-        winning_days = int((daily_changes > 0).sum())
-        losing_days = int((daily_changes < 0).sum())
-        total_trading_days = int(((daily_changes > 0) | (daily_changes < 0)).sum())
-        win_rate = (winning_days / total_trading_days) if total_trading_days else 0.0
-
-        stocks = self._filter_stocks_for_account(self.get_all_stocks(), account_name)
-        concentration_data = self.calculate_portfolio_risk(account_name=account_name)
-        stock_distribution = concentration_data.get("stock_distribution", [])
-        industry_distribution = concentration_data.get("industry_distribution", [])
-        contributions = self._calculate_stock_contributions(stocks, start_str, end_str)
-        realized_series = pd.to_numeric(window.get("realized_pnl", pd.Series(dtype=float)), errors="coerce").fillna(0.0)
-        unrealized_series = pd.to_numeric(window.get("unrealized_pnl", pd.Series(dtype=float)), errors="coerce").fillna(0.0)
-        realized_change = (
-            self._safe_float(realized_series.iloc[-1] - realized_series.iloc[0])
-            if not realized_series.empty
-            else 0.0
-        )
-        end_unrealized = self._safe_float(unrealized_series.iloc[-1]) if not unrealized_series.empty else 0.0
-        summary = {
-            "start_market_value": self._safe_float(window["total_market_value"].iloc[0]),
-            "end_market_value": self._safe_float(window["total_market_value"].iloc[-1]),
-            "cumulative_pnl": cumulative_pnl,
-            "cumulative_return_pct": cumulative_return * 100,
-            "realized_pnl_change": realized_change,
-            "end_unrealized_pnl": end_unrealized,
-            "winning_days": winning_days,
-            "losing_days": losing_days,
-            "win_rate_pct": win_rate * 100,
-            "best_day_pnl": self._safe_float(daily_changes.max()) if not daily_changes.empty else 0.0,
-            "worst_day_pnl": self._safe_float(daily_changes.min()) if not daily_changes.empty else 0.0,
-            "annual_volatility_text": (
-                f"{risk_metrics['annual_volatility'] * 100:.2f}%"
-                if risk_metrics.get("annual_volatility") is not None
-                else "N/A"
-            ),
-            "beta_text": (
-                f"{risk_metrics['beta_hs300']:.3f}"
-                if risk_metrics.get("beta_hs300") is not None
-                else "N/A"
-            ),
-            "sharpe_text": (
-                f"{risk_metrics['sharpe_ratio']:.3f}"
-                if risk_metrics.get("sharpe_ratio") is not None
-                else "N/A"
-            ),
-            "position_count": len([stock for stock in stocks if self._safe_int(stock.get("quantity")) > 0]),
-            "concentration_summary": {
-                "top_stock": (
-                    f"{stock_distribution[0]['name']} {stock_distribution[0]['weight'] * 100:.1f}%"
-                    if stock_distribution
-                    else "N/A"
-                ),
-                "top_industry": (
-                    f"{industry_distribution[0]['industry']} {industry_distribution[0]['weight'] * 100:.1f}%"
-                    if industry_distribution
-                    else "N/A"
-                ),
-            },
-            "top_contributors": contributions[:3],
-            "worst_contributors": list(reversed(contributions[-3:])) if contributions else [],
-            "data_mode_label": {
-                "actual": "真实",
-                "estimated": "估算",
-                "mixed": "混合",
-                "reconstructed": "交易重建",
-            }.get(window.attrs.get("data_mode", "estimated"), "估算"),
-            "risk_metrics": risk_metrics,
-        }
-        markdown = self._build_review_markdown(account_label, period_type, start_str, end_str, summary)
-        report_id = self.db.save_review_report(
-            account_name=account_label,
-            period_type=period_type,
-            period_start=start_str,
-            period_end=end_str,
-            data_mode=window.attrs.get("data_mode", "estimated"),
-            report_markdown=markdown,
-            report_json=summary,
-        )
-        return {
-            "status": "success",
-            "report_id": report_id,
-            "account_name": account_label,
-            "period_type": period_type,
-            "period_start": start_str,
-            "period_end": end_str,
-            "data_mode": window.attrs.get("data_mode", "estimated"),
-            "report_markdown": markdown,
-            "summary": summary,
-        }
-
-    def get_review_reports(
-        self,
-        account_name: Optional[str] = None,
-        limit: int = 20,
-        period_type: Optional[str] = None,
-    ) -> List[Dict]:
-        account_label = self._get_account_display_name(account_name) if account_name else None
-        return self.db.get_review_reports(account_name=account_label, limit=limit, period_type=period_type)
-
-    def delete_review_report(
-        self,
-        report_id: int,
-        account_name: Optional[str] = None,
-    ) -> Tuple[bool, str]:
-        """删除复盘报告。"""
-        try:
-            normalized_report_id = int(report_id)
-        except (TypeError, ValueError):
-            return False, "无效的报告ID"
-
-        if normalized_report_id <= 0:
-            return False, "无效的报告ID"
-
-        account_label = self._get_account_display_name(account_name) if account_name else None
-        deleted = self.db.delete_review_report(normalized_report_id, account_name=account_label)
-        if deleted:
-            return True, "复盘报告已删除"
-        return False, "未找到可删除的复盘报告"
 
     def _extract_first_number(self, value, allow_zero: bool = False) -> Optional[float]:
         """从数值或字符串中提取首个数字。"""
@@ -2889,4 +2709,3 @@ if __name__ == "__main__":
         print(f"  {stock['code']} {stock['name']} - 成本:{stock['cost_price']}, 数量:{stock['quantity']}")
     
     print("\n[OK] 持仓管理器测试完成")
-

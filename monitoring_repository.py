@@ -971,6 +971,35 @@ class MonitoringRepository:
         finally:
             conn.close()
 
+    def get_metadata(self, key: str) -> Optional[str]:
+        return self._get_metadata(key)
+
+    def set_metadata(self, key: str, value: str) -> None:
+        self._set_metadata(key, value)
+
+    def bulk_set_interval_minutes(self, monitor_type: str, interval_minutes: int) -> int:
+        normalized_interval = max(1, int(interval_minutes or 1))
+
+        def _update() -> int:
+            conn = self._connect()
+            try:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    UPDATE monitoring_items
+                    SET interval_minutes = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE monitor_type = ?
+                    """,
+                    (normalized_interval, monitor_type),
+                )
+                changed = int(cursor.rowcount or 0)
+                conn.commit()
+                return changed
+            finally:
+                conn.close()
+
+        return run_with_monitoring_write_lock(_update)
+
     def _ensure_asset_binding(self, item_data: Dict) -> Dict:
         if item_data.get("asset_id") or not item_data.get("symbol"):
             return item_data
@@ -1644,6 +1673,27 @@ class MonitoringRepository:
 
         run_with_monitoring_write_lock(_mark_read)
 
+    def ignore_notification(self, event_id: int) -> None:
+        def _ignore() -> None:
+            conn = self._connect()
+            try:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    UPDATE monitoring_events
+                    SET notification_pending = 0,
+                        is_read = 1,
+                        read_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """,
+                    (event_id,),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+        run_with_monitoring_write_lock(_ignore)
+
     def mark_all_notifications_sent(self) -> int:
         def _mark_all() -> int:
             conn = self._connect()
@@ -1932,4 +1982,3 @@ class MonitoringRepository:
         conn.close()
         self._set_metadata(key, str(migrated))
         return migrated
-

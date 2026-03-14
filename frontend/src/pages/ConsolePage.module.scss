@@ -34,6 +34,13 @@
   min-width: 0;
 }
 
+.summaryMetricGrid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  min-width: 0;
+}
+
 .metric {
   padding: 13px;
   border-radius: 14px;
@@ -86,9 +93,9 @@
 .field input:focus,
 .field select:focus,
 .field textarea:focus,
-.actions > input:focus,
-.actions > select:focus,
-.actions > textarea:focus {
+.actions>input:focus,
+.actions>select:focus,
+.actions>textarea:focus {
   border-color: color-mix(in srgb, var(--accent) 48%, var(--line-strong));
   background: rgba(255, 255, 255, 0.04);
   box-shadow: 0 0 0 3px rgba(143, 127, 109, 0.12);
@@ -105,29 +112,43 @@
   align-items: flex-start;
 }
 
-.actions > * {
+.actions>* {
   min-width: 0;
   max-width: 100%;
 }
 
-.actions > .field {
+.actions>.primaryButton,
+.actions>.secondaryButton,
+.actions>.dangerButton,
+.actions>.tertiaryButton {
+  flex: 1 1 132px;
+  display: inline-flex;
+  justify-content: center;
+}
+
+.actions>.field {
   flex: 1 1 220px;
 }
 
-.actions > input,
-.actions > select,
-.actions > textarea {
+.actions>input,
+.actions>select,
+.actions>textarea {
   flex: 1 1 220px;
 }
 
-.actions > .listItem {
+.actions>.listItem {
   flex: 1 1 220px;
 }
 
-.actions > .successText,
-.actions > .dangerText,
-.actions > .muted {
+.actions>.successText,
+.actions>.dangerText,
+.actions>.muted {
   flex: 1 1 100%;
+}
+
+.historyInlineActions {
+  min-width: 0;
+  flex: 1 1 0;
 }
 
 .primaryButton,
@@ -135,9 +156,11 @@
 .dangerButton,
 .tertiaryButton {
   border: 1px solid var(--line-strong);
-  border-radius: 999px;
-  padding: 9px 14px;
+  border-radius: 8px;
+  padding: 10px 16px;
   font-weight: 700;
+  font-size: 15px;
+  line-height: 1.35;
   max-width: 100%;
   transition:
     background var(--shell-transition),
@@ -185,6 +208,15 @@
   color: var(--text-main);
 }
 
+.primaryButton:disabled,
+.secondaryButton:disabled,
+.dangerButton:disabled,
+.tertiaryButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
 .tableWrap {
   overflow: auto;
   max-width: 100%;
@@ -199,7 +231,7 @@
 
 .table thead th {
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -208,10 +240,97 @@
 .table th,
 .table td {
   padding: 10px 8px;
+  font-size: 14px;
   border-bottom: 1px solid var(--line-soft);
   text-align: left;
   vertical-align: top;
   word-break: break-word;
+}
+
+.tableCompact th,
+.tableCompact td {
+  padding: 8px 6px;
+}
+
+.tradeTableCompact {
+  min-width: 0;
+}
+
+.tradeTableCompact th,
+.tradeTableCompact td {
+  padding: 8px 6px;
+}
+
+.holdingsTableCompact {
+  min-width: 0 !important;
+  table-layout: fixed;
+}
+
+.holdingsTableCompact th,
+.holdingsTableCompact td {
+  padding: 8px 6px;
+  font-size: 14px;
+}
+
+.holdingsTableCompact thead th {
+  white-space: nowrap;
+}
+
+.holdingsTableCompact th:nth-child(1),
+.holdingsTableCompact td:nth-child(1) {
+  width: 34%;
+}
+
+.holdingsTableCompact th:nth-child(2),
+.holdingsTableCompact td:nth-child(2) {
+  width: 19%;
+}
+
+.holdingsTableCompact th:nth-child(3),
+.holdingsTableCompact td:nth-child(3) {
+  width: 27%;
+}
+
+.holdingsTableCompact th:nth-child(4),
+.holdingsTableCompact td:nth-child(4) {
+  width: 20%;
+}
+
+.holdingsTableCompact th:nth-child(2),
+.holdingsTableCompact td:nth-child(2) {
+  white-space: normal;
+  line-height: 1.35;
+}
+
+.holdingsTableCompact .numericCell {
+  white-space: normal;
+  line-height: 1.35;
+}
+
+.holdingsTableCompact .numericCell>div+div {
+  margin-top: 2px;
+}
+
+.numericCell {
+  text-align: right !important;
+  white-space: nowrap;
+}
+
+.mobileOnly {
+  display: none;
+}
+
+.desktopOnly {
+  display: table-cell;
+}
+
+.pagination {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
 }
 
 .list {
@@ -229,6 +348,396 @@
   word-break: break-word;
 }
 
+.smartMonitorTaskCard {
+  padding: 14px 16px;
+  border: 1px solid var(--line-soft);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--bg-panel-strong) 94%, transparent);
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.smartMonitorTaskTitle {
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.taskIndicatorText {
+  margin: 0;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+.historyRecordCard {
+  padding: 14px 16px;
+  border: 1px solid var(--line-soft);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--bg-panel-strong) 95%, transparent);
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.historyRecordTop {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.historyRecordTitle {
+  display: block;
+  font-size: 16px;
+  line-height: 1.45;
+}
+
+.historyMeta {
+  margin: 6px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.historyActionRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+  align-items: flex-start;
+}
+
+.historyListActionRow {
+  flex-wrap: nowrap;
+  align-items: center;
+}
+
+.historyListInlineActions {
+  flex: 0 0 auto;
+}
+
+.historyListBody {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.historyListMetrics {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 16px;
+  align-items: baseline;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  min-width: 0;
+}
+
+.historyListMetric {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.historyListMetric strong {
+  color: var(--text-main);
+  font-size: 15px;
+}
+
+.historyListSummary {
+  margin: 0;
+  color: var(--text-main);
+  font-size: 14px;
+  line-height: 1.65;
+  word-break: break-word;
+}
+
+.historySummaryGrid,
+.historyLevelGrid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  min-width: 0;
+}
+
+.historySummaryCell {
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid var(--line-soft);
+  background: color-mix(in srgb, var(--bg-panel) 96%, transparent);
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.historySummaryCell span {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.historySummaryCell strong {
+  display: block;
+  font-size: 14px;
+  line-height: 1.55;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+.historyExpanded {
+  display: grid;
+  gap: 12px;
+  padding-top: 4px;
+}
+
+.historyDetailPageStack,
+.historyDetailStack {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.historyDetailStack > * {
+  flex: 0 0 auto;
+  align-self: stretch;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.historyDetailContentStack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.historyDetailTabs {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 10px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+
+.historyDetailTabs>* {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.historyDetailPanel {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  align-self: stretch;
+  box-sizing: border-box;
+  border: 1px solid var(--line-soft);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--bg-panel) 97%, transparent);
+  overflow: hidden;
+}
+
+.historyDetailSummary {
+  width: 100%;
+  box-sizing: border-box;
+  cursor: pointer;
+  padding: 14px 16px;
+  font-weight: 700;
+}
+
+.historyDetailPanelBody {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  min-width: 0;
+  padding: 16px;
+}
+
+.historyDetailPanelBody > * {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.detailOrderedList {
+  margin: 0;
+  padding-left: 22px;
+  display: grid;
+  gap: 10px;
+  line-height: 1.75;
+}
+
+.historyInfoGrid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+}
+
+.historyInfoItem {
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid var(--line-soft);
+  background: color-mix(in srgb, var(--bg-panel-strong) 94%, transparent);
+  display: grid;
+  gap: 6px;
+}
+
+.historyInfoItem span {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.historyInfoItem strong {
+  display: block;
+  line-height: 1.6;
+  word-break: break-word;
+}
+
+.historyInfoValueMultiline {
+  white-space: pre-wrap;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 12px;
+}
+
+.strategySummaryGrid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+  min-width: 0;
+}
+
+.strategyGroupGrid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
+  min-width: 0;
+}
+
+.strategyGroupCard {
+  padding: 14px;
+  border-radius: 16px;
+  border: 1px solid var(--line-soft);
+  background: color-mix(in srgb, var(--bg-panel-strong) 95%, transparent);
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.strategyGroupHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.strategyGroupHeader > * {
+  min-width: 0;
+}
+
+.strategyEntryList {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.strategyEntryItem {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid var(--line-soft);
+  background: color-mix(in srgb, var(--bg-panel) 96%, transparent);
+  line-height: 1.65;
+  min-width: 0;
+}
+
+.strategyEntryItem strong {
+  display: block;
+  font-size: 15px;
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.strategyEntryMeta {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.reportWorkbench {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  min-width: 0;
+}
+
+.reportWorkbenchNav {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+}
+
+.reportWorkbenchButton {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--bg-panel-strong) 94%, transparent);
+  text-align: left;
+  transition:
+    border-color var(--shell-transition),
+    background var(--shell-transition),
+    transform var(--shell-transition);
+}
+
+.reportWorkbenchButton span,
+.reportWorkbenchButton small {
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.reportWorkbenchButton:hover {
+  transform: translateY(-1px);
+}
+
+.reportWorkbenchButtonActive {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--line-soft));
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-panel));
+}
+
+.reportWorkbenchPanel {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line-soft);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--bg-panel-strong) 96%, transparent);
+  min-width: 0;
+}
+
+.reportWorkbenchHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.reportWorkbenchHeader h3 {
+  margin: 0;
+}
+
+.reportWorkbenchContent {
+  min-width: 0;
+}
+
 .cardHeader {
   display: flex;
   align-items: flex-start;
@@ -236,7 +745,7 @@
   gap: 10px;
 }
 
-.cardHeader > * {
+.cardHeader>* {
   min-width: 0;
 }
 
@@ -336,7 +845,60 @@
   width: 120px;
 }
 
+.slider {
+  width: 100%;
+  padding: 0;
+  border: 0 !important;
+  border-radius: 0 !important;
+  accent-color: var(--accent);
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.chartRingWrap {
+  position: relative;
+  width: 100%;
+  height: min(96vw, 420px);
+  min-height: 320px;
+}
+
+.chartRingWrap canvas {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.inlineMiniButton {
+  padding: 4px 6px;
+  font-size: 11px;
+}
+
+.holdingHistoryButton {
+  display: inline-flex;
+  min-width: 72px;
+  max-width: 100%;
+  padding: 7px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--text-main);
+  font-weight: 700;
+  font-size: 14px;
+  line-height: 1.45;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.holdingHistoryButton:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.holdingHistoryCell {
+  text-align: center !important;
+  white-space: nowrap;
+}
+
 @media (max-width: 900px) {
+
   .span6,
   .span12 {
     grid-column: span 12;
@@ -344,6 +906,7 @@
 }
 
 @media (max-width: 720px) {
+
   .stack,
   .grid {
     gap: 12px;
@@ -355,8 +918,14 @@
   }
 
   .compactGrid,
+  .summaryMetricGrid,
   .formGrid {
     grid-template-columns: 1fr;
+  }
+
+  .chartRingWrap {
+    height: min(92vw, 400px);
+    min-height: 300px;
   }
 
   .metric {
@@ -371,6 +940,11 @@
     padding: 11px 12px;
   }
 
+  .smartMonitorTaskCard,
+  .historyRecordCard {
+    padding: 12px;
+  }
+
   .noticeCard {
     padding: 12px 12px 12px 18px;
   }
@@ -379,16 +953,54 @@
     min-width: 560px;
   }
 
+  .holdingsTableCompact {
+    min-width: 0 !important;
+  }
+
+  .holdingsTableCompact th,
+  .holdingsTableCompact td {
+    padding: 6px 5px;
+    font-size: 13px;
+  }
+
   .table th,
   .table td {
     padding: 9px 7px;
-    font-size: 13px;
+    font-size: 14px;
+  }
+
+  .desktopOnly {
+    display: none;
+  }
+
+  .mobileOnly {
+    display: table-cell;
   }
 
   .actionField,
   .actionInput,
   .actionToggle {
     flex-basis: 100%;
+  }
+
+  .historyRecordTop,
+  .reportWorkbenchHeader {
+    flex-direction: column;
+  }
+
+  .historyActionRow {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .historySummaryGrid,
+  .historyLevelGrid,
+  .reportWorkbench {
+    grid-template-columns: 1fr;
+  }
+
+  .historyListMetrics {
+    gap: 12px;
   }
 }
 
@@ -397,14 +1009,54 @@
     padding: 12px;
   }
 
+  .chartRingWrap {
+    height: min(94vw, 380px);
+    min-height: 280px;
+  }
+
+  .table {
+    min-width: 520px;
+  }
+
+  .holdingsTableCompact {
+    min-width: 0 !important;
+    table-layout: fixed;
+  }
+
+  .holdingsTableCompact th,
+  .holdingsTableCompact td {
+    padding: 5px 4px;
+    font-size: 13px;
+  }
+
+  .holdingsTableCompact th:nth-child(1),
+  .holdingsTableCompact td:nth-child(1) {
+    width: 35%;
+  }
+
+  .holdingsTableCompact th:nth-child(2),
+  .holdingsTableCompact td:nth-child(2) {
+    width: 18%;
+  }
+
+  .holdingsTableCompact th:nth-child(3),
+  .holdingsTableCompact td:nth-child(3) {
+    width: 27%;
+  }
+
+  .holdingsTableCompact th:nth-child(4),
+  .holdingsTableCompact td:nth-child(4) {
+    width: 20%;
+  }
+
   .actions {
     gap: 8px;
   }
 
-  .actions > .primaryButton,
-  .actions > .secondaryButton,
-  .actions > .dangerButton,
-  .actions > .tertiaryButton,
+  .actions>.primaryButton,
+  .actions>.secondaryButton,
+  .actions>.dangerButton,
+  .actions>.tertiaryButton,
   .actionField,
   .actionInput,
   .actionToggle,
@@ -413,15 +1065,120 @@
     flex-basis: 100%;
   }
 
-  .actions > .primaryButton,
-  .actions > .secondaryButton,
-  .actions > .dangerButton,
-  .actions > .tertiaryButton {
+  .actions>.primaryButton,
+  .actions>.secondaryButton,
+  .actions>.dangerButton,
+  .actions>.tertiaryButton {
     display: inline-flex;
+    justify-content: center;
+    flex: 1 1 0;
+  }
+
+  .actions>.historyInlineActions {
+    width: auto;
+    flex: 1 1 0;
+  }
+
+  .historyInlineActions>* {
+    width: 100%;
     justify-content: center;
   }
 
-  .table {
-    min-width: 520px;
+
+
+  .tradeTableCompact {
+    min-width: 0;
+  }
+
+  .tradeTableCompact th,
+  .tradeTableCompact td {
+    padding: 6px 4px;
+    font-size: 13px;
+  }
+
+  .holdingHistoryButton {
+    font-size: 13px;
+    padding: 6px 10px;
+  }
+
+  .pagination {
+    justify-content: stretch;
+  }
+
+  .historyActionRow>* {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .historyListActionRow {
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+  }
+
+  .historyListActionRow>* {
+    width: auto;
+    justify-content: flex-start;
+  }
+
+  .historyListInlineActions {
+    flex: 0 0 auto;
+  }
+
+  .historyListInlineActions>* {
+    width: auto;
+  }
+
+  .historyListMetrics {
+    gap: 10px;
+  }
+}
+
+@media (max-width: 400px) {
+  .holdingsTableCompact th,
+  .holdingsTableCompact td {
+    padding: 3px 1px;
+    font-size: 11px;
+  }
+
+  .holdingsTableCompact th:nth-child(1),
+  .holdingsTableCompact td:nth-child(1) {
+    width: 36%;
+  }
+
+  .holdingsTableCompact th:nth-child(2),
+  .holdingsTableCompact td:nth-child(2) {
+    width: 18%;
+  }
+
+  .holdingsTableCompact th:nth-child(3),
+  .holdingsTableCompact td:nth-child(3) {
+    width: 24%;
+  }
+
+  .holdingsTableCompact th:nth-child(4),
+  .holdingsTableCompact td:nth-child(4) {
+    width: 22%;
+  }
+
+  .holdingsTableCompact .numericCell {
+    font-size: 11px;
+  }
+
+  .holdingsTableCompact .inlineMiniButton {
+    padding: 3px 4px;
+    font-size: 11px;
+  }
+
+  .holdingHistoryButton {
+    font-size: 12px;
+    padding: 5px 9px;
+  }
+
+  .summaryMetricGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .metric strong {
+    font-size: 18px;
   }
 }

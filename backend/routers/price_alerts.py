@@ -59,3 +59,10 @@ def mark_notification_read(request: Request, event_id: int) -> dict:
     require_session(request)
     services.mark_monitor_notification_read(event_id)
     return success_payload({"event_id": event_id}, message="通知已标记为已读")
+
+
+@router.post("/notifications/{event_id}/ignore")
+def ignore_notification(request: Request, event_id: int) -> dict:
+    require_session(request)
+    services.ignore_monitor_notification(event_id)
+    return success_payload({"event_id": event_id}, message="通知已忽略")
