@@ -104,6 +104,26 @@ def _first_non_empty(*values: Any) -> Any:
     return None
 
 
+def _find_sector_report_body_start(text: str) -> int | None:
+    report_patterns = (
+        r"(?m)^以下(?:为|是).*(?:分析报告|报告|研判|复盘).*$",
+        r"(?m)^整体结论先行[:：]?\s*$",
+        r"(?m)^\*\*(?:核心判断|核心结论|总体判断).*\*\*$",
+        r"(?m)^#{1,6}\s*.+(?:分析报告|报告|深度分析|分析|复盘).*$",
+        r"(?m)^(?:【|\[)?(?:综合研判结论|综合研判|宏观判断|板块研判|资金面分析|市场情绪|核心结论|投资建议|操作建议|风险提示)(?:】|\])?\s*$",
+        r"(?m)^(?:##\s*|###\s*)?(?:综合研判结论|综合研判|宏观判断|板块研判|资金面分析|市场情绪|核心结论|投资建议|操作建议|风险提示).*$",
+        r"(?m)^(?:一、|二、|三、|1[\.、]|2[\.、]|3[\.、])\s*(?:综合研判|宏观判断|板块研判|资金面分析|市场情绪|核心结论|投资建议|操作建议|风险提示|周期仪表盘|综合资产配置建议).*$",
+    )
+    positions: list[int] = []
+    for pattern in report_patterns:
+        match = re.search(pattern, text)
+        if match:
+            positions.append(match.start())
+    if not positions:
+        return None
+    return min(positions)
+
+
 def _split_report_sections(value: Any) -> tuple[str, str]:
     if value is None:
         return "", ""
@@ -124,15 +144,32 @@ def _split_report_sections(value: Any) -> tuple[str, str]:
 
     text = re.sub(r"<think>([\s\S]*?)</think>", _collect_think, text, flags=re.IGNORECASE).strip()
 
-    marker = re.search(r"[\[【]推理过程[\]】]|^\s*推理过程[:：]", text, flags=re.MULTILINE)
+    marker = re.search(r"(?m)^\s*(?:[\[【]?(?:推理过程|思考过程|分析过程|推演过程)[\]】]?|(?:推理过程|思考过程|分析过程|推演过程)[:：])\s*$", text)
+    inline_marker = re.search(r"[\[【](?:推理过程|思考过程|分析过程|推演过程)[\]】]|(?:推理过程|思考过程|分析过程|推演过程)[:：]", text)
+    marker = marker or inline_marker
     if not marker:
         return text, "\n\n".join(part for part in reasoning_parts if part).strip()
 
     before = text[: marker.start()].strip()
-    after = text[marker.end() :].strip()
-    after = re.sub(r"^\s*推理过程[:：]\s*", "", after).strip()
-    reasoning = "\n\n".join(part for part in ["\n\n".join(reasoning_parts).strip(), after] if part).strip()
-    return before, reasoning
+    after = text[marker.end() :].lstrip("：:\n ").strip()
+
+    if before:
+        body = before
+        reasoning = after
+    else:
+        report_start = _find_sector_report_body_start(after)
+        if report_start is not None and report_start > 0:
+            reasoning = after[:report_start].strip()
+            body = after[report_start:].strip()
+        else:
+            body = ""
+            reasoning = after
+
+    body = re.sub(r"^\s*分析报告(?:正文)?\s*[:：]\s*", "", body, count=1).strip()
+    reasoning = re.sub(r"^\s*[\[【]?(?:推理过程|思考过程|分析过程|推演过程)[\]】]?\s*", "", reasoning, count=1).strip()
+    reasoning = re.sub(r"^\s*(?:推理过程|思考过程|分析过程|推演过程)[:：]\s*", "", reasoning, count=1).strip()
+    reasoning = "\n\n".join(part for part in ["\n\n".join(reasoning_parts).strip(), reasoning] if part).strip()
+    return body, reasoning
 
 
 def _build_summary(value: Any) -> str:
@@ -145,6 +182,14 @@ def _build_summary(value: Any) -> str:
 
 
 def _detect_report_key(name: str, payload: dict[str, Any]) -> str | None:
+    normalized_name = str(name or "").strip().lower()
+    if normalized_name in RAW_REPORT_KEYS:
+        return normalized_name
+    if normalized_name in {"fund_flow", "fundflow", "money"}:
+        return "fund"
+    if normalized_name in {"emotion", "sentiment", "mood"}:
+        return "sentiment"
+
     text = " ".join(
         [
             name,
@@ -155,12 +200,12 @@ def _detect_report_key(name: str, payload: dict[str, Any]) -> str | None:
     ).lower()
     if re.search(r"macro|宏观", text):
         return "macro"
-    if re.search(r"sector|板块|行业", text):
-        return "sector"
     if re.search(r"fund[_\s-]?flow|资金|主力|北向", text):
         return "fund"
     if re.search(r"sentiment|情绪|热度", text):
         return "sentiment"
+    if re.search(r"sector|板块|行业", text):
+        return "sector"
     if re.search(r"discussion|chief|团队|首席|综合", text):
         return "team"
     return None

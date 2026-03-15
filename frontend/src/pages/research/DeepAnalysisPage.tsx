@@ -2,7 +2,6 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { PageFrame } from "../../components/common/PageFrame";
-import { StatusBadge } from "../../components/common/StatusBadge";
 import { TaskProgressBar } from "../../components/common/TaskProgressBar";
 import type { ActionPayload } from "../../components/research/AnalysisActionButtons";
 import {
@@ -122,8 +121,6 @@ function taskProgressTone(task: TaskDetail | null): "running" | "success" | "dan
 
 export function DeepAnalysisPage() {
   const navigate = useNavigate();
-  const period = useDeepAnalysisStore((state) => state.period);
-  const setPeriod = useDeepAnalysisStore((state) => state.setPeriod);
   const batchMode = useDeepAnalysisStore((state) => state.batchMode);
   const setBatchMode = useDeepAnalysisStore((state) => state.setBatchMode);
   const maxWorkers = useDeepAnalysisStore((state) => state.maxWorkers);
@@ -183,7 +180,6 @@ export function DeepAnalysisPage() {
         method: "POST",
         body: JSON.stringify({
           stock_input: stockInput,
-          period,
           batch_mode: batchMode,
           max_workers: maxWorkers,
           analysts,
@@ -205,7 +201,6 @@ export function DeepAnalysisPage() {
         method: "POST",
         body: JSON.stringify({
           stock_input: symbol,
-          period,
           batch_mode: "顺序分析",
           max_workers: maxWorkers,
           analysts,
@@ -223,14 +218,6 @@ export function DeepAnalysisPage() {
     await apiFetch(`/api/followup-assets/${assetId}/watchlist`, { method: "POST" });
     await loadFollowupAssets();
   };
-
-  const selectedAnalystLabels = useMemo(
-    () =>
-      Object.entries(analysts)
-        .filter(([, enabled]) => enabled)
-        .map(([key]) => analystLabels[key as keyof DeepAnalysisAnalystConfig] || key),
-    [analysts],
-  );
 
   const watchlistAssets = useMemo(
     () => followupAssets.filter((asset) => isWatchlistAsset(asset)),
@@ -262,7 +249,7 @@ export function DeepAnalysisPage() {
 
   const renderAssetSection = (assets: FollowupAsset[], emptyText: string) => (
     <section className={styles.card}>
-      <div className={styles.cardHeader}>
+      <div className={styles.stack}>
         <div className={styles.field}>
           <label htmlFor="followupSearch">搜索</label>
           <input
@@ -272,7 +259,7 @@ export function DeepAnalysisPage() {
             value={followupSearch}
           />
         </div>
-        <div className={styles.actions}>
+        <div className={styles.responsiveActionGrid}>
           <button className={styles.secondaryButton} onClick={() => void loadFollowupAssets()} type="button">
             刷新
           </button>
@@ -315,15 +302,8 @@ export function DeepAnalysisPage() {
     </section>
   );
 
-  const currentTaskBadge = taskBadge(task);
-
   return (
     <PageFrame
-      actions={
-        currentTaskBadge ? (
-          <StatusBadge label={currentTaskBadge.label} tone={currentTaskBadge.tone} />
-        ) : undefined
-      }
       sectionTabs={sectionTabs}
       activeSectionKey={section}
       onSectionChange={(nextSection) => setSection(nextSection as SectionKey)}
@@ -333,37 +313,23 @@ export function DeepAnalysisPage() {
         {section === "start" ? (
           <>
             <section className={styles.card}>
-              <div className={styles.cardHeader}>
-                <p className={styles.helperText}>录入股票后直接提交任务，设置里的分析师与并行参数会自动保留。</p>
-                <div className={styles.actions}>
-                  <button className={styles.primaryButton} form="deep-analysis-form" type="submit">
-                    开始深度分析
-                  </button>
-                </div>
-              </div>
               {message ? <p className={styles.successText}>{message}</p> : null}
               {error ? <p className={styles.dangerText}>{error}</p> : null}
               <form className={styles.stack} id="deep-analysis-form" onSubmit={handleSubmit}>
                 <div className={styles.field}>
-                  <label htmlFor="stockInput">股票代码</label>
+                  <label htmlFor="stockInput">股票代码（支持逗号或换行分隔）</label>
                   <textarea
                     id="stockInput"
                     onChange={(event) => setStockInput(event.target.value)}
-                    placeholder={"000001\n600519\nAAPL"}
-                    rows={8}
+                    placeholder={"000001,600519,AAPL"}
+                    rows={4}
                     value={stockInput}
                   />
                 </div>
-                <div className={styles.field}>
-                  <label>已选分析师</label>
-                  <div className={styles.actions}>
-                    {selectedAnalystLabels.map((label) => (
-                      <StatusBadge key={label} label={label} tone="default" />
-                    ))}
-                    {!selectedAnalystLabels.length ? (
-                      <span className={styles.muted}>请先在设置中选择至少一位分析师。</span>
-                    ) : null}
-                  </div>
+                <div className={styles.responsiveActionGrid}>
+                  <button className={styles.primaryButton} type="submit">
+                    开始深度分析
+                  </button>
                 </div>
               </form>
             </section>
@@ -439,16 +405,8 @@ export function DeepAnalysisPage() {
 
         {section === "settings" ? (
           <section className={styles.card}>
+            <p className={styles.helperText}>股票数据周期由系统配置中的“默认股票数据周期”统一控制，这里不再单独设置。</p>
             <div className={styles.formGrid}>
-              <div className={styles.field}>
-                <label htmlFor="period">周期</label>
-                <select id="period" onChange={(event) => setPeriod(event.target.value)} value={period}>
-                  <option value="6mo">6 个月</option>
-                  <option value="1y">1 年</option>
-                  <option value="2y">2 年</option>
-                  <option value="5y">5 年</option>
-                </select>
-              </div>
               <div className={styles.field}>
                 <label htmlFor="batchMode">批量模式</label>
                 <select
@@ -477,22 +435,25 @@ export function DeepAnalysisPage() {
                 </div>
               ) : null}
             </div>
-            <div className={styles.compactGrid} style={{ marginTop: 14 }}>
-              {Object.entries(analysts).map(([key, enabled]) => (
-                <label className={styles.listItem} key={key}>
-                  <input
-                    checked={enabled}
-                    onChange={(event) =>
-                      setAnalysts({
-                        ...analysts,
-                        [key]: event.target.checked,
-                      })
-                    }
-                    type="checkbox"
-                  />{" "}
-                  {analystLabels[key as keyof DeepAnalysisAnalystConfig] || key}
-                </label>
-              ))}
+            <div className={styles.field} style={{ marginTop: 14 }}>
+              <label>分析师配置</label>
+              <div className={styles.analystSelectionGroup}>
+                {Object.entries(analysts).map(([key, enabled]) => (
+                  <label className={styles.analystOption} key={key}>
+                    <input
+                      checked={enabled}
+                      onChange={(event) =>
+                        setAnalysts({
+                          ...analysts,
+                          [key]: event.target.checked,
+                        })
+                      }
+                      type="checkbox"
+                    />
+                    <span>{analystLabels[key as keyof DeepAnalysisAnalystConfig] || key}</span>
+                  </label>
+                ))}
+              </div>
             </div>
           </section>
         ) : null}

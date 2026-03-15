@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 import styles from "../../pages/ConsolePage.module.scss";
 import { formatDateTime } from "../../lib/datetime";
@@ -87,6 +87,7 @@ export interface SectorStrategyReportView {
 }
 
 type ExportKind = "pdf" | "markdown";
+type ViewSectionKey = "long_short" | "rotation" | "heat" | "raw";
 
 function asText(value: unknown, fallback = "暂无"): string {
   if (value === null || value === undefined || value === "") {
@@ -113,41 +114,178 @@ function formatPercent(value: unknown): string {
 }
 
 function splitSegments(values: Array<unknown>): string[] {
-  return values
+  const normalizeSegment = (value: string): string =>
+    value
+      .replace(/\s+/g, " ")
+      .replace(/[；;。.!！？、,，:：]/g, "")
+      .trim()
+      .toLowerCase();
+
+  const seen = new Set<string>();
+  const results: string[] = [];
+
+  values
     .flatMap((value) => String(value || "").replace(/\r\n/g, "\n").split(/\n|[；;]+/u))
     .map((item) => item.replace(/^\s*(?:\d+[.)、]?|[①②③④⑤⑥⑦⑧⑨⑩]|[一二三四五六七八九十]+[、.])\s*/u, "").trim())
-    .filter(Boolean);
+    .filter(Boolean)
+    .forEach((item) => {
+      const normalized = normalizeSegment(item);
+      if (!normalized || seen.has(normalized)) {
+        return;
+      }
+
+      const duplicatedByExisting = results.some((existing) => {
+        const current = normalizeSegment(existing);
+        return current.includes(normalized) || normalized.includes(current);
+      });
+
+      if (duplicatedByExisting) {
+        return;
+      }
+
+      seen.add(normalized);
+      results.push(item);
+    });
+
+  return results;
 }
 
-function PredictionGroupCard({
-  title,
+function PredictionEntryList({
   items,
   metaBuilder,
   detailBuilder,
 }: {
-  title: string;
   items?: SectorPredictionItem[];
   metaBuilder: (item: SectorPredictionItem) => string[];
   detailBuilder: (item: SectorPredictionItem) => string[];
 }) {
   return (
-    <div className={styles.strategyGroupCard}>
-      <div className={styles.strategyGroupHeader}>
-        <strong>{title}</strong>
-        <span className={styles.helperText}>{items?.length ?? 0} 项</span>
+    items?.length ? (
+      <div className={styles.strategyEntryList}>
+        {items.map((item, index) => (
+          <div className={styles.strategyEntryItem} key={`${item.sector || "item"}-${index}`}>
+            <strong>{asText(item.sector)}</strong>
+            {metaBuilder(item).filter(Boolean).length ? (
+              <div className={styles.strategyEntryMeta}>{metaBuilder(item).filter(Boolean).join(" | ")}</div>
+            ) : null}
+            {detailBuilder(item).filter(Boolean).map((detail, detailIndex) => (
+              <div key={`${detail}-${detailIndex}`}>{detail}</div>
+            ))}
+          </div>
+        ))}
+      </div>
+    ) : (
+      <div className={styles.muted}>暂无数据</div>
+    )
+  );
+}
+
+interface PredictionToggleOption {
+  key: string;
+  label: string;
+  items?: SectorPredictionItem[];
+}
+
+function PredictionToggleSection({
+  options,
+  metaBuilder,
+  detailBuilder,
+}: {
+  options: PredictionToggleOption[];
+  metaBuilder: (item: SectorPredictionItem) => string[];
+  detailBuilder: (item: SectorPredictionItem) => string[];
+}) {
+  const [activeKey, setActiveKey] = useState(options[0]?.key ?? "");
+  const activeOption = options.find((item) => item.key === activeKey) ?? options[0];
+
+  if (!activeOption) {
+    return <div className={styles.muted}>暂无数据</div>;
+  }
+
+  return (
+    <div className={styles.sectionControlStack}>
+      <div className={styles.reportTabGrid}>
+        {options.map((item) => (
+          <button
+            className={item.key === activeOption.key ? styles.nestedTabButtonActive : styles.nestedTabButton}
+            key={item.key}
+            onClick={() => setActiveKey(item.key)}
+            type="button"
+          >
+            {item.label}
+          </button>
+        ))}
+      </div>
+      <PredictionEntryList
+        detailBuilder={detailBuilder}
+        items={activeOption.items}
+        metaBuilder={metaBuilder}
+      />
+    </div>
+  );
+}
+
+interface HeatToggleOption extends PredictionToggleOption {
+  tone: "danger" | "warning" | "info";
+}
+
+function scorePercent(value: unknown): number {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return 0;
+  }
+  return Math.max(0, Math.min(100, numeric));
+}
+
+function HeatObservationSection({ options }: { options: HeatToggleOption[] }) {
+  const [activeKey, setActiveKey] = useState(options[0]?.key ?? "");
+  const activeOption = options.find((item) => item.key === activeKey) ?? options[0];
+
+  if (!activeOption) {
+    return <div className={styles.muted}>暂无数据</div>;
+  }
+
+  const toneClass =
+    activeOption.tone === "danger"
+      ? styles.heatChartFillDanger
+      : activeOption.tone === "warning"
+        ? styles.heatChartFillWarning
+        : styles.heatChartFillInfo;
+
+  return (
+    <div className={styles.sectionControlStack}>
+      <div className={styles.reportTabGrid}>
+        {options.map((item) => (
+          <button
+            className={item.key === activeOption.key ? styles.nestedTabButtonActive : styles.nestedTabButton}
+            key={item.key}
+            onClick={() => setActiveKey(item.key)}
+            type="button"
+          >
+            {item.label}
+          </button>
+        ))}
       </div>
 
-      {items?.length ? (
-        <div className={styles.strategyEntryList}>
-          {items.map((item, index) => (
-            <div className={styles.strategyEntryItem} key={`${title}-${item.sector || "item"}-${index}`}>
-              <strong>{asText(item.sector)}</strong>
-              {metaBuilder(item).filter(Boolean).length ? (
-                <div className={styles.strategyEntryMeta}>{metaBuilder(item).filter(Boolean).join(" | ")}</div>
-              ) : null}
-              {detailBuilder(item).filter(Boolean).map((detail, detailIndex) => (
-                <div key={`${detail}-${detailIndex}`}>{detail}</div>
-              ))}
+      {activeOption.items?.length ? (
+        <div className={styles.heatChartList}>
+          {activeOption.items.map((item, index) => (
+            <div className={styles.heatChartCard} key={`${activeOption.key}-${item.sector || "item"}-${index}`}>
+              <div className={styles.heatChartTop}>
+                <strong>{asText(item.sector)}</strong>
+                <span>{formatNumber(item.score, 0, "0")}</span>
+              </div>
+              <div className={styles.heatChartTrack}>
+                <div
+                  className={`${styles.heatChartFill} ${toneClass}`}
+                  style={{ width: `${scorePercent(item.score)}%` }}
+                />
+              </div>
+              <div className={styles.heatChartMeta}>
+                <span>趋势：{asText(item.trend)}</span>
+                <span>持续性：{asText(item.sustainability)}</span>
+              </div>
+              {item.reason ? <div>{item.reason}</div> : null}
             </div>
           ))}
         </div>
@@ -161,17 +299,15 @@ function PredictionGroupCard({
 function DetailSection({
   title,
   children,
-  defaultOpen = true,
 }: {
   title: string;
   children: ReactNode;
-  defaultOpen?: boolean;
 }) {
   return (
-    <details className={styles.historyDetailPanel} open={defaultOpen}>
-      <summary className={styles.historyDetailSummary}>{title}</summary>
+    <section className={styles.historyDetailPanel}>
+      <div className={styles.historyDetailSummary}>{title}</div>
       <div className={styles.historyDetailPanelBody}>{children}</div>
-    </details>
+    </section>
   );
 }
 
@@ -190,6 +326,8 @@ export function SectorReportDetailView({
   onExport,
   reportView,
 }: SectorReportDetailViewProps) {
+  const [activeSection, setActiveSection] = useState<ViewSectionKey>("long_short");
+
   if (!reportView) {
     return (
       <div className={`${styles.stack} ${styles.historyDetailPageStack}`}>
@@ -220,24 +358,13 @@ export function SectorReportDetailView({
   return (
     <div className={`${styles.stack} ${styles.historyDetailPageStack}`}>
       <section className={styles.card}>
-        <div className={styles.actions}>
-          <button className={styles.secondaryButton} onClick={onBack} type="button">
-            {backLabel}
-          </button>
-        </div>
-      </section>
-
-      <section className={styles.card}>
-        <div className={styles.cardHeader}>
-          <div>
-            <h2>{title}</h2>
-            <p className={styles.helperText}>
-              {formatDateTime(reportView?.meta?.timestamp, "暂无时间")}
-              {dataTimestamp ? ` | 数据时间 ${formatDateTime(dataTimestamp, dataTimestamp)}` : ""}
-            </p>
-          </div>
-
+        <div className={styles.reportHeaderStack}>
           <div className={styles.actions}>
+            <button className={styles.secondaryButton} onClick={onBack} type="button">
+              {backLabel}
+            </button>
+          </div>
+          <div className={styles.reportExportGrid}>
             <button className={styles.secondaryButton} onClick={() => onExport("markdown")} type="button">
               导出 Markdown
             </button>
@@ -246,12 +373,15 @@ export function SectorReportDetailView({
             </button>
           </div>
         </div>
+      </section>
 
-        <div className={styles.strategySummaryGrid}>
-          <div className={styles.historySummaryCell}>
-            <span>标题</span>
-            <strong>{asText(summary?.headline || title)}</strong>
-          </div>
+      <section className={styles.card}>
+        <p className={styles.helperText}>
+          {formatDateTime(reportView?.meta?.timestamp, "暂无时间")}
+          {dataTimestamp ? ` | 数据时间 ${formatDateTime(dataTimestamp, dataTimestamp)}` : ""}
+        </p>
+
+        <div className={styles.reportMetricTriplet}>
           <div className={styles.historySummaryCell}>
             <span>风险等级</span>
             <strong>{asText(summary?.risk_level)}</strong>
@@ -296,7 +426,7 @@ export function SectorReportDetailView({
       </section>
 
       <section className={`${styles.stack} ${styles.historyDetailStack}`}>
-        <DetailSection title="核心结论">
+        <div className={styles.sectionControlStack}>
           {headlineSegments.length ? (
             <ol className={styles.detailOrderedList}>
               {headlineSegments.map((item, index) => (
@@ -306,78 +436,7 @@ export function SectorReportDetailView({
           ) : (
             <div className={styles.muted}>暂无核心结论</div>
           )}
-        </DetailSection>
 
-        <DetailSection title="板块多空">
-          <div className={styles.strategyGroupGrid}>
-            <PredictionGroupCard
-              detailBuilder={(item) => [item.reason || "", item.risk ? `风险提示：${item.risk}` : ""]}
-              items={predictions?.long_short?.bullish}
-              metaBuilder={(item) => [item.direction || "看多", formatConfidence(item.confidence)]}
-              title="看多板块"
-            />
-            <PredictionGroupCard
-              detailBuilder={(item) => [item.reason || "", item.risk ? `观察点：${item.risk}` : ""]}
-              items={predictions?.long_short?.neutral}
-              metaBuilder={(item) => [item.direction || "中性", formatConfidence(item.confidence)]}
-              title="中性观察"
-            />
-            <PredictionGroupCard
-              detailBuilder={(item) => [item.reason || "", item.risk ? `风险提示：${item.risk}` : ""]}
-              items={predictions?.long_short?.bearish}
-              metaBuilder={(item) => [item.direction || "看空", formatConfidence(item.confidence)]}
-              title="风险板块"
-            />
-          </div>
-        </DetailSection>
-
-        <DetailSection title="轮动机会">
-          <div className={styles.strategyGroupGrid}>
-            <PredictionGroupCard
-              detailBuilder={(item) => [item.logic || "", item.advice ? `操作建议：${item.advice}` : ""]}
-              items={predictions?.rotation?.current_strong}
-              metaBuilder={(item) => [item.stage || "强势", item.time_window || "暂无周期"]}
-              title="当前强势"
-            />
-            <PredictionGroupCard
-              detailBuilder={(item) => [item.logic || "", item.advice ? `操作建议：${item.advice}` : ""]}
-              items={predictions?.rotation?.potential}
-              metaBuilder={(item) => [item.stage || "潜力", item.time_window || "暂无周期"]}
-              title="潜力接力"
-            />
-            <PredictionGroupCard
-              detailBuilder={(item) => [item.logic || "", item.advice ? `操作建议：${item.advice}` : ""]}
-              items={predictions?.rotation?.declining}
-              metaBuilder={(item) => [item.stage || "衰退", item.time_window || "暂无周期"]}
-              title="衰退方向"
-            />
-          </div>
-        </DetailSection>
-
-        <DetailSection title="热度观察">
-          <div className={styles.strategyGroupGrid}>
-            <PredictionGroupCard
-              detailBuilder={(item) => [item.sustainability ? `持续性：${item.sustainability}` : ""]}
-              items={predictions?.heat?.hottest}
-              metaBuilder={(item) => [`热度 ${formatNumber(item.score, 0, "0")}`, item.trend || "暂无趋势"]}
-              title="最热板块"
-            />
-            <PredictionGroupCard
-              detailBuilder={(item) => [item.sustainability ? `持续性：${item.sustainability}` : ""]}
-              items={predictions?.heat?.heating}
-              metaBuilder={(item) => [`热度 ${formatNumber(item.score, 0, "0")}`, item.trend || "暂无趋势"]}
-              title="升温板块"
-            />
-            <PredictionGroupCard
-              detailBuilder={(item) => [item.sustainability ? `持续性：${item.sustainability}` : ""]}
-              items={predictions?.heat?.cooling}
-              metaBuilder={(item) => [`热度 ${formatNumber(item.score, 0, "0")}`, item.trend || "暂无趋势"]}
-              title="降温板块"
-            />
-          </div>
-        </DetailSection>
-
-        <DetailSection title="风险与策略">
           <div className={styles.strategySummaryGrid}>
             <div className={styles.historySummaryCell}>
               <span>主要风险</span>
@@ -389,13 +448,81 @@ export function SectorReportDetailView({
             </div>
           </div>
 
-          {predictions?.raw_fallback_text ? (
-            <div className={`${styles.noticeCard} ${styles.noticeInfo}`}>
-              <strong>原始预测文本</strong>
-              <div className={styles.code}>{predictions.raw_fallback_text}</div>
-            </div>
+          <div className={styles.reportTabGridFour}>
+            <button
+              className={activeSection === "long_short" ? styles.primaryButton : styles.secondaryButton}
+              onClick={() => setActiveSection("long_short")}
+              type="button"
+            >
+              板块多空
+            </button>
+            <button
+              className={activeSection === "rotation" ? styles.primaryButton : styles.secondaryButton}
+              onClick={() => setActiveSection("rotation")}
+              type="button"
+            >
+              轮动机会
+            </button>
+            <button
+              className={activeSection === "heat" ? styles.primaryButton : styles.secondaryButton}
+              onClick={() => setActiveSection("heat")}
+              type="button"
+            >
+              热度观察
+            </button>
+            <button
+              className={activeSection === "raw" ? styles.primaryButton : styles.secondaryButton}
+              onClick={() => setActiveSection("raw")}
+              type="button"
+            >
+              原始报告
+            </button>
+          </div>
+          <div className={styles.sectionDivider} />
+
+          {activeSection === "long_short" ? (
+            <PredictionToggleSection
+              detailBuilder={(item) => [item.reason || "", item.risk ? `风险提示：${item.risk}` : ""]}
+              metaBuilder={(item) => [item.direction || "看多", formatConfidence(item.confidence)]}
+              options={[
+                { key: "bullish", label: "看多板块", items: predictions?.long_short?.bullish },
+                { key: "neutral", label: "中性观察", items: predictions?.long_short?.neutral },
+                { key: "bearish", label: "风险板块", items: predictions?.long_short?.bearish },
+              ]}
+            />
           ) : null}
-        </DetailSection>
+
+          {activeSection === "rotation" ? (
+            <PredictionToggleSection
+              detailBuilder={(item) => [item.logic || "", item.advice ? `操作建议：${item.advice}` : ""]}
+              metaBuilder={(item) => [item.stage || "强势", item.time_window || "暂无周期"]}
+              options={[
+                { key: "strong", label: "当前强势", items: predictions?.rotation?.current_strong },
+                { key: "potential", label: "潜力接力", items: predictions?.rotation?.potential },
+                { key: "declining", label: "衰退方向", items: predictions?.rotation?.declining },
+              ]}
+            />
+          ) : null}
+
+          {activeSection === "heat" ? (
+            <HeatObservationSection
+              options={[
+                { key: "hottest", label: "最热板块", items: predictions?.heat?.hottest, tone: "danger" },
+                { key: "heating", label: "升温板块", items: predictions?.heat?.heating, tone: "warning" },
+                { key: "cooling", label: "降温板块", items: predictions?.heat?.cooling, tone: "info" },
+              ]}
+            />
+          ) : null}
+
+          {activeSection === "raw" ? <FixedReportWorkspace reports={reportView?.raw_reports || null} /> : null}
+        </div>
+
+        {predictions?.raw_fallback_text ? (
+          <div className={`${styles.noticeCard} ${styles.noticeInfo}`}>
+            <strong>原始预测文本</strong>
+            <div className={styles.code}>{predictions.raw_fallback_text}</div>
+          </div>
+        ) : null}
 
         {marketSnapshot ? (
           <DetailSection title="市场快照">
@@ -440,10 +567,6 @@ export function SectorReportDetailView({
             ) : null}
           </DetailSection>
         ) : null}
-
-        <DetailSection title="原始报告">
-          <FixedReportWorkspace reports={reportView?.raw_reports || null} />
-        </DetailSection>
       </section>
     </div>
   );

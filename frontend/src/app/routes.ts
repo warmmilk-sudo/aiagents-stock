@@ -32,6 +32,7 @@ export const routeItems: AppRouteItem[] = [
   { path: "/selectors/profit-growth", title: "净利增长", group: "选股" },
   { path: "/selectors/value-stock", title: "低估值", group: "选股" },
   { path: "/system/config", title: "系统配置", group: "系统管理" },
+  { path: "/system/database", title: "数据库管理", group: "系统管理" },
 ];
 
 export const defaultRoute = "/research/deep-analysis";

@@ -211,15 +211,6 @@ export function PriceAlertsPage() {
       sectionTabs={sectionTabs}
       activeSectionKey={section}
       onSectionChange={(nextSection) => setSection(nextSection as SectionKey)}
-      actions={
-        <>
-          <StatusBadge label={`预警 ${alerts.length}`} tone="default" />
-          <StatusBadge
-            label={`触发 ${notifications.length}`}
-            tone={notifications.length ? "warning" : "default"}
-          />
-        </>
-      }
     >
       <div className={styles.stack}>
         <section className={styles.card}>

@@ -1,23 +1,37 @@
 .stack {
   display: grid;
-  gap: 14px;
+  gap: 3px;
+  width: 100%;
+  max-width: 100%;
   min-width: 0;
+  box-sizing: border-box;
 }
 
 .grid {
   display: grid;
-  gap: 14px;
+  gap: 3px;
   grid-template-columns: repeat(12, minmax(0, 1fr));
+  width: 100%;
+  max-width: 100%;
   min-width: 0;
+  box-sizing: border-box;
+}
+
+.grid > * {
+  min-width: 0;
+  max-width: 100%;
 }
 
 .card {
   grid-column: span 12;
+  width: 100%;
+  max-width: 100%;
   padding: 16px;
   border: 1px solid var(--line-soft);
   border-radius: 18px;
   background: color-mix(in srgb, var(--bg-panel) 96%, transparent);
   box-shadow: var(--shadow-card);
+  box-sizing: border-box;
   min-width: 0;
   backdrop-filter: blur(14px);
 }
@@ -27,25 +41,52 @@
   margin: 0 0 10px;
 }
 
+.card>.stack,
+.card>.list,
+.card>.compactGrid,
+.card>.summaryMetricGrid,
+.card>.formGrid,
+.card>.historyDetailStack,
+.card>.historyDetailContentStack {
+  gap: 1px;
+}
+
 .compactGrid {
   display: grid;
-  gap: 12px;
+  gap: 1px;
   grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+  width: 100%;
+  max-width: 100%;
   min-width: 0;
+  box-sizing: border-box;
 }
 
 .summaryMetricGrid {
   display: grid;
-  gap: 12px;
+  gap: 1px;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  width: 100%;
+  max-width: 100%;
   min-width: 0;
+  box-sizing: border-box;
+}
+
+.compactGrid>*,
+.summaryMetricGrid>*,
+.formGrid>* {
+  min-width: 0;
+  max-width: 100%;
 }
 
 .metric {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   padding: 13px;
   border-radius: 14px;
   border: 1px solid var(--line-soft);
   background: color-mix(in srgb, var(--bg-panel-strong) 94%, transparent);
+  box-sizing: border-box;
 }
 
 .metric strong {
@@ -58,14 +99,17 @@
 
 .formGrid {
   display: grid;
-  gap: 12px;
+  gap: 1px;
   grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+  width: 100%;
+  max-width: 100%;
   min-width: 0;
+  box-sizing: border-box;
 }
 
 .field {
   display: grid;
-  gap: 6px;
+  gap: 1px;
   min-width: 0;
 }
 
@@ -73,9 +117,15 @@
   font-weight: 600;
 }
 
-.field input,
+.field input:not([type="checkbox"]):not([type="radio"]),
 .field select,
-.field textarea {
+.field textarea,
+.actions>input:not([type="checkbox"]):not([type="radio"]),
+.actions>select,
+.actions>textarea,
+.responsiveActionGrid>input:not([type="checkbox"]):not([type="radio"]),
+.responsiveActionGrid>select,
+.responsiveActionGrid>textarea {
   width: 100%;
   max-width: 100%;
   padding: 10px 12px;
@@ -84,18 +134,22 @@
   background: rgba(255, 255, 255, 0.025);
   color: var(--text-main);
   outline: 0;
+  box-sizing: border-box;
   transition:
     border-color var(--shell-transition),
     background var(--shell-transition),
     box-shadow var(--shell-transition);
 }
 
-.field input:focus,
+.field input:not([type="checkbox"]):not([type="radio"]):focus,
 .field select:focus,
 .field textarea:focus,
-.actions>input:focus,
+.actions>input:not([type="checkbox"]):not([type="radio"]):focus,
 .actions>select:focus,
-.actions>textarea:focus {
+.actions>textarea:focus,
+.responsiveActionGrid>input:not([type="checkbox"]):not([type="radio"]):focus,
+.responsiveActionGrid>select:focus,
+.responsiveActionGrid>textarea:focus {
   border-color: color-mix(in srgb, var(--accent) 48%, var(--line-strong));
   background: rgba(255, 255, 255, 0.04);
   box-shadow: 0 0 0 3px rgba(143, 127, 109, 0.12);
@@ -105,11 +159,67 @@
   resize: vertical;
 }
 
+.newsFlowPage {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.newsFlowPage>* {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.newsFlowPage .primaryButton,
+.newsFlowPage .secondaryButton,
+.newsFlowPage .dangerButton,
+.newsFlowPage .tertiaryButton {
+  min-height: 44px;
+  align-items: center;
+}
+
+.newsFlowToolbar {
+  display: grid;
+  gap: 1px;
+  grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr));
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.newsFlowToolbar > * {
+  min-width: 0;
+}
+
+.newsFlowToolbarField {
+  min-width: 0;
+}
+
+.newsFlowToolbar > .primaryButton,
+.newsFlowToolbar > .secondaryButton,
+.newsFlowToolbar > .dangerButton,
+.newsFlowToolbar > .tertiaryButton {
+  width: 100%;
+  justify-content: center;
+}
+
+.newsFlowToolbar > .primaryButton:only-child,
+.newsFlowToolbar > .secondaryButton:only-child,
+.newsFlowToolbar > .dangerButton:only-child,
+.newsFlowToolbar > .tertiaryButton:only-child {
+  grid-column: 1 / -1;
+}
+
 .actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 1px;
   align-items: flex-start;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 .actions>* {
@@ -124,6 +234,14 @@
   flex: 1 1 132px;
   display: inline-flex;
   justify-content: center;
+}
+
+.actions>.primaryButton:only-child,
+.actions>.secondaryButton:only-child,
+.actions>.dangerButton:only-child,
+.actions>.tertiaryButton:only-child {
+  flex-basis: 100%;
+  width: 100%;
 }
 
 .actions>.field {
@@ -146,6 +264,53 @@
   flex: 1 1 100%;
 }
 
+.responsiveActionGrid {
+  display: grid;
+  gap: 1px;
+  grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr));
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.responsiveActionGrid>* {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.responsiveActionGrid>.primaryButton,
+.responsiveActionGrid>.secondaryButton,
+.responsiveActionGrid>.dangerButton,
+.responsiveActionGrid>.tertiaryButton {
+  display: inline-flex;
+  justify-content: center;
+}
+
+.responsiveActionGrid>.primaryButton:only-child,
+.responsiveActionGrid>.secondaryButton:only-child,
+.responsiveActionGrid>.dangerButton:only-child,
+.responsiveActionGrid>.tertiaryButton:only-child {
+  grid-column: 1 / -1;
+}
+
+.responsiveActionGrid>.field,
+.responsiveActionGrid>.listItem,
+.responsiveActionGrid>.actionField,
+.responsiveActionGrid>.actionInput,
+.responsiveActionGrid>.actionToggle,
+.responsiveActionGrid>.shortInput {
+  width: 100%;
+}
+
+.responsiveActionGrid>.muted,
+.responsiveActionGrid>.successText,
+.responsiveActionGrid>.dangerText {
+  align-self: center;
+}
+
 .historyInlineActions {
   min-width: 0;
   flex: 1 1 0;
@@ -154,7 +319,9 @@
 .primaryButton,
 .secondaryButton,
 .dangerButton,
-.tertiaryButton {
+.tertiaryButton,
+.nestedTabButton,
+.nestedTabButtonActive {
   border: 1px solid var(--line-strong);
   border-radius: 8px;
   padding: 10px 16px;
@@ -191,10 +358,32 @@
   color: var(--text-muted);
 }
 
+.nestedTabButton,
+.nestedTabButtonActive {
+  padding: 7px 12px;
+  border-radius: 999px;
+  font-size: 13px;
+  line-height: 1.25;
+}
+
+.nestedTabButton {
+  border-color: var(--line-soft);
+  background: color-mix(in srgb, var(--bg-panel-strong) 92%, transparent);
+  color: var(--text-muted);
+}
+
+.nestedTabButtonActive {
+  border-color: color-mix(in srgb, var(--accent) 34%, var(--line-soft));
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-panel));
+  color: var(--text-main);
+}
+
 .primaryButton:hover,
 .secondaryButton:hover,
 .dangerButton:hover,
-.tertiaryButton:hover {
+.tertiaryButton:hover,
+.nestedTabButton:hover,
+.nestedTabButtonActive:hover {
   transform: translateY(-1px);
 }
 
@@ -208,10 +397,19 @@
   color: var(--text-main);
 }
 
+.nestedTabButton:hover,
+.nestedTabButtonActive:hover {
+  border-color: color-mix(in srgb, var(--accent) 24%, var(--line-soft));
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-panel-strong));
+  color: var(--text-main);
+}
+
 .primaryButton:disabled,
 .secondaryButton:disabled,
 .dangerButton:disabled,
-.tertiaryButton:disabled {
+.tertiaryButton:disabled,
+.nestedTabButton:disabled,
+.nestedTabButtonActive:disabled {
   opacity: 0.5;
   cursor: not-allowed;
   transform: none;
@@ -219,8 +417,31 @@
 
 .tableWrap {
   overflow: auto;
+  width: 100%;
   max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
   -webkit-overflow-scrolling: touch;
+}
+
+.tableWrap>* {
+  box-sizing: border-box;
+}
+
+.chartWrap {
+  position: relative;
+  display: grid;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.chartWrap>*,
+.chartWrap canvas {
+  min-width: 0;
+  max-width: 100% !important;
 }
 
 .table {
@@ -278,17 +499,17 @@
 
 .holdingsTableCompact th:nth-child(1),
 .holdingsTableCompact td:nth-child(1) {
-  width: 34%;
+  width: 24%;
 }
 
 .holdingsTableCompact th:nth-child(2),
 .holdingsTableCompact td:nth-child(2) {
-  width: 19%;
+  width: 28%;
 }
 
 .holdingsTableCompact th:nth-child(3),
 .holdingsTableCompact td:nth-child(3) {
-  width: 27%;
+  width: 28%;
 }
 
 .holdingsTableCompact th:nth-child(4),
@@ -311,6 +532,16 @@
   margin-top: 2px;
 }
 
+.holdingMetricCell {
+  text-align: left !important;
+  white-space: normal;
+  line-height: 1.35;
+}
+
+.holdingMetricCell > div + div {
+  margin-top: 2px;
+}
+
 .numericCell {
   text-align: right !important;
   white-space: nowrap;
@@ -329,13 +560,13 @@
   justify-content: flex-end;
   align-items: center;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 1px;
   margin-top: 12px;
 }
 
 .list {
   display: grid;
-  gap: 10px;
+  gap: 1px;
   min-width: 0;
 }
 
@@ -345,6 +576,42 @@
   border-radius: 14px;
   background: color-mix(in srgb, var(--bg-panel-strong) 94%, transparent);
   min-width: 0;
+  word-break: break-word;
+}
+
+.analystSelectionGroup {
+  display: grid;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--line-soft);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--bg-panel-strong) 94%, transparent);
+  min-width: 0;
+}
+
+.analystOption {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  min-width: 0;
+  text-align: left;
+}
+
+.analystOption input {
+  width: 16px;
+  height: 16px;
+  margin: 2px 0 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.analystOption span {
+  min-width: 0;
+  line-height: 1.45;
   word-break: break-word;
 }
 
@@ -457,18 +724,32 @@
 .historySummaryGrid,
 .historyLevelGrid {
   display: grid;
-  gap: 10px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.detailMetricGrid {
+  display: grid;
+  gap: 1px;
+  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+  width: 100%;
+  max-width: 100%;
   min-width: 0;
 }
 
 .historySummaryCell {
+  width: 100%;
+  max-width: 100%;
   padding: 12px;
   border-radius: 14px;
   border: 1px solid var(--line-soft);
   background: color-mix(in srgb, var(--bg-panel) 96%, transparent);
   display: grid;
   gap: 6px;
+  box-sizing: border-box;
   min-width: 0;
 }
 
@@ -487,7 +768,7 @@
 
 .historyExpanded {
   display: grid;
-  gap: 12px;
+  gap: 1px;
   padding-top: 4px;
 }
 
@@ -495,24 +776,106 @@
 .historyDetailStack {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 1px;
   width: 100%;
   max-width: 100%;
   min-width: 0;
 }
 
-.historyDetailStack > * {
-  flex: 0 0 auto;
-  align-self: stretch;
+.historyDetailMainCard {
   width: 100%;
   max-width: 100%;
   min-width: 0;
+  box-sizing: border-box;
+}
+
+.historyDetailMainCard>* {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.historyDetailStack>* {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  flex: 0 0 auto;
+  align-self: stretch;
+  box-sizing: border-box;
 }
 
 .historyDetailContentStack {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 1px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.historyDetailContentStack>* {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.reportHeaderStack,
+.sectionControlStack {
+  display: grid;
+  gap: 1px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.sectionDivider {
+  height: 2px;
+  background: #20607e;
+  min-width: 0;
+}
+
+.reportExportGrid,
+.reportTabGrid,
+.reportTabGridFour,
+.reportTabGridFive,
+.reportMetricTriplet {
+  display: grid;
+  gap: 1px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.reportExportGrid {
+  grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr));
+}
+
+.reportTabGrid {
+  grid-template-columns: repeat(auto-fit, minmax(min(140px, 100%), 1fr));
+}
+
+.reportTabGridFour {
+  grid-template-columns: repeat(auto-fit, minmax(min(140px, 100%), 1fr));
+}
+
+.reportTabGridFive {
+  grid-template-columns: repeat(auto-fit, minmax(min(140px, 100%), 1fr));
+}
+
+.reportMetricTriplet {
+  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+}
+
+.reportExportGrid>*,
+.reportTabGrid>*,
+.reportTabGridFour>*,
+.reportTabGridFive>* {
+  width: 100%;
+  justify-content: center;
+}
+
+.reportMetricTriplet>* {
   width: 100%;
   max-width: 100%;
   min-width: 0;
@@ -521,7 +884,10 @@
 .historyDetailTabs {
   display: flex;
   flex-wrap: nowrap;
-  gap: 10px;
+  gap: 1px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
   scrollbar-width: thin;
@@ -529,6 +895,22 @@
 
 .historyDetailTabs>* {
   flex: 0 0 auto;
+  max-width: 100%;
+  white-space: nowrap;
+}
+
+.historyDetailTabsGrid {
+  display: grid;
+  gap: 1px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  width: 100%;
+  min-width: 0;
+}
+
+.historyDetailTabsGrid>* {
+  width: 100%;
+  min-width: 0;
+  justify-content: center;
   white-space: nowrap;
 }
 
@@ -548,7 +930,7 @@
 .historyDetailSummary {
   width: 100%;
   box-sizing: border-box;
-  cursor: pointer;
+  cursor: default;
   padding: 14px 16px;
   font-weight: 700;
 }
@@ -561,9 +943,11 @@
   padding: 16px;
 }
 
-.historyDetailPanelBody > * {
+.historyDetailPanelBody>* {
+  width: 100%;
   min-width: 0;
   max-width: 100%;
+  box-sizing: border-box;
 }
 
 .detailOrderedList {
@@ -576,7 +960,7 @@
 
 .historyInfoGrid {
   display: grid;
-  gap: 10px;
+  gap: 1px;
   grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
 }
 
@@ -608,14 +992,16 @@
 
 .strategySummaryGrid {
   display: grid;
-  gap: 10px;
+  gap: 1px;
   grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+  width: 100%;
+  max-width: 100%;
   min-width: 0;
 }
 
 .strategyGroupGrid {
   display: grid;
-  gap: 12px;
+  gap: 1px;
   grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
   min-width: 0;
 }
@@ -637,13 +1023,13 @@
   gap: 10px;
 }
 
-.strategyGroupHeader > * {
+.strategyGroupHeader>* {
   min-width: 0;
 }
 
 .strategyEntryList {
   display: grid;
-  gap: 10px;
+  gap: 1px;
   min-width: 0;
 }
 
@@ -665,6 +1051,130 @@
   word-break: break-word;
 }
 
+.heatChartList {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.heatChartCard {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--bg-panel) 96%, transparent);
+  min-width: 0;
+}
+
+.heatChartTop {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.heatChartTrack {
+  position: relative;
+  width: 100%;
+  height: 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-panel-strong) 94%, transparent);
+  overflow: hidden;
+}
+
+.heatChartFill {
+  height: 100%;
+  border-radius: inherit;
+}
+
+.heatChartFillDanger {
+  background: linear-gradient(90deg, #c65d4b 0%, #ef8b63 100%);
+}
+
+.heatChartFillWarning {
+  background: linear-gradient(90deg, #d6a45f 0%, #f0cf76 100%);
+}
+
+.heatChartFillInfo {
+  background: linear-gradient(90deg, #5c89a7 0%, #87b7d4 100%);
+}
+
+.heatChartMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.topicBubbleCloud {
+  position: relative;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  min-height: clamp(320px, 54vw, 520px);
+  box-sizing: border-box;
+  overflow: hidden;
+  border-radius: 24px;
+  border: 1px solid var(--line-soft);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.topicBubbleCloud::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(rgba(118, 128, 140, 0.12) 1px, transparent 1px);
+  background-size: 24px 24px;
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.topicBubble {
+  position: absolute;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  text-align: center;
+  aspect-ratio: 1 / 1;
+  min-width: 56px;
+  min-height: 56px;
+  max-width: 100%;
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  box-sizing: border-box;
+  overflow: hidden;
+  transform: translate(-50%, -50%);
+  transition:
+    transform var(--shell-transition),
+    border-color var(--shell-transition);
+}
+
+.topicBubble:hover {
+  transform: translate(-50%, -50%) scale(1.03);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.topicBubbleLabel {
+  display: -webkit-box;
+  overflow: hidden;
+  font-weight: 700;
+  line-height: 1.35;
+  word-break: break-word;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.topicBubbleValue {
+  margin-top: 6px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
 .strategyEntryMeta {
   color: var(--text-muted);
   font-size: 12px;
@@ -673,20 +1183,23 @@
 
 .reportWorkbench {
   display: grid;
-  gap: 12px;
+  gap: 1px;
   grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  width: 100%;
+  max-width: 100%;
   min-width: 0;
+  box-sizing: border-box;
 }
 
 .reportWorkbenchNav {
   display: grid;
-  gap: 10px;
+  gap: 1px;
   align-content: start;
 }
 
 .reportWorkbenchButton {
   display: grid;
-  gap: 6px;
+  gap: 1px;
   padding: 12px;
   border: 1px solid var(--line-soft);
   border-radius: 14px;
@@ -715,12 +1228,15 @@
 
 .reportWorkbenchPanel {
   display: grid;
-  gap: 12px;
+  gap: 1px;
+  width: 100%;
+  max-width: 100%;
   padding: 14px;
   border: 1px solid var(--line-soft);
   border-radius: 16px;
   background: color-mix(in srgb, var(--bg-panel-strong) 96%, transparent);
   min-width: 0;
+  box-sizing: border-box;
 }
 
 .reportWorkbenchHeader {
@@ -728,6 +1244,27 @@
   justify-content: space-between;
   align-items: flex-start;
   gap: 12px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.reportWorkbenchHeader>* {
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.reportWorkbenchHeading {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.reportWorkbenchTimestamp {
+  min-width: 0;
+  max-width: 100%;
+  word-break: break-word;
+  text-align: right;
 }
 
 .reportWorkbenchHeader h3 {
@@ -735,7 +1272,10 @@
 }
 
 .reportWorkbenchContent {
+  width: 100%;
+  max-width: 100%;
   min-width: 0;
+  box-sizing: border-box;
 }
 
 .cardHeader {
@@ -760,10 +1300,13 @@
   position: relative;
   display: grid;
   gap: 8px;
+  width: 100%;
+  max-width: 100%;
   padding: 14px 16px 14px 20px;
   border: 1px solid var(--line-soft);
   border-radius: 14px;
   background: color-mix(in srgb, var(--bg-panel-strong) 95%, transparent);
+  box-sizing: border-box;
   min-width: 0;
 }
 
@@ -840,6 +1383,78 @@
   flex: 1 1 180px;
 }
 
+.switchField {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  width: 100%;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--line-soft);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--bg-panel-strong) 94%, transparent);
+  box-sizing: border-box;
+}
+
+.switchLabel {
+  font-weight: 600;
+}
+
+.switchControl {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.switchControl > input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+  margin: 0;
+}
+
+.switchTrack {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  width: 76px;
+  height: 40px;
+  padding: 2px;
+  border-radius: 999px;
+  background: rgba(140, 148, 158, 0.32);
+  border: 1px solid rgba(140, 148, 158, 0.24);
+  box-sizing: border-box;
+  transition: background var(--shell-transition), border-color var(--shell-transition);
+}
+
+.switchThumb {
+  display: block;
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  background: #fff;
+  border: 1px solid rgba(36, 44, 52, 0.12);
+  box-shadow: 0 1px 2px rgba(30, 36, 42, 0.18);
+  transform: translateX(0);
+  transition: transform var(--shell-transition);
+}
+
+.switchControl > input:checked + .switchTrack {
+  background: #49e28c;
+  border-color: #49e28c;
+}
+
+.switchControl > input:checked + .switchTrack .switchThumb {
+  transform: translateX(36px);
+}
+
+.switchControl > input:focus-visible + .switchTrack {
+  outline: 2px solid color-mix(in srgb, var(--accent) 54%, white);
+  outline-offset: 2px;
+}
+
 .shortInput {
   flex: 0 1 120px;
   width: 120px;
@@ -874,15 +1489,18 @@
 
 .holdingHistoryButton {
   display: inline-flex;
-  min-width: 72px;
+  align-items: center;
+  justify-content: center;
+  min-width: 84px;
   max-width: 100%;
-  padding: 7px 12px;
+  margin: 0 auto;
+  padding: 6px 9px;
   border: 1px solid var(--line-strong);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.02);
   color: var(--text-main);
   font-weight: 700;
-  font-size: 14px;
+  font-size: 13px;
   line-height: 1.45;
   text-align: center;
   white-space: nowrap;
@@ -895,6 +1513,7 @@
 .holdingHistoryCell {
   text-align: center !important;
   white-space: nowrap;
+  vertical-align: middle;
 }
 
 @media (max-width: 900px) {
@@ -902,6 +1521,31 @@
   .span6,
   .span12 {
     grid-column: span 12;
+  }
+
+  .newsFlowToolbar,
+  .responsiveActionGrid,
+  .reportExportGrid,
+  .reportTabGrid,
+  .reportTabGridFour,
+  .reportTabGridFive,
+  .reportMetricTriplet,
+  .historySummaryGrid,
+  .historyLevelGrid,
+  .detailMetricGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .reportWorkbench {
+    grid-template-columns: 1fr;
+  }
+
+  .reportWorkbenchHeader {
+    flex-direction: column;
+  }
+
+  .reportWorkbenchTimestamp {
+    text-align: left;
   }
 }
 
@@ -918,7 +1562,6 @@
   }
 
   .compactGrid,
-  .summaryMetricGrid,
   .formGrid {
     grid-template-columns: 1fr;
   }
@@ -938,6 +1581,15 @@
 
   .listItem {
     padding: 11px 12px;
+  }
+
+  .topicBubbleCloud {
+    min-height: 300px;
+    border-radius: 20px;
+  }
+
+  .topicBubble {
+    padding: 10px;
   }
 
   .smartMonitorTaskCard,
@@ -993,10 +1645,8 @@
     justify-content: flex-start;
   }
 
-  .historySummaryGrid,
-  .historyLevelGrid,
-  .reportWorkbench {
-    grid-template-columns: 1fr;
+  .historyDetailTabsGrid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
   .historyListMetrics {
@@ -1031,26 +1681,44 @@
 
   .holdingsTableCompact th:nth-child(1),
   .holdingsTableCompact td:nth-child(1) {
-    width: 35%;
+    width: 29%;
   }
 
   .holdingsTableCompact th:nth-child(2),
   .holdingsTableCompact td:nth-child(2) {
-    width: 18%;
+    width: 24%;
   }
+
+  .historyDetailTabsGrid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
 
   .holdingsTableCompact th:nth-child(3),
   .holdingsTableCompact td:nth-child(3) {
-    width: 27%;
+    width: 29%;
   }
 
   .holdingsTableCompact th:nth-child(4),
   .holdingsTableCompact td:nth-child(4) {
-    width: 20%;
+    width: 18%;
   }
 
   .actions {
     gap: 8px;
+  }
+
+  .newsFlowToolbar,
+  .responsiveActionGrid,
+  .reportExportGrid,
+  .reportTabGrid,
+  .reportTabGridFour,
+  .reportTabGridFive,
+  .reportMetricTriplet,
+  .historySummaryGrid,
+  .historyLevelGrid,
+  .detailMetricGrid {
+    grid-template-columns: 1fr;
   }
 
   .actions>.primaryButton,
@@ -1097,8 +1765,9 @@
   }
 
   .holdingHistoryButton {
-    font-size: 13px;
-    padding: 6px 10px;
+    min-width: 52px;
+    font-size: 12px;
+    padding: 5px 8px;
   }
 
   .pagination {
@@ -1134,6 +1803,7 @@
 }
 
 @media (max-width: 400px) {
+
   .holdingsTableCompact th,
   .holdingsTableCompact td {
     padding: 3px 1px;
@@ -1142,22 +1812,22 @@
 
   .holdingsTableCompact th:nth-child(1),
   .holdingsTableCompact td:nth-child(1) {
-    width: 36%;
+    width: 30%;
   }
 
   .holdingsTableCompact th:nth-child(2),
   .holdingsTableCompact td:nth-child(2) {
-    width: 18%;
+    width: 24%;
   }
 
   .holdingsTableCompact th:nth-child(3),
   .holdingsTableCompact td:nth-child(3) {
-    width: 24%;
+    width: 28%;
   }
 
   .holdingsTableCompact th:nth-child(4),
   .holdingsTableCompact td:nth-child(4) {
-    width: 22%;
+    width: 18%;
   }
 
   .holdingsTableCompact .numericCell {
@@ -1170,12 +1840,14 @@
   }
 
   .holdingHistoryButton {
-    font-size: 12px;
-    padding: 5px 9px;
+    min-width: 48px;
+    font-size: 11px;
+    padding: 4px 7px;
   }
 
   .summaryMetricGrid {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
   }
 
   .metric strong {

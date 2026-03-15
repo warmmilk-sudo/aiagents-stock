@@ -31,6 +31,11 @@ except ModuleNotFoundError:
     MacroCycleDatabase = None
 
 try:
+    from macro_cycle_engine import MacroCycleEngine
+except ModuleNotFoundError:
+    MacroCycleEngine = None
+
+try:
     from sector_strategy_engine import SectorStrategyEngine
 except ModuleNotFoundError:
     SectorStrategyEngine = None
@@ -757,6 +762,24 @@ class MacroCyclePersistenceTests(unittest.TestCase):
             self.assertIsNone(db.get_latest_report())
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+@unittest.skipIf(MacroCycleEngine is None, "macro cycle dependencies unavailable")
+class MacroCycleSummaryTests(unittest.TestCase):
+    def test_extract_chief_summary_prefers_report_body_over_reasoning(self):
+        engine = MacroCycleEngine.__new__(MacroCycleEngine)
+        summary = engine._extract_chief_summary(
+            {
+                "agents_analysis": {
+                    "chief": {
+                        "analysis": "【推理过程】\n先整合三位分析师观点，再输出最终结论。\n"
+                        "# 一、周期仪表盘\n当前处于复苏后段，权益资产仍有配置价值。"
+                    }
+                }
+            }
+        )
+
+        self.assertEqual(summary, "一、周期仪表盘")
 
 
 @unittest.skipIf(SectorStrategyEngine is None, "sector strategy dependencies unavailable")

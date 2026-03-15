@@ -8,7 +8,7 @@
 }
 
 .sidebarHidden .sidebar {
-  margin-left: -272px;
+  margin-left: -304px;
   transform: translateX(-18px);
   opacity: 0;
   pointer-events: none;
@@ -21,8 +21,8 @@
   display: grid;
   grid-template-rows: auto 1fr auto;
   gap: 16px;
-  flex: 0 0 272px;
-  width: 272px;
+  flex: 0 0 304px;
+  width: 304px;
   height: 100vh;
   padding: 18px 14px;
   background: linear-gradient(180deg, var(--bg-sidebar) 0%, var(--bg-sidebar-soft) 100%);
@@ -35,7 +35,7 @@
 
 .sidebarHeader {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
 }
@@ -44,14 +44,14 @@
   margin: 0;
   text-transform: uppercase;
   letter-spacing: 0.18em;
-  font-size: 11px;
+  font-size: 13px;
   opacity: 0.7;
 }
 
 .brand h1 {
   margin: 4px 0 0;
   font-family: var(--font-display);
-  font-size: 24px;
+  font-size: 28px;
   line-height: 1;
 }
 
@@ -59,7 +59,7 @@
   min-height: 0;
   overflow: auto;
   display: grid;
-  gap: 14px;
+  gap: 15px;
   padding-right: 2px;
 }
 
@@ -71,6 +71,7 @@
 .sidebarFooter {
   display: grid;
   gap: 14px;
+  align-content: end;
 }
 
 .sidebarTools {
@@ -88,7 +89,7 @@
 }
 
 .sidebarField label {
-  font-size: 12px;
+  font-size: 13px;
   color: rgba(247, 243, 235, 0.72);
 }
 
@@ -129,10 +130,10 @@
 .sidebarLogoutButton {
   border: 1px solid var(--line-strong);
   border-radius: 8px;
-  padding: 11px 16px;
+  padding: 12px 16px;
   background: rgba(255, 255, 255, 0.02);
   color: #fffaf2;
-  font-size: 15px;
+  font-size: 16px;
   line-height: 1.35;
   transition:
     background var(--shell-transition),
@@ -145,17 +146,32 @@
   background: rgba(255, 255, 255, 0.05);
 }
 
+.sidebarIcpLink,
+.sidebarIcpText {
+  display: block;
+  text-align: center;
+  font-size: 12px;
+  line-height: 1.5;
+  color: rgba(247, 243, 235, 0.62);
+  word-break: break-word;
+}
+
+.sidebarIcpLink:hover {
+  color: #fffaf2;
+}
+
 .navItem {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 13px 15px;
+  padding: 14px 16px;
   border: 0;
   border-radius: 8px;
   color: rgba(247, 243, 235, 0.82);
   background: rgba(255, 255, 255, 0.015);
-  font-size: 15px;
+  font-size: 21px;
+  font-weight: 600;
   line-height: 1.35;
   transition: all var(--shell-transition);
 }
@@ -252,6 +268,9 @@
 }
 
 .iconButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   min-width: 42px;
   border: 0;
   background: transparent;
@@ -260,12 +279,17 @@
   line-height: 1;
 }
 
-.menuToggleButton {
+.menuToggleButton,
+.sidebarCloseButton {
   min-width: 60px;
   min-height: 60px;
   padding: 10px 12px;
   font-size: 42px;
   line-height: 1;
+}
+
+.menuToggleButton {
+  margin-left: -12px;
 }
 
 .primaryButton {
@@ -314,7 +338,7 @@
   .sidebar {
     position: fixed;
     inset: 0 auto 0 0;
-    width: min(86vw, 320px);
+    width: min(84vw, 320px);
     height: 100dvh;
     margin-left: 0;
     transform: translateX(-100%);
@@ -390,8 +414,8 @@
   }
 
   .navItem {
-    padding: 11px 13px;
-    font-size: 14px;
+    padding: 12px 14px;
+    font-size: 19px;
   }
 
   .iconButton,
@@ -399,7 +423,8 @@
     padding: 9px 12px;
   }
 
-  .menuToggleButton {
+  .menuToggleButton,
+  .sidebarCloseButton {
     min-width: 56px;
     min-height: 56px;
     padding: 8px 10px;
@@ -408,7 +433,7 @@
 
   .sidebarLogoutButton {
     padding: 10px 14px;
-    font-size: 14px;
+    font-size: 15px;
   }
 }
 
@@ -445,6 +470,10 @@
     overflow-x: visible;
   }
 
+  .menuToggleButton {
+    margin-left: -8px;
+  }
+
   .topbarTitle {
     white-space: normal;
     overflow: visible;
@@ -464,6 +493,10 @@
   .topbar {
     top: 8px;
     padding: 9px;
+  }
+
+  .menuToggleButton {
+    margin-left: -6px;
   }
 
   .content {

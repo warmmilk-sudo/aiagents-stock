@@ -84,6 +84,25 @@ function buildSummary(value: unknown): string {
 }
 
 function detectReportCategory(name: string, payload: Record<string, unknown>): ReportCategory | null {
+  const normalizedName = String(name || "").trim().toLowerCase();
+  const exactKeyMap: Record<string, ReportCategory> = {
+    technical: "technical",
+    fundamental: "fundamental",
+    fund_flow: "fund_flow",
+    risk: "risk",
+    risk_management: "risk",
+    market: "market",
+    sentiment: "market",
+    market_sentiment: "market",
+    news: "news",
+    team: "team",
+    discussion: "team",
+    chief: "team",
+  };
+  if (exactKeyMap[normalizedName]) {
+    return exactKeyMap[normalizedName];
+  }
+
   const text = [
     name,
     payload.agent_name,
@@ -94,26 +113,29 @@ function detectReportCategory(name: string, payload: Record<string, unknown>): R
     .join(" ")
     .toLowerCase();
 
+  if (/risk_management|风险管理|风控|风险识别|风险量化/.test(text)) {
+    return "risk";
+  }
+  if (/discussion|team|chief|团队|首席|综合研判|团队讨论/.test(text)) {
+    return "team";
+  }
+  if (/fund[_\s-]?flow|资金面|资金流向|主力动向|流动性/.test(text)) {
+    return "fund_flow";
+  }
+  if (/technical|技术|趋势|形态|均线|交易信号/.test(text)) {
+    return "technical";
+  }
+  if (/fundamental|基本面|财务|估值|公司价值|成长性/.test(text)) {
+    return "fundamental";
+  }
   if (/news|新闻|事件|公告|舆情|资讯/.test(text)) {
     return "news";
   }
   if (/sentiment|市场情绪|情绪|热点|赚钱效应|热度/.test(text)) {
     return "market";
   }
-  if (/fund[_\s-]?flow|资金|主力|资金流/.test(text)) {
-    return "fund_flow";
-  }
-  if (/fundamental|基本面|财务|估值/.test(text)) {
-    return "fundamental";
-  }
-  if (/technical|技术|趋势|形态|均线/.test(text)) {
-    return "technical";
-  }
-  if (/(^|[\s_-])risk($|[\s_-])|风险|风控/.test(text)) {
+  if (/(^|[\s_-])risk($|[\s_-])|风险/.test(text)) {
     return "risk";
-  }
-  if (/discussion|chief|团队|首席|综合/.test(text)) {
-    return "team";
   }
   return null;
 }
@@ -299,7 +321,7 @@ function RawReportWorkspace({
 
   return (
     <div className={styles.historyDetailContentStack}>
-      <div className={styles.historyDetailTabs} role="tablist" aria-label="原始报告分类">
+      <div className={styles.historyDetailTabsGrid} role="tablist" aria-label="原始报告分类">
         {availableTabs.map((item) => (
           <button
             aria-selected={item.key === activeKey}
@@ -416,7 +438,6 @@ export function HistoryPage() {
 
   return (
     <PageFrame
-      actions={selectedRecordId ? undefined : <StatusBadge label={`记录 ${records.length}`} tone="default" />}
       title="分析历史"
     >
       <div className={selectedRecordId ? `${styles.stack} ${styles.historyDetailPageStack}` : styles.stack}>

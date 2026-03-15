@@ -12,7 +12,7 @@ from monitor_db import StockMonitorDatabase
 from portfolio_analysis_tasks import PortfolioAnalysisTaskManager
 from portfolio_db import PortfolioDB
 from portfolio_manager import PortfolioManager
-from portfolio_scheduler import PortfolioAnalysisTaskConfig, PortfolioScheduler
+from portfolio_scheduler import PortfolioAnalysisTaskConfig, PortfolioScheduler, schedule as portfolio_schedule
 from smart_monitor_db import SmartMonitorDB
 
 
@@ -388,6 +388,9 @@ class PortfolioAnalyticsTests(unittest.TestCase):
 
 
 class PortfolioSchedulerConfigTests(unittest.TestCase):
+    def tearDown(self):
+        portfolio_schedule.clear("portfolio_analysis")
+
     def test_scheduler_exposes_shared_task_config(self):
         scheduler = PortfolioScheduler()
         config = PortfolioAnalysisTaskConfig(
@@ -499,6 +502,22 @@ class PortfolioSchedulerConfigTests(unittest.TestCase):
         self.assertEqual(task["result"]["analysis_source"], "portfolio_scheduler")
         self.assertEqual(task["result"]["persistence_result"]["saved_ids"], [1, 2])
         self.assertEqual(task["message"], "定时持仓分析完成：成功 2，失败 0，已写入 2 条历史")
+
+    def test_scheduler_registers_weekday_jobs_only(self):
+        scheduler = PortfolioScheduler()
+        scheduler.schedule_times = ["09:30", "15:00"]
+
+        class FakePortfolioManager:
+            def get_stock_count(self):
+                return 1
+
+        with patch("portfolio_scheduler.portfolio_manager", FakePortfolioManager()):
+            self.assertTrue(scheduler.start())
+            jobs = portfolio_schedule.get_jobs("portfolio_analysis")
+            self.assertEqual(len(jobs), 10)
+            self.assertTrue(all(getattr(job, "start_day", None) in {"monday", "tuesday", "wednesday", "thursday", "friday"} for job in jobs))
+
+        scheduler.stop()
 
 
 if __name__ == "__main__":

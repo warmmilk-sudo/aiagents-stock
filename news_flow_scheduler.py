@@ -2,11 +2,13 @@
 新闻流量定时任务调度模块
 实现三种定时任务：热点同步（30分钟）、预警生成（1小时）、深度分析（2小时）
 """
+import json
 import schedule
 import threading
 import time
 import logging
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, List, Optional, Callable
 
 logging.basicConfig(level=logging.INFO)
@@ -15,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 class NewsFlowScheduler:
     """新闻流量定时任务调度器"""
+    CONFIG_PATH = Path(__file__).resolve().with_name("news_flow_scheduler_config.json")
     
     # 任务类型定义
     TASK_TYPES = {
@@ -64,6 +67,7 @@ class NewsFlowScheduler:
         self.alert_system = None
         
         self._init_dependencies()
+        self._load_config()
         logger.info("[新闻流量] 调度器初始化完成")
     
     def _init_dependencies(self):
@@ -299,6 +303,7 @@ class NewsFlowScheduler:
         """设置任务开关"""
         if task_type in self.task_enabled:
             self.task_enabled[task_type] = enabled
+            self._save_config()
             logger.info(f"[新闻流量] 任务 {task_type} {'启用' if enabled else '禁用'}")
             
             # 如果调度器正在运行，重新注册任务
@@ -310,6 +315,7 @@ class NewsFlowScheduler:
         """设置任务间隔（分钟）"""
         if task_type in self.task_intervals:
             self.task_intervals[task_type] = interval
+            self._save_config()
             logger.info(f"[新闻流量] 任务 {task_type} 间隔设置为 {interval} 分钟")
             
             # 如果调度器正在运行，重新注册任务
@@ -329,6 +335,48 @@ class NewsFlowScheduler:
             },
             'next_run_times': self._get_next_run_times(),
         }
+
+    def update_task_config(self, task_enabled: Dict[str, bool], task_intervals: Dict[str, int]):
+        """批量更新任务配置并持久化"""
+        for key, value in task_enabled.items():
+            if key in self.task_enabled:
+                self.task_enabled[key] = bool(value)
+        for key, value in task_intervals.items():
+            if key in self.task_intervals:
+                self.task_intervals[key] = max(5, int(value))
+        self._save_config()
+        if self.running:
+            self.stop()
+            self.start()
+
+    def _load_config(self):
+        """加载持久化配置"""
+        if not self.CONFIG_PATH.exists():
+            return
+        try:
+            payload = json.loads(self.CONFIG_PATH.read_text(encoding="utf-8"))
+            enabled_map = payload.get("task_enabled") or {}
+            interval_map = payload.get("task_intervals") or {}
+            for key in self.task_enabled:
+                if key in enabled_map:
+                    self.task_enabled[key] = bool(enabled_map[key])
+            for key in self.task_intervals:
+                if key in interval_map:
+                    self.task_intervals[key] = max(5, int(interval_map[key]))
+            logger.info("[新闻流量] 已加载持久化调度配置")
+        except Exception as exc:
+            logger.warning(f"[新闻流量] 加载调度配置失败: {exc}")
+
+    def _save_config(self):
+        """保存持久化配置"""
+        try:
+            payload = {
+                "task_enabled": self.task_enabled,
+                "task_intervals": self.task_intervals,
+            }
+            self.CONFIG_PATH.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception as exc:
+            logger.warning(f"[新闻流量] 保存调度配置失败: {exc}")
     
     def _get_next_run_times(self) -> Dict:
         """获取下次运行时间"""

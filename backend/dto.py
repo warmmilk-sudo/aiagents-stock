@@ -21,7 +21,7 @@ class AnalystConfig(BaseModel):
 class AnalysisTaskRequest(BaseModel):
     stock_input: str = ""
     symbols: list[str] = Field(default_factory=list)
-    period: str = "1y"
+    period: Optional[str] = None
     batch_mode: Literal["顺序分析", "多线程并行"] = "顺序分析"
     max_workers: int = 3
     analysts: AnalystConfig = Field(default_factory=AnalystConfig)
@@ -315,3 +315,11 @@ class PendingActionResolveRequest(BaseModel):
 
 class ConfigUpdateRequest(BaseModel):
     values: dict[str, str]
+
+
+class DatabaseCleanupRequest(BaseModel):
+    days: int = 7
+
+
+class DatabaseRestoreRequest(BaseModel):
+    backup_name: str

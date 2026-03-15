@@ -240,16 +240,6 @@ export function ProfitGrowthPage() {
       sectionTabs={sectionTabs}
       activeSectionKey={section}
       onSectionChange={(nextSection) => setSection(nextSection as SectionKey)}
-      actions={
-        <>
-          <StatusBadge label={`结果 ${stocks.length}`} tone="default" />
-          <StatusBadge label={`监控 ${monitorStatus?.monitored_count ?? 0}`} tone="success" />
-          <StatusBadge
-            label={task ? `选股 ${task.status} ${Math.round((task.progress ?? 0) * 100)}%` : "选股空闲"}
-            tone={task?.status === "success" ? "success" : task?.status === "failed" ? "danger" : task ? "warning" : "default"}
-          />
-        </>
-      }
     >
       <div className={styles.stack}>
         {section === "results" ? (

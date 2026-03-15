@@ -85,7 +85,7 @@ class NewsFlowEngine:
         """
         运行快速分析（不含AI）
         
-        用于定时同步和快速查看
+        用于定时同步和快速查看，不触发推理模型分析
         
         Returns:
             {
@@ -199,6 +199,8 @@ class NewsFlowEngine:
                           reasoning_model: str = None) -> Dict:
         """
         运行完整分析（含AI）
+        
+        AI 智能分析链统一使用推理模型执行
         
         Returns:
             {

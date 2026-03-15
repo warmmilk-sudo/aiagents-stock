@@ -1,7 +1,8 @@
 import unittest
 from datetime import datetime
+from unittest.mock import mock_open, patch
 
-from monitor_scheduler import TradingTimeScheduler
+from monitor_scheduler import TradingTimeScheduler, WEEKDAY_TRADING_DAYS
 
 
 class _FakeMonitorService:
@@ -77,6 +78,15 @@ class TradingTimeSchedulerTests(unittest.TestCase):
 
         self.assertEqual(self.scheduler.get_next_trading_time(monday_0800), "2026-03-02 09:25")
         self.assertEqual(self.scheduler.get_next_trading_time(monday_1000), "交易时段内")
+
+    def test_load_config_forces_weekdays_only(self):
+        payload = '{"enabled": true, "trading_days": [1, 2, 3, 4, 5, 6, 7]}'
+        with patch("monitor_scheduler.os.path.exists", return_value=True), patch(
+            "builtins.open",
+            mock_open(read_data=payload),
+        ):
+            scheduler = TradingTimeScheduler(self.service)
+        self.assertEqual(scheduler.config["trading_days"], WEEKDAY_TRADING_DAYS)
 
 
 if __name__ == "__main__":

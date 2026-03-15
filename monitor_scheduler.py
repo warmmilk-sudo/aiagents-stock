@@ -53,6 +53,7 @@ except ImportError:
 
 
 logger = logging.getLogger(__name__)
+WEEKDAY_TRADING_DAYS = [1, 2, 3, 4, 5]
 
 
 class TradingTimeScheduler:
@@ -82,7 +83,7 @@ class TradingTimeScheduler:
                     {"start": "13:00", "end": "16:00"},
                 ],
             },
-            "trading_days": [1, 2, 3, 4, 5],
+            "trading_days": WEEKDAY_TRADING_DAYS,
             "auto_stop": True,
             "pre_market_minutes": 5,
             "post_market_minutes": 5,
@@ -95,6 +96,7 @@ class TradingTimeScheduler:
                     default_config.update(loaded_config)
             except Exception as exc:
                 logger.warning("Failed to load monitor scheduler config, using defaults: %s", exc)
+        default_config["trading_days"] = WEEKDAY_TRADING_DAYS
         return default_config
 
     def _save_config(self):
@@ -108,6 +110,7 @@ class TradingTimeScheduler:
 
     def update_config(self, **kwargs):
         self.config.update(kwargs)
+        self.config["trading_days"] = WEEKDAY_TRADING_DAYS
         self._save_config()
 
     @staticmethod
@@ -128,7 +131,7 @@ class TradingTimeScheduler:
 
     def _is_trading_date(self, target_date: date) -> bool:
         weekday = target_date.weekday() + 1  # 1=Monday
-        return weekday in self.config.get("trading_days", [1, 2, 3, 4, 5])
+        return weekday in WEEKDAY_TRADING_DAYS
 
     def is_trading_day(self, now: Optional[datetime] = None) -> bool:
         current = now or datetime.now()

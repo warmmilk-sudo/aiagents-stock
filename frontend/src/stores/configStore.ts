@@ -13,7 +13,7 @@ export interface ConfigField {
 
 interface ConfigPayload {
   config: Record<string, ConfigField>;
-  webhook_status: Record<string, unknown>;
+  webhook_status: Record<string, unknown> | string;
 }
 
 interface ConfigState {
@@ -36,7 +36,16 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
     const data = await apiFetch<ConfigPayload>("/api/config");
     set({
       fields: data.config,
-      webhookStatus: data.webhook_status,
+      webhookStatus:
+        typeof data.webhook_status === "string"
+          ? (() => {
+              try {
+                return JSON.parse(data.webhook_status) as Record<string, unknown>;
+              } catch {
+                return { raw: data.webhook_status };
+              }
+            })()
+          : data.webhook_status,
       loading: false,
     });
   },
@@ -67,7 +76,16 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
     });
     set({
       fields: data.config,
-      webhookStatus: data.webhook_status,
+      webhookStatus:
+        typeof data.webhook_status === "string"
+          ? (() => {
+              try {
+                return JSON.parse(data.webhook_status) as Record<string, unknown>;
+              } catch {
+                return { raw: data.webhook_status };
+              }
+            })()
+          : data.webhook_status,
     });
   },
 

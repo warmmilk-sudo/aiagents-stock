@@ -1,6 +1,7 @@
 import unittest
 
 from sector_strategy_normalization import (
+    _split_report_sections,
     build_sector_strategy_summary,
     derive_sector_strategy_recommended_sectors,
     normalize_sector_strategy_predictions,
@@ -184,6 +185,65 @@ class SectorStrategyNormalizationTests(unittest.TestCase):
         self.assertEqual([item["sector_name"] for item in recommended[:3]], ["半导体", "算力"])
         self.assertEqual(recommended[0]["type"], "看多主线")
         self.assertEqual(recommended[1]["type"], "轮动潜力")
+
+    def test_split_report_sections_extracts_reasoning_before_report_body(self) -> None:
+        body, reasoning = _split_report_sections(
+            "【推理过程】\n先汇总宏观、板块、资金和情绪结论，再输出综合报告。\n"
+            "【综合研判结论】\n"
+            "市场延续结构性活跃，科技成长仍是主线。"
+        )
+
+        self.assertEqual(body, "【综合研判结论】\n市场延续结构性活跃，科技成长仍是主线。")
+        self.assertEqual(reasoning, "先汇总宏观、板块、资金和情绪结论，再输出综合报告。")
+
+    def test_split_report_sections_extracts_trailing_reasoning_and_removes_think_block(self) -> None:
+        body, reasoning = _split_report_sections(
+            "# 板块研判\n半导体与算力保持强势。\n\n"
+            "思考过程：\n先比较景气度，再结合资金强弱判断主线延续性。\n"
+            "<think>补充验证高位波动风险。</think>"
+        )
+
+        self.assertEqual(body, "# 板块研判\n半导体与算力保持强势。")
+        self.assertEqual(reasoning, "补充验证高位波动风险。\n\n先比较景气度，再结合资金强弱判断主线延续性。")
+
+    def test_split_report_sections_keeps_macro_intro_before_first_heading(self) -> None:
+        body, reasoning = _split_report_sections(
+            "【推理过程】\nThis is internal reasoning in English.\n\n"
+            "以下为基于所给新闻线索形成的宏观策略分析报告。整体结论先行：\n\n"
+            "**核心判断：当前宏观环境处于结构性修复阶段。**\n\n"
+            "# 一、宏观环境评估\n"
+            "这里开始是正文。"
+        )
+
+        self.assertTrue(body.startswith("以下为基于所给新闻线索形成的宏观策略分析报告。整体结论先行："))
+        self.assertIn("**核心判断：当前宏观环境处于结构性修复阶段。**", body)
+        self.assertEqual(reasoning, "This is internal reasoning in English.")
+
+    def test_normalize_sector_strategy_reports_preserves_fund_and_sentiment_entries(self) -> None:
+        report_view = normalize_sector_strategy_result(
+            {
+                "agents_analysis": {
+                    "fund": {
+                        "agent_name": "资金流向分析师",
+                        "agent_role": "跟踪板块资金流向，分析主力行为和资金轮动",
+                        "focus_areas": ["资金流向", "主力行为", "北向资金", "板块轮动", "量价配合"],
+                        "analysis": "### 资金流向分析报告\n主力资金集中流入风电设备。",
+                    },
+                    "sentiment": {
+                        "agent_name": "市场情绪解码员",
+                        "agent_role": "量化市场情绪，识别恐慌贪婪信号，评估板块热度",
+                        "focus_areas": ["市场情绪", "赚钱效应", "热点识别", "恐慌贪婪", "活跃度"],
+                        "analysis": "# 市场情绪分析报告\n当前情绪谨慎偏弱。",
+                    },
+                },
+                "final_predictions": self.complete_result["final_predictions"],
+            }
+        )
+
+        self.assertEqual(report_view["raw_reports"]["fund"]["title"], "资金流向分析师")
+        self.assertIn("主力资金集中流入风电设备", report_view["raw_reports"]["fund"]["body"])
+        self.assertEqual(report_view["raw_reports"]["sentiment"]["title"], "市场情绪解码员")
+        self.assertIn("当前情绪谨慎偏弱", report_view["raw_reports"]["sentiment"]["body"])
 
 
 if __name__ == "__main__":

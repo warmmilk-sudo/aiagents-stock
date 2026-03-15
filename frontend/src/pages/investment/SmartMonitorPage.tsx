@@ -527,6 +527,20 @@ export function SmartMonitorPage() {
         </section>
       ) : null}
       <section className={styles.card}>
+        <div className={styles.cardHeader}>
+          <div className={styles.actions}>
+            <button
+              className={activePanel === "alert" ? styles.primaryButton : styles.secondaryButton}
+              onClick={() => setActivePanel((current) => current === "alert" ? null : "alert")}
+              type="button"
+            >
+              新增预警
+            </button>
+          </div>
+        </div>
+      </section>
+      {renderAlertComposer()}
+      <section className={styles.card}>
         <div className={styles.list}>
           {notifications.map((item) => {
             const meta = notificationMeta(item.message);
@@ -605,10 +619,8 @@ export function SmartMonitorPage() {
       </section>
       {renderAnalysisComposer()}
       {renderTaskComposer()}
-      {renderAlertComposer()}
       <section className={styles.card}>
         <div className={styles.cardHeader}>
-          <p className={styles.helperText}>启用状态切换后会立即影响当前任务列表。</p>
           <div className={styles.actions}>
             <button
               className={activePanel === "task" ? styles.primaryButton : styles.secondaryButton}
@@ -642,49 +654,34 @@ export function SmartMonitorPage() {
           {tasks.length === 0 ? <div className={styles.muted}>暂无智能盯盘任务</div> : null}
         </div>
       </section>
-      <section className={styles.card}>
-        <div className={styles.cardHeader}>
-          <p className={styles.helperText}>价格预警仍保留独立列表，但监控间隔统一由运行控制管理。</p>
-          <div className={styles.actions}>
-            <button
-              className={activePanel === "alert" ? styles.primaryButton : styles.secondaryButton}
-              onClick={() => setActivePanel((current) => current === "alert" ? null : "alert")}
-              type="button"
-            >
-              新增预警
-            </button>
-          </div>
-        </div>
-        <div className={styles.tableWrap}>
-          <table className={styles.table}>
-            <thead><tr><th>股票</th><th>入场区间</th><th>止盈 / 止损</th><th>通知</th><th>账户</th><th>操作</th></tr></thead>
-            <tbody>
-              {alerts.map((alert) => (
-                <tr key={alert.id}>
-                  <td><strong>{stockDisplayName(alert.name, alert.symbol)}</strong></td>
-                  <td>{formatNumber(alert.entry_range?.min)} - {formatNumber(alert.entry_range?.max)}</td>
-                  <td>{formatNumber(alert.take_profit)} / {formatNumber(alert.stop_loss)}</td>
-                  <td><StatusBadge label={alert.notification_enabled ? "开启" : "关闭"} tone={alert.notification_enabled ? "default" : "warning"} /></td>
-                  <td>{alert.account_name ?? "默认账户"}</td>
-                  <td><div className={styles.actions}><button className={styles.secondaryButton} onClick={() => void runMonitorCommand(`/api/price-alerts/${alert.id}/notification?enabled=${String(!alert.notification_enabled)}`, alert.notification_enabled ? "已关闭预警通知" : "已开启预警通知")} type="button">{alert.notification_enabled ? "关闭通知" : "开启通知"}</button><button className={styles.dangerButton} onClick={() => void runMonitorCommand(`/api/price-alerts/${alert.id}`, "价格预警已删除", "DELETE")} type="button">删除</button></div></td>
-                </tr>
-              ))}
-              {alerts.length === 0 ? <tr><td className={styles.muted} colSpan={6}>暂无价格预警</td></tr> : null}
-            </tbody>
-          </table>
-        </div>
-      </section>
     </>
   );
 
   const renderControlsSection = () => (
     <section className={styles.card}>
       <div className={styles.actions}>
-        <button className={styles.secondaryButton} onClick={() => void runMonitorCommand("/api/system/monitor-service/start", "监控服务已启动")} type="button">启动服务</button>
-        <button className={styles.secondaryButton} onClick={() => void runMonitorCommand("/api/system/monitor-service/stop", "监控服务已停止")} type="button">停止服务</button>
+        <label className={styles.switchField}>
+          <span className={styles.switchLabel}>启用监控服务</span>
+          <span className={styles.switchControl}>
+            <input
+              checked={Boolean(systemStatus?.monitor_service?.running)}
+              onChange={(event) =>
+                void runMonitorCommand(
+                  event.target.checked ? "/api/system/monitor-service/start" : "/api/system/monitor-service/stop",
+                  event.target.checked ? "监控服务已启动" : "监控服务已停止",
+                )
+              }
+              type="checkbox"
+            />
+            <span className={styles.switchTrack} aria-hidden="true">
+              <span className={styles.switchThumb} />
+            </span>
+          </span>
+        </label>
         <button className={styles.secondaryButton} onClick={() => void runMonitorCommand("/api/smart-monitor/tasks/enable-all?enabled=true", "全部任务已启用")} type="button">全部启用</button>
         <button className={styles.secondaryButton} onClick={() => void runMonitorCommand("/api/smart-monitor/tasks/enable-all?enabled=false", "全部任务已停用")} type="button">全部停用</button>
       </div>
+      <p className={styles.helperText} style={{ marginTop: 14 }}>自动盯盘仅在周一至周五的交易时段运行，周六周日不会自动执行。</p>
       <div className={styles.stack} style={{ marginTop: 14 }}>
         <div className={styles.field}>
           <label htmlFor="decision-interval">盘中决策间隔：{runtimeConfig.intraday_decision_interval_minutes} 分钟</label>
@@ -734,9 +731,6 @@ export function SmartMonitorPage() {
   return (
     <PageFrame
       title="智能盯盘"
-      actions={
-        <StatusBadge label={systemStatus?.monitor_service?.running ? `监控服务运行中` : "监控服务未启动"} tone={systemStatus?.monitor_service?.running ? "success" : "warning"} />
-      }
       activeSectionKey={section}
       onSectionChange={(nextSection) => setSection(nextSection as SectionKey)}
       sectionTabs={sectionTabs}

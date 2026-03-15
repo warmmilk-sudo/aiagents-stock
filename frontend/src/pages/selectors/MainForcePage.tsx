@@ -361,7 +361,6 @@ export function MainForcePage() {
       const data = await apiFetchCached<MainForceHistoryRecord>(`/api/selectors/main-force/history/${recordId}`);
       setLoadedHistoryRecord(data);
       setSection("batch");
-      setMessage(`已加载历史记录 #${recordId}`);
     } catch (requestError) {
       setError(requestError instanceof ApiRequestError ? requestError.message : "加载历史记录失败");
     }
@@ -409,39 +408,6 @@ export function MainForcePage() {
       sectionTabs={sectionTabs}
       activeSectionKey={section}
       onSectionChange={(nextSection) => setSection(nextSection as SectionKey)}
-      actions={
-        <>
-          <StatusBadge label={`候选 ${rawStocks.length}`} tone="default" />
-          <StatusBadge
-            label={
-              selectionTask
-                ? `筛选 ${selectionTask.status} ${Math.round((selectionTask.progress ?? 0) * 100)}%`
-                : "筛选空闲"
-            }
-            tone={
-              selectionTask?.status === "success"
-                ? "success"
-                : selectionTask?.status === "failed"
-                  ? "danger"
-                  : selectionTask
-                    ? "warning"
-                    : "default"
-            }
-          />
-          <StatusBadge
-            label={batchTask ? `批量 ${batchTask.status} ${Math.round((batchTask.progress ?? 0) * 100)}%` : "批量空闲"}
-            tone={
-              batchTask?.status === "success"
-                ? "success"
-                : batchTask?.status === "failed"
-                  ? "danger"
-                  : batchTask
-                    ? "warning"
-                    : "default"
-            }
-          />
-        </>
-      }
     >
       <div className={styles.stack}>
         {section === "selection" ? (
@@ -508,75 +474,75 @@ export function MainForcePage() {
 
             {selectionResult?.success ? (
               <>
-            <section className={styles.card}>
-              <div className={styles.compactGrid}>
-                <div className={styles.metric}>
-                  <span className={styles.muted}>获取股票数</span>
-                  <strong>{selectionResult.total_stocks ?? 0}</strong>
-                </div>
-                <div className={styles.metric}>
-                  <span className={styles.muted}>筛选后</span>
-                  <strong>{selectionResult.filtered_stocks ?? 0}</strong>
-                </div>
-                <div className={styles.metric}>
-                  <span className={styles.muted}>最终推荐</span>
-                  <strong>{selectionResult.final_recommendations?.length ?? 0}</strong>
-                </div>
-              </div>
-            </section>
+                <section className={styles.card}>
+                  <div className={styles.compactGrid}>
+                    <div className={styles.metric}>
+                      <span className={styles.muted}>获取股票数</span>
+                      <strong>{selectionResult.total_stocks ?? 0}</strong>
+                    </div>
+                    <div className={styles.metric}>
+                      <span className={styles.muted}>筛选后</span>
+                      <strong>{selectionResult.filtered_stocks ?? 0}</strong>
+                    </div>
+                    <div className={styles.metric}>
+                      <span className={styles.muted}>最终推荐</span>
+                      <strong>{selectionResult.final_recommendations?.length ?? 0}</strong>
+                    </div>
+                  </div>
+                </section>
 
-            <section className={styles.card}>
-              <h2>精选推荐</h2>
-              <div className={styles.list}>
-                {(selectionResult.final_recommendations ?? []).map((item, index) => {
-                  const stockData = item.stock_data ?? {};
-                  const industryKey = findKey(stockData, industryPatterns);
-                  const mainFundKey = findKey(stockData, mainFundPatterns);
-                  const rangeKey = findKey(stockData, rangePatterns);
-                  return (
-                    <div className={styles.listItem} key={`${item.symbol ?? "unknown"}-${index}`}>
-                      <strong>
-                        第 {item.rank ?? index + 1} 名 · {asText(item.symbol)} - {asText(item.name)}
-                      </strong>
-                      <div className={styles.compactGrid} style={{ marginTop: 12 }}>
-                        <div>
-                          <div className={styles.muted}>推荐理由</div>
-                          <div>{(item.reasons ?? []).length ? item.reasons?.join("；") : "暂无"}</div>
-                        </div>
-                        <div>
-                          <div className={styles.muted}>建议仓位 / 周期</div>
-                          <div>
-                            {asText(item.position)} / {asText(item.investment_period)}
+                <section className={styles.card}>
+                  <h2>精选推荐</h2>
+                  <div className={styles.list}>
+                    {(selectionResult.final_recommendations ?? []).map((item, index) => {
+                      const stockData = item.stock_data ?? {};
+                      const industryKey = findKey(stockData, industryPatterns);
+                      const mainFundKey = findKey(stockData, mainFundPatterns);
+                      const rangeKey = findKey(stockData, rangePatterns);
+                      return (
+                        <div className={styles.listItem} key={`${item.symbol ?? "unknown"}-${index}`}>
+                          <strong>
+                            第 {item.rank ?? index + 1} 名 · {asText(item.symbol)} - {asText(item.name)}
+                          </strong>
+                          <div className={styles.compactGrid} style={{ marginTop: 12 }}>
+                            <div>
+                              <div className={styles.muted}>推荐理由</div>
+                              <div>{(item.reasons ?? []).length ? item.reasons?.join("；") : "暂无"}</div>
+                            </div>
+                            <div>
+                              <div className={styles.muted}>建议仓位 / 周期</div>
+                              <div>
+                                {asText(item.position)} / {asText(item.investment_period)}
+                              </div>
+                            </div>
+                            <div>
+                              <div className={styles.muted}>亮点</div>
+                              <div>{asText(item.highlights)}</div>
+                            </div>
+                            <div>
+                              <div className={styles.muted}>风险提示</div>
+                              <div>{asText(item.risks)}</div>
+                            </div>
+                          </div>
+                          <div className={styles.compactGrid} style={{ marginTop: 12 }}>
+                            <div className={styles.metric}>
+                              <span className={styles.muted}>所属行业</span>
+                              <strong>{industryKey ? asText(stockData[industryKey]) : "N/A"}</strong>
+                            </div>
+                            <div className={styles.metric}>
+                              <span className={styles.muted}>主力资金净流入</span>
+                              <strong>{mainFundKey ? asText(stockData[mainFundKey]) : "N/A"}</strong>
+                            </div>
+                            <div className={styles.metric}>
+                              <span className={styles.muted}>区间涨跌幅</span>
+                              <strong>{rangeKey ? asText(stockData[rangeKey]) : "N/A"}</strong>
+                            </div>
                           </div>
                         </div>
-                        <div>
-                          <div className={styles.muted}>亮点</div>
-                          <div>{asText(item.highlights)}</div>
-                        </div>
-                        <div>
-                          <div className={styles.muted}>风险提示</div>
-                          <div>{asText(item.risks)}</div>
-                        </div>
-                      </div>
-                      <div className={styles.compactGrid} style={{ marginTop: 12 }}>
-                        <div className={styles.metric}>
-                          <span className={styles.muted}>所属行业</span>
-                          <strong>{industryKey ? asText(stockData[industryKey]) : "N/A"}</strong>
-                        </div>
-                        <div className={styles.metric}>
-                          <span className={styles.muted}>主力资金净流入</span>
-                          <strong>{mainFundKey ? asText(stockData[mainFundKey]) : "N/A"}</strong>
-                        </div>
-                        <div className={styles.metric}>
-                          <span className={styles.muted}>区间涨跌幅</span>
-                          <strong>{rangeKey ? asText(stockData[rangeKey]) : "N/A"}</strong>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </section>
+                      );
+                    })}
+                  </div>
+                </section>
               </>
             ) : null}
           </>
@@ -584,44 +550,44 @@ export function MainForcePage() {
 
         {section === "candidates" ? (
           <section className={styles.card}>
-              <div className={styles.actions}>
-                <h2>候选股票列表</h2>
-                <button className={styles.secondaryButton} onClick={() => void exportSelection("pdf")} type="button">
-                  导出 PDF
-                </button>
-                <button className={styles.secondaryButton} onClick={() => void exportSelection("markdown")} type="button">
-                  导出 Markdown
-                </button>
-                <button
-                  className={styles.secondaryButton}
-                  onClick={() => downloadCsv(rawStocks, `main_force_candidates_${new Date().toISOString().slice(0, 10)}.csv`)}
-                  type="button"
-                >
-                  下载候选列表 CSV
-                </button>
-              </div>
-              <div className={styles.tableWrap}>
-                <table className={styles.table}>
-                  <thead>
-                    <tr>
+            <div className={styles.actions}>
+              <h2>候选股票列表</h2>
+              <button className={styles.secondaryButton} onClick={() => void exportSelection("pdf")} type="button">
+                导出 PDF
+              </button>
+              <button className={styles.secondaryButton} onClick={() => void exportSelection("markdown")} type="button">
+                导出 Markdown
+              </button>
+              <button
+                className={styles.secondaryButton}
+                onClick={() => downloadCsv(rawStocks, `main_force_candidates_${new Date().toISOString().slice(0, 10)}.csv`)}
+                type="button"
+              >
+                下载候选列表 CSV
+              </button>
+            </div>
+            <div className={styles.tableWrap}>
+              <table className={styles.table}>
+                <thead>
+                  <tr>
+                    {candidateMeta.displayKeys.map((key) => (
+                      <th key={key}>{key}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {rawStocks.map((row, index) => (
+                    <tr key={`${normalizeSymbol(row[candidateMeta.codeKey]) || "row"}-${index}`}>
                       {candidateMeta.displayKeys.map((key) => (
-                        <th key={key}>{key}</th>
+                        <td key={key}>{asText(row[key])}</td>
                       ))}
                     </tr>
-                  </thead>
-                  <tbody>
-                    {rawStocks.map((row, index) => (
-                      <tr key={`${normalizeSymbol(row[candidateMeta.codeKey]) || "row"}-${index}`}>
-                        {candidateMeta.displayKeys.map((key) => (
-                          <td key={key}>{asText(row[key])}</td>
-                        ))}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <p className={styles.muted}>共 {rawStocks.length} 只候选股票。</p>
-            </section>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className={styles.muted}>共 {rawStocks.length} 只候选股票。</p>
+          </section>
         ) : null}
 
         {section === "batch" ? (

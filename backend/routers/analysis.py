@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Request
 
+import config
 from backend.api import ApiError, success_payload
 from backend.auth import build_session_key, require_session
 from backend.dto import AnalysisTaskRequest
@@ -19,7 +20,7 @@ def submit_analysis_task(request: Request, payload: AnalysisTaskRequest) -> dict
         task_id = services.submit_research_analysis_task(
             session_key=build_session_key(session),
             symbols=symbols,
-            period=payload.period,
+            period=getattr(config, "DATA_PERIOD", "1y"),
             batch_mode=payload.batch_mode,
             max_workers=payload.max_workers,
             analysts=services.build_analyst_config(payload.analysts),

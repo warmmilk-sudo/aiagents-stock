@@ -2,6 +2,24 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react-swc";
 export default defineConfig({
     plugins: [react()],
+    build: {
+        rollupOptions: {
+            output: {
+                manualChunks: function (id) {
+                    if (id.indexOf("node_modules") === -1) {
+                        return undefined;
+                    }
+                    if (id.indexOf("chart.js") !== -1 || id.indexOf("react-chartjs-2") !== -1) {
+                        return "charts";
+                    }
+                    if (id.indexOf("react") !== -1) {
+                        return "react-vendor";
+                    }
+                    return "vendor";
+                },
+            },
+        },
+    },
     server: {
         host: "0.0.0.0",
         port: 5173,

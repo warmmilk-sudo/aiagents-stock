@@ -14,6 +14,7 @@ from analysis_repository import analysis_repository
 from asset_service import STATUS_RESEARCH, STATUS_WATCHLIST, asset_service
 from batch_analysis_service import analyze_single_stock_for_batch
 from config_manager import config_manager
+from database_admin import database_admin
 from investment_action_utils import build_analysis_action_payload
 from investment_db_utils import DEFAULT_ACCOUNT_NAME
 from low_price_bull_monitor import low_price_bull_monitor
@@ -1887,15 +1888,7 @@ def update_news_flow_scheduler_config(
     task_intervals: dict[str, int],
 ) -> dict[str, Any]:
     scheduler = _get_news_flow_scheduler()
-    for key, value in task_enabled.items():
-        if key in scheduler.task_enabled:
-            scheduler.task_enabled[key] = bool(value)
-    for key, value in task_intervals.items():
-        if key in scheduler.task_intervals:
-            scheduler.task_intervals[key] = max(5, int(value))
-    if scheduler.running:
-        scheduler.stop()
-        scheduler.start()
+    scheduler.update_task_config(task_enabled, task_intervals)
     return _json_safe(scheduler.get_status())
 
 
@@ -2367,6 +2360,22 @@ def get_config_payload() -> dict[str, Any]:
 
 def test_webhook() -> tuple[bool, str]:
     return notification_service.send_test_webhook()
+
+
+def get_database_admin_status() -> dict[str, Any]:
+    return database_admin.get_status()
+
+
+def create_database_backup() -> dict[str, Any]:
+    return database_admin.create_backup()
+
+
+def restore_database_backup(backup_name: str) -> dict[str, Any]:
+    return database_admin.restore_backup(backup_name)
+
+
+def cleanup_database_history(days: int) -> dict[str, Any]:
+    return database_admin.cleanup_history(days)
 
 
 def delete_price_alert(stock_id: int) -> bool:

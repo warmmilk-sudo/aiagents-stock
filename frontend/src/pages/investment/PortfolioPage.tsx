@@ -70,6 +70,7 @@ interface SchedulerStatus {
   schedule_times?: string[];
   analysis_mode?: string;
   max_workers?: number;
+  selected_agents?: string[];
 }
 
 interface PositionIntentPayload {
@@ -111,6 +112,20 @@ const UI = {
 const TRADE_PAGE_SIZE = 20;
 const PAGE_CACHE_TTL_MS = 30_000;
 const PIE_COLORS = ["#c65d4b", "#db7c57", "#d6a45f", "#7f9b6d", "#4f7c82", "#6f6d9b", "#9a5f7c", "#8b7d64"];
+
+const schedulerAnalystOptions = [
+  { key: "technical", label: "技术分析师" },
+  { key: "fundamental", label: "基本面分析师" },
+  { key: "fund_flow", label: "资金流分析师" },
+  { key: "risk", label: "风险控制分析师" },
+  { key: "sentiment", label: "市场情绪分析师" },
+  { key: "news", label: "新闻事件分析师" },
+] as const;
+
+type SchedulerAnalystKey = (typeof schedulerAnalystOptions)[number]["key"];
+
+const defaultSchedulerAnalysts: SchedulerAnalystKey[] = ["technical", "fundamental", "fund_flow", "risk"];
+const schedulerAnalystKeySet = new Set<SchedulerAnalystKey>(schedulerAnalystOptions.map((item) => item.key));
 
 ChartJS.register(ArcElement, Legend, Tooltip);
 
@@ -166,6 +181,17 @@ function schedulerModeLabel(value?: string) {
   return value === "parallel" ? "并行分析" : "顺序分析";
 }
 
+function normalizeSchedulerAnalysts(value?: string[] | null): SchedulerAnalystKey[] {
+  const nextSelection = Array.isArray(value)
+    ? value.filter((item): item is SchedulerAnalystKey => schedulerAnalystKeySet.has(item as SchedulerAnalystKey))
+    : [];
+  return nextSelection.length ? Array.from(new Set(nextSelection)) : [...defaultSchedulerAnalysts];
+}
+
+function schedulerAnalystLabel(value: string) {
+  return schedulerAnalystOptions.find((item) => item.key === value)?.label || value;
+}
+
 function resolvePnlTone(value: unknown, stylesMap: Record<string, string>) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) {
@@ -200,10 +226,23 @@ export function PortfolioPage() {
   const [schedulerMaxWorkers, setSchedulerMaxWorkers] = useState(
     () => (cachedPage?.scheduler as SchedulerStatus | null)?.max_workers ?? 3,
   );
+  const [schedulerAnalysts, setSchedulerAnalysts] = useState<SchedulerAnalystKey[]>(
+    () => normalizeSchedulerAnalysts((cachedPage?.scheduler as SchedulerStatus | null)?.selected_agents),
+  );
   const [activePanel, setActivePanel] = useState<ComposerPanel>(null);
   const [section, setSection] = useState<SectionKey>("overview");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+
+  const applySchedulerState = (schedulerData: SchedulerStatus | null) => {
+    setScheduler(schedulerData);
+    const nextSchedulerTimes = (schedulerData?.schedule_times ?? [])[0] || "09:30";
+    setSchedulerTimes(nextSchedulerTimes);
+    setSchedulerMode(schedulerData?.analysis_mode === "parallel" ? "parallel" : "sequential");
+    setSchedulerMaxWorkers(schedulerData?.max_workers ?? 3);
+    setSchedulerAnalysts(normalizeSchedulerAnalysts(schedulerData?.selected_agents));
+    return nextSchedulerTimes;
+  };
 
   const applyPageCache = (cache: PortfolioPageCache | null) => {
     if (!cache) {
@@ -214,11 +253,7 @@ export function PortfolioPage() {
     setTradePage(cache.tradePage || 1);
     setTradeTotal(cache.tradeTotal || 0);
     setRisk((cache.risk as PortfolioRisk | null) ?? null);
-    const cachedScheduler = (cache.scheduler as SchedulerStatus | null) ?? null;
-    setScheduler(cachedScheduler);
-    setSchedulerTimes(cache.schedulerTimes || "09:30");
-    setSchedulerMode(cachedScheduler?.analysis_mode === "parallel" ? "parallel" : "sequential");
-    setSchedulerMaxWorkers(cachedScheduler?.max_workers ?? 3);
+    applySchedulerState((cache.scheduler as SchedulerStatus | null) ?? null);
   };
 
   const loadAll = async (force = false, targetTradePage = tradePage) => {
@@ -249,11 +284,7 @@ export function PortfolioPage() {
     setTradePage(tradeData.page);
     setTradeTotal(tradeData.total);
     setRisk(riskData);
-    setScheduler(schedulerData);
-    const nextSchedulerTimes = (schedulerData.schedule_times ?? []).join(", ") || "09:30";
-    setSchedulerTimes(nextSchedulerTimes);
-    setSchedulerMode(schedulerData.analysis_mode === "parallel" ? "parallel" : "sequential");
-    setSchedulerMaxWorkers(schedulerData.max_workers ?? 3);
+    const nextSchedulerTimes = applySchedulerState(schedulerData);
     setKnownAccounts(
       stockData
         .map((item) => item.account_name || UI.defaultAccount)
@@ -447,15 +478,21 @@ export function PortfolioPage() {
   const saveScheduler = async () => {
     setMessage("");
     setError("");
+    if (!schedulerAnalysts.length) {
+      setError("请至少选择一位分析师。");
+      return;
+    }
     try {
-      await apiFetch("/api/portfolio/scheduler", {
+      const nextScheduler = await apiFetch<SchedulerStatus>("/api/portfolio/scheduler", {
         method: "PUT",
         body: JSON.stringify({
-          schedule_times: schedulerTimes.split(",").map((item) => item.trim()).filter(Boolean),
+          schedule_times: [schedulerTimes.trim() || "09:30"],
           analysis_mode: schedulerMode,
           max_workers: schedulerMaxWorkers,
+          selected_agents: schedulerAnalysts,
         }),
       });
+      applySchedulerState(nextScheduler);
       setMessage("定时分析配置已更新。");
       await loadAll(true, tradePage);
     } catch (requestError) {
@@ -467,9 +504,10 @@ export function PortfolioPage() {
     setMessage("");
     setError("");
     try {
-      await apiFetch(running ? "/api/portfolio/scheduler/start" : "/api/portfolio/scheduler/stop", {
+      const nextScheduler = await apiFetch<SchedulerStatus>(running ? "/api/portfolio/scheduler/start" : "/api/portfolio/scheduler/stop", {
         method: "POST",
       });
+      applySchedulerState(nextScheduler);
       setMessage(running ? "定时分析已启动。" : "定时分析已停止。");
       await loadAll(true, tradePage);
     } catch (requestError) {
@@ -616,7 +654,7 @@ export function PortfolioPage() {
       return (
         <section className={styles.card}>
           <div className={styles.cardHeader}>
-            <p className={styles.helperText}>可以直接修改执行时间、分析模式和并发线程数。</p>
+            <p className={styles.helperText}>可以直接选择执行时间、分析模式、分析师和并发线程数，仅在周一至周五自动执行。</p>
             <button className={styles.tertiaryButton} onClick={() => setActivePanel(null)} type="button">
               {UI.close}
             </button>
@@ -624,7 +662,13 @@ export function PortfolioPage() {
           <div className={styles.formGrid}>
             <div className={styles.field}>
               <label htmlFor="scheduler-times">执行时间</label>
-              <input id="scheduler-times" value={schedulerTimes} onChange={(event) => setSchedulerTimes(event.target.value)} />
+              <input
+                id="scheduler-times"
+                onChange={(event) => setSchedulerTimes(event.target.value)}
+                step="60"
+                type="time"
+                value={schedulerTimes}
+              />
             </div>
             <div className={styles.field}>
               <label htmlFor="scheduler-mode">分析模式</label>
@@ -653,11 +697,44 @@ export function PortfolioPage() {
                 </select>
               </div>
             ) : null}
+            <div className={styles.field} style={{ gridColumn: "1 / -1" }}>
+              <label>分析师配置</label>
+              <div className={styles.analystSelectionGroup}>
+                {schedulerAnalystOptions.map((item) => (
+                  <label
+                    className={styles.analystOption}
+                    htmlFor={`scheduler-analyst-${item.key}`}
+                    key={item.key}
+                  >
+                    <input
+                      checked={schedulerAnalysts.includes(item.key)}
+                      id={`scheduler-analyst-${item.key}`}
+                      onChange={(event) => {
+                        setSchedulerAnalysts((current) => (
+                          event.target.checked
+                            ? Array.from(new Set([...current, item.key]))
+                            : current.filter((value) => value !== item.key)
+                        ));
+                      }}
+                      type="checkbox"
+                    />
+                    <span>{item.label}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
           </div>
           <div className={styles.actions} style={{ marginTop: 14 }}>
             <button className={styles.secondaryButton} onClick={() => void saveScheduler()} type="button">保存调度</button>
-            <button className={styles.secondaryButton} onClick={() => void toggleScheduler(true)} type="button">启动</button>
-            <button className={styles.secondaryButton} onClick={() => void toggleScheduler(false)} type="button">停止</button>
+            <label className={styles.switchField}>
+              <span className={styles.switchLabel}>启用定时分析</span>
+              <span className={styles.switchControl}>
+                <input checked={Boolean(scheduler?.is_running)} onChange={(event) => void toggleScheduler(event.target.checked)} type="checkbox" />
+                <span className={styles.switchTrack} aria-hidden="true">
+                  <span className={styles.switchThumb} />
+                </span>
+              </span>
+            </label>
             <button className={styles.primaryButton} onClick={() => void runSchedulerNow()} type="button">立即执行</button>
           </div>
         </section>
@@ -673,13 +750,6 @@ export function PortfolioPage() {
       sectionTabs={sectionTabs}
       activeSectionKey={section}
       onSectionChange={(nextSection) => setSection(nextSection as SectionKey)}
-      actions={
-        <>
-          <StatusBadge label={scheduler?.is_running ? UI.schedulerRunning : UI.schedulerIdle} tone={scheduler?.is_running ? "success" : "default"} />
-          <StatusBadge label={`持仓 ${stocks.length}`} tone="default" />
-          <StatusBadge label={`风险提醒 ${riskWarnings.length}`} tone={riskWarnings.length ? "warning" : "default"} />
-        </>
-      }
     >
       <div className={styles.stack}>
         {section === "overview" ? (
@@ -817,7 +887,7 @@ export function PortfolioPage() {
                     <tr>
                       <th>股票</th>
                       <th>成本 / 数量</th>
-                      <th className={styles.numericCell}>盈亏 / 收益率</th>
+                      <th>盈亏 / 收益率</th>
                       <th>分析历史</th>
                     </tr>
                   </thead>
@@ -832,8 +902,11 @@ export function PortfolioPage() {
                           <strong>{stock.name}</strong>
                           <div className={styles.muted}>{stock.code}</div>
                         </td>
-                        <td>{numberText(stock.cost_price)} / {stock.quantity ?? "N/A"}</td>
-                        <td className={`${styles.numericCell} ${pnlClassName}`}>
+                        <td className={styles.holdingMetricCell}>
+                          <div>{numberText(stock.cost_price)}</div>
+                          <div>{stock.quantity ?? "N/A"}</div>
+                        </td>
+                        <td className={`${styles.holdingMetricCell} ${pnlClassName}`}>
                           <div>{numberText(metrics?.pnl)}</div>
                           <div>{percentText(metrics?.pnlPct)}</div>
                         </td>
@@ -942,6 +1015,7 @@ export function PortfolioPage() {
                 <div className={styles.metric}>
                   <span className={styles.muted}>执行时间</span>
                   <strong>{schedulerTimes || "未配置"}</strong>
+                  <div className={styles.muted}>仅周一至周五执行</div>
                 </div>
                 <div className={styles.metric}>
                   <span className={styles.muted}>分析模式</span>
@@ -950,6 +1024,14 @@ export function PortfolioPage() {
                 <div className={styles.metric}>
                   <span className={styles.muted}>最大并发</span>
                   <strong>{scheduler?.max_workers ?? 3}</strong>
+                </div>
+                <div className={styles.metric}>
+                  <span className={styles.muted}>分析师配置</span>
+                  <strong>
+                    {normalizeSchedulerAnalysts(scheduler?.selected_agents)
+                      .map((item) => schedulerAnalystLabel(item))
+                      .join("、")}
+                  </strong>
                 </div>
               </div>
             </section>

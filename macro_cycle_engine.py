@@ -6,6 +6,7 @@
 from macro_cycle_agents import MacroCycleAgents
 from macro_cycle_data import MacroCycleDataFetcher
 from macro_cycle_db import macro_cycle_db
+from ui_shared import _split_analysis_report_sections
 from typing import Dict, Any
 import time
 import logging
@@ -159,7 +160,8 @@ class MacroCycleEngine:
         if not chief_analysis:
             return ""
 
-        normalized = str(chief_analysis).replace("\r\n", "\n").strip()
+        body, _reasoning = _split_analysis_report_sections(chief_analysis)
+        normalized = str(body or chief_analysis).replace("\r\n", "\n").strip()
         for paragraph in normalized.split("\n\n"):
             text = paragraph.strip().lstrip("#*-> ")
             if len(text) >= 20:

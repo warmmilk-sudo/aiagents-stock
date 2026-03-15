@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 
 import { PageFrame } from "../../components/common/PageFrame";
 import { StatusBadge } from "../../components/common/StatusBadge";
@@ -65,6 +66,26 @@ function renderField(
   field: ConfigField,
   setValue: (key: string, value: string) => void,
 ) {
+  const optionLabel = (option: string) => {
+    if (field.type === "boolean") {
+      return option === "true" ? "开启" : "关闭";
+    }
+    if (key === "WEBHOOK_TYPE") {
+      return option === "dingtalk" ? "钉钉" : option === "feishu" ? "飞书" : option;
+    }
+    if (key === "DATA_PERIOD") {
+      return (
+        {
+          "6mo": "6 个月",
+          "1y": "1 年",
+          "2y": "2 年",
+          "5y": "5 年",
+        }[option] || option
+      );
+    }
+    return option;
+  };
+
   return (
     <div className={styles.field} key={key}>
       <label htmlFor={key}>
@@ -75,14 +96,14 @@ function renderField(
         <select id={key} value={field.value} onChange={(event) => setValue(key, event.target.value)}>
           {field.options.map((option) => (
             <option key={option} value={option}>
-              {option}
+              {optionLabel(option)}
             </option>
           ))}
         </select>
       ) : field.type === "boolean" ? (
         <select id={key} value={field.value} onChange={(event) => setValue(key, event.target.value)}>
-          <option value="true">true</option>
-          <option value="false">false</option>
+          <option value="true">开启</option>
+          <option value="false">关闭</option>
         </select>
       ) : (
         <input
@@ -92,12 +113,12 @@ function renderField(
           value={field.value}
         />
       )}
-      <small className={styles.muted}>{key}</small>
     </div>
   );
 }
 
 export function ConfigPage() {
+  const navigate = useNavigate();
   const fields = useConfigStore((state) => state.fields);
   const webhookStatus = useConfigStore((state) => state.webhookStatus);
   const loading = useConfigStore((state) => state.loading);
@@ -136,6 +157,60 @@ export function ConfigPage() {
   };
 
   const fieldEntries = useMemo(() => Object.entries(fields), [fields]);
+  const webhookStatusEntries = useMemo(() => {
+    const normalizeValue = (value: unknown) => {
+      if (typeof value === "boolean") {
+        return value ? "已开启" : "未开启";
+      }
+      if (value === null || value === undefined || value === "") {
+        return "未配置";
+      }
+      if (typeof value === "string") {
+        if (value === "dingtalk") {
+          return "钉钉";
+        }
+        if (value === "feishu") {
+          return "飞书";
+        }
+        return value;
+      }
+      return String(value);
+    };
+
+    const orderedKeys = [
+      "enabled",
+      "configured",
+      "webhook_type",
+      "webhook_url",
+      "raw",
+    ];
+    const labelMap: Record<string, string> = {
+      enabled: "通知开关",
+      configured: "配置状态",
+      webhook_type: "Webhook 类型",
+      webhook_url: "Webhook 地址",
+      raw: "原始信息",
+    };
+    const seen = new Set<string>();
+    const entries: Array<{ label: string; value: string }> = [];
+
+    orderedKeys.forEach((key) => {
+      if (key in webhookStatus) {
+        entries.push({ label: labelMap[key] || key, value: normalizeValue(webhookStatus[key]) });
+        seen.add(key);
+      }
+    });
+
+    Object.entries(webhookStatus).forEach(([key, value]) => {
+      if (seen.has(key)) {
+        return;
+      }
+      entries.push({ label: labelMap[key] || key, value: normalizeValue(value) });
+    });
+
+    return entries;
+  }, [webhookStatus]);
+
   const renderPanel = (title: string, keys: string[]) => {
     const entries = keys
       .map((key) => [key, fields[key]] as const)
@@ -168,7 +243,6 @@ export function ConfigPage() {
       sectionTabs={sectionTabs}
       activeSectionKey={section}
       onSectionChange={(nextSection) => setSection(nextSection as SectionKey)}
-      actions={<StatusBadge label={loading ? "读取中" : `字段 ${Object.keys(fields).length}`} tone={loading ? "warning" : "default"} />}
     >
       <div className={styles.stack}>
         <section className={styles.card}>
@@ -209,10 +283,27 @@ export function ConfigPage() {
             {NOTIFICATION_PANELS.map((panel) => renderPanel(panel.title, panel.keys))}
             <section className={styles.card}>
               <h2>Webhook 状态</h2>
-              <pre className={styles.listItem}>{JSON.stringify(webhookStatus, null, 2)}</pre>
+              <div className={styles.compactGrid}>
+                {webhookStatusEntries.map((item) => (
+                  <div className={styles.metric} key={item.label}>
+                    <span className={styles.muted}>{item.label}</span>
+                    <strong>{item.value}</strong>
+                  </div>
+                ))}
+              </div>
             </section>
           </>
         ) : null}
+
+        <section className={styles.card}>
+          <h2>数据库管理</h2>
+          <p className={styles.helperText}>需要清理历史数据、创建备份或从备份恢复时，可进入数据库管理页面。</p>
+          <div className={styles.actions}>
+            <button className={styles.primaryButton} onClick={() => navigate("/system/database")} type="button">
+              打开数据库管理
+            </button>
+          </div>
+        </section>
       </div>
     </PageFrame>
   );

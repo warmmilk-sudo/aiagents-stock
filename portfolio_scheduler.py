@@ -374,6 +374,11 @@ class PortfolioScheduler:
 
     def _scheduled_job(self, trigger: str = "scheduled"):
         """定时任务执行入口：将分析任务提交到后台队列。"""
+        if trigger == "scheduled" and datetime.now().weekday() >= 5:
+            print("[INFO] 周末跳过持仓定时分析")
+            self._update_next_run_time()
+            return None
+
         stock_count = portfolio_manager.get_stock_count()
         if stock_count == 0:
             print("[ERROR] 没有持仓股票，跳过定时分析")
@@ -549,24 +554,33 @@ class PortfolioScheduler:
         
         return content
     
+    def _register_weekday_jobs(self) -> None:
+        for time_str in self.schedule_times:
+            for weekday_job in (
+                schedule.every().monday,
+                schedule.every().tuesday,
+                schedule.every().wednesday,
+                schedule.every().thursday,
+                schedule.every().friday,
+            ):
+                job = weekday_job.at(time_str).do(self._scheduled_job)
+                job.tag('portfolio_analysis')
+
     def _reschedule(self):
         """重新调度任务（支持多个时间点）"""
-        # 只清除持仓定时分析的任务，不影响其他模块
-        jobs_to_remove = [job for job in schedule.jobs if not any(tag in ['sector_strategy', 'monitor'] for tag in job.tags)]
+        jobs_to_remove = [job for job in schedule.jobs if 'portfolio_analysis' in job.tags]
         for job in jobs_to_remove:
             schedule.cancel_job(job)
-        
-        for time_str in self.schedule_times:
-            job = schedule.every().day.at(time_str).do(self._scheduled_job)
-            job.tag('portfolio_analysis')
+
+        self._register_weekday_jobs()
         self._update_next_run_time()
-        print(f"[OK] 重新调度任务: 每天 {', '.join(self.schedule_times)}")
-    
+        print(f"[OK] 重新调度任务: 工作日 {', '.join(self.schedule_times)}")
+
     def _update_next_run_time(self):
         """更新下次运行时间"""
-        jobs = schedule.jobs
+        jobs = [job for job in schedule.jobs if 'portfolio_analysis' in job.tags and job.next_run]
         if jobs:
-            self.next_run_time = jobs[0].next_run
+            self.next_run_time = min(job.next_run for job in jobs)
         else:
             self.next_run_time = None
     
@@ -610,10 +624,9 @@ class PortfolioScheduler:
             schedule.cancel_job(job)
         print(f"[OK] 清除了 {len(jobs_to_remove)} 个旧的持仓任务")
         
+        self._register_weekday_jobs()
         for time_str in self.schedule_times:
-            job = schedule.every().day.at(time_str).do(self._scheduled_job)
-            job.tag('portfolio_analysis')
-            print(f"[OK] 添加调度任务: 每天 {time_str}")
+            print(f"[OK] 添加调度任务: 工作日 {time_str}")
         
         self._update_next_run_time()
         
@@ -623,7 +636,7 @@ class PortfolioScheduler:
         self.thread.start()
         
         print(f"\n[OK] 定时任务已启动")
-        print(f"    调度时间: {', '.join(self.schedule_times)}")
+        print(f"    调度时间: 工作日 {', '.join(self.schedule_times)}")
         print(f"    分析模式: {self.analysis_mode}")
         print(f"    持仓数量: {stock_count}只")
         if self.next_run_time:
@@ -803,4 +816,3 @@ if __name__ == "__main__":
         print(f"  {key}: {value}")
     
     print("\n[OK] 调度器测试完成")
-

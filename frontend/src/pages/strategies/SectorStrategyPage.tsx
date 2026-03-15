@@ -54,14 +54,6 @@ interface SchedulerStatus {
   schedule_time?: string;
   last_run_time?: string | null;
   next_run_time?: string | null;
-  email_config?: {
-    enabled?: boolean;
-    smtp_server?: string;
-    email_from?: string;
-    email_to?: string;
-    password_configured?: boolean;
-    configured?: boolean;
-  };
 }
 
 type SectionKey = "overview" | "history" | "scheduler";
@@ -226,19 +218,6 @@ export function SectorStrategyPage() {
     }
   };
 
-  const testEmail = async () => {
-    setMessage("");
-    setError("");
-    try {
-      const data = await apiFetch<{ ok: boolean }>("/api/strategies/sector-strategy/scheduler/test-email", { method: "POST" });
-      if (data.ok) {
-        setMessage("测试邮件发送成功");
-      }
-    } catch (requestError) {
-      setError(requestError instanceof ApiRequestError ? requestError.message : "测试邮件发送失败");
-    }
-  };
-
   const deleteHistory = async (reportId: number) => {
     setMessage("");
     setError("");
@@ -280,23 +259,6 @@ export function SectorStrategyPage() {
   return (
     <PageFrame
       activeSectionKey={detailView ? undefined : section}
-      actions={
-        <>
-          <StatusBadge label={scheduler?.running ? `定时 ${scheduler.schedule_time}` : "定时空闲"} tone={scheduler?.running ? "success" : "default"} />
-          <StatusBadge
-            label={task ? `分析 ${task.status} ${Math.round((task.progress ?? 0) * 100)}%` : "分析空闲"}
-            tone={
-              task?.status === "success"
-                ? "success"
-                : task?.status === "failed"
-                  ? "danger"
-                  : task
-                    ? "warning"
-                    : "default"
-            }
-          />
-        </>
-      }
       onSectionChange={(nextSection) => setSection(nextSection as SectionKey)}
       sectionTabs={detailView ? undefined : sectionTabs}
       summary="智策板块分析支持最新报告、历史报告与定时任务。"
@@ -312,23 +274,23 @@ export function SectorStrategyPage() {
         />
       ) : (
         <div className={styles.stack}>
-          <section className={styles.card}>
-            <div className={styles.actions}>
-              <button className={styles.primaryButton} onClick={() => void submitAnalysis()} type="button">
-                开始智策分析
-              </button>
-              {latestReportView ? (
-                <button className={styles.secondaryButton} onClick={openLatestDetail} type="button">
-                  查看最新报告
-                </button>
-              ) : null}
-              {message ? <span className={styles.successText}>{message}</span> : null}
-              {error ? <span className={styles.dangerText}>{error}</span> : null}
-            </div>
-          </section>
-
           {section === "overview" ? (
             <>
+              <section className={styles.card}>
+                <div className={styles.actions}>
+                  <button className={styles.primaryButton} onClick={() => void submitAnalysis()} type="button">
+                    开始智策分析
+                  </button>
+                  {latestReportView ? (
+                    <button className={styles.secondaryButton} onClick={openLatestDetail} type="button">
+                      查看最新报告
+                    </button>
+                  ) : null}
+                  {message ? <span className={styles.successText}>{message}</span> : null}
+                  {error ? <span className={styles.dangerText}>{error}</span> : null}
+                </div>
+              </section>
+
               <section className={styles.card}>
                 <div className={styles.cardHeader}>
                   <div>
@@ -400,17 +362,18 @@ export function SectorStrategyPage() {
           {section === "history" ? (
             <section className={styles.card}>
               <h2>历史报告</h2>
+              {message ? <p className={styles.successText}>{message}</p> : null}
+              {error ? <p className={styles.dangerText}>{error}</p> : null}
               <div className={styles.list}>
                 {history.map((item) => (
                   <div className={styles.historyRecordCard} key={item.id}>
                     <div className={styles.historyRecordTop}>
                       <div>
                         <strong className={styles.historyRecordTitle}>
-                          {item.summary_data?.headline || item.summary || "智策板块分析报告"}
+                          {formatDateTime(item.analysis_date ?? item.created_at, "未知时间")}
                         </strong>
                         <p className={styles.historyMeta}>
-                          {formatDateTime(item.analysis_date ?? item.created_at, "未知时间")}
-                          {item.data_date_range ? ` | ${item.data_date_range}` : ""}
+                          {item.data_date_range || "暂无数据区间"}
                         </p>
                       </div>
                       <div className={`${styles.historyActionRow} ${styles.historyListActionRow}`}>
@@ -447,6 +410,8 @@ export function SectorStrategyPage() {
           {section === "scheduler" ? (
             <section className={styles.card}>
               <h2>定时分析设置</h2>
+              {message ? <p className={styles.successText}>{message}</p> : null}
+              {error ? <p className={styles.dangerText}>{error}</p> : null}
               <div className={styles.formGrid}>
                 <div className={styles.field}>
                   <label htmlFor="scheduleTime">定时时间</label>
@@ -458,26 +423,23 @@ export function SectorStrategyPage() {
                   <div className={styles.muted}>下次运行: {formatDateTime(scheduler?.next_run_time, "-")}</div>
                   <div className={styles.muted}>上次运行: {formatDateTime(scheduler?.last_run_time, "-")}</div>
                 </div>
-                <div className={styles.metric}>
-                  <span className={styles.muted}>邮件配置</span>
-                  <strong>{scheduler?.email_config?.configured ? "完整" : "未完成"}</strong>
-                  <div className={styles.muted}>启用: {scheduler?.email_config?.enabled ? "是" : "否"}</div>
-                  <div className={styles.muted}>SMTP: {asText(scheduler?.email_config?.smtp_server, "未配置")}</div>
-                  <div className={styles.muted}>发件箱: {asText(scheduler?.email_config?.email_from, "未配置")}</div>
-                </div>
               </div>
-              <div className={styles.actions} style={{ marginTop: 16 }}>
-                <button className={styles.primaryButton} onClick={() => void saveScheduler(true)} type="button">
-                  启动 / 更新
-                </button>
+              <div className={styles.summaryMetricGrid} style={{ marginTop: 16 }}>
+                <label className={styles.switchField}>
+                  <span className={styles.switchLabel}>启用定时分析</span>
+                  <span className={styles.switchControl}>
+                    <input
+                      checked={Boolean(scheduler?.running)}
+                      onChange={(event) => void saveScheduler(event.target.checked)}
+                      type="checkbox"
+                    />
+                    <span className={styles.switchTrack} aria-hidden="true">
+                      <span className={styles.switchThumb} />
+                    </span>
+                  </span>
+                </label>
                 <button className={styles.secondaryButton} onClick={() => void runOnce()} type="button">
                   立即运行
-                </button>
-                <button className={styles.secondaryButton} onClick={() => void testEmail()} type="button">
-                  测试邮件
-                </button>
-                <button className={styles.dangerButton} onClick={() => void saveScheduler(false)} type="button">
-                  停止
                 </button>
               </div>
             </section>

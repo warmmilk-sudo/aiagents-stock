@@ -7,7 +7,6 @@ import { useAuthStore } from "../../stores/authStore";
 import { type ConfigField } from "../../stores/configStore";
 import { useShellStore } from "../../stores/shellStore";
 import { useTaskStore } from "../../stores/taskStore";
-import { StatusBadge } from "../common/StatusBadge";
 import styles from "./AppLayout.module.scss";
 
 const MOBILE_BREAKPOINT = "(max-width: 960px)";
@@ -60,7 +59,6 @@ export function AppLayout() {
   const sidebarCollapsed = useShellStore((state) => state.sidebarCollapsed);
   const toggleSidebar = useShellStore((state) => state.toggleSidebar);
   const logout = useAuthStore((state) => state.logout);
-  const activeTask = useTaskStore((state) => state.activeTask);
   const refreshTasks = useTaskStore((state) => state.refresh);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(() =>
@@ -174,6 +172,8 @@ export function AppLayout() {
     () => parseModelOptions(configFields.REASONING_MODEL_OPTIONS?.value, reasoningModel),
     [configFields.REASONING_MODEL_OPTIONS?.value, reasoningModel],
   );
+  const icpNumber = (configFields.ICP_NUMBER?.value ?? "").trim();
+  const icpLink = (configFields.ICP_LINK?.value ?? "").trim();
   const desktopSidebarHidden = !isMobile && sidebarCollapsed;
   const modelControlsDisabled = configLoading || Boolean(savingModelKey);
 
@@ -323,6 +323,15 @@ export function AppLayout() {
           <button className={styles.sidebarLogoutButton} onClick={() => void handleLogout()} type="button">
             {LABELS.logout}
           </button>
+          {icpNumber ? (
+            icpLink ? (
+              <a className={styles.sidebarIcpLink} href={icpLink} rel="noreferrer" target="_blank">
+                {icpNumber}
+              </a>
+            ) : (
+              <span className={styles.sidebarIcpText}>{icpNumber}</span>
+            )
+          ) : null}
         </div>
       </aside>
       <div className={styles.main}>
@@ -340,14 +349,7 @@ export function AppLayout() {
           <div className={styles.topbarTitleWrap}>
             <strong className={styles.topbarTitle}>{currentPageLabel}</strong>
           </div>
-          <div className={styles.topbarRight}>
-            {activeTask ? (
-              <StatusBadge
-                label={`${activeTask.label} ${Math.round((activeTask.progress ?? 0) * 100)}%`}
-                tone="warning"
-              />
-            ) : null}
-          </div>
+          <div className={styles.topbarRight} />
         </header>
         <main className={styles.content}>
           <Outlet />

@@ -250,7 +250,8 @@ class ConfigManager:
                 "value": "1y",
                 "description": "默认股票数据周期",
                 "required": False,
-                "type": "text",
+                "type": "select",
+                "options": ["6mo", "1y", "2y", "5y"],
             },
         }
 

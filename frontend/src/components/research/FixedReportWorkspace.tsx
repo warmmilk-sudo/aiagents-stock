@@ -75,7 +75,7 @@ export function FixedReportWorkspace({ reports }: FixedReportWorkspaceProps) {
       {activeEntry ? (
         <div className={styles.reportWorkbenchPanel}>
           <div className={styles.reportWorkbenchHeader}>
-            <div>
+            <div className={styles.reportWorkbenchHeading}>
               <h3>{activeEntry.title || activeTab.label}</h3>
               {activeEntry.role || activeEntry.focus_areas?.length ? (
                 <p className={styles.helperText}>
@@ -84,7 +84,9 @@ export function FixedReportWorkspace({ reports }: FixedReportWorkspaceProps) {
               ) : null}
               {activeEntry.summary ? <p className={styles.helperText}>{activeEntry.summary}</p> : null}
             </div>
-            {activeEntry.timestamp ? <span className={styles.historyMeta}>{activeEntry.timestamp}</span> : null}
+            {activeEntry.timestamp ? (
+              <span className={`${styles.historyMeta} ${styles.reportWorkbenchTimestamp}`}>{activeEntry.timestamp}</span>
+            ) : null}
           </div>
 
           <div className={styles.reportWorkbenchContent}>

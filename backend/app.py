@@ -15,6 +15,7 @@ from backend.routers import (
     analysis_history,
     auth_router,
     config_router,
+    database_admin,
     exports,
     followup_assets,
     investment_activity,
@@ -69,6 +70,7 @@ def create_app() -> FastAPI:
     app.include_router(auth_router.router)
     app.include_router(system.router)
     app.include_router(config_router.router)
+    app.include_router(database_admin.router)
     app.include_router(tasks.router)
     app.include_router(analysis.router)
     app.include_router(analysis_history.router)

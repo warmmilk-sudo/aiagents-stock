@@ -53,12 +53,9 @@ export function ActivityPage() {
       activeSectionKey={section}
       onSectionChange={(nextSection) => setSection(nextSection as SectionKey)}
       actions={
-        <>
-          <StatusBadge label={`事件 ${snapshot?.recent_events.length ?? 0}`} tone="default" />
-          <button className={styles.secondaryButton} onClick={() => void load()} type="button">
-            刷新
-          </button>
-        </>
+        <button className={styles.secondaryButton} onClick={() => void load()} type="button">
+          刷新
+        </button>
       }
     >
       <div className={styles.stack}>
