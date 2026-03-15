@@ -1,9 +1,18 @@
 .stack {
   display: grid;
   gap: 3px;
+  grid-template-columns: minmax(0, 1fr);
   width: 100%;
   max-width: 100%;
   min-width: 0;
+  box-sizing: border-box;
+}
+
+.stack > * {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  justify-self: stretch;
   box-sizing: border-box;
 }
 
@@ -39,6 +48,94 @@
 .card h2,
 .card h3 {
   margin: 0 0 10px;
+}
+
+.moduleCard {
+  display: grid;
+  gap: 14px;
+}
+
+.moduleHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.moduleHeader > * {
+  min-width: 0;
+}
+
+.moduleHeading {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.moduleToolbar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 1px;
+  min-width: 0;
+}
+
+.moduleToolbar > * {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.moduleBody {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+}
+
+.moduleSection {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr);
+  padding: 14px;
+  border: 1px solid var(--line-soft);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--bg-panel-strong) 95%, transparent);
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.moduleFooter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1px;
+  min-width: 0;
+}
+
+.feedbackCard {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.collapsibleSection {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.feedbackText {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  line-height: 1.6;
+  white-space: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
 }
 
 .card>.stack,
@@ -567,6 +664,7 @@
 .list {
   display: grid;
   gap: 1px;
+  grid-template-columns: minmax(0, 1fr);
   min-width: 0;
 }
 
@@ -587,6 +685,14 @@
   border-radius: 14px;
   background: color-mix(in srgb, var(--bg-panel-strong) 94%, transparent);
   min-width: 0;
+}
+
+.analystSelectionColumns1 {
+  grid-template-columns: 1fr;
+}
+
+.analystSelectionColumns2 {
+  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
 }
 
 .analystOption {
@@ -829,6 +935,10 @@
   min-width: 0;
 }
 
+.tabControlStack {
+  gap: 12px;
+}
+
 .sectionDivider {
   height: 2px;
   background: #20607e;
@@ -884,7 +994,7 @@
 .historyDetailTabs {
   display: flex;
   flex-wrap: nowrap;
-  gap: 1px;
+  gap: 8px;
   width: 100%;
   max-width: 100%;
   min-width: 0;
@@ -1397,6 +1507,24 @@
   box-sizing: border-box;
 }
 
+.schedulerControl {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.schedulerControlActions {
+  display: grid;
+  gap: 1px;
+  grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr));
+  width: 100%;
+  min-width: 0;
+}
+
+.schedulerControlActions > * {
+  width: 100%;
+}
+
 .switchLabel {
   font-weight: 600;
 }
@@ -1556,6 +1684,12 @@
     gap: 12px;
   }
 
+  .moduleHeader,
+  .moduleToolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
   .card {
     padding: 14px;
     border-radius: 16px;
@@ -1706,6 +1840,11 @@
 
   .actions {
     gap: 8px;
+  }
+
+  .analystSelectionColumns2,
+  .schedulerControlActions {
+    grid-template-columns: 1fr;
   }
 
   .newsFlowToolbar,

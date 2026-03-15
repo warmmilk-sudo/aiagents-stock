@@ -3,7 +3,14 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { ArcElement, Chart as ChartJS, Legend, Tooltip } from "chart.js";
 import { Doughnut } from "react-chartjs-2";
 
+import { AnalystSelector } from "../../components/common/AnalystSelector";
+import { ModuleCard } from "../../components/common/ModuleCard";
+import { PageFeedback } from "../../components/common/PageFeedback";
 import { PageFrame } from "../../components/common/PageFrame";
+import { SchedulerControl } from "../../components/common/SchedulerControl";
+import { ANALYST_OPTIONS, normalizeAnalystKeys, type AnalystKey } from "../../constants/analysts";
+import { DEFAULT_SCHEDULER_TIME, DEFAULT_SCHEDULER_WORKERS, schedulerModeLabel } from "../../constants/scheduler";
+import { usePageFeedback } from "../../hooks/usePageFeedback";
 import { StatusBadge } from "../../components/common/StatusBadge";
 import { ApiRequestError, apiFetch, apiFetchCached, buildQuery } from "../../lib/api";
 import { formatDateOnly } from "../../lib/datetime";
@@ -19,14 +26,12 @@ interface PortfolioStock {
   cost_price?: number;
   quantity?: number;
   analysis_record_id?: number;
-  analysis_time?: string;
 }
 
 interface PortfolioStockDistribution {
   code?: string;
   name?: string;
   market_value?: number;
-  cost_value?: number;
   pnl?: number;
   pnl_pct?: number;
 }
@@ -39,7 +44,6 @@ interface PortfolioTrade {
   quantity: number;
   price: number;
   trade_time?: string;
-  note?: string;
 }
 
 interface PortfolioTradePage {
@@ -61,7 +65,6 @@ interface PortfolioRisk {
   industry_distribution?: Array<{
     industry?: string;
     market_value?: number;
-    weight?: number;
   }>;
 }
 
@@ -82,7 +85,7 @@ interface PositionIntentPayload {
   default_note?: string;
 }
 
-type ComposerPanel = "position" | "trade" | "scheduler" | null;
+type EditorPanel = "position" | "trade" | null;
 type SectionKey = "overview" | "holdings" | "trades" | "scheduler";
 
 const sectionTabs = [
@@ -99,33 +102,14 @@ const UI = {
   refresh: "刷新",
   addPosition: "新增持仓",
   addTrade: "登记交易",
-  schedule: "定时分析",
-  close: "收起",
-  riskWarnings: "风险提醒",
   noWarnings: "当前没有风险提醒。",
   noHoldings: "当前没有持仓记录。",
   noTrades: "最近还没有交易记录。",
-  schedulerRunning: "定时分析运行中",
-  schedulerIdle: "定时分析空闲",
 };
 
 const TRADE_PAGE_SIZE = 20;
 const PAGE_CACHE_TTL_MS = 30_000;
 const PIE_COLORS = ["#c65d4b", "#db7c57", "#d6a45f", "#7f9b6d", "#4f7c82", "#6f6d9b", "#9a5f7c", "#8b7d64"];
-
-const schedulerAnalystOptions = [
-  { key: "technical", label: "技术分析师" },
-  { key: "fundamental", label: "基本面分析师" },
-  { key: "fund_flow", label: "资金流分析师" },
-  { key: "risk", label: "风险控制分析师" },
-  { key: "sentiment", label: "市场情绪分析师" },
-  { key: "news", label: "新闻事件分析师" },
-] as const;
-
-type SchedulerAnalystKey = (typeof schedulerAnalystOptions)[number]["key"];
-
-const defaultSchedulerAnalysts: SchedulerAnalystKey[] = ["technical", "fundamental", "fund_flow", "risk"];
-const schedulerAnalystKeySet = new Set<SchedulerAnalystKey>(schedulerAnalystOptions.map((item) => item.key));
 
 ChartJS.register(ArcElement, Legend, Tooltip);
 
@@ -177,21 +161,6 @@ function tradeTypeText(value: string) {
   return value || "未知";
 }
 
-function schedulerModeLabel(value?: string) {
-  return value === "parallel" ? "并行分析" : "顺序分析";
-}
-
-function normalizeSchedulerAnalysts(value?: string[] | null): SchedulerAnalystKey[] {
-  const nextSelection = Array.isArray(value)
-    ? value.filter((item): item is SchedulerAnalystKey => schedulerAnalystKeySet.has(item as SchedulerAnalystKey))
-    : [];
-  return nextSelection.length ? Array.from(new Set(nextSelection)) : [...defaultSchedulerAnalysts];
-}
-
-function schedulerAnalystLabel(value: string) {
-  return schedulerAnalystOptions.find((item) => item.key === value)?.label || value;
-}
-
 function resolvePnlTone(value: unknown, stylesMap: Record<string, string>) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) {
@@ -219,29 +188,26 @@ export function PortfolioPage() {
   const [scheduler, setScheduler] = useState<SchedulerStatus | null>(() => (cachedPage?.scheduler as SchedulerStatus | null) ?? null);
   const [positionForm, setPositionForm] = useState(defaultPositionForm);
   const [tradeForm, setTradeForm] = useState(defaultTradeForm);
-  const [schedulerTimes, setSchedulerTimes] = useState(() => cachedPage?.schedulerTimes ?? "09:30");
+  const [schedulerTimes, setSchedulerTimes] = useState(() => cachedPage?.schedulerTimes ?? DEFAULT_SCHEDULER_TIME);
   const [schedulerMode, setSchedulerMode] = useState<"sequential" | "parallel">(
     () => (cachedPage?.scheduler as SchedulerStatus | null)?.analysis_mode === "parallel" ? "parallel" : "sequential",
   );
   const [schedulerMaxWorkers, setSchedulerMaxWorkers] = useState(
-    () => (cachedPage?.scheduler as SchedulerStatus | null)?.max_workers ?? 3,
+    () => (cachedPage?.scheduler as SchedulerStatus | null)?.max_workers ?? DEFAULT_SCHEDULER_WORKERS,
   );
-  const [schedulerAnalysts, setSchedulerAnalysts] = useState<SchedulerAnalystKey[]>(
-    () => normalizeSchedulerAnalysts((cachedPage?.scheduler as SchedulerStatus | null)?.selected_agents),
+  const [schedulerAnalysts, setSchedulerAnalysts] = useState<AnalystKey[]>(
+    () => normalizeAnalystKeys((cachedPage?.scheduler as SchedulerStatus | null)?.selected_agents),
   );
-  const [activePanel, setActivePanel] = useState<ComposerPanel>(null);
+  const [activeEditor, setActiveEditor] = useState<EditorPanel>(null);
   const [section, setSection] = useState<SectionKey>("overview");
-  const [message, setMessage] = useState("");
-  const [error, setError] = useState("");
+  const { message, error, clear, showError, showMessage } = usePageFeedback();
 
   const applySchedulerState = (schedulerData: SchedulerStatus | null) => {
     setScheduler(schedulerData);
-    const nextSchedulerTimes = (schedulerData?.schedule_times ?? [])[0] || "09:30";
-    setSchedulerTimes(nextSchedulerTimes);
+    setSchedulerTimes((schedulerData?.schedule_times ?? [])[0] || DEFAULT_SCHEDULER_TIME);
     setSchedulerMode(schedulerData?.analysis_mode === "parallel" ? "parallel" : "sequential");
-    setSchedulerMaxWorkers(schedulerData?.max_workers ?? 3);
-    setSchedulerAnalysts(normalizeSchedulerAnalysts(schedulerData?.selected_agents));
-    return nextSchedulerTimes;
+    setSchedulerMaxWorkers(schedulerData?.max_workers ?? DEFAULT_SCHEDULER_WORKERS);
+    setSchedulerAnalysts(normalizeAnalystKeys(schedulerData?.selected_agents));
   };
 
   const applyPageCache = (cache: PortfolioPageCache | null) => {
@@ -279,12 +245,13 @@ export function PortfolioPage() {
       apiFetchCached<PortfolioRisk>(`/api/portfolio/risk${buildQuery({ account_name: accountParam })}`),
       apiFetch<SchedulerStatus>("/api/portfolio/scheduler"),
     ]);
+
     setStocks(stockData);
     setTrades(tradeData.items);
     setTradePage(tradeData.page);
     setTradeTotal(tradeData.total);
     setRisk(riskData);
-    const nextSchedulerTimes = applySchedulerState(schedulerData);
+    applySchedulerState(schedulerData);
     setKnownAccounts(
       stockData
         .map((item) => item.account_name || UI.defaultAccount)
@@ -298,7 +265,7 @@ export function PortfolioPage() {
       tradePageSize: tradeData.page_size,
       risk: riskData,
       scheduler: schedulerData,
-      schedulerTimes: nextSchedulerTimes,
+      schedulerTimes: (schedulerData?.schedule_times ?? [])[0] || DEFAULT_SCHEDULER_TIME,
       updatedAt: Date.now(),
     });
     if (!tradeForm.stock_id && stockData[0]) {
@@ -336,7 +303,7 @@ export function PortfolioPage() {
       note: payload.default_note || "",
       origin_analysis_id: payload.origin_analysis_id,
     }));
-    setActivePanel("position");
+    setActiveEditor("position");
     setSection("holdings");
 
     const nextParams = new URLSearchParams(searchParams);
@@ -366,22 +333,7 @@ export function PortfolioPage() {
       ]),
     );
   }, [risk?.stock_distribution]);
-  const renderAccountSelect = (id: string) => (
-    <select
-      id={id}
-      value={selectedAccount}
-      onChange={(event) => {
-        setTradePage(1);
-        setSelectedAccount(event.target.value);
-      }}
-    >
-      {accountOptions.map((item) => (
-        <option key={item} value={item}>
-          {item}
-        </option>
-      ))}
-    </select>
-  );
+
   const industryPieData = useMemo(() => {
     const items = (risk?.industry_distribution ?? [])
       .filter((item) => Number(item.market_value) > 0)
@@ -397,6 +349,7 @@ export function PortfolioPage() {
       ],
     };
   }, [risk?.industry_distribution]);
+
   const stockPieData = useMemo(() => {
     const items = (risk?.stock_distribution ?? [])
       .filter((item) => Number(item.market_value) > 0)
@@ -413,15 +366,26 @@ export function PortfolioPage() {
     };
   }, [risk?.stock_distribution]);
 
-  const openPanel = (panel: Exclude<ComposerPanel, null>, nextSection: SectionKey) => {
-    setSection(nextSection);
-    setActivePanel((current) => (current === panel ? null : panel));
-  };
+  const renderAccountSelect = (id: string) => (
+    <select
+      id={id}
+      value={selectedAccount}
+      onChange={(event) => {
+        setTradePage(1);
+        setSelectedAccount(event.target.value);
+      }}
+    >
+      {accountOptions.map((item) => (
+        <option key={item} value={item}>
+          {item}
+        </option>
+      ))}
+    </select>
+  );
 
   const submitPosition = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    setMessage("");
-    setError("");
+    clear();
     try {
       await apiFetch("/api/portfolio/stocks", {
         method: "POST",
@@ -437,24 +401,23 @@ export function PortfolioPage() {
           origin_analysis_id: positionForm.origin_analysis_id ?? null,
         }),
       });
-      setMessage(`持仓已新增：${positionForm.code}`);
       setPositionForm(defaultPositionForm);
-      setActivePanel(null);
+      setActiveEditor(null);
+      showMessage(`持仓已新增：${positionForm.code}`);
       await loadAll(true, tradePage);
     } catch (requestError) {
-      setError(requestError instanceof ApiRequestError ? requestError.message : "新增持仓失败");
+      showError(requestError instanceof ApiRequestError ? requestError.message : "新增持仓失败");
     }
   };
 
   const submitTrade = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!tradeForm.stock_id) {
-      setError("请先选择对应持仓。");
+      showError("请先选择对应持仓。");
       return;
     }
 
-    setMessage("");
-    setError("");
+    clear();
     try {
       await apiFetch(`/api/portfolio/stocks/${tradeForm.stock_id}/trades`, {
         method: "POST",
@@ -466,283 +429,170 @@ export function PortfolioPage() {
           note: tradeForm.note,
         }),
       });
-      setMessage("交易记录已保存。");
       setTradeForm((current) => ({ ...defaultTradeForm, stock_id: current.stock_id }));
-      setActivePanel(null);
+      setActiveEditor(null);
+      showMessage("交易记录已保存。");
       await loadAll(true, tradePage);
     } catch (requestError) {
-      setError(requestError instanceof ApiRequestError ? requestError.message : "登记交易失败");
+      showError(requestError instanceof ApiRequestError ? requestError.message : "登记交易失败");
     }
   };
 
   const saveScheduler = async () => {
-    setMessage("");
-    setError("");
+    clear();
     if (!schedulerAnalysts.length) {
-      setError("请至少选择一位分析师。");
+      showError("请至少选择一位分析师。");
       return;
     }
     try {
       const nextScheduler = await apiFetch<SchedulerStatus>("/api/portfolio/scheduler", {
         method: "PUT",
         body: JSON.stringify({
-          schedule_times: [schedulerTimes.trim() || "09:30"],
+          schedule_times: [schedulerTimes.trim() || DEFAULT_SCHEDULER_TIME],
           analysis_mode: schedulerMode,
           max_workers: schedulerMaxWorkers,
           selected_agents: schedulerAnalysts,
         }),
       });
       applySchedulerState(nextScheduler);
-      setMessage("定时分析配置已更新。");
+      showMessage("定时分析配置已更新。");
       await loadAll(true, tradePage);
     } catch (requestError) {
-      setError(requestError instanceof ApiRequestError ? requestError.message : "保存定时分析失败");
+      showError(requestError instanceof ApiRequestError ? requestError.message : "保存定时分析失败");
     }
   };
 
   const toggleScheduler = async (running: boolean) => {
-    setMessage("");
-    setError("");
+    clear();
     try {
-      const nextScheduler = await apiFetch<SchedulerStatus>(running ? "/api/portfolio/scheduler/start" : "/api/portfolio/scheduler/stop", {
-        method: "POST",
-      });
+      const nextScheduler = await apiFetch<SchedulerStatus>(
+        running ? "/api/portfolio/scheduler/start" : "/api/portfolio/scheduler/stop",
+        { method: "POST" },
+      );
       applySchedulerState(nextScheduler);
-      setMessage(running ? "定时分析已启动。" : "定时分析已停止。");
+      showMessage(running ? "定时分析已启动。" : "定时分析已停止。");
       await loadAll(true, tradePage);
     } catch (requestError) {
-      setError(requestError instanceof ApiRequestError ? requestError.message : "更新定时分析状态失败");
+      showError(requestError instanceof ApiRequestError ? requestError.message : "更新定时分析状态失败");
     }
   };
 
   const runSchedulerNow = async () => {
-    setMessage("");
-    setError("");
+    clear();
     try {
       await apiFetch("/api/portfolio/scheduler/run-once", { method: "POST" });
-      setMessage("已触发一次立即分析。");
+      showMessage("已触发一次立即分析。");
       await loadAll(true, tradePage);
     } catch (requestError) {
-      setError(requestError instanceof ApiRequestError ? requestError.message : "立即执行失败");
+      showError(requestError instanceof ApiRequestError ? requestError.message : "立即执行失败");
     }
   };
 
-  const renderComposer = () => {
-    if (activePanel === "position") {
-      return (
-        <section className={styles.card}>
-          <div className={styles.cardHeader}>
-            <p className={styles.helperText}>新增持仓后，可继续登记交易并关联后续分析历史。</p>
-            <button className={styles.tertiaryButton} onClick={() => setActivePanel(null)} type="button">
-              {UI.close}
-            </button>
-          </div>
-          <form className={styles.stack} onSubmit={submitPosition}>
-            <div className={styles.formGrid}>
-              <div className={styles.field}>
-                <label htmlFor="position-code">股票代码</label>
-                <input id="position-code" value={positionForm.code} onChange={(event) => setPositionForm((current) => ({ ...current, code: event.target.value }))} />
-              </div>
-              <div className={styles.field}>
-                <label htmlFor="position-name">股票名称</label>
-                <input id="position-name" value={positionForm.name} onChange={(event) => setPositionForm((current) => ({ ...current, name: event.target.value }))} />
-              </div>
-              <div className={styles.field}>
-                <label htmlFor="position-account">账户</label>
-                <input
-                  id="position-account"
-                  list="portfolio-account-options"
-                  value={positionForm.account_name}
-                  onChange={(event) => setPositionForm((current) => ({ ...current, account_name: event.target.value }))}
-                  placeholder="输入新账号或选择已有账号"
-                />
-                <datalist id="portfolio-account-options">
-                  {accountOptions
-                    .filter((item) => item !== UI.allAccounts)
-                    .map((item) => (
-                      <option key={item} value={item} />
-                    ))}
-                </datalist>
-              </div>
-              <div className={styles.field}>
-                <label htmlFor="position-cost">成本价</label>
-                <input id="position-cost" value={positionForm.cost_price} onChange={(event) => setPositionForm((current) => ({ ...current, cost_price: event.target.value }))} />
-              </div>
-              <div className={styles.field}>
-                <label htmlFor="position-quantity">数量</label>
-                <input id="position-quantity" value={positionForm.quantity} onChange={(event) => setPositionForm((current) => ({ ...current, quantity: event.target.value }))} />
-              </div>
-              <div className={styles.field}>
-                <label htmlFor="position-date">买入日期</label>
-                <input id="position-date" type="date" value={positionForm.buy_date} onChange={(event) => setPositionForm((current) => ({ ...current, buy_date: event.target.value }))} />
-              </div>
-            </div>
-            <div className={styles.field}>
-              <label htmlFor="position-note">备注</label>
-              <textarea id="position-note" rows={3} value={positionForm.note} onChange={(event) => setPositionForm((current) => ({ ...current, note: event.target.value }))} />
-            </div>
-            <label className={styles.listItem}>
-              <input checked={positionForm.auto_monitor} onChange={(event) => setPositionForm((current) => ({ ...current, auto_monitor: event.target.checked }))} type="checkbox" />{" "}
-              新增后自动加入监控联动
-            </label>
-            <div className={styles.actions}>
-              <button className={styles.primaryButton} type="submit">保存持仓</button>
-              <button className={styles.secondaryButton} onClick={() => setActivePanel(null)} type="button">取消</button>
-            </div>
-          </form>
-        </section>
-      );
-    }
+  const renderPositionForm = () => (
+    <form className={styles.moduleSection} onSubmit={submitPosition}>
+      <div className={styles.formGrid}>
+        <div className={styles.field}>
+          <label htmlFor="position-code">股票代码</label>
+          <input id="position-code" onChange={(event) => setPositionForm((current) => ({ ...current, code: event.target.value }))} value={positionForm.code} />
+        </div>
+        <div className={styles.field}>
+          <label htmlFor="position-name">股票名称</label>
+          <input id="position-name" onChange={(event) => setPositionForm((current) => ({ ...current, name: event.target.value }))} value={positionForm.name} />
+        </div>
+        <div className={styles.field}>
+          <label htmlFor="position-account">账户</label>
+          <input
+            id="position-account"
+            list="portfolio-account-options"
+            onChange={(event) => setPositionForm((current) => ({ ...current, account_name: event.target.value }))}
+            placeholder="输入新账号或选择已有账号"
+            value={positionForm.account_name}
+          />
+          <datalist id="portfolio-account-options">
+            {accountOptions
+              .filter((item) => item !== UI.allAccounts)
+              .map((item) => (
+                <option key={item} value={item} />
+              ))}
+          </datalist>
+        </div>
+        <div className={styles.field}>
+          <label htmlFor="position-cost">成本价</label>
+          <input id="position-cost" onChange={(event) => setPositionForm((current) => ({ ...current, cost_price: event.target.value }))} value={positionForm.cost_price} />
+        </div>
+        <div className={styles.field}>
+          <label htmlFor="position-quantity">数量</label>
+          <input id="position-quantity" onChange={(event) => setPositionForm((current) => ({ ...current, quantity: event.target.value }))} value={positionForm.quantity} />
+        </div>
+        <div className={styles.field}>
+          <label htmlFor="position-date">买入日期</label>
+          <input id="position-date" onChange={(event) => setPositionForm((current) => ({ ...current, buy_date: event.target.value }))} type="date" value={positionForm.buy_date} />
+        </div>
+      </div>
+      <div className={styles.field}>
+        <label htmlFor="position-note">备注</label>
+        <textarea id="position-note" onChange={(event) => setPositionForm((current) => ({ ...current, note: event.target.value }))} rows={3} value={positionForm.note} />
+      </div>
+      <label className={styles.listItem}>
+        <input checked={positionForm.auto_monitor} onChange={(event) => setPositionForm((current) => ({ ...current, auto_monitor: event.target.checked }))} type="checkbox" />
+        <span>新增后自动加入监控联动</span>
+      </label>
+      <div className={styles.actions}>
+        <button className={styles.primaryButton} type="submit">保存持仓</button>
+        <button className={styles.secondaryButton} onClick={() => setActiveEditor(null)} type="button">取消</button>
+      </div>
+    </form>
+  );
 
-    if (activePanel === "trade") {
-      return (
-        <section className={styles.card}>
-          <div className={styles.cardHeader}>
-            <p className={styles.helperText}>登记后的流水会出现在完整交易列表中，并支持分页查看。</p>
-            <button className={styles.tertiaryButton} onClick={() => setActivePanel(null)} type="button">
-              {UI.close}
-            </button>
-          </div>
-          <form className={styles.stack} onSubmit={submitTrade}>
-            <div className={styles.formGrid}>
-              <div className={styles.field}>
-                <label htmlFor="trade-stock">选择持仓</label>
-                <select id="trade-stock" value={tradeForm.stock_id} onChange={(event) => setTradeForm((current) => ({ ...current, stock_id: event.target.value }))}>
-                  <option value="">请选择持仓</option>
-                  {stocks.map((stock) => (
-                    <option key={stock.id} value={stock.id}>
-                      {stock.name} ({stock.code})
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className={styles.field}>
-                <label htmlFor="trade-type">交易类型</label>
-                <select id="trade-type" value={tradeForm.trade_type} onChange={(event) => setTradeForm((current) => ({ ...current, trade_type: event.target.value as "buy" | "sell" | "clear" }))}>
-                  <option value="buy">加仓</option>
-                  <option value="sell">减仓</option>
-                  <option value="clear">清仓</option>
-                </select>
-              </div>
-              <div className={styles.field}>
-                <label htmlFor="trade-quantity">数量</label>
-                <input id="trade-quantity" value={tradeForm.quantity} onChange={(event) => setTradeForm((current) => ({ ...current, quantity: event.target.value }))} />
-              </div>
-              <div className={styles.field}>
-                <label htmlFor="trade-price">价格</label>
-                <input id="trade-price" value={tradeForm.price} onChange={(event) => setTradeForm((current) => ({ ...current, price: event.target.value }))} />
-              </div>
-              <div className={styles.field}>
-                <label htmlFor="trade-date">交易日期</label>
-                <input id="trade-date" type="date" value={tradeForm.trade_date} onChange={(event) => setTradeForm((current) => ({ ...current, trade_date: event.target.value }))} />
-              </div>
-              <div className={styles.field}>
-                <label htmlFor="trade-note">备注</label>
-                <input id="trade-note" value={tradeForm.note} onChange={(event) => setTradeForm((current) => ({ ...current, note: event.target.value }))} />
-              </div>
-            </div>
-            <div className={styles.actions}>
-              <button className={styles.primaryButton} type="submit">保存交易</button>
-              <button className={styles.secondaryButton} onClick={() => setActivePanel(null)} type="button">取消</button>
-            </div>
-          </form>
-        </section>
-      );
-    }
-
-    if (activePanel === "scheduler") {
-      return (
-        <section className={styles.card}>
-          <div className={styles.cardHeader}>
-            <p className={styles.helperText}>可以直接选择执行时间、分析模式、分析师和并发线程数，仅在周一至周五自动执行。</p>
-            <button className={styles.tertiaryButton} onClick={() => setActivePanel(null)} type="button">
-              {UI.close}
-            </button>
-          </div>
-          <div className={styles.formGrid}>
-            <div className={styles.field}>
-              <label htmlFor="scheduler-times">执行时间</label>
-              <input
-                id="scheduler-times"
-                onChange={(event) => setSchedulerTimes(event.target.value)}
-                step="60"
-                type="time"
-                value={schedulerTimes}
-              />
-            </div>
-            <div className={styles.field}>
-              <label htmlFor="scheduler-mode">分析模式</label>
-              <select
-                id="scheduler-mode"
-                onChange={(event) => setSchedulerMode(event.target.value as "sequential" | "parallel")}
-                value={schedulerMode}
-              >
-                <option value="sequential">顺序分析</option>
-                <option value="parallel">并行分析</option>
-              </select>
-            </div>
-            {schedulerMode === "parallel" ? (
-              <div className={styles.field}>
-                <label htmlFor="scheduler-workers">并发线程数</label>
-                <select
-                  id="scheduler-workers"
-                  onChange={(event) => setSchedulerMaxWorkers(Number(event.target.value) || 3)}
-                  value={schedulerMaxWorkers}
-                >
-                  {[1, 2, 3, 4, 5].map((value) => (
-                    <option key={value} value={value}>
-                      {value}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            ) : null}
-            <div className={styles.field} style={{ gridColumn: "1 / -1" }}>
-              <label>分析师配置</label>
-              <div className={styles.analystSelectionGroup}>
-                {schedulerAnalystOptions.map((item) => (
-                  <label
-                    className={styles.analystOption}
-                    htmlFor={`scheduler-analyst-${item.key}`}
-                    key={item.key}
-                  >
-                    <input
-                      checked={schedulerAnalysts.includes(item.key)}
-                      id={`scheduler-analyst-${item.key}`}
-                      onChange={(event) => {
-                        setSchedulerAnalysts((current) => (
-                          event.target.checked
-                            ? Array.from(new Set([...current, item.key]))
-                            : current.filter((value) => value !== item.key)
-                        ));
-                      }}
-                      type="checkbox"
-                    />
-                    <span>{item.label}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
-          </div>
-          <div className={styles.actions} style={{ marginTop: 14 }}>
-            <button className={styles.secondaryButton} onClick={() => void saveScheduler()} type="button">保存调度</button>
-            <label className={styles.switchField}>
-              <span className={styles.switchLabel}>启用定时分析</span>
-              <span className={styles.switchControl}>
-                <input checked={Boolean(scheduler?.is_running)} onChange={(event) => void toggleScheduler(event.target.checked)} type="checkbox" />
-                <span className={styles.switchTrack} aria-hidden="true">
-                  <span className={styles.switchThumb} />
-                </span>
-              </span>
-            </label>
-            <button className={styles.primaryButton} onClick={() => void runSchedulerNow()} type="button">立即执行</button>
-          </div>
-        </section>
-      );
-    }
-
-    return null;
-  };
+  const renderTradeForm = () => (
+    <form className={styles.moduleSection} onSubmit={submitTrade}>
+      <div className={styles.formGrid}>
+        <div className={styles.field}>
+          <label htmlFor="trade-stock">选择持仓</label>
+          <select id="trade-stock" onChange={(event) => setTradeForm((current) => ({ ...current, stock_id: event.target.value }))} value={tradeForm.stock_id}>
+            <option value="">请选择持仓</option>
+            {stocks.map((stock) => (
+              <option key={stock.id} value={stock.id}>
+                {stock.name} ({stock.code})
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className={styles.field}>
+          <label htmlFor="trade-type">交易类型</label>
+          <select
+            id="trade-type"
+            onChange={(event) => setTradeForm((current) => ({ ...current, trade_type: event.target.value as "buy" | "sell" | "clear" }))}
+            value={tradeForm.trade_type}
+          >
+            <option value="buy">加仓</option>
+            <option value="sell">减仓</option>
+            <option value="clear">清仓</option>
+          </select>
+        </div>
+        <div className={styles.field}>
+          <label htmlFor="trade-quantity">数量</label>
+          <input id="trade-quantity" onChange={(event) => setTradeForm((current) => ({ ...current, quantity: event.target.value }))} value={tradeForm.quantity} />
+        </div>
+        <div className={styles.field}>
+          <label htmlFor="trade-price">价格</label>
+          <input id="trade-price" onChange={(event) => setTradeForm((current) => ({ ...current, price: event.target.value }))} value={tradeForm.price} />
+        </div>
+        <div className={styles.field}>
+          <label htmlFor="trade-date">交易日期</label>
+          <input id="trade-date" onChange={(event) => setTradeForm((current) => ({ ...current, trade_date: event.target.value }))} type="date" value={tradeForm.trade_date} />
+        </div>
+        <div className={styles.field}>
+          <label htmlFor="trade-note">备注</label>
+          <input id="trade-note" onChange={(event) => setTradeForm((current) => ({ ...current, note: event.target.value }))} value={tradeForm.note} />
+        </div>
+      </div>
+      <div className={styles.actions}>
+        <button className={styles.primaryButton} type="submit">保存交易</button>
+        <button className={styles.secondaryButton} onClick={() => setActiveEditor(null)} type="button">取消</button>
+      </div>
+    </form>
+  );
 
   return (
     <PageFrame
@@ -752,28 +602,45 @@ export function PortfolioPage() {
       onSectionChange={(nextSection) => setSection(nextSection as SectionKey)}
     >
       <div className={styles.stack}>
-        {section === "overview" ? (
-          <>
-            <section className={styles.card}>
-              <div className={styles.stack}>
-                <div className={styles.field}>
-                  <label htmlFor="portfolio-account-overview">账户</label>
-                  {renderAccountSelect("portfolio-account-overview")}
-                </div>
-                <div className={styles.actions}>
-                  <button className={styles.secondaryButton} onClick={() => void loadAll(true, tradePage)} type="button">{UI.refresh}</button>
-                </div>
-                {message ? <span className={styles.successText}>{message}</span> : null}
-                {error ? <span className={styles.dangerText}>{error}</span> : null}
-              </div>
-            </section>
+        <PageFeedback error={error} message={message} />
 
-            <section className={styles.card}>
-              <div className={styles.cardHeader}>
-                <div>
-                  <h2>{UI.riskWarnings}</h2>
+        {section === "overview" ? (
+          <ModuleCard
+            title="持仓总览"
+            summary="账户、风险提醒和持仓分布收敛到一个总览模块。"
+            toolbar={(
+              <button className={styles.secondaryButton} onClick={() => void loadAll(true, tradePage)} type="button">
+                {UI.refresh}
+              </button>
+            )}
+          >
+            <div className={styles.moduleSection}>
+              <div className={styles.field}>
+                <label htmlFor="portfolio-account-overview">账户</label>
+                {renderAccountSelect("portfolio-account-overview")}
+              </div>
+              <div className={styles.summaryMetricGrid}>
+                <div className={styles.metric}>
+                  <span className={styles.muted}>总市值</span>
+                  <strong>{numberText(risk?.total_market_value)}</strong>
+                </div>
+                <div className={styles.metric}>
+                  <span className={styles.muted}>总成本</span>
+                  <strong>{numberText(risk?.total_cost_value)}</strong>
+                </div>
+                <div className={styles.metric}>
+                  <span className={styles.muted}>浮动盈亏</span>
+                  <strong className={resolvePnlTone(risk?.total_pnl, styles)}>{numberText(risk?.total_pnl)}</strong>
+                </div>
+                <div className={styles.metric}>
+                  <span className={styles.muted}>收益率</span>
+                  <strong className={resolvePnlTone(risk?.total_pnl_pct, styles)}>{percentText(risk?.total_pnl_pct)}</strong>
                 </div>
               </div>
+            </div>
+
+            <div className={styles.moduleSection}>
+              <h3>风险提醒</h3>
               <div className={styles.list}>
                 {riskWarnings.map((item, index) => (
                   <div className={`${styles.noticeCard} ${styles.noticeWarning}`} key={`${item}-${index}`}>
@@ -800,10 +667,10 @@ export function PortfolioPage() {
                   </div>
                 ) : null}
               </div>
-            </section>
+            </div>
 
-            <section className={styles.card}>
-              <h2>行业分布</h2>
+            <div className={styles.moduleSection}>
+              <h3>行业分布</h3>
               {industryPieData.labels.length ? (
                 <div className={styles.chartRingWrap}>
                   <Doughnut
@@ -819,9 +686,10 @@ export function PortfolioPage() {
               ) : (
                 <div className={styles.muted}>暂无行业分布数据</div>
               )}
-            </section>
-            <section className={styles.card}>
-              <h2>个股分布</h2>
+            </div>
+
+            <div className={styles.moduleSection}>
+              <h3>个股分布</h3>
               {stockPieData.labels.length ? (
                 <div className={styles.chartRingWrap}>
                   <Doughnut
@@ -837,14 +705,26 @@ export function PortfolioPage() {
               ) : (
                 <div className={styles.muted}>暂无个股分布数据</div>
               )}
-            </section>
-          </>
+            </div>
+          </ModuleCard>
         ) : null}
 
         {section === "holdings" ? (
           <>
-            <section className={styles.card}>
-              <div className={styles.stack}>
+            <ModuleCard
+              title="持仓操作"
+              summary="新增持仓和账户上下文放在同一模块内。"
+              toolbar={(
+                <button
+                  className={activeEditor === "position" ? styles.primaryButton : styles.secondaryButton}
+                  onClick={() => setActiveEditor((current) => (current === "position" ? null : "position"))}
+                  type="button"
+                >
+                  {UI.addPosition}
+                </button>
+              )}
+            >
+              <div className={styles.moduleSection}>
                 <div className={styles.field}>
                   <label htmlFor="portfolio-account-holdings">账户</label>
                   {renderAccountSelect("portfolio-account-holdings")}
@@ -864,178 +744,231 @@ export function PortfolioPage() {
                   </div>
                   <div className={styles.metric}>
                     <span className={styles.muted}>收益率</span>
-                    <strong className={resolvePnlTone(risk?.total_pnl, styles)}>{percentText(risk?.total_pnl_pct)}</strong>
+                    <strong className={resolvePnlTone(risk?.total_pnl_pct, styles)}>{percentText(risk?.total_pnl_pct)}</strong>
                   </div>
                 </div>
               </div>
-            </section>
+              {activeEditor === "position" ? renderPositionForm() : null}
+            </ModuleCard>
 
-            <section className={styles.card}>
-              <div className={styles.actions}>
-                <button className={section === "holdings" && activePanel === "position" ? styles.primaryButton : styles.secondaryButton} onClick={() => openPanel("position", "holdings")} type="button">{UI.addPosition}</button>
-                {message ? <span className={styles.successText}>{message}</span> : null}
-                {error ? <span className={styles.dangerText}>{error}</span> : null}
-              </div>
-            </section>
-
-            {activePanel === "position" ? renderComposer() : null}
-
-            <section className={styles.card}>
-              <div className={styles.tableWrap}>
-                <table className={`${styles.table} ${styles.tableCompact} ${styles.holdingsTableCompact}`}>
-                  <thead>
-                    <tr>
-                      <th>股票</th>
-                      <th>成本 / 数量</th>
-                      <th>盈亏 / 收益率</th>
-                      <th>分析历史</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {stocks.map((stock) => {
-                      const metrics = holdingMetrics.get(`${stock.code || ""}::${stock.name || ""}`);
-                      const pnlClassName = resolvePnlTone(metrics?.pnl, styles);
-
-                      return (
-                      <tr key={stock.id}>
-                        <td>
-                          <strong>{stock.name}</strong>
-                          <div className={styles.muted}>{stock.code}</div>
-                        </td>
-                        <td className={styles.holdingMetricCell}>
-                          <div>{numberText(stock.cost_price)}</div>
-                          <div>{stock.quantity ?? "N/A"}</div>
-                        </td>
-                        <td className={`${styles.holdingMetricCell} ${pnlClassName}`}>
-                          <div>{numberText(metrics?.pnl)}</div>
-                          <div>{percentText(metrics?.pnlPct)}</div>
-                        </td>
-                        <td className={styles.holdingHistoryCell}>
-                          {stock.analysis_record_id ? (
-                            <button
-                              className={styles.holdingHistoryButton}
-                              onClick={() => navigate(`/research/history?recordId=${stock.analysis_record_id}`)}
-                              type="button"
-                            >
-                              查看
-                            </button>
-                          ) : (
-                            <span className={styles.muted}>暂无</span>
-                          )}
-                        </td>
-                      </tr>
-                    )})}
-                    {!stocks.length ? (
+            <ModuleCard title="持仓数据" summary="列表与分析历史入口统一保留在数据模块内。">
+              <div className={styles.moduleSection}>
+                <div className={styles.tableWrap}>
+                  <table className={`${styles.table} ${styles.tableCompact} ${styles.holdingsTableCompact}`}>
+                    <thead>
                       <tr>
-                        <td className={styles.muted} colSpan={4}>{UI.noHoldings}</td>
+                        <th>股票</th>
+                        <th>成本 / 数量</th>
+                        <th>盈亏 / 收益率</th>
+                        <th>分析历史</th>
                       </tr>
-                    ) : null}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {stocks.map((stock) => {
+                        const metrics = holdingMetrics.get(`${stock.code || ""}::${stock.name || ""}`);
+                        const pnlClassName = resolvePnlTone(metrics?.pnl, styles);
+
+                        return (
+                          <tr key={stock.id}>
+                            <td>
+                              <strong>{stock.name}</strong>
+                              <div className={styles.muted}>{stock.code}</div>
+                            </td>
+                            <td className={styles.holdingMetricCell}>
+                              <div>{numberText(stock.cost_price)}</div>
+                              <div>{stock.quantity ?? "N/A"}</div>
+                            </td>
+                            <td className={`${styles.holdingMetricCell} ${pnlClassName}`}>
+                              <div>{numberText(metrics?.pnl)}</div>
+                              <div>{percentText(metrics?.pnlPct)}</div>
+                            </td>
+                            <td className={styles.holdingHistoryCell}>
+                              {stock.analysis_record_id ? (
+                                <button
+                                  className={styles.holdingHistoryButton}
+                                  onClick={() => navigate(`/research/history?recordId=${stock.analysis_record_id}`)}
+                                  type="button"
+                                >
+                                  查看
+                                </button>
+                              ) : (
+                                <span className={styles.muted}>暂无</span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                      {!stocks.length ? (
+                        <tr>
+                          <td className={styles.muted} colSpan={4}>{UI.noHoldings}</td>
+                        </tr>
+                      ) : null}
+                    </tbody>
+                  </table>
+                </div>
               </div>
-            </section>
+            </ModuleCard>
           </>
         ) : null}
 
         {section === "trades" ? (
           <>
-            <section className={styles.card}>
-              <div className={styles.actions}>
-                <button className={section === "trades" && activePanel === "trade" ? styles.primaryButton : styles.secondaryButton} onClick={() => openPanel("trade", "trades")} type="button">{UI.addTrade}</button>
-                {message ? <span className={styles.successText}>{message}</span> : null}
-                {error ? <span className={styles.dangerText}>{error}</span> : null}
-              </div>
-            </section>
+            <ModuleCard
+              title="交易操作"
+              summary="登记交易表单作为当前模块内的展开区，不再拆成额外卡片。"
+              toolbar={(
+                <button
+                  className={activeEditor === "trade" ? styles.primaryButton : styles.secondaryButton}
+                  onClick={() => setActiveEditor((current) => (current === "trade" ? null : "trade"))}
+                  type="button"
+                >
+                  {UI.addTrade}
+                </button>
+              )}
+            >
+              {activeEditor === "trade" ? renderTradeForm() : (
+                <div className={styles.moduleSection}>
+                  <p className={styles.helperText}>登记后的流水会出现在完整交易列表中，并支持分页查看。</p>
+                </div>
+              )}
+            </ModuleCard>
 
-            {activePanel === "trade" ? renderComposer() : null}
-
-            <section className={styles.card}>
-              <div className={styles.tableWrap}>
-                <table className={`${styles.table} ${styles.tableCompact} ${styles.tradeTableCompact}`}>
-                  <thead>
-                    <tr>
-                      <th>时间</th>
-                      <th>股票</th>
-                      <th className={styles.desktopOnly}>类型</th>
-                      <th className={styles.desktopOnly}>数量</th>
-                      <th className={styles.mobileOnly}>交易</th>
-                      <th className={styles.numericCell}>价格</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {trades.map((trade) => (
-                      <tr key={trade.id}>
-                        <td>{formatDateOnly(trade.trade_time, "暂无")}</td>
-                        <td>{`${trade.stock_name}（${trade.stock_code}）`}</td>
-                        <td className={styles.desktopOnly}>{tradeTypeText(trade.trade_type)}</td>
-                        <td className={styles.desktopOnly}>{trade.quantity}</td>
-                        <td className={styles.mobileOnly}>{`${tradeTypeText(trade.trade_type)} ${trade.quantity}股`}</td>
-                        <td className={styles.numericCell}>{numberText(trade.price)}</td>
-                      </tr>
-                    ))}
-                    {!trades.length ? (
+            <ModuleCard title="交易列表" summary="交易记录和分页统一放在同一模块内。">
+              <div className={styles.moduleSection}>
+                <div className={styles.tableWrap}>
+                  <table className={`${styles.table} ${styles.tableCompact} ${styles.tradeTableCompact}`}>
+                    <thead>
                       <tr>
-                        <td className={styles.muted} colSpan={6}>{UI.noTrades}</td>
+                        <th>时间</th>
+                        <th>股票</th>
+                        <th className={styles.desktopOnly}>类型</th>
+                        <th className={styles.desktopOnly}>数量</th>
+                        <th className={styles.mobileOnly}>交易</th>
+                        <th className={styles.numericCell}>价格</th>
                       </tr>
-                    ) : null}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {trades.map((trade) => (
+                        <tr key={trade.id}>
+                          <td>{formatDateOnly(trade.trade_time, "暂无")}</td>
+                          <td>{`${trade.stock_name}（${trade.stock_code}）`}</td>
+                          <td className={styles.desktopOnly}>{tradeTypeText(trade.trade_type)}</td>
+                          <td className={styles.desktopOnly}>{trade.quantity}</td>
+                          <td className={styles.mobileOnly}>{`${tradeTypeText(trade.trade_type)} ${trade.quantity}股`}</td>
+                          <td className={styles.numericCell}>{numberText(trade.price)}</td>
+                        </tr>
+                      ))}
+                      {!trades.length ? (
+                        <tr>
+                          <td className={styles.muted} colSpan={6}>{UI.noTrades}</td>
+                        </tr>
+                      ) : null}
+                    </tbody>
+                  </table>
+                </div>
+                <div className={styles.pagination}>
+                  <button className={styles.secondaryButton} disabled={tradePage <= 1} onClick={() => setTradePage((current) => Math.max(1, current - 1))} type="button">
+                    上一页
+                  </button>
+                  <span className={styles.muted}>第 {tradePage} / {tradePageCount} 页</span>
+                  <button className={styles.secondaryButton} disabled={tradePage >= tradePageCount} onClick={() => setTradePage((current) => Math.min(tradePageCount, current + 1))} type="button">
+                    下一页
+                  </button>
+                </div>
               </div>
-              <div className={styles.pagination}>
-                <button className={styles.secondaryButton} disabled={tradePage <= 1} onClick={() => setTradePage((current) => Math.max(1, current - 1))} type="button">
-                  上一页
-                </button>
-                <span className={styles.muted}>第 {tradePage} / {tradePageCount} 页</span>
-                <button className={styles.secondaryButton} disabled={tradePage >= tradePageCount} onClick={() => setTradePage((current) => Math.min(tradePageCount, current + 1))} type="button">
-                  下一页
-                </button>
-              </div>
-            </section>
+            </ModuleCard>
           </>
         ) : null}
 
         {section === "scheduler" ? (
-          <>
-            <section className={styles.card}>
-              <div className={styles.actions}>
-                <button className={section === "scheduler" && activePanel === "scheduler" ? styles.primaryButton : styles.secondaryButton} onClick={() => openPanel("scheduler", "scheduler")} type="button">{UI.schedule}</button>
-                {message ? <span className={styles.successText}>{message}</span> : null}
-                {error ? <span className={styles.dangerText}>{error}</span> : null}
-              </div>
-            </section>
-
-            {activePanel === "scheduler" ? renderComposer() : null}
-
-            <section className={styles.card}>
-              <div className={styles.compactGrid}>
-                <div className={styles.metric}>
-                  <span className={styles.muted}>运行状态</span>
-                  <strong>{scheduler?.is_running ? "运行中" : "未启动"}</strong>
+          <ModuleCard title="定时分析" summary="执行时间、模式、分析师配置和运行状态统一收口到一个模块。">
+            <SchedulerControl
+              enabled={Boolean(scheduler?.is_running)}
+              label="启用定时分析"
+              onRunOnce={() => void runSchedulerNow()}
+              onSave={() => void saveScheduler()}
+              onToggle={(next) => void toggleScheduler(next)}
+              scheduleFields={(
+                <>
+                  <div className={styles.formGrid}>
+                    <div className={styles.field}>
+                      <label htmlFor="scheduler-times">执行时间</label>
+                      <input
+                        id="scheduler-times"
+                        onChange={(event) => setSchedulerTimes(event.target.value)}
+                        step="60"
+                        type="time"
+                        value={schedulerTimes}
+                      />
+                    </div>
+                    <div className={styles.field}>
+                      <label htmlFor="scheduler-mode">分析模式</label>
+                      <select
+                        id="scheduler-mode"
+                        onChange={(event) => setSchedulerMode(event.target.value as "sequential" | "parallel")}
+                        value={schedulerMode}
+                      >
+                        <option value="sequential">顺序分析</option>
+                        <option value="parallel">并行分析</option>
+                      </select>
+                    </div>
+                    {schedulerMode === "parallel" ? (
+                      <div className={styles.field}>
+                        <label htmlFor="scheduler-workers">并发线程数</label>
+                        <select
+                          id="scheduler-workers"
+                          onChange={(event) => setSchedulerMaxWorkers(Number(event.target.value) || DEFAULT_SCHEDULER_WORKERS)}
+                          value={schedulerMaxWorkers}
+                        >
+                          {[1, 2, 3, 4, 5].map((value) => (
+                            <option key={value} value={value}>
+                              {value}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    ) : null}
+                  </div>
+                  <div className={styles.field}>
+                    <label>分析师配置</label>
+                    <AnalystSelector
+                      onChange={(next) => setSchedulerAnalysts(normalizeAnalystKeys(next))}
+                      value={schedulerAnalysts}
+                    />
+                  </div>
+                </>
+              )}
+              statusFields={(
+                <div className={styles.compactGrid}>
+                  <div className={styles.metric}>
+                    <span className={styles.muted}>运行状态</span>
+                    <strong>{scheduler?.is_running ? "运行中" : "未启动"}</strong>
+                  </div>
+                  <div className={styles.metric}>
+                    <span className={styles.muted}>执行时间</span>
+                    <strong>{schedulerTimes || "未配置"}</strong>
+                    <div className={styles.muted}>仅周一至周五执行</div>
+                  </div>
+                  <div className={styles.metric}>
+                    <span className={styles.muted}>分析模式</span>
+                    <strong>{schedulerModeLabel(scheduler?.analysis_mode)}</strong>
+                  </div>
+                  <div className={styles.metric}>
+                    <span className={styles.muted}>最大并发</span>
+                    <strong>{scheduler?.max_workers ?? DEFAULT_SCHEDULER_WORKERS}</strong>
+                  </div>
+                  <div className={styles.metric}>
+                    <span className={styles.muted}>分析师配置</span>
+                    <strong>
+                      {normalizeAnalystKeys(scheduler?.selected_agents)
+                        .map((item) => ANALYST_OPTIONS.find((option) => option.key === item)?.label || item)
+                        .join("、")}
+                    </strong>
+                  </div>
                 </div>
-                <div className={styles.metric}>
-                  <span className={styles.muted}>执行时间</span>
-                  <strong>{schedulerTimes || "未配置"}</strong>
-                  <div className={styles.muted}>仅周一至周五执行</div>
-                </div>
-                <div className={styles.metric}>
-                  <span className={styles.muted}>分析模式</span>
-                  <strong>{schedulerModeLabel(scheduler?.analysis_mode)}</strong>
-                </div>
-                <div className={styles.metric}>
-                  <span className={styles.muted}>最大并发</span>
-                  <strong>{scheduler?.max_workers ?? 3}</strong>
-                </div>
-                <div className={styles.metric}>
-                  <span className={styles.muted}>分析师配置</span>
-                  <strong>
-                    {normalizeSchedulerAnalysts(scheduler?.selected_agents)
-                      .map((item) => schedulerAnalystLabel(item))
-                      .join("、")}
-                  </strong>
-                </div>
-              </div>
-            </section>
-          </>
+              )}
+            />
+          </ModuleCard>
         ) : null}
       </div>
     </PageFrame>

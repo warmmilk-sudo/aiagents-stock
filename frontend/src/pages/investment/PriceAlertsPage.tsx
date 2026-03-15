@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 
+import { PageFeedback } from "../../components/common/PageFeedback";
 import { PageFrame } from "../../components/common/PageFrame";
 import { StatusBadge } from "../../components/common/StatusBadge";
 import { ApiRequestError, apiFetch } from "../../lib/api";
@@ -213,6 +214,7 @@ export function PriceAlertsPage() {
       onSectionChange={(nextSection) => setSection(nextSection as SectionKey)}
     >
       <div className={styles.stack}>
+        <PageFeedback error={error} message={message} />
         <section className={styles.card}>
           <div className={styles.cardHeader}>
             <div>
@@ -241,8 +243,6 @@ export function PriceAlertsPage() {
               </button>
             </div>
           </div>
-          {message ? <p className={styles.successText}>{message}</p> : null}
-          {error ? <p className={styles.dangerText}>{error}</p> : null}
         </section>
 
         {section === "overview" ? (

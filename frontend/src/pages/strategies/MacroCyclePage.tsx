@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 
+import { PageFeedback } from "../../components/common/PageFeedback";
 import { PageFrame } from "../../components/common/PageFrame";
 import { MacroCycleReportDetailView } from "../../components/research/MacroCycleReportDetailView";
 import { splitReportSections } from "../../components/research/FormattedReport";
@@ -261,12 +262,7 @@ export function MacroCyclePage() {
       onSectionChange={(nextSection) => setPanel(nextSection as Panel)}
     >
       <div className={styles.stack}>
-        {(message || error) ? (
-          <section className={styles.card}>
-            {message ? <p className={styles.successText}>{message}</p> : null}
-            {error ? <p className={styles.dangerText}>{error}</p> : null}
-          </section>
-        ) : null}
+        <PageFeedback error={error} message={message} />
 
         {panel === "analysis" ? (
           <>

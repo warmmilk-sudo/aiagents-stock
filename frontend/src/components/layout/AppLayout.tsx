@@ -19,7 +19,7 @@ const LABELS = {
   lightweightModel: "轻量模型",
   reasoningModel: "推理模型",
   savingModel: "正在保存模型配置...",
-  modelHint: "切换后自动保存到当前 .env",
+  modelHint: "切换后自动保存",
   noModelOptions: "暂无可用模型",
   lightweightSaved: "轻量模型已更新",
   reasoningSaved: "推理模型已更新",
@@ -226,9 +226,8 @@ export function AppLayout() {
 
   return (
     <div
-      className={`${styles.shell} ${desktopSidebarHidden ? styles.sidebarHidden : ""} ${
-        isMobile && mobileSidebarOpen ? styles.mobileSidebarOpen : ""
-      }`}
+      className={`${styles.shell} ${desktopSidebarHidden ? styles.sidebarHidden : ""} ${isMobile && mobileSidebarOpen ? styles.mobileSidebarOpen : ""
+        }`}
     >
       <button
         aria-hidden={!isMobile || !mobileSidebarOpen}

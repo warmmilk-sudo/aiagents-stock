@@ -203,8 +203,8 @@ function PredictionToggleSection({
   }
 
   return (
-    <div className={styles.sectionControlStack}>
-      <div className={styles.reportTabGrid}>
+    <div className={`${styles.sectionControlStack} ${styles.tabControlStack}`}>
+      <div className={styles.historyDetailTabs}>
         {options.map((item) => (
           <button
             className={item.key === activeOption.key ? styles.nestedTabButtonActive : styles.nestedTabButton}
@@ -253,8 +253,8 @@ function HeatObservationSection({ options }: { options: HeatToggleOption[] }) {
         : styles.heatChartFillInfo;
 
   return (
-    <div className={styles.sectionControlStack}>
-      <div className={styles.reportTabGrid}>
+    <div className={`${styles.sectionControlStack} ${styles.tabControlStack}`}>
+      <div className={styles.historyDetailTabs}>
         {options.map((item) => (
           <button
             className={item.key === activeOption.key ? styles.nestedTabButtonActive : styles.nestedTabButton}
@@ -381,6 +381,22 @@ export function SectorReportDetailView({
           {dataTimestamp ? ` | 数据时间 ${formatDateTime(dataTimestamp, dataTimestamp)}` : ""}
         </p>
 
+        {headlineSegments.length ? (
+          <div className={styles.listItem}>
+            <strong>核心结论</strong>
+            <ol className={styles.detailOrderedList} style={{ marginTop: 10 }}>
+              {headlineSegments.map((item, index) => (
+                <li key={`${item}-${index}`}>{item}</li>
+              ))}
+            </ol>
+          </div>
+        ) : (
+          <div className={styles.listItem}>
+            <strong>核心结论</strong>
+            <div className={styles.muted} style={{ marginTop: 10 }}>暂无核心结论</div>
+          </div>
+        )}
+
         <div className={styles.reportMetricTriplet}>
           <div className={styles.historySummaryCell}>
             <span>风险等级</span>
@@ -426,17 +442,7 @@ export function SectorReportDetailView({
       </section>
 
       <section className={`${styles.stack} ${styles.historyDetailStack}`}>
-        <div className={styles.sectionControlStack}>
-          {headlineSegments.length ? (
-            <ol className={styles.detailOrderedList}>
-              {headlineSegments.map((item, index) => (
-                <li key={`${item}-${index}`}>{item}</li>
-              ))}
-            </ol>
-          ) : (
-            <div className={styles.muted}>暂无核心结论</div>
-          )}
-
+        <div className={`${styles.sectionControlStack} ${styles.tabControlStack}`}>
           <div className={styles.strategySummaryGrid}>
             <div className={styles.historySummaryCell}>
               <span>主要风险</span>
@@ -448,7 +454,7 @@ export function SectorReportDetailView({
             </div>
           </div>
 
-          <div className={styles.reportTabGridFour}>
+          <div className={styles.historyDetailTabs}>
             <button
               className={activeSection === "long_short" ? styles.primaryButton : styles.secondaryButton}
               onClick={() => setActiveSection("long_short")}

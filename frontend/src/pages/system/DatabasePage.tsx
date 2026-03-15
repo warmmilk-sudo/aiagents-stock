@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 
+import { PageFeedback } from "../../components/common/PageFeedback";
 import { PageFrame } from "../../components/common/PageFrame";
 import { ApiRequestError, apiFetch } from "../../lib/api";
 import styles from "../ConsolePage.module.scss";
@@ -70,13 +71,12 @@ export function DatabasePage() {
   return (
     <PageFrame title="数据库管理">
       <div className={styles.stack}>
+        <PageFeedback error={error} message={message} />
         <section className={styles.card}>
           <div className={styles.actions}>
             <button className={styles.secondaryButton} disabled={loading} onClick={() => void withAction(loadStatus)} type="button">
               刷新状态
             </button>
-            {message ? <span className={styles.successText}>{message}</span> : null}
-            {error ? <span className={styles.dangerText}>{error}</span> : null}
           </div>
         </section>
 

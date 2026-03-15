@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 
+import { PageFeedback } from "../../components/common/PageFeedback";
 import { PageFrame } from "../../components/common/PageFrame";
 import { AnalysisActionButtons, type ActionPayload } from "../../components/research/AnalysisActionButtons";
 import { LonghubangReportDetailView } from "../../components/research/LonghubangReportDetailView";
@@ -343,12 +344,7 @@ export function LonghubangPage() {
       onSectionChange={(nextSection) => setPanel(nextSection as Panel)}
     >
       <div className={styles.stack}>
-        {(message || error) ? (
-          <section className={styles.card}>
-            {message ? <p className={styles.successText}>{message}</p> : null}
-            {error ? <p className={styles.dangerText}>{error}</p> : null}
-          </section>
-        ) : null}
+        <PageFeedback error={error} message={message} />
 
         {panel === "analysis" ? (
           <>

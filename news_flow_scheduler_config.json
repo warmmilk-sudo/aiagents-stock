@@ -1,0 +1,12 @@
+{
+  "task_enabled": {
+    "sync_hotspots": true,
+    "generate_alerts": true,
+    "deep_analysis": false
+  },
+  "task_intervals": {
+    "sync_hotspots": 30,
+    "generate_alerts": 60,
+    "deep_analysis": 120
+  }
+}

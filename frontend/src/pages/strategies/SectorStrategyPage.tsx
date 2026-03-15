@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 
+import { PageFeedback } from "../../components/common/PageFeedback";
 import { PageFrame } from "../../components/common/PageFrame";
 import { StatusBadge } from "../../components/common/StatusBadge";
 import {
@@ -264,16 +265,18 @@ export function SectorStrategyPage() {
       summary="智策板块分析支持最新报告、历史报告与定时任务。"
       title="智策板块"
     >
-      {detailView ? (
-        <SectorReportDetailView
-          backLabel={section === "history" ? "返回历史报告" : "返回分析总览"}
-          onBack={closeDetail}
-          onExport={(kind) => void exportCurrentResult(kind)}
-          reportView={detailReportView}
-          title={detailTitle}
-        />
-      ) : (
-        <div className={styles.stack}>
+      <div className={styles.stack}>
+        <PageFeedback error={error} message={message} />
+        {detailView ? (
+          <SectorReportDetailView
+            backLabel={section === "history" ? "返回历史报告" : "返回分析总览"}
+            onBack={closeDetail}
+            onExport={(kind) => void exportCurrentResult(kind)}
+            reportView={detailReportView}
+            title={detailTitle}
+          />
+        ) : (
+          <>
           {section === "overview" ? (
             <>
               <section className={styles.card}>
@@ -286,8 +289,6 @@ export function SectorStrategyPage() {
                       查看最新报告
                     </button>
                   ) : null}
-                  {message ? <span className={styles.successText}>{message}</span> : null}
-                  {error ? <span className={styles.dangerText}>{error}</span> : null}
                 </div>
               </section>
 
@@ -362,8 +363,6 @@ export function SectorStrategyPage() {
           {section === "history" ? (
             <section className={styles.card}>
               <h2>历史报告</h2>
-              {message ? <p className={styles.successText}>{message}</p> : null}
-              {error ? <p className={styles.dangerText}>{error}</p> : null}
               <div className={styles.list}>
                 {history.map((item) => (
                   <div className={styles.historyRecordCard} key={item.id}>
@@ -410,8 +409,6 @@ export function SectorStrategyPage() {
           {section === "scheduler" ? (
             <section className={styles.card}>
               <h2>定时分析设置</h2>
-              {message ? <p className={styles.successText}>{message}</p> : null}
-              {error ? <p className={styles.dangerText}>{error}</p> : null}
               <div className={styles.formGrid}>
                 <div className={styles.field}>
                   <label htmlFor="scheduleTime">定时时间</label>
@@ -444,8 +441,9 @@ export function SectorStrategyPage() {
               </div>
             </section>
           ) : null}
-        </div>
-      )}
+          </>
+        )}
+      </div>
     </PageFrame>
   );
 }

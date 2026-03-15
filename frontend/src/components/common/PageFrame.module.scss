@@ -1,6 +1,7 @@
 .frame {
   display: grid;
   gap: 12px;
+  grid-template-columns: minmax(0, 1fr);
   min-width: 0;
   width: 100%;
   max-width: 100%;

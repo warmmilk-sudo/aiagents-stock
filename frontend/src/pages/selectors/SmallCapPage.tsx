@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
+import { PageFeedback } from "../../components/common/PageFeedback";
 import { PageFrame } from "../../components/common/PageFrame";
 import { StatusBadge } from "../../components/common/StatusBadge";
 import { ApiRequestError, apiFetch } from "../../lib/api";
@@ -300,6 +301,7 @@ export function SmallCapPage() {
       onSectionChange={(nextSection) => setSection(nextSection as SectionKey)}
     >
       <div className={styles.stack}>
+        <PageFeedback error={error} message={message} />
         {section === "results" ? (
           <>
             <section className={styles.card}>
@@ -362,8 +364,6 @@ export function SmallCapPage() {
                       发送钉钉通知
                     </button>
                   ) : null}
-                  {message ? <span className={styles.successText}>{message}</span> : null}
-                  {error ? <span className={styles.dangerText}>{error}</span> : null}
                 </div>
               </form>
             </section>

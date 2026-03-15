@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
+import { PageFeedback } from "../../components/common/PageFeedback";
 import { PageFrame } from "../../components/common/PageFrame";
 import { StatusBadge } from "../../components/common/StatusBadge";
 import { ApiRequestError } from "../../lib/api";
@@ -245,6 +246,7 @@ export function ConfigPage() {
       onSectionChange={(nextSection) => setSection(nextSection as SectionKey)}
     >
       <div className={styles.stack}>
+        <PageFeedback error={error} message={message} />
         <section className={styles.card}>
           <div className={styles.actions}>
             <button className={styles.primaryButton} onClick={() => void handleSave()} type="button">
@@ -255,8 +257,6 @@ export function ConfigPage() {
                 测试 Webhook
               </button>
             ) : null}
-            {message ? <span className={styles.successText}>{message}</span> : null}
-            {error ? <span className={styles.dangerText}>{error}</span> : null}
           </div>
         </section>
 
