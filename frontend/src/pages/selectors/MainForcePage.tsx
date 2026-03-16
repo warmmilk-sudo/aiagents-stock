@@ -551,7 +551,7 @@ export function MainForcePage() {
         {section === "candidates" ? (
           <section className={styles.card}>
             <div className={styles.actions}>
-              <h2>候选股票列表</h2>
+              <h2 className={styles.mobileDuplicateHeading}>候选股票列表</h2>
               <button className={styles.secondaryButton} onClick={() => void exportSelection("pdf")} type="button">
                 导出 PDF
               </button>
@@ -593,7 +593,7 @@ export function MainForcePage() {
         {section === "batch" ? (
           <>
             <section className={styles.card}>
-              <h2>TOP 股票批量深度分析</h2>
+              <h2 className={styles.mobileDuplicateHeading}>TOP 股票批量深度分析</h2>
               <div className={styles.formGrid}>
                 <div className={styles.field}>
                   <label htmlFor="batchCount">分析数量</label>
@@ -765,7 +765,7 @@ export function MainForcePage() {
 
         {section === "history" ? (
           <section className={styles.card}>
-            <h2>批量分析历史</h2>
+            <h2 className={styles.mobileDuplicateHeading}>批量分析历史</h2>
             <div className={styles.compactGrid}>
               <div className={styles.metric}>
                 <span className={styles.muted}>总记录数</span>

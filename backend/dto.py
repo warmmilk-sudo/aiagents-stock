@@ -29,6 +29,14 @@ class AnalysisTaskRequest(BaseModel):
     reasoning_model: Optional[str] = None
 
 
+class PortfolioAnalysisTaskRequest(BaseModel):
+    account_name: Optional[str] = None
+    period: Optional[str] = None
+    batch_mode: Literal["顺序分析", "多线程并行"] = "顺序分析"
+    max_workers: int = 3
+    analysts: AnalystConfig = Field(default_factory=AnalystConfig)
+
+
 class MainForceSelectionTaskRequest(BaseModel):
     days_ago: Optional[int] = 90
     start_date: Optional[str] = None
@@ -238,6 +246,11 @@ class TradeRecordCreateRequest(BaseModel):
     note: str = ""
 
 
+class PortfolioSchedulerAccountConfigRequest(BaseModel):
+    account_name: str
+    enabled: bool = True
+
+
 class PortfolioSchedulerConfigRequest(BaseModel):
     schedule_times: list[str] = Field(default_factory=list)
     analysis_mode: Optional[str] = None
@@ -245,6 +258,7 @@ class PortfolioSchedulerConfigRequest(BaseModel):
     auto_sync_monitor: Optional[bool] = None
     send_notification: Optional[bool] = None
     selected_agents: Optional[list[str]] = None
+    account_configs: Optional[list[PortfolioSchedulerAccountConfigRequest]] = None
 
 
 class PriceAlertCreateRequest(BaseModel):

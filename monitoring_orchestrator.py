@@ -190,6 +190,13 @@ class MonitoringOrchestrator:
     def manual_update_stock(self, stock_id: int) -> bool:
         return self.manual_update_item(stock_id)
 
+    def run_item_once(self, item_id: int) -> bool:
+        item = self.repository.get_item(item_id)
+        if not item:
+            return False
+        timeout = self.AI_TASK_TIMEOUT_SECONDS if item.get("monitor_type") == "ai_task" else self.PRICE_FETCH_TIMEOUT_SECONDS + 5
+        return self._run_coroutine_sync(self._dispatch_item_async(item, force=True), timeout=timeout)
+
     def run_once(self):
         self.ensure_started(ignore_schedule=True)
         if not self.running:
@@ -315,6 +322,12 @@ class MonitoringOrchestrator:
             return False
 
     async def _process_ai_task(self, item: Dict, force: bool = False) -> bool:
+        # 立即生效检查：验证监控项是否依然存在且启用
+        current_item = await asyncio.to_thread(self.repository.get_item, item["id"])
+        if not current_item or not current_item.get("enabled"):
+            self.logger.info("[%s] AI盯盘任务已删除或禁用，跳过执行", item.get("symbol"))
+            return False
+
         try:
             result = await self._await_to_thread(
                 self.engine.analyze_stock,
@@ -325,6 +338,7 @@ class MonitoringOrchestrator:
                 account_name=item.get("account_name"),
                 asset_id=item.get("asset_id"),
                 portfolio_stock_id=item.get("portfolio_stock_id"),
+                require_active_task=True,
             )
         except TimeoutError:
             await asyncio.to_thread(
@@ -374,7 +388,9 @@ class MonitoringOrchestrator:
 
     async def _process_price_alert(self, item: Dict, force: bool = False) -> bool:
         stock = await asyncio.to_thread(monitor_db.get_stock_by_id, item["id"])
-        if not stock:
+        if not stock or not stock.get("enabled"):
+            if not stock:
+                self.logger.info("[%s] 价格预警项已删除，跳过执行", item.get("symbol"))
             return False
 
         if not force and stock.get("trading_hours_only") and not self._is_trading_time():
@@ -389,12 +405,16 @@ class MonitoringOrchestrator:
             return False
 
         current_price = await self._get_latest_price(item["symbol"])
+        latest_stock = await asyncio.to_thread(monitor_db.get_stock_by_id, item["id"])
+        if not latest_stock or not latest_stock.get("enabled"):
+            self.logger.info("[%s] 价格预警项在执行期间已删除或禁用，丢弃本次结果", item.get("symbol"))
+            return False
         if current_price and current_price > 0:
-            await asyncio.to_thread(monitor_db.update_stock_price, stock["id"], current_price)
-            await asyncio.to_thread(self._check_trigger_conditions, stock, current_price)
+            await asyncio.to_thread(monitor_db.update_stock_price, latest_stock["id"], current_price)
+            await asyncio.to_thread(self._check_trigger_conditions, latest_stock, current_price)
             return True
 
-        await asyncio.to_thread(monitor_db.update_last_checked, stock["id"])
+        await asyncio.to_thread(monitor_db.update_last_checked, latest_stock["id"])
         return False
 
     async def _await_to_thread(self, func, timeout_seconds: int, *args, **kwargs):
@@ -451,7 +471,7 @@ class MonitoringOrchestrator:
 
         if entry_range and entry_range.get("min") and entry_range.get("max"):
             if entry_range["min"] <= current_price <= entry_range["max"]:
-                if not monitor_db.has_recent_notification(stock["id"], "entry", minutes=60):
+                if not monitor_db.has_latest_notification_type(stock["id"], "entry"):
                     message = (
                         f"股票 {stock['symbol']} ({stock['name']}) 价格 {current_price} "
                         f"进入进场区间 [{entry_range['min']}-{entry_range['max']}]"
@@ -459,7 +479,7 @@ class MonitoringOrchestrator:
                     monitor_db.add_notification(stock["id"], "entry", message)
 
         if take_profit and current_price >= take_profit:
-            if not monitor_db.has_recent_notification(stock["id"], "take_profit", minutes=60):
+            if not monitor_db.has_latest_notification_type(stock["id"], "take_profit"):
                 message = (
                     f"股票 {stock['symbol']} ({stock['name']}) 价格 {current_price} "
                     f"达到止盈位 {take_profit}"
@@ -467,7 +487,7 @@ class MonitoringOrchestrator:
                 monitor_db.add_notification(stock["id"], "take_profit", message)
 
         if stop_loss and current_price <= stop_loss:
-            if not monitor_db.has_recent_notification(stock["id"], "stop_loss", minutes=60):
+            if not monitor_db.has_latest_notification_type(stock["id"], "stop_loss"):
                 message = (
                     f"股票 {stock['symbol']} ({stock['name']}) 价格 {current_price} "
                     f"达到止损位 {stop_loss}"

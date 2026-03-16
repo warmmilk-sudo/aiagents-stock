@@ -7,10 +7,16 @@ export interface SplitReportSections {
   reasoning: string;
 }
 
+export interface ReportMetricItem {
+  label: string;
+  value: string;
+}
+
 type ReportBlock =
   | { type: "heading"; level: number; text: string }
   | { type: "paragraph"; lines: string[] }
   | { type: "list"; ordered: boolean; items: string[] }
+  | { type: "metrics"; items: ReportMetricItem[] }
   | { type: "table"; headers: string[]; rows: string[][] };
 
 const REPORT_START_PATTERNS = [
@@ -20,14 +26,119 @@ const REPORT_START_PATTERNS = [
 ];
 
 const REPORT_BODY_MARKERS = [
-  /[\[【]?(?:报告正文|正文内容|分析正文|最终报告|正式报告)[\]】]?[:：]?\s*/m,
   /^\s*(?:以下|下面)是(?:最终)?(?:正式)?(?:分析)?报告[:：]?\s*$/m,
+  /[\[【]?(?:报告正文|正文内容|分析正文|最终报告|正式报告)[\]】]?[:：]?\s*/m,
 ];
 
 const PREAMBLE_LINE_PATTERNS = [
   /^(?:好的|下面|以下|基于|根据|综合|结合|我将|我会|先对|接下来|这里是)/u,
   /(?:分析报告如下|正式报告如下|报告如下|为你提供|为您提供)/u,
 ];
+
+const STRUCTURED_HEADING_PATTERNS: Array<{ level: number; pattern: RegExp }> = [
+  { level: 1, pattern: /^[一二三四五六七八九十]+[、.]\s*(.+)$/u },
+  { level: 2, pattern: /^[（(][一二三四五六七八九十]+[)）]\s*(.+)$/u },
+  { level: 2, pattern: /^\d+[.)、]\s*(.+)$/u },
+  { level: 3, pattern: /^\d+(?:\.\d+){1,2}\s+(.+)$/u },
+  { level: 3, pattern: /^[①②③④⑤⑥⑦⑧⑨⑩]\s*(.+)$/u },
+  { level: 2, pattern: /^\*\*(.+)\*\*$/u },
+];
+
+const METRIC_LABEL_ALIASES: Record<string, string> = {
+  rating: "评级",
+  investment_rating: "评级",
+  confidence_level: "信心度",
+  confidence_score: "置信度",
+  target_price: "目标价",
+  entry_range: "进场区间",
+  entry_min: "进场下沿",
+  entry_max: "进场上沿",
+  take_profit: "止盈位",
+  stop_loss: "止损位",
+  holding_period: "持有周期",
+  position_size: "仓位建议",
+  risk_level: "风险等级",
+  market_outlook: "市场展望",
+  market_view: "市场观点",
+  key_opportunity: "主线机会",
+  major_risk: "主要风险",
+  strategy: "策略",
+  direction: "方向",
+  stage: "阶段",
+  time_window: "关注周期",
+  sector: "板块",
+  score: "热度",
+  trend: "趋势",
+  sustainability: "持续性",
+  data_source: "数据来源",
+  total_records: "榜单记录",
+  total_stocks: "涉及股票",
+  total_youzi: "涉及游资",
+};
+
+const STRUCTURED_METRIC_FIELDS = [
+  "rating",
+  "investment_rating",
+  "confidence_level",
+  "confidence_score",
+  "risk_level",
+  "market_outlook",
+  "target_price",
+  "entry_range",
+  "take_profit",
+  "stop_loss",
+  "holding_period",
+  "position_size",
+  "market_view",
+  "key_opportunity",
+  "major_risk",
+  "strategy",
+  "direction",
+  "stage",
+  "time_window",
+  "sector",
+  "score",
+  "trend",
+  "sustainability",
+  "data_source",
+  "total_records",
+  "total_stocks",
+  "total_youzi",
+];
+
+const METRIC_TEXT_FALLBACK_LABELS = new Set([
+  "评级",
+  "信心度",
+  "置信度",
+  "目标价",
+  "进场区间",
+  "进场下沿",
+  "进场上沿",
+  "止盈位",
+  "止损位",
+  "持有周期",
+  "仓位建议",
+  "风险等级",
+  "市场展望",
+  "市场观点",
+  "主线机会",
+  "主要风险",
+  "策略",
+  "方向",
+  "阶段",
+  "关注周期",
+  "板块",
+  "热度",
+  "趋势",
+  "持续性",
+  "数据来源",
+  "榜单记录",
+  "涉及股票",
+  "涉及游资",
+]);
+
+const LONG_VALUE_LABELS = new Set(["市场观点", "主线机会", "主要风险", "策略", "风险提示", "操作建议"]);
+const METRIC_IGNORED_LABELS = new Set(["推理过程", "思考过程", "分析过程", "报告正文", "正文内容", "分析正文"]);
 
 function toReportText(value: unknown): string {
   if (value === null || value === undefined || value === "") {
@@ -39,6 +150,15 @@ function toReportText(value: unknown): string {
   return JSON.stringify(value, null, 2);
 }
 
+function removeInlineFormatting(text: string): string {
+  return text
+    .replace(/\*\*(.*?)\*\*/g, "$1")
+    .replace(/__(.*?)__/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\[(.*?)\]\([^)]+\)/g, "$1")
+    .trim();
+}
+
 function findReportBodyStart(text: string): number | null {
   const positions = REPORT_START_PATTERNS
     .map((pattern) => text.search(pattern))
@@ -48,15 +168,15 @@ function findReportBodyStart(text: string): number | null {
 
 function cleanReasoningLabel(text: string): string {
   return text
-    .replace(/^\s*[\[【]?推理过程[\]】]?\s*/u, "")
-    .replace(/^\s*推理过程[:：]\s*/u, "")
+    .replace(/^\s*[\[【]?(?:推理过程|思考过程|分析过程|推演过程)[\]】]?\s*/u, "")
+    .replace(/^\s*(?:推理过程|思考过程|分析过程|推演过程)[:：]\s*/u, "")
     .trim();
 }
 
 function cleanBodyLabel(text: string): string {
   return text
     .replace(/^\s*[\[【]?(?:报告正文|正文内容|分析正文|最终报告|正式报告)[\]】]?\s*/u, "")
-    .replace(/^\s*(?:以下|下面)是(?:最终)?(?:正式)?(?:分析)?报告[:：]?\s*/u, "")
+    .replace(/^\s*(?:以下|下面)是(?:最终)?(?:正式)?(?:分析)?报告[:：]\s*/u, "")
     .trim();
 }
 
@@ -128,7 +248,7 @@ export function splitReportSections(value: unknown): SplitReportSections {
     };
   }
 
-  const marker = text.match(/[\[【]推理过程[\]】]|^\s*推理过程[:：]/m);
+  const marker = text.match(/[\[【](?:推理过程|思考过程|分析过程|推演过程)[\]】]|^\s*(?:推理过程|思考过程|分析过程|推演过程)[:：]/m);
   if (!marker || marker.index === undefined) {
     const { body, preamble } = splitLeadingPreamble(text);
     return {
@@ -182,12 +302,137 @@ function parseTableRow(line: string): string[] {
     .map((cell) => cell.trim());
 }
 
+function looksLikeStructuredTitle(text: string): boolean {
+  const normalized = removeInlineFormatting(text).replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return false;
+  }
+  if (/[:：]\s*$/.test(normalized)) {
+    return true;
+  }
+  if (/[，,；;]/u.test(normalized) && normalized.length > 18) {
+    return false;
+  }
+  if (/[。！？]/u.test(normalized) && normalized.length > 16) {
+    return false;
+  }
+  return normalized.length <= 32;
+}
+
+function parseStructuredHeading(line: string): { level: number; text: string } | null {
+  const candidate = line.replace(/^>\s*/, "").trim();
+  if (!candidate) {
+    return null;
+  }
+  for (const matcher of STRUCTURED_HEADING_PATTERNS) {
+    const match = candidate.match(matcher.pattern);
+    if (!match) {
+      continue;
+    }
+    const text = match[1]?.trim() || "";
+    if (!looksLikeStructuredTitle(text)) {
+      return null;
+    }
+    return { level: matcher.level, text };
+  }
+  return null;
+}
+
 function isListLine(line: string): boolean {
-  return /^\s*(?:[-*+]|(?:\d+[.)])|[①②③④⑤⑥⑦⑧⑨⑩])\s+/.test(line);
+  return /^\s*(?:[-*+]|(?:\d+[.)、])|(?:[一二三四五六七八九十]+[、.])|(?:[（(][一二三四五六七八九十]+[)）])|[①②③④⑤⑥⑦⑧⑨⑩])\s+/.test(line);
 }
 
 function stripListMarker(line: string): string {
-  return line.replace(/^\s*(?:[-*+]|(?:\d+[.)])|[①②③④⑤⑥⑦⑧⑨⑩])\s+/, "").trim();
+  return line.replace(/^\s*(?:[-*+]|(?:\d+[.)、])|(?:[一二三四五六七八九十]+[、.])|(?:[（(][一二三四五六七八九十]+[)）])|[①②③④⑤⑥⑦⑧⑨⑩])\s+/, "").trim();
+}
+
+function isOrderedListLine(line: string): boolean {
+  return /^\s*(?:(?:\d+[.)、])|(?:[一二三四五六七八九十]+[、.])|(?:[（(][一二三四五六七八九十]+[)）])|[①②③④⑤⑥⑦⑧⑨⑩])\s+/.test(line);
+}
+
+function humanizeMetricLabel(label: string): string {
+  const normalized = label
+    .trim()
+    .replace(/^#+\s*/u, "")
+    .replace(/[：:]+$/u, "")
+    .replace(/\s+/g, "_")
+    .toLowerCase();
+  return METRIC_LABEL_ALIASES[normalized] || label.trim();
+}
+
+function isMetricValueValid(label: string, value: string, segmented: boolean): boolean {
+  const normalized = removeInlineFormatting(value).replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return false;
+  }
+  if (/^[{\[]/.test(normalized) || /^(?:true|false|null)$/i.test(normalized)) {
+    return false;
+  }
+  if (/^(?:以下|下面)是/u.test(normalized)) {
+    return false;
+  }
+  const maxLength = LONG_VALUE_LABELS.has(label) ? 72 : segmented ? 52 : 42;
+  if (normalized.length > maxLength) {
+    return false;
+  }
+  if (/[。！？]/u.test(normalized) && normalized.length > 24 && !LONG_VALUE_LABELS.has(label)) {
+    return false;
+  }
+  return true;
+}
+
+function dedupeMetrics(items: ReportMetricItem[]): ReportMetricItem[] {
+  const seen = new Set<string>();
+  const result: ReportMetricItem[] = [];
+  items.forEach((item) => {
+    const label = humanizeMetricLabel(item.label);
+    const value = removeInlineFormatting(item.value).replace(/\s+/g, " ").trim();
+    if (!label || !value) {
+      return;
+    }
+    const key = `${label}::${value}`;
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    result.push({ label, value });
+  });
+  return result;
+}
+
+function extractMetricPairsFromLine(line: string): ReportMetricItem[] {
+  const candidate = line
+    .replace(/^>\s*/u, "")
+    .replace(/^\s*(?:[-*+]|(?:\d+[.)、])|(?:[一二三四五六七八九十]+[、.])|(?:[（(][一二三四五六七八九十]+[)）])|[①②③④⑤⑥⑦⑧⑨⑩])\s+/u, "")
+    .trim();
+  if (!candidate) {
+    return [];
+  }
+
+  const segments = candidate.split(/[|｜]/u).map((item) => item.trim()).filter(Boolean);
+  const sources = segments.length > 1 ? segments : [candidate];
+
+  return dedupeMetrics(
+    sources.flatMap((segment) => {
+      const match = removeInlineFormatting(segment).match(/^([^：:]{1,14}?)\s*[：:]\s*(.+)$/u);
+      if (!match) {
+        return [];
+      }
+
+      const label = humanizeMetricLabel(match[1]);
+      const value = match[2].trim();
+      if (!label || !value || METRIC_IGNORED_LABELS.has(label)) {
+        return [];
+      }
+      if (!METRIC_TEXT_FALLBACK_LABELS.has(label) && !LONG_VALUE_LABELS.has(label) && label.length > 10) {
+        return [];
+      }
+      if (!isMetricValueValid(label, value, segments.length > 1)) {
+        return [];
+      }
+      return [{ label, value }];
+    }),
+  );
 }
 
 function parseBlocks(text: string): ReportBlock[] {
@@ -220,6 +465,17 @@ function parseBlocks(text: string): ReportBlock[] {
       continue;
     }
 
+    const structuredHeading = parseStructuredHeading(trimmed);
+    if (structuredHeading) {
+      blocks.push({
+        type: "heading",
+        level: structuredHeading.level,
+        text: structuredHeading.text,
+      });
+      index += 1;
+      continue;
+    }
+
     if (isTableLine(trimmed) && index + 1 < lines.length && isTableSeparator(lines[index + 1])) {
       const headers = parseTableRow(trimmed);
       const rows: string[][] = [];
@@ -232,8 +488,29 @@ function parseBlocks(text: string): ReportBlock[] {
       continue;
     }
 
+    const metricItems = extractMetricPairsFromLine(trimmed);
+    if (metricItems.length) {
+      const collected = [...metricItems];
+      index += 1;
+      while (index < lines.length) {
+        const nextTrimmed = lines[index].trim();
+        if (!nextTrimmed) {
+          index += 1;
+          break;
+        }
+        const nextMetrics = extractMetricPairsFromLine(nextTrimmed);
+        if (!nextMetrics.length) {
+          break;
+        }
+        collected.push(...nextMetrics);
+        index += 1;
+      }
+      blocks.push({ type: "metrics", items: dedupeMetrics(collected) });
+      continue;
+    }
+
     if (isListLine(trimmed)) {
-      const ordered = /^\s*(?:\d+[.)]|[①②③④⑤⑥⑦⑧⑨⑩])\s+/.test(trimmed);
+      const ordered = isOrderedListLine(trimmed);
       const items: string[] = [];
       while (index < lines.length && isListLine(lines[index].trim())) {
         items.push(stripListMarker(lines[index]));
@@ -253,7 +530,9 @@ function parseBlocks(text: string): ReportBlock[] {
       }
       if (
         nextTrimmed.match(/^(#{1,4})\s+(.+)$/) ||
+        parseStructuredHeading(nextTrimmed) ||
         (isTableLine(nextTrimmed) && index + 1 < lines.length && isTableSeparator(lines[index + 1])) ||
+        extractMetricPairsFromLine(nextTrimmed).length ||
         isListLine(nextTrimmed)
       ) {
         break;
@@ -277,6 +556,82 @@ function renderInline(text: string) {
   });
 }
 
+function formatMetricValue(label: string, value: unknown): string {
+  if (value === null || value === undefined || value === "") {
+    return "";
+  }
+  if (label === "进场区间" && typeof value === "object" && !Array.isArray(value)) {
+    const payload = value as { min?: unknown; max?: unknown };
+    const min = payload.min ?? "";
+    const max = payload.max ?? "";
+    return [min, max].filter(Boolean).join(" - ");
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item || "").trim()).filter(Boolean).join(" / ");
+  }
+  if (typeof value === "number") {
+    if (label === "置信度" || label === "热度") {
+      return `${Math.round(value)}分`;
+    }
+    return Number.isInteger(value) ? String(value) : value.toLocaleString("zh-CN", { maximumFractionDigits: 2 });
+  }
+  return String(value).trim();
+}
+
+function collectStructuredMetrics(value: unknown, items: ReportMetricItem[]): void {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return;
+  }
+
+  const payload = value as Record<string, unknown>;
+  const entryRangeValue =
+    payload.entry_range && typeof payload.entry_range === "object" && !Array.isArray(payload.entry_range)
+      ? formatMetricValue("进场区间", payload.entry_range)
+      : payload.entry_range
+        ? formatMetricValue("进场区间", payload.entry_range)
+        : payload.entry_min !== undefined || payload.entry_max !== undefined
+          ? [payload.entry_min, payload.entry_max].filter((item) => item !== null && item !== undefined && item !== "").join(" - ")
+          : "";
+  if (entryRangeValue) {
+    items.push({ label: "进场区间", value: entryRangeValue });
+  }
+
+  STRUCTURED_METRIC_FIELDS.forEach((field) => {
+    if (!(field in payload) || field === "entry_range") {
+      return;
+    }
+    const label = METRIC_LABEL_ALIASES[field] || field;
+    const formatted = formatMetricValue(label, payload[field]);
+    if (formatted) {
+      items.push({ label, value: formatted });
+    }
+  });
+
+  if (payload.summary && typeof payload.summary === "object" && !Array.isArray(payload.summary)) {
+    collectStructuredMetrics(payload.summary, items);
+  }
+}
+
+function collectTextMetrics(value: unknown, items: ReportMetricItem[]): void {
+  const text = toReportText(value);
+  if (!text) {
+    return;
+  }
+  text
+    .replace(/\r\n/g, "\n")
+    .split("\n")
+    .forEach((line) => {
+      items.push(...extractMetricPairsFromLine(line));
+    });
+}
+
+export function extractReportKeyMetrics(content: unknown, limit = 6): ReportMetricItem[] {
+  const collected: ReportMetricItem[] = [];
+  collectStructuredMetrics(content, collected);
+  collectTextMetrics(content, collected);
+  return dedupeMetrics(collected).slice(0, limit);
+}
+
 interface FormattedReportProps {
   content: unknown;
   emptyText?: string;
@@ -295,7 +650,23 @@ export function FormattedReport({ content, emptyText = "暂无正文" }: Formatt
           if (block.level <= 1) {
             return <h3 className={styles.reportHeadingPrimary} key={`heading-${index}`}>{renderInline(block.text)}</h3>;
           }
-          return <h4 className={styles.reportHeadingSecondary} key={`heading-${index}`}>{renderInline(block.text)}</h4>;
+          if (block.level === 2) {
+            return <h4 className={styles.reportHeadingSecondary} key={`heading-${index}`}>{renderInline(block.text)}</h4>;
+          }
+          return <h5 className={styles.reportHeadingTertiary} key={`heading-${index}`}>{renderInline(block.text)}</h5>;
+        }
+
+        if (block.type === "metrics") {
+          return (
+            <div className={styles.reportMetricGrid} key={`metrics-${index}`}>
+              {block.items.map((item, itemIndex) => (
+                <div className={styles.reportMetricCard} key={`${item.label}-${item.value}-${itemIndex}`}>
+                  <span className={styles.reportMetricLabel}>{item.label}</span>
+                  <strong className={styles.reportMetricValue}>{renderInline(item.value)}</strong>
+                </div>
+              ))}
+            </div>
+          );
         }
 
         if (block.type === "list") {

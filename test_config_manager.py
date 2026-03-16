@@ -92,6 +92,22 @@ class ConfigManagerEnvFormatTests(unittest.TestCase):
             self.assertFalse(is_valid)
             self.assertIn("TDX API 地址不能为空", message)
 
+    def test_validate_config_allows_short_deepseek_api_key(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            env_path = Path(temp_dir) / ".env"
+            manager = ConfigManager(str(env_path))
+
+            is_valid, message = manager.validate_config(
+                {
+                    "DEEPSEEK_API_KEY": "short-key",
+                    "TDX_ENABLED": "false",
+                    "TDX_BASE_URL": "",
+                }
+            )
+
+            self.assertTrue(is_valid)
+            self.assertEqual(message, "配置验证通过")
+
 
 if __name__ == "__main__":
     unittest.main()

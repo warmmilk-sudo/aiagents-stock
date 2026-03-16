@@ -172,7 +172,7 @@ class SmartMonitorTDXDataFetcher:
                 volume,
                 datetime.fromtimestamp(int(quote_data.get('ServerTime', 0))).strftime('%Y-%m-%d %H:%M:%S'),
             )
-            self.logger.info(f"✅ TDX成功获取 {stock_code} ({stock_name}) 实时行情")
+            self.logger.debug(f"✅ TDX成功获取 {stock_code} ({stock_name}) 实时行情")
             
             return {
                 'code': stock_code,
@@ -298,7 +298,7 @@ class SmartMonitorTDXDataFetcher:
                 df.iloc[0]['日期'],
                 df.iloc[-1]['日期'],
             )
-            self.logger.info(f"✅ TDX成功获取 {stock_code} K线数据，共{len(df)}条")
+            self.logger.debug(f"✅ TDX成功获取 {stock_code} K线数据，共{len(df)}条")
             
             return df
             

@@ -1502,12 +1502,27 @@ class MonitoringRepository:
         sent: bool = False,
         details: Optional[Dict] = None,
         created_at: Optional[str] = None,
+        suppress_if_latest_same_type: bool = False,
     ) -> int:
         def _record() -> int:
             item = self.get_item(item_id) if item_id else None
             conn = self._connect()
             try:
                 cursor = conn.cursor()
+                if suppress_if_latest_same_type and item_id:
+                    cursor.execute(
+                        """
+                        SELECT id, event_type
+                        FROM monitoring_events
+                        WHERE monitoring_item_id = ?
+                        ORDER BY datetime(created_at) DESC, id DESC
+                        LIMIT 1
+                        """,
+                        (item_id,),
+                    )
+                    latest = cursor.fetchone()
+                    if latest and latest["event_type"] == event_type:
+                        return int(latest["id"])
                 cursor.execute(
                     """
                     INSERT INTO monitoring_events (
@@ -1722,22 +1737,25 @@ class MonitoringRepository:
 
         return run_with_monitoring_write_lock(_clear)
 
-    def has_recent_notification(self, item_id: int, event_type: str, minutes: int = 60) -> bool:
+    def has_latest_notification_type(self, item_id: int, event_type: str) -> bool:
         conn = self._connect()
         cursor = conn.cursor()
         cursor.execute(
             """
-            SELECT COUNT(*)
+            SELECT event_type
             FROM monitoring_events
-            WHERE monitoring_item_id = ? AND event_type = ?
-              AND notification_pending = 1
-              AND datetime(created_at) > datetime('now', '-' || ? || ' minutes')
+            WHERE monitoring_item_id = ?
+            ORDER BY datetime(created_at) DESC, id DESC
+            LIMIT 1
             """,
-            (item_id, event_type, minutes),
+            (item_id,),
         )
-        count = int(cursor.fetchone()[0])
+        latest = cursor.fetchone()
         conn.close()
-        return count > 0
+        return bool(latest and latest["event_type"] == event_type)
+
+    def has_recent_notification(self, item_id: int, event_type: str, minutes: int = 60) -> bool:
+        return self.has_latest_notification_type(item_id, event_type)
 
     @staticmethod
     def _build_smart_migration_key(db_path: str) -> str:

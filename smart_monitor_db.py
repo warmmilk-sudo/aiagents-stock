@@ -713,9 +713,21 @@ class SmartMonitorDB:
             }
         )
 
-    def get_monitor_tasks(self, enabled_only: bool = True) -> List[Dict]:
-        items = self.monitoring_repository.list_items(monitor_type="ai_task", enabled_only=enabled_only)
-        return [self._item_to_task(item) for item in items]
+    def get_monitor_tasks(
+        self,
+        enabled_only: bool = True,
+        account_name: Optional[str] = None,
+        has_position: Optional[bool] = None,
+    ) -> List[Dict]:
+        items = self.monitoring_repository.list_items(
+            monitor_type="ai_task",
+            enabled_only=enabled_only,
+            account_name=account_name,
+        )
+        tasks = [self._item_to_task(item) for item in items]
+        if has_position is not None:
+            tasks = [t for t in tasks if t["has_position"] == (1 if has_position else 0)]
+        return tasks
 
     def update_monitor_task(self, stock_code: str, task_data: Dict):
         account_name = task_data.get("account_name")
@@ -908,7 +920,21 @@ class SmartMonitorDB:
         return task_id
 
     def delete_monitor_task(self, task_id: int):
-        return self.monitoring_repository.delete_item(task_id)
+        item = self.monitoring_repository.get_item(task_id)
+        if not item or item.get("monitor_type") != "ai_task":
+            return False
+
+        linked_alert = self._get_linked_price_alert_item(item)
+        target_asset_id = item.get("asset_id")
+        if target_asset_id is not None:
+            asset = self.asset_repository.get_asset(int(target_asset_id))
+            if asset and bool(asset.get("monitor_enabled", True)):
+                self.asset_repository.update_asset(int(target_asset_id), monitor_enabled=False)
+
+        deleted = self.monitoring_repository.delete_item(task_id)
+        if linked_alert is not None:
+            deleted = self.monitoring_repository.delete_item(int(linked_alert["id"])) or deleted
+        return deleted
 
     def delete_monitor_task_by_code(
         self,

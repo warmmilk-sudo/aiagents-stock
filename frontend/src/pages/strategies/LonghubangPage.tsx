@@ -477,7 +477,7 @@ export function LonghubangPage() {
             ) : null}
 
             <section className={styles.card}>
-              <h2>历史分析报告</h2>
+              <h2 className={styles.mobileDuplicateHeading}>历史分析报告</h2>
               <div className={styles.list}>
                 {history.map((item) => (
                   <div className={styles.listItem} key={item.id}>
@@ -498,7 +498,7 @@ export function LonghubangPage() {
 
         {panel === "statistics" ? (
           <section className={styles.card}>
-            <h2>数据统计</h2>
+            <h2 className={styles.mobileDuplicateHeading}>数据统计</h2>
             <div className={styles.compactGrid}>
               <div className={styles.metric}><span className={styles.muted}>总记录数</span><strong>{statistics?.stats?.total_records ?? 0}</strong></div>
               <div className={styles.metric}><span className={styles.muted}>股票总数</span><strong>{statistics?.stats?.total_stocks ?? 0}</strong></div>

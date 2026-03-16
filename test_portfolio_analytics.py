@@ -428,8 +428,14 @@ class PortfolioSchedulerConfigTests(unittest.TestCase):
         persisted_codes = []
 
         class FakePortfolioManager:
-            def get_stock_count(self):
-                return 2
+            def get_all_stocks(self):
+                return [
+                    {"code": "000001", "account_name": "默认账户"},
+                    {"code": "000002", "account_name": "默认账户"},
+                ]
+
+            def get_stock_count(self, account_name=None):
+                return 2 if account_name in (None, "默认账户") else 0
 
             def batch_analyze_portfolio(
                 self,
@@ -442,6 +448,7 @@ class PortfolioSchedulerConfigTests(unittest.TestCase):
                 model=None,
                 lightweight_model=None,
                 reasoning_model=None,
+                account_name=None,
             ):
                 results = []
                 for index, code in enumerate(["000001", "000002"], start=1):
@@ -474,6 +481,7 @@ class PortfolioSchedulerConfigTests(unittest.TestCase):
                 sync_realtime_monitor=True,
                 analysis_source="portfolio_batch_analysis",
                 analysis_period="1y",
+                account_name=None,
             ):
                 persisted_codes.append(code)
                 return {
@@ -502,6 +510,111 @@ class PortfolioSchedulerConfigTests(unittest.TestCase):
         self.assertEqual(task["result"]["analysis_source"], "portfolio_scheduler")
         self.assertEqual(task["result"]["persistence_result"]["saved_ids"], [1, 2])
         self.assertEqual(task["message"], "定时持仓分析完成：成功 2，失败 0，已写入 2 条历史")
+
+    def test_scheduler_only_runs_enabled_accounts(self):
+        scheduler = PortfolioScheduler()
+        scheduler.set_task_config(
+            PortfolioAnalysisTaskConfig(
+                analysis_mode="parallel",
+                max_workers=3,
+                auto_monitor_sync=False,
+                notification_enabled=False,
+                selected_agents=["technical"],
+            )
+        )
+        scheduler.set_account_task_configs(
+            [
+                {"account_name": "ly", "enabled": True},
+                {"account_name": "zfy", "enabled": False},
+            ]
+        )
+
+        task_manager = PortfolioAnalysisTaskManager()
+        execution_records = []
+        persisted_records = []
+
+        class FakePortfolioManager:
+            def get_all_stocks(self):
+                return [
+                    {"code": "000001", "account_name": "ly"},
+                    {"code": "000002", "account_name": "zfy"},
+                ]
+
+            def get_stock_count(self, account_name=None):
+                if account_name == "ly":
+                    return 1
+                if account_name == "zfy":
+                    return 1
+                return 2
+
+            def batch_analyze_portfolio(
+                self,
+                mode="sequential",
+                period="1y",
+                selected_agents=None,
+                max_workers=3,
+                progress_callback=None,
+                result_callback=None,
+                model=None,
+                lightweight_model=None,
+                reasoning_model=None,
+                account_name=None,
+            ):
+                code = "000001" if account_name == "ly" else "000002"
+                execution_records.append((account_name, mode, max_workers))
+                single_result = {
+                    "success": True,
+                    "stock_info": {"symbol": code, "name": f"Stock{code}"},
+                    "final_decision": {"rating": "持有"},
+                }
+                if progress_callback:
+                    progress_callback(1, 1, code, "success")
+                if result_callback:
+                    result_callback(code, single_result)
+                return {
+                    "success": True,
+                    "mode": mode,
+                    "total": 1,
+                    "succeeded": 1,
+                    "failed": 0,
+                    "results": [{"code": code, "result": single_result}],
+                    "failed_stocks": [],
+                    "elapsed_time": 0.1,
+                }
+
+            def persist_single_analysis_result(
+                self,
+                code,
+                analysis_result,
+                *,
+                sync_realtime_monitor=True,
+                analysis_source="portfolio_batch_analysis",
+                analysis_period="1y",
+                account_name=None,
+            ):
+                persisted_records.append((account_name, code))
+                return {
+                    "saved_ids": [len(persisted_records)],
+                    "sync_result": None,
+                }
+
+        with patch("portfolio_scheduler.portfolio_analysis_task_manager", task_manager), patch(
+            "portfolio_scheduler.portfolio_manager",
+            FakePortfolioManager(),
+        ):
+            task_id = scheduler._scheduled_job()
+            self.assertIsNotNone(task_id)
+
+            for _ in range(60):
+                task = task_manager.get_task(task_id)
+                if task and task.get("status") == "success":
+                    break
+                time.sleep(0.02)
+            else:
+                self.fail("account-filtered scheduled portfolio task did not finish in time")
+
+        self.assertEqual(execution_records, [("ly", "parallel", 3)])
+        self.assertEqual(persisted_records, [("ly", "000001")])
 
     def test_scheduler_registers_weekday_jobs_only(self):
         scheduler = PortfolioScheduler()

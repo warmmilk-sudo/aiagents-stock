@@ -3,18 +3,25 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import json
 import os
-from typing import Dict
+from typing import Dict, Optional
+from urllib.parse import urlparse
 
 from monitor_db import monitor_db
+
+try:
+    from dotenv import load_dotenv
+except ModuleNotFoundError:
+    def load_dotenv(*args, **kwargs):
+        return False
 
 class NotificationService:
     """通知服务"""
     
     def __init__(self):
         # 强制重新加载环境变量
-        from dotenv import load_dotenv
         load_dotenv()
         self.config = self._load_config()
+        self.last_webhook_error = ""
     
     def _load_config(self) -> Dict:
         """加载通知配置"""
@@ -256,24 +263,75 @@ class NotificationService:
     def _send_webhook_notification(self, notification: Dict) -> bool:
         """发送Webhook通知"""
         try:
+            self._clear_webhook_error()
             # 检查webhook配置是否完整
             if not self.config['webhook_url']:
+                self._set_webhook_error("Webhook URL未配置，请先保存通知配置")
                 print("⚠️ Webhook URL未配置")
                 return False
             
             webhook_type = self.config['webhook_type']
+            validation_error = self._validate_webhook_url(webhook_type)
+            if validation_error:
+                self._set_webhook_error(validation_error)
+                print(f"⚠️ {validation_error}")
+                return False
             
             if webhook_type == 'dingtalk':
                 return self._send_dingtalk_webhook(notification)
             elif webhook_type == 'feishu':
                 return self._send_feishu_webhook(notification)
             else:
+                self._set_webhook_error(f"不支持的webhook类型: {webhook_type}")
                 print(f"⚠️ 不支持的webhook类型: {webhook_type}")
                 return False
         
         except Exception as e:
+            self._set_webhook_error(f"Webhook发送失败: {e}")
             print(f"Webhook发送失败: {e}")
             return False
+
+    def _set_webhook_error(self, message: str) -> str:
+        self.last_webhook_error = str(message or "").strip()
+        return self.last_webhook_error
+
+    def _clear_webhook_error(self):
+        self.last_webhook_error = ""
+
+    def _validate_webhook_url(self, webhook_type: str) -> Optional[str]:
+        url = str(self.config.get('webhook_url') or "").strip()
+        if not url:
+            return "Webhook URL未配置，请先保存通知配置"
+
+        parsed = urlparse(url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            return "Webhook URL格式无效，请填写完整的 http(s) 地址"
+
+        lowered = url.lower()
+        if webhook_type == 'feishu' and ('dingtalk.com' in lowered or '/robot/send' in lowered):
+            return "当前 URL 更像钉钉机器人地址，请确认 WEBHOOK_TYPE=feishu 且使用飞书机器人 Webhook"
+        if webhook_type == 'dingtalk' and (
+            'feishu.cn' in lowered or 'larksuite.com' in lowered or '/bot/v2/hook/' in lowered
+        ):
+            return "当前 URL 更像飞书机器人地址，请确认 WEBHOOK_TYPE=dingtalk 且使用钉钉机器人 Webhook"
+        return None
+
+    def _extract_response_message(self, response, *, default: str) -> str:
+        try:
+            payload = response.json()
+        except ValueError:
+            payload = None
+
+        if isinstance(payload, dict):
+            for key in ('msg', 'errmsg', 'message', 'error'):
+                value = str(payload.get(key) or "").strip()
+                if value:
+                    return value
+
+        raw_text = str(getattr(response, 'text', '') or '').strip()
+        if raw_text:
+            return raw_text[:160]
+        return default
     
     def _send_dingtalk_webhook(self, notification: Dict) -> bool:
         """发送钉钉Webhook通知"""
@@ -337,16 +395,33 @@ _此消息由AI股票分析系统自动发送_"""
             if response.status_code == 200:
                 result = response.json()
                 if result.get('errcode') == 0:
+                    self._clear_webhook_error()
                     print(f"[成功] 钉钉Webhook发送成功")
                     return True
                 else:
-                    print(f"[失败] 钉钉Webhook返回错误: {result.get('errmsg')}")
+                    error_message = f"钉钉Webhook返回错误: {result.get('errmsg') or '未知错误'}"
+                    self._set_webhook_error(error_message)
+                    print(f"[失败] {error_message}")
                     return False
             else:
+                error_message = self._extract_response_message(
+                    response,
+                    default=f"HTTP {response.status_code}",
+                )
+                self._set_webhook_error(f"钉钉Webhook请求失败: HTTP {response.status_code} - {error_message}")
                 print(f"[失败] 钉钉Webhook请求失败: HTTP {response.status_code}")
                 return False
         
+        except requests.exceptions.Timeout:
+            self._set_webhook_error("钉钉Webhook请求超时，请检查网络连接、代理设置或目标地址可达性")
+            print("钉钉Webhook发送异常: 请求超时")
+            return False
+        except requests.exceptions.RequestException as e:
+            self._set_webhook_error(f"钉钉Webhook请求异常: {e}")
+            print(f"钉钉Webhook发送异常: {e}")
+            return False
         except Exception as e:
+            self._set_webhook_error(f"钉钉Webhook发送异常: {e}")
             print(f"钉钉Webhook发送异常: {e}")
             return False
     
@@ -354,6 +429,19 @@ _此消息由AI股票分析系统自动发送_"""
         """发送飞书Webhook通知"""
         try:
             import requests
+            keyword = str(self.config.get('webhook_keyword') or '').strip()
+            title_prefix = f"{keyword} - " if keyword else ""
+            keyword_block = []
+            if keyword:
+                keyword_block.append(
+                    {
+                        "tag": "div",
+                        "text": {
+                            "content": f"**关键词**\n{keyword}",
+                            "tag": "lark_md"
+                        }
+                    }
+                )
             
             # 构建飞书消息格式
             data = {
@@ -361,12 +449,12 @@ _此消息由AI股票分析系统自动发送_"""
                 "card": {
                     "header": {
                         "title": {
-                            "content": f"📊 股票监测提醒 - {notification['symbol']}",
+                            "content": f"📊 {title_prefix}股票监测提醒 - {notification['symbol']}",
                             "tag": "plain_text"
                         },
                         "template": "blue"
                     },
-                    "elements": [
+                    "elements": keyword_block + [
                         {
                             "tag": "div",
                             "fields": [
@@ -441,22 +529,40 @@ _此消息由AI股票分析系统自动发送_"""
             if response.status_code == 200:
                 result = response.json()
                 if result.get('code') == 0:
+                    self._clear_webhook_error()
                     print(f"[成功] 飞书Webhook发送成功")
                     return True
                 else:
-                    print(f"[失败] 飞书Webhook返回错误: {result.get('msg')}")
+                    error_message = f"飞书Webhook返回错误: {result.get('msg') or '未知错误'}"
+                    self._set_webhook_error(error_message)
+                    print(f"[失败] {error_message}")
                     return False
             else:
+                error_message = self._extract_response_message(
+                    response,
+                    default=f"HTTP {response.status_code}",
+                )
+                self._set_webhook_error(f"飞书Webhook请求失败: HTTP {response.status_code} - {error_message}")
                 print(f"[失败] 飞书Webhook请求失败: HTTP {response.status_code}")
                 return False
         
+        except requests.exceptions.Timeout:
+            self._set_webhook_error("飞书Webhook请求超时，请检查网络连接、代理设置或目标地址可达性")
+            print("飞书Webhook发送异常: 请求超时")
+            return False
+        except requests.exceptions.RequestException as e:
+            self._set_webhook_error(f"飞书Webhook请求异常: {e}")
+            print(f"飞书Webhook发送异常: {e}")
+            return False
         except Exception as e:
+            self._set_webhook_error(f"飞书Webhook发送异常: {e}")
             print(f"飞书Webhook发送异常: {e}")
             return False
     
     def send_test_webhook(self) -> tuple[bool, str]:
         """发送测试Webhook"""
         try:
+            self._clear_webhook_error()
             # 检查webhook配置是否完整
             if not self.config['webhook_url']:
                 return False, "Webhook URL未配置，请检查环境变量设置"
@@ -471,20 +577,23 @@ _此消息由AI股票分析系统自动发送_"""
             }
             
             webhook_type = self.config['webhook_type']
+            validation_error = self._validate_webhook_url(webhook_type)
+            if validation_error:
+                return False, validation_error
             
             if webhook_type == 'dingtalk':
                 success = self._send_dingtalk_webhook(test_notification)
                 if success:
                     return True, "钉钉Webhook测试成功！请检查钉钉群消息。"
                 else:
-                    return False, "钉钉Webhook发送失败，请检查URL和网络连接"
+                    return False, self.last_webhook_error or "钉钉Webhook发送失败，请检查URL和网络连接"
             
             elif webhook_type == 'feishu':
                 success = self._send_feishu_webhook(test_notification)
                 if success:
                     return True, "飞书Webhook测试成功！请检查飞书群消息。"
                 else:
-                    return False, "飞书Webhook发送失败，请检查URL和网络连接"
+                    return False, self.last_webhook_error or "飞书Webhook发送失败，请检查URL和网络连接"
             
             else:
                 return False, f"不支持的webhook类型: {webhook_type}"
@@ -498,7 +607,8 @@ _此消息由AI股票分析系统自动发送_"""
             'enabled': self.config['webhook_enabled'],
             'webhook_type': self.config['webhook_type'],
             'webhook_url': self.config['webhook_url'][:50] + '...' if self.config['webhook_url'] else '未配置',
-            'configured': bool(self.config['webhook_url'])
+            'configured': bool(self.config['webhook_url']),
+            'last_error': self.last_webhook_error or '无'
         }
     
     def send_portfolio_analysis_notification(self, analysis_results: dict, sync_result: dict = None) -> bool:
@@ -741,9 +851,6 @@ _此消息由AI股票分析系统自动发送_"""
 
 # 全局通知服务实例
 notification_service = NotificationService()
-
-
-
 
 
 

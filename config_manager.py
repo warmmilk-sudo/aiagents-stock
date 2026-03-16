@@ -463,10 +463,6 @@ class ConfigManager:
             if info["required"] and not config.get(key):
                 return False, f"必填项 {info['description']} 不能为空"
 
-        api_key = config.get("DEEPSEEK_API_KEY", "")
-        if api_key and len(api_key) < 20:
-            return False, "DeepSeek API Key 格式不正确（长度太短）"
-
         if str(config.get("TDX_ENABLED", "false")).strip().lower() == "true":
             if not str(config.get("TDX_BASE_URL", "")).strip():
                 return False, "启用 TDX 数据源时，TDX API 地址不能为空"

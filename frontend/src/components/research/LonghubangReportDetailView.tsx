@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type CSSProperties } from "react";
 
 import {
   ArcElement,
@@ -125,6 +125,7 @@ export function LonghubangReportDetailView({
   onExport,
 }: LonghubangReportDetailViewProps) {
   const [activeSection, setActiveSection] = useState<LonghubangSectionKey>("summary");
+  const sectionTabsStyle = { "--nested-tab-count": 5 } as CSSProperties;
 
   const scoringRows = useMemo(
     () =>
@@ -252,37 +253,37 @@ export function LonghubangReportDetailView({
 
       <section className={styles.card}>
         <div className={styles.sectionControlStack}>
-          <div className={styles.reportTabGridFive}>
+          <div className={styles.historyDetailTabs} style={sectionTabsStyle}>
             <button
-              className={activeSection === "summary" ? styles.primaryButton : styles.secondaryButton}
+              className={activeSection === "summary" ? styles.nestedTabButtonActive : styles.nestedTabButton}
               onClick={() => setActiveSection("summary")}
               type="button"
             >
               综合结论
             </button>
             <button
-              className={activeSection === "recommended" ? styles.primaryButton : styles.secondaryButton}
+              className={activeSection === "recommended" ? styles.nestedTabButtonActive : styles.nestedTabButton}
               onClick={() => setActiveSection("recommended")}
               type="button"
             >
               推荐股票
             </button>
             <button
-              className={activeSection === "ranking" ? styles.primaryButton : styles.secondaryButton}
+              className={activeSection === "ranking" ? styles.nestedTabButtonActive : styles.nestedTabButton}
               onClick={() => setActiveSection("ranking")}
               type="button"
             >
               评分排名
             </button>
             <button
-              className={activeSection === "agents" ? styles.primaryButton : styles.secondaryButton}
+              className={activeSection === "agents" ? styles.nestedTabButtonActive : styles.nestedTabButton}
               onClick={() => setActiveSection("agents")}
               type="button"
             >
               分析师报告
             </button>
             <button
-              className={activeSection === "overview" ? styles.primaryButton : styles.secondaryButton}
+              className={activeSection === "overview" ? styles.nestedTabButtonActive : styles.nestedTabButton}
               onClick={() => setActiveSection("overview")}
               type="button"
             >

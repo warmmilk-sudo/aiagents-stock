@@ -297,8 +297,9 @@ class SmartMonitorEngine:
                       trading_hours_only: bool = True,
                       account_name: str = DEFAULT_ACCOUNT_NAME,
                       asset_id: Optional[int] = None,
-                     portfolio_stock_id: Optional[int] = None,
-                     strategy_context: Optional[Dict] = None) -> Dict:
+                      portfolio_stock_id: Optional[int] = None,
+                      strategy_context: Optional[Dict] = None,
+                      require_active_task: bool = False) -> Dict:
         """
         分析单只股票并做出决策
         
@@ -361,6 +362,24 @@ class SmartMonitorEngine:
                 asset_id=asset_id,
                 portfolio_stock_id=portfolio_stock_id,
             ) or {}
+
+            if require_active_task and not task_context.get("id"):
+                self.logger.info("[%s] 盯盘任务已删除，中断执行", stock_code)
+                return {
+                    "success": False,
+                    "skipped": True,
+                    "error": "task_deleted"
+                }
+            
+            # 立即生效检查：如果任务已禁用，则跳过执行
+            if task_context.get("id") and not task_context.get("enabled"):
+                self.logger.info("[%s] 盯盘任务已禁用，中断执行", stock_code)
+                return {
+                    "success": False,
+                    "skipped": True,
+                    "error": "task_disabled"
+                }
+
             asset_id = asset_id or task_context.get("asset_id")
             account_name = task_context.get("account_name") or account_name
             asset = None
@@ -422,6 +441,21 @@ class SmartMonitorEngine:
                     'error': 'AI决策失败',
                     'details': ai_result
                 }
+
+            if require_active_task:
+                latest_task = self.db.get_monitor_task_by_code(
+                    stock_code,
+                    account_name=account_name,
+                    asset_id=asset_id,
+                    portfolio_stock_id=portfolio_stock_id,
+                ) or {}
+                if not latest_task.get("id") or not latest_task.get("enabled"):
+                    self.logger.info("[%s] 盯盘任务已删除或禁用，丢弃本次分析结果", stock_code)
+                    return {
+                        "success": False,
+                        "skipped": True,
+                        "error": "task_deleted"
+                    }
             
             decision = ai_result['decision']
             
@@ -734,4 +768,3 @@ if __name__ == '__main__':
         print(f"  理由: {result['decision']['reasoning'][:100]}...")
     else:
         print(f"\n分析失败: {result.get('error')}")
-

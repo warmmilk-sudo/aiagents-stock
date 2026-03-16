@@ -1,3 +1,4 @@
+import asyncio
 import sys
 import tempfile
 import types
@@ -12,6 +13,32 @@ sys.modules.setdefault(
             "StockDataFetcher",
             (),
             {"get_stock_info": lambda self, *args, **kwargs: {}},
+        )
+    ),
+)
+sys.modules.setdefault(
+    "smart_monitor_data",
+    types.SimpleNamespace(
+        SmartMonitorDataFetcher=type(
+            "SmartMonitorDataFetcher",
+            (),
+            {"__init__": lambda self, *args, **kwargs: None, "get_comprehensive_data": lambda self, *args, **kwargs: {}},
+        )
+    ),
+)
+sys.modules.setdefault(
+    "smart_monitor_deepseek",
+    types.SimpleNamespace(
+        SmartMonitorDeepSeek=type(
+            "SmartMonitorDeepSeek",
+            (),
+            {
+                "__init__": lambda self, *args, **kwargs: None,
+                "http_timeout_seconds": 15,
+                "set_model_overrides": lambda self, *args, **kwargs: None,
+                "get_trading_session": lambda self: {"session": "上午盘", "can_trade": True, "recommendation": ""},
+                "analyze_stock_and_decide": lambda self, **kwargs: {"success": False},
+            },
         )
     ),
 )
@@ -296,6 +323,107 @@ class ManualOnlyMonitoringTests(unittest.TestCase):
         self.assertEqual(captured_strategy_context["origin_analysis_id"], 99)
         self.assertEqual(captured_strategy_context["analysis_date"], "2026-03-13 10:30:00")
         self.assertEqual(result["strategy_context"]["origin_analysis_id"], 99)
+
+    def test_price_alert_deleted_during_execution_does_not_continue_checking(self):
+        temp_monitor_db = StockMonitorDatabase(str(self.base / "monitor.db"))
+        stock_id = temp_monitor_db.add_monitored_stock(
+            symbol="000001",
+            name="平安银行",
+            rating="买入",
+            entry_range={"min": 10.0, "max": 10.5},
+            take_profit=11.0,
+            stop_loss=9.8,
+            check_interval=30,
+            notification_enabled=True,
+        )
+        item = temp_monitor_db.repository.get_item(stock_id)
+
+        with patch.object(monitoring_orchestrator, "monitor_db", temp_monitor_db), patch.object(
+            monitoring_orchestrator,
+            "SmartMonitorEngine",
+            return_value=object(),
+        ):
+            orchestrator = monitoring_orchestrator.MonitoringOrchestrator()
+
+            async def _delete_then_return_price(symbol):
+                temp_monitor_db.remove_monitored_stock(stock_id)
+                return 10.2
+
+            orchestrator._get_latest_price = _delete_then_return_price
+            result = asyncio.run(orchestrator._process_price_alert(item, force=True))
+
+        self.assertFalse(result)
+        self.assertEqual(temp_monitor_db.get_pending_notifications(), [])
+
+    def test_require_active_task_discards_ai_result_when_task_was_deleted(self):
+        fake_db = FakeSmartMonitorDB()
+        task_states = [
+            {"id": 1, "enabled": True, "account_name": "测试账户", "asset_id": 101},
+            {},
+        ]
+
+        def _next_task(*args, **kwargs):
+            if len(task_states) > 1:
+                return task_states.pop(0)
+            return task_states[0]
+
+        fake_db.get_monitor_task_by_code = _next_task
+
+        with patch.object(smart_monitor_engine_module, "SmartMonitorDB", return_value=fake_db), patch.object(
+            smart_monitor_engine_module.event_bus,
+            "subscribe",
+            return_value=None,
+        ):
+            engine = smart_monitor_engine_module.SmartMonitorEngine(deepseek_api_key="stub")
+
+        engine.deepseek.get_trading_session = lambda: {
+            "session": "上午盘",
+            "can_trade": True,
+            "recommendation": "",
+        }
+        engine.data_fetcher.get_comprehensive_data = lambda stock_code, intraday_strict=False: {
+            "name": "贵州茅台",
+            "current_price": 1520.0,
+            "change_pct": 1.25,
+            "change_amount": 18.8,
+            "volume": 123456,
+            "turnover_rate": 0.75,
+        }
+        engine.deepseek.analyze_stock_and_decide = lambda **kwargs: {
+            "success": True,
+            "decision": {
+                "action": "BUY",
+                "confidence": 82,
+                "reasoning": "任务删除后不应继续保存。",
+                "position_size_pct": 20,
+                "stop_loss_pct": 5,
+                "take_profit_pct": 12,
+                "risk_level": "中",
+                "key_price_levels": {"support": 1500, "resistance": 1560},
+                "monitor_levels": {
+                    "entry_min": 1505,
+                    "entry_max": 1515,
+                    "take_profit": 1702.4,
+                    "stop_loss": 1444.0,
+                },
+            },
+        }
+        engine._send_notification = lambda **kwargs: self.fail("deleted task should not notify")
+        engine._sync_runtime_thresholds = lambda **kwargs: self.fail("deleted task should not sync thresholds")
+
+        result = engine.analyze_stock(
+            "600519",
+            notify=True,
+            account_name="测试账户",
+            asset_id=101,
+            require_active_task=True,
+        )
+
+        self.assertFalse(result["success"])
+        self.assertTrue(result["skipped"])
+        self.assertEqual(result["error"], "task_deleted")
+        self.assertEqual(fake_db.saved_decisions, [])
+        self.assertEqual(fake_db.pending_actions, [])
 
 
 if __name__ == "__main__":

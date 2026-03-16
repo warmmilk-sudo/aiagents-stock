@@ -354,7 +354,7 @@ export function DeepAnalysisPage() {
         <PageFeedback error={error} message={message} />
 
         {section === "start" ? (
-          <ModuleCard title="分析任务" summary="股票输入、分析模式、并发和分析师配置集中在同一模块内。">
+          <ModuleCard hideTitleOnMobile title="分析任务" summary="股票输入、分析模式、并发和分析师配置集中在同一模块内。">
             <form className={styles.moduleSection} id="deep-analysis-form" onSubmit={handleSubmit}>
               <div className={styles.field}>
                 <label htmlFor="stockInput">股票代码（支持逗号或换行分隔）</label>
@@ -422,7 +422,7 @@ export function DeepAnalysisPage() {
         ) : null}
 
         {section === "watchlist" ? (
-          <ModuleCard title="关注中" summary="搜索、刷新和后续操作都收拢到同一模块。">
+          <ModuleCard hideTitleOnMobile title="关注中" summary="搜索、刷新和后续操作都收拢到同一模块。">
             <FollowupAssetList
               assets={watchlistAssets}
               emptyText="暂无关注中的股票"
@@ -437,7 +437,7 @@ export function DeepAnalysisPage() {
         ) : null}
 
         {section === "viewed" ? (
-          <ModuleCard title="看过" summary="保留再次分析、进入盯盘和历史记录的主路径。">
+          <ModuleCard hideTitleOnMobile title="看过" summary="保留再次分析、进入盯盘和历史记录的主路径。">
             <FollowupAssetList
               assets={viewedAssets}
               emptyText="暂无看过的股票"

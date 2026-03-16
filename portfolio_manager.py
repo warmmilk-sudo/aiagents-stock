@@ -202,7 +202,7 @@ class PortfolioManager:
             cost_price: 持仓成本价
             quantity: 持仓数量
             note: 备注
-            auto_monitor: 是否自动同步到监测
+            auto_monitor: 是否默认启用托管盯盘任务
             
         Returns:
             (成功标志, 消息, 股票ID)
@@ -681,9 +681,11 @@ class PortfolioManager:
         """搜索持仓股票"""
         return self.db.search_stocks(keyword)
     
-    def get_stock_count(self) -> int:
-        """获取持仓股票总数"""
-        return self.db.get_stock_count()
+    def get_stock_count(self, account_name: Optional[str] = None) -> int:
+        """获取持仓股票总数，可按账户过滤。"""
+        if not account_name or account_name == self.AGGREGATE_ACCOUNT_NAME:
+            return self.db.get_stock_count()
+        return len(self._filter_stocks_for_account(self.get_all_stocks(), account_name))
 
     def _get_stock_data_fetcher(self):
         if self._stock_data_fetcher is None:
@@ -1976,11 +1978,16 @@ class PortfolioManager:
                 print(f"[ERROR] 同步 AI盯盘任务失败 ({stock['code']}): {e}")
         return {"synced": synced, "failed": failed, "total": synced + failed}
 
-    def sync_latest_analysis_to_realtime_monitor(self, codes: Optional[List[str]] = None) -> Dict[str, int]:
+    def sync_latest_analysis_to_realtime_monitor(
+        self,
+        codes: Optional[List[str]] = None,
+        account_name: Optional[str] = None,
+    ) -> Dict[str, int]:
         """将最新持仓分析结果同步到实时监测。"""
         added = 0
         failed = 0
         stocks = self.db.get_all_stocks(auto_monitor_only=False)
+        stocks = self._filter_stocks_for_account(stocks, account_name)
         if codes:
             code_set = {self._normalize_stock_code(code) for code in codes if code}
             stocks = [stock for stock in stocks if stock["code"] in code_set]
@@ -2085,25 +2092,27 @@ class PortfolioManager:
         sync_realtime_monitor: bool = True,
         analysis_source: str = "portfolio_batch_analysis",
         analysis_period: str = "1y",
+        account_name: Optional[str] = None,
     ) -> Dict:
         """保存持仓分析结果，并按需同步到实时监测。"""
         saved_ids = self.save_analysis_results(
             analysis_results,
             analysis_source=analysis_source,
             analysis_period=analysis_period,
+            account_name=account_name,
         )
         sync_result = None
 
         if sync_realtime_monitor:
             codes = [item.get("code") for item in analysis_results.get("results", []) if item.get("code")]
-            sync_result = self.sync_latest_analysis_to_realtime_monitor(codes=codes)
+            sync_result = self.sync_latest_analysis_to_realtime_monitor(codes=codes, account_name=account_name)
 
         affected_accounts = set()
         for item in analysis_results.get("results", []):
             code = item.get("code")
             if not code:
                 continue
-            for stock in self.db.get_stocks_by_code(code):
+            for stock in self._filter_stocks_for_account(self.db.get_stocks_by_code(code), account_name):
                 affected_accounts.add(stock.get("account_name", "默认账户"))
         if affected_accounts:
             for account in affected_accounts:
@@ -2119,6 +2128,7 @@ class PortfolioManager:
         sync_realtime_monitor: bool = True,
         analysis_source: str = "portfolio_batch_analysis",
         analysis_period: str = "1y",
+        account_name: Optional[str] = None,
     ) -> Dict:
         """Persist one completed analysis result immediately."""
         wrapped_results = {
@@ -2135,6 +2145,7 @@ class PortfolioManager:
             sync_realtime_monitor=sync_realtime_monitor,
             analysis_source=analysis_source,
             analysis_period=analysis_period,
+            account_name=account_name,
         )
     
     # ==================== 单只股票分析 ====================
@@ -2424,7 +2435,8 @@ class PortfolioManager:
                                 result_callback: Optional[Callable[[str, Dict], None]] = None,
                                 model: str = None,
                                 lightweight_model: str = None,
-                                reasoning_model: str = None) -> Dict:
+                                reasoning_model: str = None,
+                                account_name: Optional[str] = None) -> Dict:
         """
         批量分析所有持仓股票
         
@@ -2438,8 +2450,8 @@ class PortfolioManager:
         Returns:
             批量分析结果字典
         """
-        # 获取所有持仓股票
-        stocks = self.get_all_stocks()
+        # 获取目标账户下的持仓股票
+        stocks = self._filter_stocks_for_account(self.get_all_stocks(), account_name)
         
         if not stocks:
             return {
@@ -2481,6 +2493,7 @@ class PortfolioManager:
         analysis_results: Dict,
         analysis_source: str = "portfolio_batch_analysis",
         analysis_period: str = "1y",
+        account_name: Optional[str] = None,
     ) -> List[int]:
         """
         保存批量分析结果到数据库
@@ -2502,16 +2515,10 @@ class PortfolioManager:
             result = item.get("result", {})
             
             # 获取持仓股票ID
-            stocks = self.db.get_stocks_by_code(code)
+            stocks = self._filter_stocks_for_account(self.db.get_stocks_by_code(code), account_name)
             if not stocks:
                 print(f"[WARN] 未找到持仓股票: {code}，跳过保存")
                 continue
-            stock = stocks[0]
-            if not stock:
-                print(f"[WARN] 未找到持仓股票: {code}，跳过保存")
-                continue
-            
-            stock_id = stock['id']
             
             # 提取分析结果关键信息
             final_decision = result.get("final_decision", {})
@@ -2525,31 +2532,30 @@ class PortfolioManager:
                 analysis_source=analysis_source,
             )
             
-            try:
-                # 保存到数据库
-                analysis_id = self.db.save_analysis(
-                    stock_id,
-                    payload["rating"],
-                    payload["confidence"],
-                    payload["current_price"],
-                    payload["target_price"],
-                    payload["entry_min"],
-                    payload["entry_max"],
-                    payload["take_profit"],
-                    payload["stop_loss"],
-                    payload["summary"],
-                    stock_info=payload["stock_info"],
-                    agents_results=payload["agents_results"],
-                    discussion_result=payload["discussion_result"],
-                    final_decision=payload["final_decision"],
-                    analysis_period=payload["analysis_period"],
-                    analysis_source=payload["analysis_source"],
-                    has_full_report=payload["has_full_report"],
-                )
-                saved_ids.append(analysis_id)
-                
-            except Exception as e:
-                print(f"[ERROR] 保存分析结果失败 ({code}): {str(e)}")
+            for stock in stocks:
+                try:
+                    analysis_id = self.db.save_analysis(
+                        stock["id"],
+                        payload["rating"],
+                        payload["confidence"],
+                        payload["current_price"],
+                        payload["target_price"],
+                        payload["entry_min"],
+                        payload["entry_max"],
+                        payload["take_profit"],
+                        payload["stop_loss"],
+                        payload["summary"],
+                        stock_info=payload["stock_info"],
+                        agents_results=payload["agents_results"],
+                        discussion_result=payload["discussion_result"],
+                        final_decision=payload["final_decision"],
+                        analysis_period=payload["analysis_period"],
+                        analysis_source=payload["analysis_source"],
+                        has_full_report=payload["has_full_report"],
+                    )
+                    saved_ids.append(analysis_id)
+                except Exception as e:
+                    print(f"[ERROR] 保存分析结果失败 ({code}/{stock.get('account_name', '默认账户')}): {str(e)}")
         
         print(f"\n[OK] 保存分析结果: {len(saved_ids)}条记录")
         return saved_ids

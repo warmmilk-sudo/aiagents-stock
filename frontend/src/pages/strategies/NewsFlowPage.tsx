@@ -410,7 +410,7 @@ export function NewsFlowPage() {
         <PageFeedback error={error} message={message} />
 
         {panel === "dashboard" ? (
-          <ModuleCard title="仪表盘">
+          <ModuleCard hideTitleOnMobile title="仪表盘">
             <div className={styles.moduleSection}>
               <div className={styles.formGrid}>
                 <div className={styles.field}>
@@ -499,7 +499,7 @@ export function NewsFlowPage() {
         ) : null}
 
         {panel === "analysis" ? (
-          <ModuleCard title="实时监测">
+          <ModuleCard hideTitleOnMobile title="实时监测">
             <div className={styles.moduleSection}>
               <div className={styles.cardHeader}>
                 <div>
@@ -690,7 +690,7 @@ export function NewsFlowPage() {
         ) : null}
 
         {panel === "trend" ? (
-          <ModuleCard title="趋势分析">
+          <ModuleCard hideTitleOnMobile title="趋势分析">
             <div className={styles.moduleSection}>
               <div className={styles.stack}>
                 <div className={styles.field}>
@@ -834,7 +834,7 @@ export function NewsFlowPage() {
               </div>
             </ModuleCard>
           ) : (
-            <ModuleCard title="历史记录">
+            <ModuleCard hideTitleOnMobile title="历史记录">
               <div className={styles.moduleSection}>
                 <h3>历史快照</h3>
                 <div className={styles.list}>

@@ -239,6 +239,47 @@ class PortfolioHistoryPersistenceTests(unittest.TestCase):
         self.assertEqual(row["summary"], "最新深度分析建议加仓。")
         self.assertEqual(row["analysis_scope"], "research")
 
+    def test_latest_analysis_rows_keep_portfolio_account_identity(self):
+        success, msg, stock_id = self.manager.add_stock(
+            code="002594",
+            name=None,
+            cost_price=225.0,
+            quantity=30,
+            note="多账户测试",
+            auto_monitor=True,
+            account_name="策略账户",
+        )
+        self.assertTrue(success, msg)
+
+        analysis_id = self.portfolio_db.analysis_repository.save_record(
+            symbol="002594",
+            stock_name="Stock002594",
+            period="1y",
+            stock_info={"symbol": "002594", "name": "Stock002594", "current_price": 231.5},
+            agents_results={"technical": {"analysis": "趋势延续"}},
+            discussion_result="历史分析记录沿用了旧账户名。",
+            final_decision={
+                "rating": "买入",
+                "confidence_level": 8.1,
+                "operation_advice": "继续持有。",
+            },
+            account_name="默认账户",
+            asset_id=stock_id,
+            portfolio_stock_id=stock_id,
+            analysis_scope="portfolio",
+            analysis_source="portfolio_batch_analysis",
+            analysis_date="2026-03-11 09:30:00",
+            summary="旧账户名记录。",
+            has_full_report=True,
+            asset_status_snapshot="portfolio",
+        )
+
+        latest_rows = self.portfolio_db.get_all_latest_analysis()
+        row = next(item for item in latest_rows if item["id"] == stock_id)
+        self.assertEqual(row["account_name"], "策略账户")
+        self.assertEqual(row["analysis_record_id"], analysis_id)
+        self.assertEqual(row["analysis_record_account_name"], "默认账户")
+
     def test_build_analysis_payload_uses_clean_default_rating(self):
         payload = self.manager._build_analysis_payload(
             stock_info={"current_price": 10.5},
@@ -469,6 +510,21 @@ class UiSharedNormalizationTests(unittest.TestCase):
             "这里开始是市场情绪正文。",
         )
         self.assertEqual(reasoning, "先整理情绪指标，再输出报告。")
+
+    def test_split_analysis_report_sections_extracts_body_after_report_marker_and_think(self):
+        body, reasoning = _split_analysis_report_sections(
+            "<think>先整理量价和资金线索。</think>\n"
+            "下面是正式报告：\n"
+            "# 技术分析报告\n"
+            "股价突破 60 日线后，等待回踩确认。"
+        )
+
+        self.assertEqual(
+            body,
+            "# 技术分析报告\n"
+            "股价突破 60 日线后，等待回踩确认。",
+        )
+        self.assertEqual(reasoning, "先整理量价和资金线索。")
 
     def test_resolve_final_decision_content_extracts_embedded_json(self):
         final_decision, invalid, reasoning = _resolve_final_decision_content(

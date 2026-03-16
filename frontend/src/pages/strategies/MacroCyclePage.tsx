@@ -374,7 +374,7 @@ export function MacroCyclePage() {
             ) : null}
 
             <section className={styles.card}>
-              <h2>历史报告</h2>
+              <h2 className={styles.mobileDuplicateHeading}>历史报告</h2>
               <div className={styles.list}>
                 {history.map((item) => (
                   <div className={styles.listItem} key={item.id}>

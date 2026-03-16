@@ -40,6 +40,18 @@ function metricValue(value: unknown): string {
   return String(value);
 }
 
+function rangeValue(min: unknown, max: unknown, fallback: unknown): string {
+  if (fallback !== null && fallback !== undefined && fallback !== "") {
+    return metricValue(fallback);
+  }
+  const minText = min === null || min === undefined || min === "" ? "" : String(min);
+  const maxText = max === null || max === undefined || max === "" ? "" : String(max);
+  if (minText && maxText) {
+    return `${minText} - ${maxText}`;
+  }
+  return minText || maxText || "N/A";
+}
+
 interface AnalysisDetailPanelProps {
   record: AnalysisRecordDetail;
   showPortfolioAction?: boolean;
@@ -52,6 +64,19 @@ export function AnalysisDetailPanel({
   const finalDecision = record.final_decision ?? {};
   const stockInfo = record.stock_info ?? {};
   const agentsResults = record.agents_results ?? {};
+  const locationMetrics = [
+    {
+      label: "进场区间",
+      value: rangeValue(finalDecision.entry_min, finalDecision.entry_max, finalDecision.entry_range),
+    },
+    { label: "止盈位", value: metricValue(finalDecision.take_profit) },
+    { label: "止损位", value: metricValue(finalDecision.stop_loss) },
+    { label: "持有周期", value: metricValue(finalDecision.holding_period) },
+    { label: "当前状态", value: metricValue(record.linked_asset_status_label || record.portfolio_state_label) },
+    { label: "账户", value: metricValue(record.account_name) },
+    { label: "分析时间", value: metricValue(formatDateTime(record.analysis_time_text, "N/A")) },
+    { label: "周期", value: metricValue(record.period) },
+  ];
 
   return (
     <div className={styles.contentGrid}>
@@ -89,20 +114,14 @@ export function AnalysisDetailPanel({
 
       <section className={styles.block}>
         <h3>关键位置</h3>
-        <p className={styles.text}>
-          进场区间:{" "}
-          {metricValue(
-            finalDecision.entry_range ||
-              `${metricValue(finalDecision.entry_min)} - ${metricValue(finalDecision.entry_max)}`,
-          )}
-          {"\n"}止盈位: {metricValue(finalDecision.take_profit)}
-          {"\n"}止损位: {metricValue(finalDecision.stop_loss)}
-          {"\n"}持有周期: {metricValue(finalDecision.holding_period)}
-          {"\n"}当前状态: {metricValue(record.linked_asset_status_label || record.portfolio_state_label)}
-          {"\n"}账户: {metricValue(record.account_name)}
-          {"\n"}分析时间: {metricValue(formatDateTime(record.analysis_time_text, "N/A"))}
-          {"\n"}周期: {metricValue(record.period)}
-        </p>
+        <div className={styles.detailMetricGrid}>
+          {locationMetrics.map((item) => (
+            <div className={styles.detailMetricCell} key={item.label}>
+              <span>{item.label}</span>
+              <strong>{item.value}</strong>
+            </div>
+          ))}
+        </div>
       </section>
 
       <section className={styles.block}>

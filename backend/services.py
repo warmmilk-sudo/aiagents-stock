@@ -77,6 +77,7 @@ PROFIT_GROWTH_TASK_TYPE = "profit_growth_selection"
 VALUE_STOCK_TASK_TYPE = "value_stock_selection"
 MACRO_CYCLE_TASK_TYPE = "macro_cycle_analysis"
 NEWS_FLOW_TASK_TYPE = "news_flow_analysis"
+PORTFOLIO_SCHEDULER_TASK_TYPE = "batch"
 SMART_MONITOR_INTRADAY_INTERVAL_KEY = "smart_monitor_intraday_decision_interval_minutes"
 SMART_MONITOR_REALTIME_INTERVAL_KEY = "smart_monitor_realtime_monitor_interval_minutes"
 
@@ -356,6 +357,149 @@ def submit_research_analysis_task(
             "total": total,
             "batch_mode": batch_mode,
             "max_workers": worker_count if batch_mode == "多线程并行" else 1,
+        },
+    )
+
+
+def _selected_analyst_keys(analysts: dict[str, bool]) -> list[str]:
+    return [key for key, enabled in (analysts or {}).items() if enabled]
+
+
+def submit_portfolio_analysis_task(
+    *,
+    session_key: str,
+    account_name: Optional[str],
+    period: str,
+    batch_mode: str,
+    max_workers: int,
+    analysts: dict[str, bool],
+) -> str:
+    normalized_account = str(account_name or "").strip()
+    if normalized_account in {"", "全部账户"}:
+        normalized_account = ""
+    if not any(analysts.values()):
+        raise ValueError("请至少选择一位分析师参与分析")
+    if not getattr(config, "DEEPSEEK_API_KEY", ""):
+        raise ValueError("请先配置 DeepSeek API Key")
+
+    existing_task = portfolio_analysis_task_manager.get_active_task(session_key)
+    if existing_task:
+        raise ValueError("当前已有分析任务在执行或排队中，请稍后再试")
+
+    selected_analysts = _selected_analyst_keys(analysts)
+    worker_count = _clamp_int(max_workers, 1, 5, 3)
+    normalized_batch_mode = "多线程并行" if batch_mode == "多线程并行" else "顺序分析"
+    portfolio_mode = "parallel" if normalized_batch_mode == "多线程并行" else "sequential"
+    account_label = normalized_account or "全部账户"
+    stock_count = portfolio_manager.get_stock_count(normalized_account or None)
+    if stock_count <= 0:
+        raise ValueError(f"{account_label} 当前没有可分析的持仓股")
+
+    def batch_runner(_task_id: str, report_progress) -> dict[str, Any]:
+        saved_ids: list[int] = []
+        sync_totals = {"added": 0, "updated": 0, "failed": 0, "total": 0}
+        report_progress(
+            current=0,
+            total=0,
+            step_status="analyzing",
+            message=f"正在准备 {account_label} 的持仓分析任务...",
+        )
+
+        def progress_callback(current, total, code, status):
+            status_text = {
+                "success": "分析完成",
+                "failed": "分析失败",
+                "error": "分析异常",
+            }.get(status, "正在分析")
+            report_progress(
+                current=int(current or 0),
+                total=int(total or 0),
+                step_code=code,
+                step_status=status,
+                message=f"{account_label} | {code} {status_text}",
+            )
+
+        def result_callback(code: str, single_result: dict[str, Any]):
+            persistence_result = portfolio_manager.persist_single_analysis_result(
+                code,
+                single_result,
+                sync_realtime_monitor=True,
+                analysis_source="portfolio_batch_analysis",
+                analysis_period=period,
+                account_name=normalized_account or None,
+            )
+            saved_ids.extend(persistence_result.get("saved_ids", []))
+            sync_result = persistence_result.get("sync_result") or {}
+            for key in sync_totals:
+                sync_totals[key] += int(sync_result.get(key, 0) or 0)
+
+        analysis_results = portfolio_manager.batch_analyze_portfolio(
+            mode=portfolio_mode,
+            period=period,
+            selected_agents=selected_analysts,
+            max_workers=worker_count,
+            progress_callback=progress_callback,
+            result_callback=result_callback,
+            account_name=normalized_account or None,
+        )
+        if not analysis_results.get("success"):
+            raise RuntimeError(str(analysis_results.get("error") or "持仓分析失败"))
+
+        success_rows = [
+            {
+                "code": item.get("code"),
+                "success": True,
+                "account_name": normalized_account or None,
+            }
+            for item in analysis_results.get("results", [])
+        ]
+        failed_rows = [
+            {
+                "code": item.get("code"),
+                "success": False,
+                "error": item.get("error"),
+                "account_name": normalized_account or None,
+            }
+            for item in analysis_results.get("failed_stocks", [])
+        ]
+        total = int(analysis_results.get("total") or (len(success_rows) + len(failed_rows)))
+        success_count = int(analysis_results.get("succeeded") or len(success_rows))
+        failed_count = int(analysis_results.get("failed") or len(failed_rows))
+        report_progress(
+            current=total,
+            total=total or 1,
+            step_status="success",
+            message=f"{account_label} 持仓分析完成：成功 {success_count}，失败 {failed_count}，已写入 {len(saved_ids)} 条历史",
+        )
+        return {
+            "mode": "batch",
+            "account_name": normalized_account or None,
+            "results": success_rows + failed_rows,
+            "batch_mode": normalized_batch_mode,
+            "max_workers": worker_count if normalized_batch_mode == "多线程并行" else 1,
+            "success_count": success_count,
+            "failed_count": failed_count,
+            "saved_count": len(saved_ids),
+            "period": period,
+            "persistence_result": {
+                "saved_ids": list(saved_ids),
+                "sync_result": sync_totals,
+            },
+        }
+
+    label = f"{account_label}持仓批量分析" if normalized_account else "全部账户持仓批量分析"
+    return portfolio_analysis_task_manager.start_task(
+        session_key,
+        task_type="portfolio_holdings_analysis",
+        label=label,
+        runner=batch_runner,
+        metadata={
+            "mode": "batch",
+            "account_name": normalized_account or None,
+            "stock_count": stock_count,
+            "batch_mode": normalized_batch_mode,
+            "max_workers": worker_count if normalized_batch_mode == "多线程并行" else 1,
+            "selected_agents": selected_analysts,
         },
     )
 
@@ -2166,6 +2310,18 @@ def get_portfolio_scheduler_status() -> dict[str, Any]:
     }
 
 
+def get_portfolio_scheduler_latest_task() -> Optional[dict[str, Any]]:
+    return get_latest_ui_task(PORTFOLIO_SCHEDULER_TASK_TYPE)
+
+
+def get_portfolio_scheduler_active_task() -> Optional[dict[str, Any]]:
+    return get_active_ui_task(PORTFOLIO_SCHEDULER_TASK_TYPE)
+
+
+def get_portfolio_scheduler_task(task_id: str) -> Optional[dict[str, Any]]:
+    return get_ui_task(PORTFOLIO_SCHEDULER_TASK_TYPE, task_id)
+
+
 def update_portfolio_scheduler(payload: dict[str, Any]) -> dict[str, Any]:
     schedule_times = payload.get("schedule_times") or []
     if schedule_times:
@@ -2176,6 +2332,7 @@ def update_portfolio_scheduler(payload: dict[str, Any]) -> dict[str, Any]:
         auto_sync_monitor=payload.get("auto_sync_monitor"),
         send_notification=payload.get("send_notification"),
         selected_agents=payload.get("selected_agents"),
+        account_configs=payload.get("account_configs"),
     )
     return get_portfolio_scheduler_status()
 
@@ -2284,8 +2441,16 @@ def update_smart_monitor_runtime_config(payload: dict[str, Any]) -> dict[str, in
     }
 
 
-def list_smart_monitor_tasks(enabled_only: bool = False) -> list[dict[str, Any]]:
-    return smart_monitor_db.get_monitor_tasks(enabled_only=enabled_only)
+def list_smart_monitor_tasks(
+    enabled_only: bool = False,
+    account_name: Optional[str] = None,
+    has_position: Optional[bool] = None,
+) -> list[dict[str, Any]]:
+    return smart_monitor_db.get_monitor_tasks(
+        enabled_only=enabled_only,
+        account_name=account_name,
+        has_position=has_position,
+    )
 
 
 def upsert_smart_monitor_task(payload: dict[str, Any]) -> int:
@@ -2325,6 +2490,65 @@ def run_manual_smart_monitor_analysis(payload: dict[str, Any]) -> dict[str, Any]
         asset_id=payload.get("asset_id"),
         portfolio_stock_id=payload.get("portfolio_stock_id"),
     )
+
+
+def run_smart_monitor_tasks_once(
+    *,
+    enabled_only: bool = True,
+    account_name: Optional[str] = None,
+    has_position: Optional[bool] = None,
+) -> dict[str, Any]:
+    tasks = smart_monitor_db.get_monitor_tasks(
+        enabled_only=enabled_only,
+        account_name=account_name,
+        has_position=has_position,
+    )
+    orchestrator = monitor_service.orchestrator
+    processed_alert_ids: set[int] = set()
+    summary = {
+        "task_total": 0,
+        "task_success": 0,
+        "task_failed": 0,
+        "price_alert_total": 0,
+        "price_alert_success": 0,
+        "price_alert_failed": 0,
+        "account_name": account_name or "",
+        "has_position": has_position,
+        "enabled_only": enabled_only,
+    }
+
+    for task in tasks:
+        task_id = int(task.get("id") or 0)
+        if task_id <= 0:
+            continue
+        summary["task_total"] += 1
+        if orchestrator.run_item_once(task_id):
+            summary["task_success"] += 1
+        else:
+            summary["task_failed"] += 1
+
+        alert_item = smart_monitor_db.monitoring_repository.get_item_by_symbol(
+            task.get("stock_code") or "",
+            monitor_type="price_alert",
+            managed_only=True if task.get("managed_by_portfolio") else None,
+            account_name=task.get("account_name"),
+            asset_id=task.get("asset_id"),
+            portfolio_stock_id=task.get("portfolio_stock_id"),
+        )
+        alert_id = int((alert_item or {}).get("id") or 0)
+        if alert_id <= 0 or alert_id in processed_alert_ids:
+            continue
+        processed_alert_ids.add(alert_id)
+        summary["price_alert_total"] += 1
+        if orchestrator.run_item_once(alert_id):
+            summary["price_alert_success"] += 1
+        else:
+            summary["price_alert_failed"] += 1
+
+    scheduler = monitor_service.get_scheduler()
+    summary["service_status"] = monitor_service.get_status()
+    summary["scheduler_status"] = scheduler.get_status() if scheduler else None
+    return summary
 
 
 def get_activity_snapshot() -> dict[str, Any]:
@@ -2432,15 +2656,29 @@ def resolve_pending_action(action_id: int, status: str, resolution_note: str = "
 
 
 def start_monitor_runtime() -> dict[str, Any]:
-    monitor_service.start_monitoring()
-    ensure_runtime_started()
-    return monitor_service.get_status()
+    scheduler = monitor_service.get_scheduler()
+    if scheduler is not None:
+        scheduler.update_config(enabled=True)
+        monitor_service.ensure_scheduler_state()
+    else:
+        monitor_service.start_monitoring()
+    return {
+        "monitor_service": monitor_service.get_status(),
+        "monitor_scheduler": scheduler.get_status() if scheduler else None,
+    }
 
 
 def stop_monitor_runtime() -> dict[str, Any]:
+    scheduler = monitor_service.get_scheduler()
+    if scheduler is not None:
+        scheduler.update_config(enabled=False)
+        if scheduler.running:
+            scheduler.stop_scheduler()
     monitor_service.stop_monitoring()
-    ensure_runtime_started()
-    return monitor_service.get_status()
+    return {
+        "monitor_service": monitor_service.get_status(),
+        "monitor_scheduler": scheduler.get_status() if scheduler else None,
+    }
 
 
 def start_portfolio_scheduler() -> dict[str, Any]:
@@ -2454,8 +2692,33 @@ def stop_portfolio_scheduler() -> dict[str, Any]:
 
 
 def run_portfolio_scheduler_once() -> dict[str, Any]:
-    success = portfolio_scheduler.run_once()
+    task_id = portfolio_scheduler.run_once()
+    active_task = get_portfolio_scheduler_active_task()
+    if task_id:
+        return {
+            "success": True,
+            "task_id": task_id,
+            "task": get_portfolio_scheduler_task(task_id),
+            "status": get_portfolio_scheduler_status(),
+        }
+
+    if active_task:
+        return {
+            "success": False,
+            "message": "当前已有持仓分析任务正在执行或排队，请等待当前任务完成。",
+            "task": active_task,
+            "status": get_portfolio_scheduler_status(),
+        }
+
+    if portfolio_manager.get_stock_count() <= 0:
+        return {
+            "success": False,
+            "message": "当前没有可执行分析的持仓股票。",
+            "status": get_portfolio_scheduler_status(),
+        }
+
     return {
-        "success": bool(success),
+        "success": False,
+        "message": "立即执行失败",
         "status": get_portfolio_scheduler_status(),
     }

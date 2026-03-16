@@ -19,9 +19,20 @@ router = APIRouter(prefix="/api/smart-monitor", tags=["smart-monitor"])
 
 
 @router.get("/tasks")
-def list_tasks(request: Request, enabled_only: bool = False) -> dict:
+def list_tasks(
+    request: Request,
+    enabled_only: bool = False,
+    account_name: Optional[str] = None,
+    has_position: Optional[bool] = None,
+) -> dict:
     require_session(request)
-    return success_payload(services.list_smart_monitor_tasks(enabled_only=enabled_only))
+    return success_payload(
+        services.list_smart_monitor_tasks(
+            enabled_only=enabled_only,
+            account_name=account_name,
+            has_position=has_position,
+        )
+    )
 
 
 @router.get("/runtime-config")
@@ -75,6 +86,24 @@ def toggle_all_tasks(request: Request, enabled: bool) -> dict:
     require_session(request)
     changed = services.set_all_smart_monitor_tasks_enabled(enabled)
     return success_payload({"changed": changed, "enabled": enabled}, message="批量任务状态已更新")
+
+
+@router.post("/tasks/run-once")
+def run_all_tasks_once(
+    request: Request,
+    enabled_only: bool = True,
+    account_name: Optional[str] = None,
+    has_position: Optional[bool] = None,
+) -> dict:
+    require_session(request)
+    return success_payload(
+        services.run_smart_monitor_tasks_once(
+            enabled_only=enabled_only,
+            account_name=account_name,
+            has_position=has_position,
+        ),
+        message="已触发一次智能盯盘批量执行",
+    )
 
 
 @router.post("/analyze")

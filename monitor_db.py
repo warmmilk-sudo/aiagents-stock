@@ -220,8 +220,11 @@ class StockMonitorDatabase:
     def update_last_checked(self, stock_id: int):
         self.repository.update_runtime(stock_id, last_status="checked")
 
+    def has_latest_notification_type(self, stock_id: int, notification_type: str) -> bool:
+        return self.repository.has_latest_notification_type(stock_id, notification_type)
+
     def has_recent_notification(self, stock_id: int, notification_type: str, minutes: int = 60) -> bool:
-        return self.repository.has_recent_notification(stock_id, notification_type, minutes=minutes)
+        return self.has_latest_notification_type(stock_id, notification_type)
 
     def add_notification(self, stock_id: int, notification_type: str, message: str):
         self.repository.record_event(
@@ -229,6 +232,7 @@ class StockMonitorDatabase:
             event_type=notification_type,
             message=message,
             notification_pending=True,
+            suppress_if_latest_same_type=True,
         )
 
     def get_pending_notifications(self) -> List[Dict]:

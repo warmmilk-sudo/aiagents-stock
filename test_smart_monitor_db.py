@@ -183,6 +183,32 @@ class SmartMonitorDBTests(unittest.TestCase):
         self.assertEqual(self.db.monitoring_repository.get_item(task_id)["interval_minutes"], 30)
         self.assertEqual(self.monitor_db.repository.get_item(alert_id)["interval_minutes"], 2)
 
+    def test_delete_monitor_task_removes_linked_price_alert_and_disables_asset(self):
+        task_id = self.db.upsert_monitor_task(
+            {
+                "stock_code": "000001",
+                "stock_name": "平安银行",
+                "account_name": "默认账户",
+                "enabled": 1,
+                "trading_hours_only": 1,
+            }
+        )
+
+        task_item = self.db.monitoring_repository.get_item(task_id)
+        self.assertIsNotNone(task_item)
+        asset_id = int(task_item["asset_id"])
+        linked_alert = self.monitor_db.get_monitor_by_code("000001", account_name="默认账户", asset_id=asset_id)
+        self.assertIsNotNone(linked_alert)
+
+        deleted = self.db.delete_monitor_task(task_id)
+
+        self.assertTrue(deleted)
+        self.assertIsNone(self.db.monitoring_repository.get_item(task_id))
+        self.assertIsNone(self.monitor_db.get_monitor_by_code("000001", account_name="默认账户", asset_id=asset_id))
+        asset = self.db.asset_repository.get_asset(asset_id)
+        self.assertIsNotNone(asset)
+        self.assertFalse(asset["monitor_enabled"])
+
 
 if __name__ == "__main__":
     unittest.main()

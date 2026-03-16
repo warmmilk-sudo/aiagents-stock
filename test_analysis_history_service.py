@@ -136,12 +136,74 @@ class AnalysisHistoryServiceTests(unittest.TestCase):
         self.assertEqual(record["portfolio_state_label"], "在持仓")
         self.assertEqual(record["portfolio_action_label"], "跳转持仓")
 
+    def test_legacy_default_account_record_falls_back_to_current_portfolio_asset(self):
+        new_account_asset_id = self.asset_store.create_or_update_research_asset(
+            symbol="300750",
+            name="宁德时代",
+            account_name="新增账户",
+            note="后来迁移到新账户",
+        )
+        self.asset_store.transition_asset_status(
+            new_account_asset_id,
+            STATUS_PORTFOLIO,
+            cost_price=205.0,
+            quantity=20,
+        )
+        record_id = self.repository.save_record(
+            symbol="300750",
+            stock_name="宁德时代",
+            period="1y",
+            summary="历史记录没有带正确账户。",
+            final_decision={"rating": "持有", "confidence_level": 7.1},
+            account_name="默认账户",
+            analysis_scope="portfolio",
+            analysis_source="legacy_portfolio_analysis",
+            has_full_report=True,
+        )
+
+        record = self.service.get_record(record_id)
+        self.assertIsNotNone(record)
+        self.assertTrue(record["is_in_portfolio"])
+        self.assertEqual(record["portfolio_state_label"], "在持仓")
+        self.assertEqual(record["linked_asset_id"], new_account_asset_id)
+        self.assertEqual(record["linked_asset_account_name"], "新增账户")
+
     def test_delete_record_updates_unified_history(self):
         self.assertTrue(self.service.delete_record(self.portfolio_id))
         remaining = self.service.list_records()
         self.assertEqual(len(remaining), 1)
         self.assertEqual(remaining[0]["id"], self.research_id)
         self.assertIsNone(self.service.get_record(self.portfolio_id))
+
+    def test_normalizes_legacy_final_decision_threshold_strings(self):
+        legacy_id = self.repository.save_record(
+            symbol="300308",
+            stock_name="中际旭创",
+            period="6mo",
+            summary="旧格式阈值字段兼容校验",
+            final_decision={
+                "rating": "买入",
+                "entry_range": "115-118元",
+                "take_profit": "125元（第一止盈）",
+                "stop_loss": "108元（跌破后止损）",
+                "operation_advice": "等待回踩后分批介入。",
+            },
+            account_name="账户A",
+            analysis_scope="research",
+            analysis_source="legacy_home_analysis",
+            has_full_report=True,
+        )
+
+        record = self.service.get_record(legacy_id)
+        self.assertIsNotNone(record)
+        self.assertEqual(record["entry_min"], 115.0)
+        self.assertEqual(record["entry_max"], 118.0)
+        self.assertEqual(record["take_profit"], 125.0)
+        self.assertEqual(record["stop_loss"], 108.0)
+        self.assertEqual(record["final_decision"]["entry_min"], 115.0)
+        self.assertEqual(record["final_decision"]["entry_max"], 118.0)
+        self.assertEqual(record["final_decision"]["take_profit"], "125元（第一止盈）")
+        self.assertEqual(record["final_decision"]["stop_loss"], "108元（跌破后止损）")
 
     def test_backfills_legacy_full_report_flag_for_existing_records(self):
         conn = sqlite3.connect(self.db_path)

@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 
 import styles from "../../pages/ConsolePage.module.scss";
-import { FormattedReport } from "./FormattedReport";
+import { FormattedReport, extractReportKeyMetrics } from "./FormattedReport";
 
 export type FixedReportCategory = "macro" | "sector" | "fund" | "sentiment" | "team";
 
@@ -49,7 +49,9 @@ export function FixedReportWorkspace({ reports }: FixedReportWorkspaceProps) {
   }, [activeKey, entries]);
 
   const activeEntry = entries[activeKey] ?? null;
+  const activeMetrics = useMemo(() => extractReportKeyMetrics(activeEntry?.body, 6), [activeEntry?.body]);
   const activeTab = reportTabs.find((item) => item.key === activeKey) ?? reportTabs[0];
+  const tabsStyle = { "--nested-tab-count": reportTabs.length } as CSSProperties;
 
   if (!reportTabs.some((item) => entries[item.key])) {
     return <div className={styles.muted}>暂无原始报告</div>;
@@ -57,11 +59,11 @@ export function FixedReportWorkspace({ reports }: FixedReportWorkspaceProps) {
 
   return (
     <div className={styles.historyDetailContentStack}>
-      <div className={styles.historyDetailTabs} aria-label="原始报告分类" role="tablist">
+      <div className={styles.historyDetailTabs} aria-label="原始报告分类" role="tablist" style={tabsStyle}>
         {reportTabs.map((item) => (
           <button
             aria-selected={item.key === activeKey}
-            className={item.key === activeKey ? styles.primaryButton : styles.secondaryButton}
+            className={item.key === activeKey ? styles.nestedTabButtonActive : styles.nestedTabButton}
             key={item.key}
             onClick={() => setActiveKey(item.key)}
             role="tab"
@@ -90,6 +92,16 @@ export function FixedReportWorkspace({ reports }: FixedReportWorkspaceProps) {
           </div>
 
           <div className={styles.reportWorkbenchContent}>
+            {activeMetrics.length ? (
+              <div className={styles.reportWorkbenchMetricGrid}>
+                {activeMetrics.map((metric, index) => (
+                  <div className={styles.reportWorkbenchMetricCard} key={`${metric.label}-${metric.value}-${index}`}>
+                    <span>{metric.label}</span>
+                    <strong>{metric.value}</strong>
+                  </div>
+                ))}
+              </div>
+            ) : null}
             <FormattedReport content={activeEntry.body} emptyText={activeTab.emptyText} />
           </div>
 

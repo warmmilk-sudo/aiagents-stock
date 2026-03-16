@@ -365,6 +365,69 @@ class MonitoringRepositoryTests(unittest.TestCase):
         self.assertEqual(int(events[0]["notification_pending"] or 0), 0)
         self.assertEqual(int(events[0]["is_read"] or 0), 1)
 
+    def test_record_event_can_skip_latest_same_type_notification(self):
+        item_id = self.repo.create_item(
+            {
+                "symbol": "000001",
+                "name": "平安银行",
+                "monitor_type": "price_alert",
+                "account_name": "默认账户",
+            }
+        )
+
+        first_id = self.repo.record_event(
+            item_id=item_id,
+            event_type="take_profit",
+            message="股票 000001 (平安银行) 价格 11.2 达到止盈位 11.0",
+            notification_pending=True,
+            suppress_if_latest_same_type=True,
+        )
+        second_id = self.repo.record_event(
+            item_id=item_id,
+            event_type="take_profit",
+            message="股票 000001 (平安银行) 价格 11.3 达到止盈位 11.0",
+            notification_pending=True,
+            suppress_if_latest_same_type=True,
+        )
+
+        self.assertEqual(first_id, second_id)
+        events = self.repo.get_recent_events(limit=10)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["id"], first_id)
+        notifications = self.repo.get_pending_notifications()
+        self.assertEqual(len(notifications), 1)
+        self.assertEqual(notifications[0]["id"], first_id)
+
+    def test_record_event_allows_new_notification_when_latest_type_changes(self):
+        item_id = self.repo.create_item(
+            {
+                "symbol": "000001",
+                "name": "平安银行",
+                "monitor_type": "price_alert",
+                "account_name": "默认账户",
+            }
+        )
+
+        first_id = self.repo.record_event(
+            item_id=item_id,
+            event_type="take_profit",
+            message="股票 000001 (平安银行) 价格 11.2 达到止盈位 11.0",
+            notification_pending=True,
+            suppress_if_latest_same_type=True,
+        )
+        second_id = self.repo.record_event(
+            item_id=item_id,
+            event_type="stop_loss",
+            message="股票 000001 (平安银行) 价格 9.7 达到止损位 9.8",
+            notification_pending=True,
+            suppress_if_latest_same_type=True,
+        )
+
+        self.assertNotEqual(first_id, second_id)
+        events = self.repo.get_recent_events(limit=10)
+        self.assertEqual(len(events), 2)
+        self.assertEqual(events[0]["id"], second_id)
+
     def test_price_alert_upsert_reuses_existing_asset_record_when_managed_state_changes(self):
         first_id = self.repo.create_item(
             {

@@ -5,7 +5,6 @@ export interface SmartMonitorPageCache {
   systemStatus: unknown | null;
   tasks: unknown[];
   decisions: unknown[];
-  alerts: unknown[];
   notifications: unknown[];
   runtimeConfig: unknown | null;
   updatedAt: number;

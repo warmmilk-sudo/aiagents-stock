@@ -66,9 +66,18 @@
   min-width: 0;
 }
 
+.moduleHeaderTitleOnly {
+  justify-content: flex-start;
+}
+
 .moduleHeading {
   display: grid;
   gap: 6px;
+  min-width: 0;
+}
+
+.moduleHeaderMobileTitleHidden,
+.moduleHeadingMobileHidden {
   min-width: 0;
 }
 
@@ -457,22 +466,27 @@
 
 .nestedTabButton,
 .nestedTabButtonActive {
-  padding: 7px 12px;
-  border-radius: 999px;
-  font-size: 13px;
-  line-height: 1.25;
+  position: relative;
+  width: 100%;
+  padding: 12px 18px;
+  border: 0;
+  border-radius: 16px;
+  font-size: 16px;
+  line-height: 1.2;
+  text-align: center;
 }
 
 .nestedTabButton {
-  border-color: var(--line-soft);
-  background: color-mix(in srgb, var(--bg-panel-strong) 92%, transparent);
+  background: transparent;
   color: var(--text-muted);
 }
 
 .nestedTabButtonActive {
-  border-color: color-mix(in srgb, var(--accent) 34%, var(--line-soft));
-  background: color-mix(in srgb, var(--accent) 10%, var(--bg-panel));
+  background: color-mix(in srgb, white 10%, var(--bg-panel) 90%);
   color: var(--text-main);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 10px 22px rgba(0, 0, 0, 0.18);
 }
 
 .primaryButton:hover,
@@ -496,8 +510,8 @@
 
 .nestedTabButton:hover,
 .nestedTabButtonActive:hover {
-  border-color: color-mix(in srgb, var(--accent) 24%, var(--line-soft));
-  background: color-mix(in srgb, var(--accent) 8%, var(--bg-panel-strong));
+  transform: none;
+  background: color-mix(in srgb, white 6%, var(--bg-panel) 94%);
   color: var(--text-main);
 }
 
@@ -639,6 +653,34 @@
   margin-top: 2px;
 }
 
+.holdingSymbolButton {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.holdingSymbolButton:hover strong,
+.holdingSymbolButton:focus-visible strong {
+  color: color-mix(in srgb, var(--accent) 82%, var(--text-main));
+}
+
+.holdingSymbolButton:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 54%, white);
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+
+.holdingSymbolCode {
+  color: var(--text-muted);
+}
+
 .numericCell {
   text-align: right !important;
   white-space: nowrap;
@@ -739,7 +781,8 @@
 .taskIndicatorText {
   margin: 0;
   color: var(--text-muted);
-  line-height: 1.6;
+  font-size: 13px;
+  line-height: 1.55;
 }
 
 .historyRecordCard {
@@ -977,6 +1020,18 @@
   grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
 }
 
+.dualToggleGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  width: 100%;
+}
+
+.dualToggleGrid > * {
+  width: 100%;
+  justify-content: center;
+}
+
 .reportExportGrid>*,
 .reportTabGrid>*,
 .reportTabGridFour>*,
@@ -992,36 +1047,71 @@
 }
 
 .historyDetailTabs {
-  display: flex;
-  flex-wrap: nowrap;
-  gap: 8px;
-  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(var(--nested-tab-count, 1), minmax(0, 1fr));
+  gap: 0;
+  width: min(100%, max(320px, calc(var(--nested-tab-count, 1) * 148px)));
+  margin: 0 auto;
+  padding: 6px;
+  border: 1px solid color-mix(in srgb, var(--line-soft) 70%, transparent);
+  border-radius: 24px;
+  background: color-mix(in srgb, var(--bg-panel-strong) 92%, black 8%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.02);
   max-width: 100%;
   min-width: 0;
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
-  scrollbar-width: thin;
 }
 
 .historyDetailTabs>* {
-  flex: 0 0 auto;
+  position: relative;
   max-width: 100%;
+  min-width: 0;
   white-space: nowrap;
 }
 
 .historyDetailTabsGrid {
   display: grid;
-  gap: 1px;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  width: 100%;
+  grid-template-columns: repeat(var(--nested-tab-count, 4), minmax(0, 1fr));
+  gap: 0;
+  width: min(100%, max(320px, calc(var(--nested-tab-count, 1) * 148px)));
+  margin: 0 auto;
+  padding: 6px;
+  border: 1px solid color-mix(in srgb, var(--line-soft) 70%, transparent);
+  border-radius: 24px;
+  background: color-mix(in srgb, var(--bg-panel-strong) 92%, black 8%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.02);
   min-width: 0;
 }
 
 .historyDetailTabsGrid>* {
+  position: relative;
   width: 100%;
   min-width: 0;
   justify-content: center;
   white-space: nowrap;
+}
+
+.historyDetailTabs > * + *::before,
+.historyDetailTabsGrid > * + *::before {
+  content: "";
+  position: absolute;
+  left: -1px;
+  top: 50%;
+  width: 1px;
+  height: 28px;
+  background: color-mix(in srgb, var(--line-strong) 60%, transparent);
+  transform: translateY(-50%);
+  transition: opacity var(--shell-transition);
+}
+
+.historyDetailTabs > .nestedTabButtonActive::before,
+.historyDetailTabs > .nestedTabButtonActive + *::before,
+.historyDetailTabsGrid > .nestedTabButtonActive::before,
+.historyDetailTabsGrid > .nestedTabButtonActive + *::before {
+  opacity: 0;
 }
 
 .historyDetailPanel {
@@ -1388,6 +1478,34 @@
   box-sizing: border-box;
 }
 
+.reportWorkbenchMetricGrid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(min(150px, 100%), 1fr));
+  margin-bottom: 14px;
+}
+
+.reportWorkbenchMetricCard {
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+  border: 1px solid var(--line-soft);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--bg-panel) 96%, transparent);
+  min-width: 0;
+}
+
+.reportWorkbenchMetricCard span {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.reportWorkbenchMetricCard strong {
+  display: block;
+  line-height: 1.45;
+  word-break: break-word;
+}
+
 .cardHeader {
   display: flex;
   align-items: flex-start;
@@ -1529,6 +1647,18 @@
   font-weight: 600;
 }
 
+.switchBody {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.switchDescription {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .switchControl {
   position: relative;
   display: inline-flex;
@@ -1581,6 +1711,10 @@
 .switchControl > input:focus-visible + .switchTrack {
   outline: 2px solid color-mix(in srgb, var(--accent) 54%, white);
   outline-offset: 2px;
+}
+
+.filterSwitchField {
+  min-height: 100%;
 }
 
 .shortInput {
@@ -1684,6 +1818,38 @@
     gap: 12px;
   }
 
+  .moduleCard {
+    gap: 12px;
+  }
+
+  .moduleBody,
+  .schedulerControl {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+
+  .moduleBody > * + *,
+  .schedulerControl > * + * {
+    margin-top: 12px;
+  }
+
+  .moduleSection {
+    gap: 8px;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+  }
+
+  /* Flatten nested section cards into divider-separated blocks on phones. */
+  .moduleBody > .moduleSection + .moduleSection,
+  .schedulerControl > .moduleSection + .moduleSection {
+    margin-top: 0;
+    padding-top: 14px;
+    border-top: 1px solid color-mix(in srgb, var(--line-strong) 58%, transparent);
+  }
+
   .moduleHeader,
   .moduleToolbar {
     flex-direction: column;
@@ -1691,8 +1857,49 @@
   }
 
   .card {
-    padding: 14px;
-    border-radius: 16px;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    backdrop-filter: none;
+  }
+
+  .moduleCard.card {
+    padding: 0;
+  }
+
+  .moduleHeadingMobileHidden {
+    display: none;
+  }
+
+  .moduleHeaderMobileTitleHidden.moduleHeaderTitleOnly {
+    display: none;
+  }
+
+  .mobileDuplicateHeading {
+    display: none;
+  }
+
+  .card h2 {
+    margin-bottom: 8px;
+    font-size: clamp(18px, 5vw, 22px);
+    line-height: 1.2;
+  }
+
+  .card h3 {
+    margin-bottom: 6px;
+    font-size: 15px;
+    line-height: 1.35;
+  }
+
+  .cardHeader {
+    gap: 8px;
+  }
+
+  .reportWorkbenchHeader h3 {
+    font-size: 16px;
+    line-height: 1.35;
   }
 
   .compactGrid,
@@ -1729,6 +1936,11 @@
   .smartMonitorTaskCard,
   .historyRecordCard {
     padding: 12px;
+  }
+
+  .taskIndicatorText {
+    font-size: 12px;
+    line-height: 1.5;
   }
 
   .noticeCard {
@@ -1779,8 +1991,22 @@
     justify-content: flex-start;
   }
 
+  .historyDetailTabs,
   .historyDetailTabsGrid {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    width: 100%;
+    padding: 5px;
+    border-radius: 20px;
+  }
+
+  .nestedTabButton,
+  .nestedTabButtonActive {
+    padding: 11px 10px;
+    font-size: 14px;
+  }
+
+  .historyDetailTabs > * + *::before,
+  .historyDetailTabsGrid > * + *::before {
+    height: 24px;
   }
 
   .historyListMetrics {
@@ -1790,7 +2016,11 @@
 
 @media (max-width: 560px) {
   .card {
-    padding: 12px;
+    padding: 0;
+  }
+
+  .moduleCard.card {
+    padding: 0;
   }
 
   .chartRingWrap {
@@ -1823,8 +2053,10 @@
     width: 24%;
   }
 
-  .historyDetailTabsGrid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+  .nestedTabButton,
+  .nestedTabButtonActive {
+    padding-inline: 8px;
+    font-size: 13px;
   }
 
 

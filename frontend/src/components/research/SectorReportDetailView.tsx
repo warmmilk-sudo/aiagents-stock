@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useState, type CSSProperties, type ReactNode } from "react";
 
 import styles from "../../pages/ConsolePage.module.scss";
 import { formatDateTime } from "../../lib/datetime";
@@ -197,6 +197,7 @@ function PredictionToggleSection({
 }) {
   const [activeKey, setActiveKey] = useState(options[0]?.key ?? "");
   const activeOption = options.find((item) => item.key === activeKey) ?? options[0];
+  const tabsStyle = { "--nested-tab-count": options.length } as CSSProperties;
 
   if (!activeOption) {
     return <div className={styles.muted}>暂无数据</div>;
@@ -204,7 +205,7 @@ function PredictionToggleSection({
 
   return (
     <div className={`${styles.sectionControlStack} ${styles.tabControlStack}`}>
-      <div className={styles.historyDetailTabs}>
+      <div className={styles.historyDetailTabs} style={tabsStyle}>
         {options.map((item) => (
           <button
             className={item.key === activeOption.key ? styles.nestedTabButtonActive : styles.nestedTabButton}
@@ -251,10 +252,11 @@ function HeatObservationSection({ options }: { options: HeatToggleOption[] }) {
       : activeOption.tone === "warning"
         ? styles.heatChartFillWarning
         : styles.heatChartFillInfo;
+  const tabsStyle = { "--nested-tab-count": options.length } as CSSProperties;
 
   return (
     <div className={`${styles.sectionControlStack} ${styles.tabControlStack}`}>
-      <div className={styles.historyDetailTabs}>
+      <div className={styles.historyDetailTabs} style={tabsStyle}>
         {options.map((item) => (
           <button
             className={item.key === activeOption.key ? styles.nestedTabButtonActive : styles.nestedTabButton}
@@ -327,6 +329,7 @@ export function SectorReportDetailView({
   reportView,
 }: SectorReportDetailViewProps) {
   const [activeSection, setActiveSection] = useState<ViewSectionKey>("long_short");
+  const sectionTabsStyle = { "--nested-tab-count": 4 } as CSSProperties;
 
   if (!reportView) {
     return (
@@ -454,30 +457,30 @@ export function SectorReportDetailView({
             </div>
           </div>
 
-          <div className={styles.historyDetailTabs}>
+          <div className={styles.historyDetailTabs} style={sectionTabsStyle}>
             <button
-              className={activeSection === "long_short" ? styles.primaryButton : styles.secondaryButton}
+              className={activeSection === "long_short" ? styles.nestedTabButtonActive : styles.nestedTabButton}
               onClick={() => setActiveSection("long_short")}
               type="button"
             >
               板块多空
             </button>
             <button
-              className={activeSection === "rotation" ? styles.primaryButton : styles.secondaryButton}
+              className={activeSection === "rotation" ? styles.nestedTabButtonActive : styles.nestedTabButton}
               onClick={() => setActiveSection("rotation")}
               type="button"
             >
               轮动机会
             </button>
             <button
-              className={activeSection === "heat" ? styles.primaryButton : styles.secondaryButton}
+              className={activeSection === "heat" ? styles.nestedTabButtonActive : styles.nestedTabButton}
               onClick={() => setActiveSection("heat")}
               type="button"
             >
               热度观察
             </button>
             <button
-              className={activeSection === "raw" ? styles.primaryButton : styles.secondaryButton}
+              className={activeSection === "raw" ? styles.nestedTabButtonActive : styles.nestedTabButton}
               onClick={() => setActiveSection("raw")}
               type="button"
             >

@@ -19,6 +19,42 @@ sys.modules.setdefault(
         )
     ),
 )
+sys.modules.setdefault(
+    "smart_monitor_data",
+    types.SimpleNamespace(
+        SmartMonitorDataFetcher=type(
+            "SmartMonitorDataFetcher",
+            (),
+            {"__init__": lambda self, *args, **kwargs: None, "get_comprehensive_data": lambda self, *args, **kwargs: {}},
+        )
+    ),
+)
+sys.modules.setdefault(
+    "smart_monitor_tdx_data",
+    types.SimpleNamespace(
+        SmartMonitorTDXDataFetcher=type(
+            "SmartMonitorTDXDataFetcher",
+            (),
+            {"__init__": lambda self, *args, **kwargs: None, "available": True},
+        )
+    ),
+)
+sys.modules.setdefault(
+    "smart_monitor_deepseek",
+    types.SimpleNamespace(
+        SmartMonitorDeepSeek=type(
+            "SmartMonitorDeepSeek",
+            (),
+            {
+                "__init__": lambda self, *args, **kwargs: None,
+                "http_timeout_seconds": 15,
+                "set_model_overrides": lambda self, *args, **kwargs: None,
+                "get_trading_session": lambda self: {"session": "上午盘", "can_trade": True, "recommendation": ""},
+                "analyze_stock_and_decide": lambda self, **kwargs: {"success": False},
+            },
+        )
+    ),
+)
 
 import monitoring_orchestrator
 from monitoring_repository import MonitoringRepository
@@ -87,7 +123,11 @@ class _FakeMonitorDB:
 
     def get_stock_by_id(self, stock_id):
         stock = self._stocks.get(stock_id)
-        return dict(stock) if stock else None
+        if not stock:
+            return None
+        snapshot = dict(stock)
+        snapshot.setdefault("enabled", True)
+        return snapshot
 
     def update_stock_price(self, stock_id, price):
         self.updated_prices.append((stock_id, price))
@@ -96,6 +136,9 @@ class _FakeMonitorDB:
 
     def update_last_checked(self, stock_id):
         self.last_checked.append(stock_id)
+
+    def has_latest_notification_type(self, stock_id, notification_type):
+        return False
 
     def has_recent_notification(self, stock_id, notification_type, minutes=60):
         return False

@@ -32,48 +32,76 @@
   position: sticky;
   top: 88px;
   z-index: 12;
+  display: flex;
+  justify-content: center;
 }
 
 .sectionTabs {
-  display: flex;
-  gap: 8px;
-  padding: 8px;
+  display: grid;
+  grid-template-columns: repeat(var(--section-tab-count, 1), minmax(0, 1fr));
+  gap: 0;
+  align-items: end;
+  width: min(100%, max(360px, calc(var(--section-tab-count, 1) * 168px)));
+  padding: 0 10px;
   border: 0;
-  border-radius: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--line-soft) 82%, transparent);
   background: transparent;
-  box-shadow: none;
-  backdrop-filter: none;
-  overflow-x: auto;
-  scrollbar-width: thin;
 }
 
 .sectionTabButton {
-  flex: 0 0 auto;
+  position: relative;
+  width: 100%;
   border: 0;
-  border-radius: 8px;
+  border-radius: 0;
   background: transparent;
   color: var(--text-muted);
-  padding: 10px 16px;
-  font-weight: 700;
-  font-size: 15px;
-  line-height: 1.35;
+  padding: 14px 18px 16px;
+  font-weight: 600;
+  font-size: 17px;
+  line-height: 1.2;
+  text-align: center;
   white-space: nowrap;
   transition:
     background var(--shell-transition),
-    border-color var(--shell-transition),
     color var(--shell-transition),
+    opacity var(--shell-transition);
+}
+
+.sectionTabButton::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  width: 50px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--accent);
+  opacity: 0;
+  transform: translateX(-50%) scaleX(0.45);
+  transform-origin: center;
+  transition:
+    opacity var(--shell-transition),
     transform var(--shell-transition);
 }
 
 .sectionTabButton:hover {
-  transform: translateY(-1px);
-  background: rgba(255, 255, 255, 0.05);
   color: var(--text-main);
+  opacity: 0.9;
 }
 
 .sectionTabButtonActive {
-  background: color-mix(in srgb, var(--accent) 18%, transparent);
   color: var(--text-main);
+  font-weight: 800;
+}
+
+.sectionTabButtonActive::after {
+  opacity: 1;
+  transform: translateX(-50%) scaleX(1);
+}
+
+.sectionTabButton:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 52%, white);
+  outline-offset: 2px;
 }
 
 .actions > * {
@@ -90,8 +118,18 @@
   }
 
   .sectionTabs {
-    padding: 7px;
-    border-radius: 18px;
+    width: 100%;
+    padding: 0 4px;
+  }
+
+  .sectionTabButton {
+    padding: 13px 8px 15px;
+    font-size: 15px;
+  }
+
+  .sectionTabButton::after {
+    width: 40px;
+    height: 5px;
   }
 }
 

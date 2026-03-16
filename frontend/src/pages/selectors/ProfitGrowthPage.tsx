@@ -411,7 +411,7 @@ export function ProfitGrowthPage() {
 
         {section === "data" && stocks.length ? (
           <section className={styles.card}>
-            <h2>完整数据表格</h2>
+            <h2 className={styles.mobileDuplicateHeading}>完整数据表格</h2>
             <div className={styles.tableWrap}>
               <table className={styles.table}>
                 <thead>
@@ -438,7 +438,7 @@ export function ProfitGrowthPage() {
         {section === "monitor" ? (
           <>
             <section className={styles.card}>
-              <h2>策略监控中心</h2>
+              <h2 className={styles.mobileDuplicateHeading}>策略监控中心</h2>
               <div className={styles.compactGrid}>
                 <div className={styles.metric}>
                   <span className={styles.muted}>监控股票</span>

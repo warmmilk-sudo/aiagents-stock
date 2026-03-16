@@ -33,6 +33,14 @@ class PortfolioAnalysisTaskConfig:
     )
 
 
+@dataclass
+class PortfolioAccountTaskConfig:
+    """账户级定时分析启用配置。"""
+
+    account_name: str
+    enabled: bool = True
+
+
 class PortfolioScheduler:
     """持仓分析定时调度器"""
     
@@ -45,6 +53,7 @@ class PortfolioScheduler:
         self.next_run_time = None
         self.notification_service = NotificationService()
         self.task_config = PortfolioAnalysisTaskConfig()
+        self.account_task_configs: dict[str, PortfolioAccountTaskConfig] = {}
 
     @property
     def analysis_mode(self) -> str:
@@ -260,6 +269,37 @@ class PortfolioScheduler:
         self.set_notification_enabled(config.notification_enabled)
         self.set_selected_agents(config.selected_agents)
 
+    def get_account_task_configs(self) -> List[PortfolioAccountTaskConfig]:
+        return [
+            PortfolioAccountTaskConfig(
+                account_name=config.account_name,
+                enabled=config.enabled,
+            )
+            for config in sorted(self.account_task_configs.values(), key=lambda item: item.account_name)
+        ]
+
+    def set_account_task_configs(self, configs: Optional[List[dict]]) -> None:
+        normalized: dict[str, PortfolioAccountTaskConfig] = {}
+        for item in configs or []:
+            account_name = str((item or {}).get("account_name") or "").strip()
+            if not account_name or account_name == getattr(portfolio_manager, "AGGREGATE_ACCOUNT_NAME", "全部账户"):
+                continue
+            normalized[account_name] = PortfolioAccountTaskConfig(
+                account_name=account_name,
+                enabled=bool((item or {}).get("enabled", True)),
+            )
+        self.account_task_configs = normalized
+
+    def _resolve_enabled_accounts(self, available_accounts: List[str]) -> List[str]:
+        if not self.account_task_configs:
+            return list(available_accounts)
+        enabled_accounts: List[str] = []
+        for account_name in available_accounts:
+            account_config = self.account_task_configs.get(account_name)
+            if account_config is None or account_config.enabled:
+                enabled_accounts.append(account_name)
+        return enabled_accounts
+
     def _merge_sync_result(self, summary: Optional[dict], sync_result: Optional[dict]) -> Optional[dict]:
         if summary is None:
             return None
@@ -281,9 +321,23 @@ class PortfolioScheduler:
             return f"{base} {code} ({current}/{total})"
         return f"{base} {code}"
 
+    def _collect_available_accounts(self) -> List[str]:
+        stocks = portfolio_manager.get_all_stocks()
+        return sorted({stock.get("account_name", "默认账户") for stock in stocks if stock.get("code")})
+
     def _run_scheduled_analysis_task(self, report_progress, *, trigger: str) -> dict:
         config = self.get_task_config()
-        stock_count = portfolio_manager.get_stock_count()
+        available_accounts = self._collect_available_accounts()
+        if not available_accounts:
+            raise RuntimeError("没有持仓股票")
+        target_accounts = self._resolve_enabled_accounts(available_accounts)
+        if not target_accounts:
+            raise RuntimeError("没有启用的定时分析账户")
+        account_counts = {
+            account_name: portfolio_manager.get_stock_count(account_name)
+            for account_name in target_accounts
+        }
+        stock_count = sum(account_counts.values())
         trigger_label = "定时" if trigger == "scheduled" else "手动"
         task_label = f"{trigger_label}持仓分析"
         saved_ids: List[int] = []
@@ -292,6 +346,11 @@ class PortfolioScheduler:
             if config.auto_monitor_sync
             else None
         )
+        aggregated_results: List[dict] = []
+        aggregated_failed: List[dict] = []
+        total_succeeded = 0
+        total_failed = 0
+        start_time = time.time()
 
         print("\n" + "=" * 60)
         print(f"{task_label}开始: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
@@ -304,45 +363,83 @@ class PortfolioScheduler:
             message=f"正在准备{task_label}任务...",
         )
 
-        def progress_callback(current, callback_total, code, status):
-            report_progress(
-                current=current,
-                total=callback_total,
-                step_code=code,
-                step_status=status,
-                message=self._build_progress_message(current, callback_total, code, status),
-            )
-
-        def result_callback(code, single_result):
-            persistence_result = portfolio_manager.persist_single_analysis_result(
-                code,
-                single_result,
-                sync_realtime_monitor=config.auto_monitor_sync,
-                analysis_source="portfolio_scheduler",
-                analysis_period="1y",
-            )
-            saved_ids.extend(persistence_result.get("saved_ids", []))
-            self._merge_sync_result(aggregated_sync_result, persistence_result.get("sync_result"))
-
         try:
-            analysis_results = portfolio_manager.batch_analyze_portfolio(
-                mode=config.analysis_mode,
-                max_workers=config.max_workers,
-                selected_agents=config.selected_agents,
-                progress_callback=progress_callback,
-                result_callback=result_callback,
-            )
-            if not analysis_results.get("success"):
-                error_msg = analysis_results.get("error", "未知错误")
-                raise RuntimeError(error_msg)
+            completed_offset = 0
+            for account_name in target_accounts:
+                account_stock_count = account_counts.get(account_name, 0)
+                if account_stock_count <= 0:
+                    continue
+                account_label = account_name or "默认账户"
+
+                def progress_callback(current, callback_total, code, status, *, offset=completed_offset, label=account_label):
+                    absolute_current = min(stock_count, offset + int(current or 0))
+                    report_progress(
+                        current=absolute_current,
+                        total=stock_count,
+                        step_code=code,
+                        step_status=status,
+                        message=f"{label} | {self._build_progress_message(int(current or 0), int(callback_total or 0), code, status)}",
+                    )
+
+                def result_callback(code, single_result, *, target_account=account_name):
+                    persistence_result = portfolio_manager.persist_single_analysis_result(
+                        code,
+                        single_result,
+                        sync_realtime_monitor=config.auto_monitor_sync,
+                        analysis_source="portfolio_scheduler",
+                        analysis_period="1y",
+                        account_name=target_account,
+                    )
+                    saved_ids.extend(persistence_result.get("saved_ids", []))
+                    self._merge_sync_result(aggregated_sync_result, persistence_result.get("sync_result"))
+
+                analysis_results = portfolio_manager.batch_analyze_portfolio(
+                    mode=config.analysis_mode,
+                    max_workers=config.max_workers,
+                    selected_agents=config.selected_agents,
+                    progress_callback=progress_callback,
+                    result_callback=result_callback,
+                    account_name=account_name,
+                )
+                if not analysis_results.get("success"):
+                    error_msg = analysis_results.get("error", f"{account_label} 分析失败")
+                    raise RuntimeError(error_msg)
+
+                total_succeeded += int(analysis_results.get("succeeded", 0))
+                total_failed += int(analysis_results.get("failed", 0))
+                aggregated_results.extend(
+                    [{**item, "account_name": account_name} for item in analysis_results.get("results", [])]
+                )
+                aggregated_failed.extend(
+                    [{**item, "account_name": account_name} for item in analysis_results.get("failed_stocks", [])]
+                )
+                completed_offset += account_stock_count
+
+            analysis_results = {
+                "success": True,
+                "mode": config.analysis_mode,
+                "total": stock_count,
+                "succeeded": total_succeeded,
+                "failed": total_failed,
+                "results": aggregated_results,
+                "failed_stocks": aggregated_failed,
+                "elapsed_time": time.time() - start_time,
+                "accounts": [
+                    {
+                        "account_name": account_name,
+                    }
+                    for account_name in target_accounts
+                    if account_counts.get(account_name, 0) > 0
+                ],
+            }
 
             if config.notification_enabled:
                 self._send_notification(analysis_results, aggregated_sync_result)
 
             self.last_run_time = datetime.now()
             report_progress(
-                current=analysis_results.get("total", stock_count),
-                total=analysis_results.get("total", stock_count) or stock_count or 1,
+                current=stock_count,
+                total=stock_count or 1,
                 step_status="success",
                 message=(
                     f"{task_label}完成：成功 {analysis_results.get('succeeded', 0)}，"
@@ -372,11 +469,16 @@ class PortfolioScheduler:
             self.last_run_time = datetime.now()
             raise
 
-    def _scheduled_job(self, trigger: str = "scheduled"):
+    def _scheduled_job(self, trigger: str = "scheduled") -> Optional[str]:
         """定时任务执行入口：将分析任务提交到后台队列。"""
         if trigger == "scheduled" and datetime.now().weekday() >= 5:
             print("[INFO] 周末跳过持仓定时分析")
             self._update_next_run_time()
+            return None
+
+        active_task = portfolio_analysis_task_manager.get_active_task_any(task_type="batch")
+        if active_task:
+            print("[WARN] 已有持仓分析任务正在执行或排队，跳过新的提交")
             return None
 
         stock_count = portfolio_manager.get_stock_count()
@@ -398,6 +500,13 @@ class PortfolioScheduler:
                 "analysis_mode": self.analysis_mode,
                 "max_workers": self.max_workers,
                 "selected_agents": self.selected_agents,
+                "account_configs": [
+                    {
+                        "account_name": config.account_name,
+                        "enabled": config.enabled,
+                    }
+                    for config in self.get_account_task_configs()
+                ],
             },
         )
     
@@ -486,6 +595,7 @@ class PortfolioScheduler:
         succeeded = analysis_results.get("succeeded", 0)
         failed = analysis_results.get("failed", 0)
         mode = analysis_results.get("mode", "sequential")
+        mode_label = "账户分组" if mode == "account_scoped" else ("顺序分析" if mode == "sequential" else "并行分析")
         elapsed_time = analysis_results.get("elapsed_time", 0)
         
         # 统计评级分布
@@ -520,7 +630,7 @@ class PortfolioScheduler:
 ✅ 成功：{succeeded}只
 ❌ 失败：{failed}只
 ⏱ 耗时：{elapsed_time:.1f}秒
-🔄 模式：{'顺序分析' if mode == 'sequential' else '并行分析'}
+🔄 模式：{mode_label}
 
 📈 投资评级分布：
 • 买入：{rating_stats.get('买入', 0)}只
@@ -676,21 +786,21 @@ class PortfolioScheduler:
         print("[OK] 定时任务已停止")
         return True
     
-    def run_once(self) -> bool:
+    def run_once(self) -> Optional[str]:
         """
         立即执行一次分析（不影响定时计划）
         
         Returns:
-            是否执行成功
+            已提交任务ID；若未提交成功则返回 None
         """
         # 检查持仓数量
         stock_count = portfolio_manager.get_stock_count()
         if stock_count == 0:
             print("[ERROR] 没有持仓股票")
-            return False
+            return None
         
         print("[OK] 立即执行持仓分析...")
-        return self._scheduled_job(trigger="manual") is not None
+        return self._scheduled_job(trigger="manual")
     
     def get_status(self) -> dict:
         """
@@ -709,7 +819,14 @@ class PortfolioScheduler:
             "selected_agents": self.selected_agents,
             "last_run_time": self.last_run_time.strftime("%Y-%m-%d %H:%M:%S") if self.last_run_time else None,
             "next_run_time": self.next_run_time.strftime("%Y-%m-%d %H:%M:%S") if self.next_run_time else None,
-            "portfolio_count": portfolio_manager.get_stock_count()
+            "portfolio_count": portfolio_manager.get_stock_count(),
+            "account_configs": [
+                {
+                    "account_name": config.account_name,
+                    "enabled": config.enabled,
+                }
+                for config in self.get_account_task_configs()
+            ],
         }
     
     def get_next_run_time(self) -> Optional[str]:
@@ -731,6 +848,7 @@ class PortfolioScheduler:
         auto_sync_monitor: bool = None,
         send_notification: bool = None,
         selected_agents: Optional[List[str]] = None,
+        account_configs: Optional[List[dict]] = None,
     ):
         """
         更新调度器配置
@@ -760,6 +878,9 @@ class PortfolioScheduler:
 
         if selected_agents is not None:
             self.set_selected_agents(selected_agents)
+
+        if account_configs is not None:
+            self.set_account_task_configs(account_configs)
         
         print("[OK] 配置已更新")
     
@@ -781,12 +902,12 @@ class PortfolioScheduler:
         """
         return self.stop()
     
-    def run_analysis_now(self) -> bool:
+    def run_analysis_now(self) -> Optional[str]:
         """
         立即执行一次分析（UI友好方法名）
         
         Returns:
-            是否执行成功
+            已提交任务ID；若未提交成功则返回 None
         """
         return self.run_once()
 

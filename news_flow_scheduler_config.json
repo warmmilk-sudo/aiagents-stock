@@ -1,6 +1,6 @@
 {
   "task_enabled": {
-    "sync_hotspots": true,
+    "sync_hotspots": false,
     "generate_alerts": true,
     "deep_analysis": false
   },

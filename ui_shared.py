@@ -77,6 +77,27 @@ REPORT_METADATA_KEYS = {
     "risk_warning",
 }
 
+REPORT_START_PATTERNS = (
+    r"(?m)^#\s*.+(?:分析报告|报告|深度分析|分析).*$",
+    r"(?m)^##\s*基本概况.*$",
+    r"(?m)^##\s*.+$",
+    r"(?m)^(?:一、|1[\.、])\s*(?:趋势分析|基本概况|核心结论|技术分析|投资建议|市场分析|新闻分析|风险分析|资金分析).*$",
+    r"(?m)^(?:##\s*)?(?:一、|1[\.、])\s*(?:周期仪表盘|康波周期仪表盘|综合资产配置建议|不同人群的具体建议|核心观点总结|周金涛名言对照).*$",
+    r"(?m)^以下(?:为|是).*(?:分析报告|报告|研判|复盘).*$",
+    r"(?m)^整体结论先行[:：]?\s*$",
+    r"(?m)^\*\*(?:核心判断|核心结论|总体判断).*\*\*$",
+)
+
+REPORT_BODY_MARKERS = (
+    r"(?m)^\s*(?:以下|下面)是(?:最终)?(?:正式)?(?:分析)?报告[:：]?\s*$",
+    r"[\[【]?(?:报告正文|正文内容|分析正文|最终报告|正式报告)[\]】]?[:：]?\s*",
+)
+
+PREAMBLE_LINE_PATTERNS = (
+    r"^(?:好的|下面|以下|基于|根据|综合|结合|我将|我会|先对|接下来|这里是)",
+    r"(?:分析报告如下|正式报告如下|报告如下|为你提供|为您提供)",
+)
+
 
 def get_dataframe_height(
     row_count: int,
@@ -231,14 +252,8 @@ def _resolve_final_decision_content(final_decision: Any) -> tuple[Any, bool, str
 
 
 def _find_report_body_start(text: str) -> Optional[int]:
-    report_patterns = (
-        r"(?m)^#\s*.+(?:分析报告|报告|深度分析|分析).*$",
-        r"(?m)^##\s*基本概况.*$",
-        r"(?m)^(?:一、|1[\.、])\s*(?:趋势分析|基本概况|核心结论|技术分析|投资建议).*$",
-        r"(?m)^(?:##\s*)?(?:一、|1[\.、])\s*(?:周期仪表盘|康波周期仪表盘|综合资产配置建议|不同人群的具体建议|核心观点总结|周金涛名言对照).*$",
-    )
     positions = []
-    for pattern in report_patterns:
+    for pattern in REPORT_START_PATTERNS:
         match = re.search(pattern, text)
         if match:
             positions.append(match.start())
@@ -247,18 +262,94 @@ def _find_report_body_start(text: str) -> Optional[int]:
     return min(positions)
 
 
+def _clean_reasoning_label(text: str) -> str:
+    return (
+        text
+        .replace("【推理过程】", "")
+        .replace("[推理过程]", "")
+        .replace("【思考过程】", "")
+        .replace("[思考过程]", "")
+        .replace("【分析过程】", "")
+        .replace("[分析过程]", "")
+        .replace("【推演过程】", "")
+        .replace("[推演过程]", "")
+        .strip()
+    )
+
+
+def _clean_body_label(text: str) -> str:
+    cleaned = re.sub(r"^\s*[\[【]?(?:报告正文|正文内容|分析正文|最终报告|正式报告)[\]】]?\s*", "", text, count=1)
+    cleaned = re.sub(r"^\s*(?:以下|下面)是(?:最终)?(?:正式)?(?:分析)?报告[:：]\s*", "", cleaned, count=1)
+    return cleaned.strip()
+
+
+def _find_body_marker(text: str) -> Optional[re.Match[str]]:
+    for pattern in REPORT_BODY_MARKERS:
+        match = re.search(pattern, text)
+        if match:
+            return match
+    return None
+
+
+def _is_preamble_line(line: str) -> bool:
+    normalized = line.strip()
+    if not normalized:
+        return True
+    return any(re.search(pattern, normalized) for pattern in PREAMBLE_LINE_PATTERNS)
+
+
+def _split_leading_preamble(text: str) -> tuple[str, str]:
+    report_start = _find_report_body_start(text)
+    if report_start is None or report_start <= 0:
+        return text.strip(), ""
+
+    preamble = text[:report_start].strip()
+    body = text[report_start:].strip()
+    if not preamble:
+        return body, ""
+
+    preamble_lines = [line.strip() for line in preamble.splitlines() if line.strip()]
+    if len(preamble) <= 220 or all(_is_preamble_line(line) for line in preamble_lines):
+        return body, preamble
+
+    return text.strip(), ""
+
+
 def _split_analysis_report_sections(value: Any) -> tuple[str, str]:
     parsed = _coerce_json_value(value)
     text = "" if parsed is None else str(parsed).strip()
     if not text:
         return "", ""
 
-    marker = re.search(r"[\[【]推理过程[\]】]", text)
+    reasoning_parts: list[str] = []
+
+    def _collect_think(match: re.Match[str]) -> str:
+        content = match.group(1).strip()
+        if content:
+            reasoning_parts.append(content)
+        return ""
+
+    text = re.sub(r"<think>([\s\S]*?)</think>", _collect_think, text, flags=re.IGNORECASE).strip()
+
+    body_marker = _find_body_marker(text)
+    if body_marker:
+        before_marker = text[: body_marker.start()].strip()
+        after_marker = _clean_body_label(text[body_marker.end() :])
+        body, preamble = _split_leading_preamble(after_marker)
+        reasoning = "\n\n".join(part for part in ["\n\n".join(reasoning_parts).strip(), before_marker, preamble] if part).strip()
+        return body, reasoning
+
+    marker = re.search(
+        r"(?m)[\[【](?:推理过程|思考过程|分析过程|推演过程)[\]】]|^\s*(?:推理过程|思考过程|分析过程|推演过程)[:：]",
+        text,
+    )
     if not marker:
-        return text, ""
+        body, preamble = _split_leading_preamble(text)
+        reasoning = "\n\n".join(part for part in ["\n\n".join(reasoning_parts).strip(), preamble] if part).strip()
+        return body, reasoning
 
     before_marker = text[:marker.start()].strip()
-    after_marker = text[marker.end() :].lstrip("：:\n ").strip()
+    after_marker = _clean_reasoning_label(text[marker.end() :].lstrip("：:\n ").strip())
 
     if before_marker:
         body = before_marker
@@ -269,12 +360,13 @@ def _split_analysis_report_sections(value: Any) -> tuple[str, str]:
             reasoning = after_marker[:report_start].strip()
             body = after_marker[report_start:].strip()
         else:
-            body = ""
+            body = after_marker if report_start == 0 else ""
             reasoning = after_marker
 
     body = re.sub(r"^\s*分析报告(?:正文)?\s*[:：]\s*", "", body, count=1)
     reasoning = re.sub(r"^\s*[\[【]?推理过程[\]】]?\s*", "", reasoning, count=1)
     reasoning = re.sub(r"^\s*推理过程[:：]\s*", "", reasoning, count=1)
+    reasoning = "\n\n".join(part for part in ["\n\n".join(reasoning_parts).strip(), reasoning] if part).strip()
     return body.strip(), reasoning.strip()
 
 
@@ -454,4 +546,3 @@ def _resolve_report_body_text(value: Any) -> str:
     if parsed in (None, ""):
         return ""
     return str(parsed).strip()
-

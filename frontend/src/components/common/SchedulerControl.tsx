@@ -13,6 +13,7 @@ interface SchedulerControlProps {
   onRunOnce?: () => void | Promise<void>;
   saveLabel?: string;
   runOnceLabel?: string;
+  runOnceDisabled?: boolean;
 }
 
 export function SchedulerControl({
@@ -25,6 +26,7 @@ export function SchedulerControl({
   onRunOnce,
   saveLabel = DEFAULT_SAVE_LABEL,
   runOnceLabel = DEFAULT_RUN_ONCE_LABEL,
+  runOnceDisabled = false,
 }: SchedulerControlProps) {
   return (
     <div className={styles.schedulerControl}>
@@ -46,7 +48,7 @@ export function SchedulerControl({
           </span>
         </label>
         {onRunOnce ? (
-          <button className={styles.primaryButton} onClick={() => void onRunOnce()} type="button">
+          <button className={styles.primaryButton} disabled={runOnceDisabled} onClick={() => void onRunOnce()} type="button">
             {runOnceLabel}
           </button>
         ) : null}

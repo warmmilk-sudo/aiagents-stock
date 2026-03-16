@@ -1089,8 +1089,22 @@ class PortfolioDB:
                 if latest_record.get("analysis_date") and not latest_record.get("analysis_time"):
                     latest_record["analysis_time"] = latest_record.get("analysis_date")
                 merged["analysis_record_id"] = latest_record.get("id")
+                merged["analysis_record_account_name"] = latest_record.get("account_name")
                 merged.update(latest_record)
                 merged["id"] = stock.get("id")
+                merged["account_name"] = stock.get("account_name", DEFAULT_ACCOUNT_NAME)
+                merged["symbol"] = stock.get("code") or stock.get("symbol")
+                merged["code"] = stock.get("code") or stock.get("symbol")
+                merged["name"] = stock.get("name") or latest_record.get("stock_name") or stock.get("code")
+                merged["cost_price"] = stock.get("cost_price")
+                merged["quantity"] = stock.get("quantity")
+                merged["note"] = stock.get("note")
+                merged["auto_monitor"] = stock.get("auto_monitor")
+                merged["monitor_enabled"] = stock.get("monitor_enabled")
+                merged["position_status"] = stock.get("position_status")
+                merged["origin_analysis_id"] = stock.get("origin_analysis_id")
+                merged["last_trade_at"] = stock.get("last_trade_at")
+                merged["analysis_record_id"] = latest_record.get("id")
             result.append(merged)
         return result
 

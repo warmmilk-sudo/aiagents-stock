@@ -7,6 +7,7 @@ from typing import Dict, List, Optional
 from analysis_repository import AnalysisRepository, analysis_repository
 from asset_repository import AssetRepository, STATUS_PORTFOLIO, STATUS_PRIORITY, STATUS_RESEARCH, STATUS_WATCHLIST
 from investment_db_utils import DEFAULT_ACCOUNT_NAME
+from investment_action_utils import extract_first_number, resolve_entry_range
 
 
 SCOPE_LABELS = {
@@ -135,9 +136,18 @@ class AnalysisHistoryService:
             str(account_name or DEFAULT_ACCOUNT_NAME).strip() or DEFAULT_ACCOUNT_NAME,
         )
 
-    def _build_asset_indexes(self) -> tuple[Dict[int, Dict], Dict[tuple[str, str], Dict]]:
+    def _asset_sort_key(self, asset: Optional[Dict]) -> tuple[int, str, int]:
+        return (
+            STATUS_PRIORITY.get(str((asset or {}).get("status") or STATUS_RESEARCH), -1),
+            str((asset or {}).get("updated_at") or ""),
+            int((asset or {}).get("id") or 0),
+        )
+
+    def _build_asset_indexes(self) -> tuple[Dict[int, Dict], Dict[tuple[str, str], Dict], Dict[str, Dict], Dict[str, Dict]]:
         assets_by_id: Dict[int, Dict] = {}
         assets_by_symbol_account: Dict[tuple[str, str], Dict] = {}
+        assets_by_symbol: Dict[str, Dict] = {}
+        portfolio_assets_by_symbol: Dict[str, Dict] = {}
         for asset in self.asset_store.list_assets(include_deleted=False):
             asset_id = asset.get("id")
             if asset_id not in (None, ""):
@@ -147,19 +157,21 @@ class AnalysisHistoryService:
                     pass
             key = self._normalize_asset_lookup_key(asset.get("symbol"), asset.get("account_name"))
             existing = assets_by_symbol_account.get(key)
-            asset_sort_key = (
-                STATUS_PRIORITY.get(str(asset.get("status") or STATUS_RESEARCH), -1),
-                str(asset.get("updated_at") or ""),
-                int(asset.get("id") or 0),
-            )
-            existing_sort_key = (
-                STATUS_PRIORITY.get(str((existing or {}).get("status") or STATUS_RESEARCH), -1),
-                str((existing or {}).get("updated_at") or ""),
-                int((existing or {}).get("id") or 0),
-            )
+            asset_sort_key = self._asset_sort_key(asset)
+            existing_sort_key = self._asset_sort_key(existing)
             if existing is None or asset_sort_key > existing_sort_key:
                 assets_by_symbol_account[key] = asset
-        return assets_by_id, assets_by_symbol_account
+            symbol_key = str(asset.get("symbol") or "").strip().upper()
+            if not symbol_key:
+                continue
+            existing_symbol_asset = assets_by_symbol.get(symbol_key)
+            if existing_symbol_asset is None or asset_sort_key > self._asset_sort_key(existing_symbol_asset):
+                assets_by_symbol[symbol_key] = asset
+            if str(asset.get("status") or "").strip().lower() == STATUS_PORTFOLIO:
+                existing_portfolio_asset = portfolio_assets_by_symbol.get(symbol_key)
+                if existing_portfolio_asset is None or asset_sort_key > self._asset_sort_key(existing_portfolio_asset):
+                    portfolio_assets_by_symbol[symbol_key] = asset
+        return assets_by_id, assets_by_symbol_account, assets_by_symbol, portfolio_assets_by_symbol
 
     def _resolve_linked_asset(
         self,
@@ -167,6 +179,8 @@ class AnalysisHistoryService:
         *,
         assets_by_id: Dict[int, Dict],
         assets_by_symbol_account: Dict[tuple[str, str], Dict],
+        assets_by_symbol: Dict[str, Dict],
+        portfolio_assets_by_symbol: Dict[str, Dict],
     ) -> Optional[Dict]:
         linked_asset_id = record.get("asset_id")
         if linked_asset_id in (None, ""):
@@ -182,7 +196,16 @@ class AnalysisHistoryService:
             record.get("symbol"),
             record.get("account_name") or DEFAULT_ACCOUNT_NAME,
         )
-        return assets_by_symbol_account.get(lookup_key)
+        exact_asset = assets_by_symbol_account.get(lookup_key)
+        if exact_asset:
+            return exact_asset
+        symbol_key = str(record.get("symbol") or "").strip().upper()
+        if not symbol_key:
+            return None
+        portfolio_asset = portfolio_assets_by_symbol.get(symbol_key)
+        if portfolio_asset:
+            return portfolio_asset
+        return assets_by_symbol.get(symbol_key)
 
     def _apply_position_state(self, record: Dict, linked_asset: Optional[Dict]) -> Dict:
         normalized = dict(record)
@@ -198,9 +221,51 @@ class AnalysisHistoryService:
             current_status,
             "未关联",
         )
+        normalized["linked_asset_account_name"] = (linked_asset or {}).get("account_name")
         normalized["is_in_portfolio"] = is_in_portfolio
         normalized["portfolio_state_label"] = "在持仓" if is_in_portfolio else "未持仓"
         normalized["portfolio_action_label"] = "跳转持仓" if is_in_portfolio else "设为持仓"
+        return normalized
+
+    def _normalize_final_decision_thresholds(self, record: Dict) -> Dict:
+        normalized = dict(record)
+        final_decision = normalized.get("final_decision")
+        if not isinstance(final_decision, dict):
+            return normalized
+
+        decision_payload = dict(final_decision)
+        entry_min, entry_max = resolve_entry_range(decision_payload)
+        take_profit = extract_first_number(decision_payload.get("take_profit"))
+        stop_loss = extract_first_number(decision_payload.get("stop_loss"))
+
+        if entry_min is None:
+            entry_min = extract_first_number(normalized.get("entry_min"))
+        if entry_max is None:
+            entry_max = extract_first_number(normalized.get("entry_max"))
+        if take_profit is None:
+            take_profit = extract_first_number(normalized.get("take_profit"))
+        if stop_loss is None:
+            stop_loss = extract_first_number(normalized.get("stop_loss"))
+
+        if entry_min is not None and decision_payload.get("entry_min") in (None, ""):
+            decision_payload["entry_min"] = entry_min
+        if entry_max is not None and decision_payload.get("entry_max") in (None, ""):
+            decision_payload["entry_max"] = entry_max
+        if take_profit is not None and decision_payload.get("take_profit") in (None, ""):
+            decision_payload["take_profit"] = take_profit
+        if stop_loss is not None and decision_payload.get("stop_loss") in (None, ""):
+            decision_payload["stop_loss"] = stop_loss
+
+        if normalized.get("entry_min") in (None, "") and entry_min is not None:
+            normalized["entry_min"] = entry_min
+        if normalized.get("entry_max") in (None, "") and entry_max is not None:
+            normalized["entry_max"] = entry_max
+        if normalized.get("take_profit") in (None, "") and take_profit is not None:
+            normalized["take_profit"] = take_profit
+        if normalized.get("stop_loss") in (None, "") and stop_loss is not None:
+            normalized["stop_loss"] = stop_loss
+
+        normalized["final_decision"] = decision_payload
         return normalized
 
     def _build_view_model(
@@ -209,8 +274,11 @@ class AnalysisHistoryService:
         *,
         assets_by_id: Dict[int, Dict],
         assets_by_symbol_account: Dict[tuple[str, str], Dict],
+        assets_by_symbol: Dict[str, Dict],
+        portfolio_assets_by_symbol: Dict[str, Dict],
     ) -> Dict:
         normalized = dict(record)
+        normalized = self._normalize_final_decision_thresholds(normalized)
         scope = str(normalized.get("analysis_scope") or "research").strip().lower()
         scope = scope if scope in SCOPE_LABELS else "research"
         normalized["analysis_scope"] = scope
@@ -228,10 +296,13 @@ class AnalysisHistoryService:
             or ""
         )
         normalized["account_name"] = normalized.get("account_name") or DEFAULT_ACCOUNT_NAME
+        normalized["symbol"] = str(normalized.get("symbol") or "").strip().upper()
         linked_asset = self._resolve_linked_asset(
             normalized,
             assets_by_id=assets_by_id,
             assets_by_symbol_account=assets_by_symbol_account,
+            assets_by_symbol=assets_by_symbol,
+            portfolio_assets_by_symbol=portfolio_assets_by_symbol,
         )
         return self._apply_position_state(normalized, linked_asset)
 
@@ -287,7 +358,7 @@ class AnalysisHistoryService:
         normalized_search = str(search_term or "").strip()
 
         records = self.repository.list_record_summaries(full_report_only=full_report_only, limit=limit)
-        assets_by_id, assets_by_symbol_account = self._build_asset_indexes()
+        assets_by_id, assets_by_symbol_account, assets_by_symbol, portfolio_assets_by_symbol = self._build_asset_indexes()
         result: List[Dict] = []
         seen_keys = set()
         for record in records:
@@ -295,6 +366,8 @@ class AnalysisHistoryService:
                 record,
                 assets_by_id=assets_by_id,
                 assets_by_symbol_account=assets_by_symbol_account,
+                assets_by_symbol=assets_by_symbol,
+                portfolio_assets_by_symbol=portfolio_assets_by_symbol,
             )
             if normalized_scope != "all" and item["analysis_scope"] != normalized_scope:
                 continue
@@ -320,11 +393,13 @@ class AnalysisHistoryService:
         record = self.repository.get_record(record_id)
         if not record:
             return None
-        assets_by_id, assets_by_symbol_account = self._build_asset_indexes()
+        assets_by_id, assets_by_symbol_account, assets_by_symbol, portfolio_assets_by_symbol = self._build_asset_indexes()
         return self._build_view_model(
             record,
             assets_by_id=assets_by_id,
             assets_by_symbol_account=assets_by_symbol_account,
+            assets_by_symbol=assets_by_symbol,
+            portfolio_assets_by_symbol=portfolio_assets_by_symbol,
         )
 
     def delete_record(self, record_id: int) -> bool:

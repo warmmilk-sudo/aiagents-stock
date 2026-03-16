@@ -348,7 +348,7 @@ export function PriceAlertsPage() {
           <section className={styles.card}>
             <div className={styles.cardHeader}>
               <div>
-                <h2>近期通知</h2>
+                <h2 className={styles.mobileDuplicateHeading}>近期通知</h2>
                 <p className={styles.helperText}>用颜色区分不同类型，优先识别风险、收益和关注信号。</p>
               </div>
             </div>
@@ -385,7 +385,7 @@ export function PriceAlertsPage() {
           <section className={styles.card}>
             <div className={styles.cardHeader}>
               <div>
-                <h2>当前预警</h2>
+                <h2 className={styles.mobileDuplicateHeading}>当前预警</h2>
               </div>
             </div>
             <div className={styles.tableWrap}>

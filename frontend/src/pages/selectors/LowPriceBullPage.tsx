@@ -583,7 +583,7 @@ export function LowPriceBullPage() {
         {section === "data" && stocks.length ? (
           <section className={styles.card}>
             <div className={styles.actions}>
-              <h2>完整数据表格</h2>
+              <h2 className={styles.mobileDuplicateHeading}>完整数据表格</h2>
               <button className={styles.secondaryButton} onClick={() => void runSimulation()} type="button">
                 开始策略模拟
               </button>
@@ -614,7 +614,7 @@ export function LowPriceBullPage() {
         {section === "simulation" ? (
           simulation ? (
             <section className={styles.card}>
-              <h2>策略模拟执行</h2>
+              <h2 className={styles.mobileDuplicateHeading}>策略模拟执行</h2>
               <div className={styles.list}>
                 {simulation.buy_results.map((item, index) => (
                   <div className={styles.listItem} key={`buy-${index}`}>
@@ -643,7 +643,7 @@ export function LowPriceBullPage() {
             </section>
           ) : (
             <section className={styles.card}>
-              <h2>策略模拟执行</h2>
+              <h2 className={styles.mobileDuplicateHeading}>策略模拟执行</h2>
               <p className={styles.muted}>
                 {stocks.length ? "可直接启动策略模拟，查看买入结果与资金变化。" : "请先完成一次选股，再进入策略模拟。"}
               </p>
@@ -661,7 +661,7 @@ export function LowPriceBullPage() {
         {section === "monitor" ? (
           <>
             <section className={styles.card}>
-              <h2>策略监控中心</h2>
+              <h2 className={styles.mobileDuplicateHeading}>策略监控中心</h2>
               <div className={styles.compactGrid}>
                 <div className={styles.metric}>
                   <span className={styles.muted}>服务状态</span>

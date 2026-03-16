@@ -24,10 +24,14 @@ interface PortfolioState {
   selectedAccount: string;
   knownAccounts: string[];
   draftPosition: DraftPosition | null;
+  holdingsAnalysisTaskId: string | null;
+  schedulerTaskId: string | null;
   pageCacheByAccount: Record<string, PortfolioPageCache>;
   setSelectedAccount: (account: string) => void;
   setKnownAccounts: (accounts: string[]) => void;
   setDraftPosition: (draft: DraftPosition | null) => void;
+  setHoldingsAnalysisTaskId: (taskId: string | null) => void;
+  setSchedulerTaskId: (taskId: string | null) => void;
   setPageCache: (account: string, cache: PortfolioPageCache) => void;
   clearPageCache: (account?: string) => void;
 }
@@ -38,6 +42,8 @@ export const usePortfolioStore = create<PortfolioState>()(
       selectedAccount: "ly",
       knownAccounts: ["ly", "zfy", "全部账户"],
       draftPosition: null,
+      holdingsAnalysisTaskId: null,
+      schedulerTaskId: null,
       pageCacheByAccount: {},
       setSelectedAccount: (selectedAccount) => set({ selectedAccount }),
       setKnownAccounts: (accounts) =>
@@ -51,6 +57,8 @@ export const usePortfolioStore = create<PortfolioState>()(
           ),
         })),
       setDraftPosition: (draftPosition) => set({ draftPosition }),
+      setHoldingsAnalysisTaskId: (holdingsAnalysisTaskId) => set({ holdingsAnalysisTaskId }),
+      setSchedulerTaskId: (schedulerTaskId) => set({ schedulerTaskId }),
       setPageCache: (account, cache) =>
         set((state) => ({
           pageCacheByAccount: {
@@ -93,6 +101,8 @@ export const usePortfolioStore = create<PortfolioState>()(
       partialize: (state) => ({
         selectedAccount: state.selectedAccount,
         knownAccounts: state.knownAccounts,
+        holdingsAnalysisTaskId: state.holdingsAnalysisTaskId,
+        schedulerTaskId: state.schedulerTaskId,
       }),
     },
   ),

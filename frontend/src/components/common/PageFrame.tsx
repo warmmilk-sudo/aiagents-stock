@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 
 import styles from "./PageFrame.module.scss";
 
@@ -25,12 +25,16 @@ export function PageFrame({
   onSectionChange,
   children,
 }: PageFrameProps) {
+  const sectionTabsStyle = sectionTabs?.length
+    ? ({ "--section-tab-count": sectionTabs.length } as CSSProperties)
+    : undefined;
+
   return (
     <section className={styles.frame}>
       {actions ? <header className={styles.header}>{actions ? <div className={styles.actions}>{actions}</div> : null}</header> : null}
       {sectionTabs?.length ? (
         <div className={styles.sectionTabsWrap}>
-          <div className={styles.sectionTabs} aria-label={`${title}页面分区`} role="tablist">
+          <div className={styles.sectionTabs} aria-label={`${title}页面分区`} role="tablist" style={sectionTabsStyle}>
             {sectionTabs.map((item) => (
               <button
                 aria-selected={item.key === activeSectionKey}

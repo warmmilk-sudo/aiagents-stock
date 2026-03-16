@@ -362,7 +362,7 @@ export function SectorStrategyPage() {
 
           {section === "history" ? (
             <section className={styles.card}>
-              <h2>历史报告</h2>
+              <h2 className={styles.mobileDuplicateHeading}>历史报告</h2>
               <div className={styles.list}>
                 {history.map((item) => (
                   <div className={styles.historyRecordCard} key={item.id}>
@@ -408,7 +408,7 @@ export function SectorStrategyPage() {
 
           {section === "scheduler" ? (
             <section className={styles.card}>
-              <h2>定时分析设置</h2>
+              <h2 className={styles.mobileDuplicateHeading}>定时分析设置</h2>
               <div className={styles.formGrid}>
                 <div className={styles.field}>
                   <label htmlFor="scheduleTime">定时时间</label>

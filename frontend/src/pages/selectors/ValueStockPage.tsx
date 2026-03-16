@@ -386,7 +386,7 @@ export function ValueStockPage() {
 
         {section === "data" && stocks.length ? (
           <section className={styles.card}>
-            <h2>完整数据表格</h2>
+            <h2 className={styles.mobileDuplicateHeading}>完整数据表格</h2>
             <div className={styles.tableWrap}>
               <table className={styles.table}>
                 <thead>
@@ -412,7 +412,7 @@ export function ValueStockPage() {
 
         {section === "simulation" ? (
           <section className={styles.card}>
-            <h2>策略模拟结果</h2>
+            <h2 className={styles.mobileDuplicateHeading}>策略模拟结果</h2>
             {simulation ? (
               <>
                 <div className={styles.list}>

@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 
 import styles from "../../pages/ConsolePage.module.scss";
-import { FormattedReport } from "./FormattedReport";
+import { FormattedReport, extractReportKeyMetrics } from "./FormattedReport";
 
 export interface ReportWorkspaceEntry {
   key: string;
@@ -53,6 +53,8 @@ export function ReportWorkspace({
   }, [activeKey, visibleEntries]);
 
   const activeEntry = visibleEntries.find((item) => item.key === activeKey) ?? visibleEntries[0] ?? null;
+  const activeMetrics = useMemo(() => extractReportKeyMetrics(activeEntry?.body, 6), [activeEntry?.body]);
+  const tabsStyle = { "--nested-tab-count": visibleEntries.length } as CSSProperties;
 
   if (!visibleEntries.length) {
     return <div className={styles.muted}>{emptyText}</div>;
@@ -60,7 +62,7 @@ export function ReportWorkspace({
 
   return (
     <div className={styles.historyDetailContentStack}>
-      <div className={styles.historyDetailTabs} aria-label={ariaLabel} role="tablist">
+      <div className={styles.historyDetailTabs} aria-label={ariaLabel} role="tablist" style={tabsStyle}>
         {visibleEntries.map((item) => (
           <button
             aria-selected={item.key === activeEntry?.key}
@@ -93,6 +95,16 @@ export function ReportWorkspace({
           </div>
 
           <div className={styles.reportWorkbenchContent}>
+            {activeMetrics.length ? (
+              <div className={styles.reportWorkbenchMetricGrid}>
+                {activeMetrics.map((metric, index) => (
+                  <div className={styles.reportWorkbenchMetricCard} key={`${metric.label}-${metric.value}-${index}`}>
+                    <span>{metric.label}</span>
+                    <strong>{metric.value}</strong>
+                  </div>
+                ))}
+              </div>
+            ) : null}
             <FormattedReport content={activeEntry.body} emptyText={emptyText} />
           </div>
 

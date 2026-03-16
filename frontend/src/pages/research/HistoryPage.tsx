@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 
 import { PageFrame } from "../../components/common/PageFrame";
 import { StatusBadge } from "../../components/common/StatusBadge";
 import { AnalysisActionButtons } from "../../components/research/AnalysisActionButtons";
-import { FormattedReport, splitReportSections } from "../../components/research/FormattedReport";
+import { FormattedReport, extractReportKeyMetrics, splitReportSections } from "../../components/research/FormattedReport";
 import { apiFetch, apiFetchCached, buildQuery } from "../../lib/api";
 import { formatDateTime } from "../../lib/datetime";
 import styles from "../ConsolePage.module.scss";
@@ -26,6 +26,7 @@ interface AnalysisRecordDetail {
   analysis_time_text?: string;
   period?: string;
   account_name?: string;
+  linked_asset_account_name?: string;
   portfolio_state_label?: string;
   linked_asset_status_label?: string;
   summary?: string;
@@ -81,6 +82,10 @@ function buildSummary(value: unknown): string {
     .map((line) => line.trim())
     .find(Boolean);
   return text || "暂无摘要";
+}
+
+function resolveDisplayAccount(record: AnalysisRecordDetail | null | undefined): string {
+  return record?.linked_asset_account_name || record?.account_name || "默认账户";
 }
 
 function detectReportCategory(name: string, payload: Record<string, unknown>): ReportCategory | null {
@@ -313,7 +318,9 @@ function RawReportWorkspace({
   }, [activeKey, availableTabs, entries]);
 
   const activeEntry = entries[activeKey];
+  const activeMetrics = useMemo(() => extractReportKeyMetrics(activeEntry?.body, 6), [activeEntry?.body]);
   const activeTab = availableTabs.find((item) => item.key === activeKey) || availableTabs[0] || null;
+  const tabsStyle = { "--nested-tab-count": availableTabs.length } as CSSProperties;
 
   if (!availableTabs.length) {
     return <div className={styles.muted}>暂无原始报告</div>;
@@ -321,11 +328,11 @@ function RawReportWorkspace({
 
   return (
     <div className={styles.historyDetailContentStack}>
-      <div className={styles.historyDetailTabsGrid} role="tablist" aria-label="原始报告分类">
+      <div className={styles.historyDetailTabsGrid} role="tablist" aria-label="原始报告分类" style={tabsStyle}>
         {availableTabs.map((item) => (
           <button
             aria-selected={item.key === activeKey}
-            className={item.key === activeKey ? styles.primaryButton : styles.secondaryButton}
+            className={item.key === activeKey ? styles.nestedTabButtonActive : styles.nestedTabButton}
             key={item.key}
             onClick={() => setActiveKey(item.key)}
             role="tab"
@@ -351,6 +358,16 @@ function RawReportWorkspace({
             {activeEntry.timestamp ? <span className={styles.historyMeta}>{activeEntry.timestamp}</span> : null}
           </div>
           <div className={styles.reportWorkbenchContent}>
+            {activeMetrics.length ? (
+              <div className={styles.reportWorkbenchMetricGrid}>
+                {activeMetrics.map((metric, index) => (
+                  <div className={styles.reportWorkbenchMetricCard} key={`${metric.label}-${metric.value}-${index}`}>
+                    <span>{metric.label}</span>
+                    <strong>{metric.value}</strong>
+                  </div>
+                ))}
+              </div>
+            ) : null}
             <FormattedReport content={activeEntry.body} emptyText={activeTab?.emptyText || "暂无正文"} />
           </div>
           {activeEntry.reasoning ? (
@@ -462,7 +479,7 @@ export function HistoryPage() {
                               {selectedRecord.symbol ? `（${selectedRecord.symbol}）` : ""}
                             </strong>
                             <p className={styles.historyMeta}>
-                              {formatDateTime(selectedRecord.analysis_time_text, "暂无时间")} | {selectedRecord.portfolio_state_label || "未持仓"} | {selectedRecord.account_name || "默认账户"}
+                              {formatDateTime(selectedRecord.analysis_time_text, "暂无时间")} | {selectedRecord.portfolio_state_label || "未持仓"} | {resolveDisplayAccount(selectedRecord)}
                             </p>
                           </div>
                           <div className={styles.historyActionRow}>
@@ -525,7 +542,7 @@ export function HistoryPage() {
                         </div>
                         <div className={styles.historySummaryCell}>
                           <span>账户</span>
-                          <strong>{selectedRecord.account_name || "默认账户"}</strong>
+                          <strong>{resolveDisplayAccount(selectedRecord)}</strong>
                         </div>
                       </div>
                     </HistoryDetailSection>
@@ -620,9 +637,6 @@ export function HistoryPage() {
                         <div className={styles.historyListMetrics} aria-label="分析摘要指标">
                           <span className={styles.historyListMetric}>
                             评级：<strong>{formatMetric(finalDecision.rating || record.decision_label)}</strong>
-                          </span>
-                          <span className={styles.historyListMetric}>
-                            目标价：<strong>{formatMetric(finalDecision.target_price)}</strong>
                           </span>
                           <span className={styles.historyListMetric}>
                             信心度：<strong>{formatMetric(finalDecision.confidence_level)}</strong>

@@ -121,10 +121,44 @@
   color: var(--text-main);
 }
 
+.reportHeadingTertiary {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
 .reportParagraph {
   margin: 0;
   line-height: 1.75;
   color: var(--text-main);
+}
+
+.reportMetricGrid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(min(150px, 100%), 1fr));
+}
+
+.reportMetricCard {
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+  border: 1px solid var(--line-soft);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--bg-panel-strong) 94%, transparent);
+  min-width: 0;
+}
+
+.reportMetricLabel {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.reportMetricValue {
+  display: block;
+  line-height: 1.5;
+  word-break: break-word;
 }
 
 .reportList {
@@ -230,6 +264,32 @@
 .reportReasoningSummary {
   cursor: pointer;
   font-weight: 700;
+}
+
+.detailMetricGrid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(min(160px, 100%), 1fr));
+}
+
+.detailMetricCell {
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+  border: 1px solid var(--line-soft);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--bg-panel) 96%, transparent);
+}
+
+.detailMetricCell span {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.detailMetricCell strong {
+  display: block;
+  line-height: 1.45;
+  word-break: break-word;
 }
 
 .actionRow > * {
