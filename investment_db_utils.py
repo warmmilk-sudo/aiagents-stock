@@ -1,11 +1,13 @@
 import os
 import sqlite3
 import threading
-from typing import Callable, Optional, TypeVar
+from typing import Callable, Iterable, Optional, TypeVar
 
 
 CANONICAL_INVESTMENT_DB = "investment.db"
-DEFAULT_ACCOUNT_NAME = "默认账户"
+DEFAULT_ACCOUNT_NAME = "zfy"
+SUPPORTED_ACCOUNT_NAMES = ("zfy", "ly")
+AGGREGATE_ACCOUNT_NAME = "全部账户"
 METADATA_TABLE = "investment_metadata"
 SQLITE_TIMEOUT_SECONDS = 30
 SQLITE_BUSY_TIMEOUT_MILLISECONDS = 30000
@@ -58,6 +60,36 @@ def connect_sqlite(db_path: str) -> sqlite3.Connection:
 def run_with_monitoring_write_lock(fn: Callable[..., _T], *args, **kwargs) -> _T:
     with MONITORING_WRITE_LOCK:
         return fn(*args, **kwargs)
+
+
+def normalize_account_name(
+    account_name: Optional[object],
+    *,
+    allow_aggregate: bool = False,
+    keep_none: bool = False,
+) -> Optional[str]:
+    text = str(account_name or "").strip()
+    if keep_none and not text:
+        return None
+    if allow_aggregate and text == AGGREGATE_ACCOUNT_NAME:
+        return AGGREGATE_ACCOUNT_NAME
+    lowered = text.lower()
+    if lowered == "ly":
+        return "ly"
+    return DEFAULT_ACCOUNT_NAME
+
+
+def normalize_account_name_list(
+    account_names: Iterable[Optional[object]],
+    *,
+    allow_aggregate: bool = False,
+) -> list[str]:
+    normalized: list[str] = []
+    for account_name in account_names:
+        resolved = normalize_account_name(account_name, allow_aggregate=allow_aggregate)
+        if resolved and resolved not in normalized:
+            normalized.append(resolved)
+    return normalized
 
 
 def ensure_metadata_table(conn: sqlite3.Connection) -> None:

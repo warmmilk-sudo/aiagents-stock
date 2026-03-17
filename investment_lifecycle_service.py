@@ -7,7 +7,7 @@ import config
 
 from analysis_repository import AnalysisRepository, analysis_repository
 from asset_service import AssetService, asset_service
-from investment_db_utils import DEFAULT_ACCOUNT_NAME
+from investment_db_utils import DEFAULT_ACCOUNT_NAME, normalize_account_name
 from monitor_db import StockMonitorDatabase, monitor_db
 from monitoring_repository import MonitoringRepository
 from portfolio_db import PortfolioDB, portfolio_db
@@ -52,6 +52,17 @@ class InvestmentLifecycleService:
             account_name=stock.get("account_name") or DEFAULT_ACCOUNT_NAME,
         )
 
+    def _resolve_account_risk_profile(self, account_name: Optional[str]) -> Dict[str, int]:
+        if self.monitoring_repository and hasattr(self.monitoring_repository, "get_account_risk_profile"):
+            profile = self.monitoring_repository.get_account_risk_profile(account_name)
+            return {
+                "position_size_pct": int(profile["position_size_pct"]),
+                "total_position_pct": int(profile["total_position_pct"]),
+                "stop_loss_pct": int(profile["stop_loss_pct"]),
+                "take_profit_pct": int(profile["take_profit_pct"]),
+            }
+        return dict(config.get_smart_monitor_risk_defaults())
+
     def _build_ai_task_projection(self, stock: Dict, strategy_context: Optional[Dict], existing: Optional[Dict]) -> Dict:
         existing = existing or {}
         existing_config = existing.get("config") or {}
@@ -59,6 +70,8 @@ class InvestmentLifecycleService:
         cost_price = float(stock.get("cost_price") or 0)
         has_position = bool(quantity > 0 and cost_price > 0)
         task_name = existing_config.get("task_name") or f"{stock.get('name') or stock['code']}盯盘"
+        account_name = stock.get("account_name") or DEFAULT_ACCOUNT_NAME
+        account_risk = self._resolve_account_risk_profile(account_name)
         origin_analysis_id = (
             (strategy_context or {}).get("origin_analysis_id")
             or stock.get("origin_analysis_id")
@@ -74,14 +87,15 @@ class InvestmentLifecycleService:
             "trading_hours_only": bool(existing.get("trading_hours_only", True)),
             "notification_enabled": bool(existing.get("notification_enabled", True)),
             "managed_by_portfolio": True,
-            "account_name": stock.get("account_name") or DEFAULT_ACCOUNT_NAME,
+            "account_name": account_name,
             "portfolio_stock_id": stock["id"],
             "origin_analysis_id": origin_analysis_id,
             "config": {
                 "task_name": task_name,
-                "position_size_pct": existing_config.get("position_size_pct", 20),
-                "stop_loss_pct": existing_config.get("stop_loss_pct", 5),
-                "take_profit_pct": existing_config.get("take_profit_pct", 10),
+                "position_size_pct": account_risk["position_size_pct"],
+                "total_position_pct": account_risk["total_position_pct"],
+                "stop_loss_pct": account_risk["stop_loss_pct"],
+                "take_profit_pct": account_risk["take_profit_pct"],
                 "notify_email": existing_config.get("notify_email"),
                 "notify_webhook": existing_config.get("notify_webhook"),
                 "has_position": has_position,
@@ -138,11 +152,12 @@ class InvestmentLifecycleService:
             stock = self.portfolio_db.get_stock(stock_id)
             return [stock] if stock else []
         stocks = self.portfolio_db.get_all_stocks(auto_monitor_only=False)
+        normalized_account_name = normalize_account_name(account_name, keep_none=True)
         result = []
         for stock in stocks:
             if stock.get("position_status", "active") != "active":
                 continue
-            if account_name and stock.get("account_name") != account_name:
+            if normalized_account_name and normalize_account_name(stock.get("account_name")) != normalized_account_name:
                 continue
             if symbol and stock.get("code") != symbol:
                 continue

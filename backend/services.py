@@ -16,7 +16,8 @@ from batch_analysis_service import analyze_single_stock_for_batch
 from config_manager import config_manager
 from database_admin import database_admin
 from investment_action_utils import build_analysis_action_payload
-from investment_db_utils import DEFAULT_ACCOUNT_NAME
+from investment_db_utils import AGGREGATE_ACCOUNT_NAME, DEFAULT_ACCOUNT_NAME, SUPPORTED_ACCOUNT_NAMES, normalize_account_name
+from investment_lifecycle_service import investment_lifecycle_service
 from low_price_bull_monitor import low_price_bull_monitor
 from low_price_bull_selector import LowPriceBullSelector
 from low_price_bull_service import low_price_bull_service
@@ -96,6 +97,48 @@ def _default_intraday_decision_interval_minutes() -> int:
 
 def _default_realtime_monitor_interval_minutes() -> int:
     return _clamp_int(getattr(config, "SMART_MONITOR_PRICE_ALERT_INTERVAL_MINUTES", 3), 1, 10, 3)
+
+
+def _normalize_smart_monitor_account_name(account_name: Optional[str]) -> str:
+    return str(normalize_account_name(account_name))
+
+
+def _get_smart_monitor_shared_risk_profile() -> dict[str, Any]:
+    return monitoring_repository.get_shared_risk_profile()
+
+
+def _get_smart_monitor_account_risk_profile(account_name: Optional[str]) -> dict[str, Any]:
+    return monitoring_repository.get_account_risk_profile(_normalize_smart_monitor_account_name(account_name))
+
+
+def _apply_smart_monitor_task_risk_defaults(
+    payload: dict[str, Any],
+    *,
+    fill_missing: bool,
+    fallback_account_name: Optional[str] = None,
+) -> dict[str, Any]:
+    normalized = dict(payload)
+    account_name = _normalize_smart_monitor_account_name(normalized.get("account_name") or fallback_account_name)
+    account_defaults = _get_smart_monitor_shared_risk_profile()
+    if fill_missing or "account_name" in normalized:
+        normalized["account_name"] = account_name
+
+    risk_keys = {
+        "position_size_pct": (0, 100),
+        "total_position_pct": (0, 100),
+        "stop_loss_pct": (0, 100),
+        "take_profit_pct": (0, 100),
+    }
+    for key, (minimum, maximum) in risk_keys.items():
+        if not fill_missing and key not in normalized:
+            continue
+        normalized[key] = _clamp_int(
+            normalized.get(key),
+            minimum,
+            maximum,
+            int(account_defaults[key]),
+        )
+    return normalized
 
 
 def ensure_runtime_started() -> None:
@@ -374,8 +417,10 @@ def submit_portfolio_analysis_task(
     max_workers: int,
     analysts: dict[str, bool],
 ) -> str:
-    normalized_account = str(account_name or "").strip()
-    if normalized_account in {"", "全部账户"}:
+    normalized_account = str(
+        normalize_account_name(account_name, allow_aggregate=True, keep_none=True) or ""
+    ).strip()
+    if normalized_account in {"", AGGREGATE_ACCOUNT_NAME}:
         normalized_account = ""
     if not any(analysts.values()):
         raise ValueError("请至少选择一位分析师参与分析")
@@ -894,7 +939,15 @@ def get_sector_strategy_report(report_id: int) -> Optional[dict[str, Any]]:
     report = sector_strategy_db.get_analysis_report(report_id)
     if not report:
         return None
-    report_view = normalize_sector_strategy_result(report)
+    embedded_data_summary = {}
+    analysis_payload = report.get("analysis_content_parsed") if isinstance(report.get("analysis_content_parsed"), dict) else {}
+    if isinstance(analysis_payload, dict):
+        embedded_data_summary = analysis_payload.get("data_summary") if isinstance(analysis_payload.get("data_summary"), dict) else {}
+    if not embedded_data_summary:
+        report_date = str(report.get("analysis_date") or report.get("created_at") or "").strip()[:10]
+        if report_date:
+            embedded_data_summary = sector_strategy_db.build_data_summary(data_date=report_date)
+    report_view = normalize_sector_strategy_result(report, data_summary=embedded_data_summary)
     return {
         **_json_safe(report),
         "summary_data": _extract_sector_strategy_summary(report_view),
@@ -2216,10 +2269,11 @@ def get_stock_info(symbol: str) -> dict[str, Any]:
 
 def list_portfolio_stocks(account_name: Optional[str] = None) -> list[dict[str, Any]]:
     all_stocks = portfolio_manager.get_all_latest_analysis()
-    if account_name and account_name != "全部账户":
+    normalized_account_name = normalize_account_name(account_name, allow_aggregate=True, keep_none=True)
+    if normalized_account_name and normalized_account_name != AGGREGATE_ACCOUNT_NAME:
         all_stocks = [
             item for item in all_stocks
-            if item.get("account_name", DEFAULT_ACCOUNT_NAME) == account_name
+            if normalize_account_name(item.get("account_name")) == normalized_account_name
         ]
     trade_summary_map = portfolio_manager.get_trade_summary_map(
         [stock.get("id") for stock in all_stocks if stock.get("id")]
@@ -2240,7 +2294,7 @@ def create_portfolio_stock(payload: dict[str, Any]) -> tuple[bool, str, Optional
         quantity=payload.get("quantity"),
         note=payload.get("note") or "",
         auto_monitor=bool(payload.get("auto_monitor", True)),
-        account_name=str(payload.get("account_name") or DEFAULT_ACCOUNT_NAME).strip() or DEFAULT_ACCOUNT_NAME,
+        account_name=str(normalize_account_name(payload.get("account_name"))),
         origin_analysis_id=payload.get("origin_analysis_id"),
     )
     warnings: list[str] = []
@@ -2261,6 +2315,8 @@ def update_portfolio_stock(stock_id: int, payload: dict[str, Any]) -> tuple[bool
         for key, value in payload.items()
         if key in {"code", "name", "cost_price", "quantity", "note", "auto_monitor", "account_name"} and value is not None
     }
+    if payload.get("buy_date") is not None:
+        updates["last_trade_at"] = payload.get("buy_date")
     return portfolio_manager.update_stock(stock_id, **updates)
 
 
@@ -2298,6 +2354,15 @@ def list_portfolio_trade_records(
 
 def get_portfolio_risk(account_name: Optional[str] = None) -> dict[str, Any]:
     return portfolio_manager.calculate_portfolio_risk(account_name=account_name)
+
+
+def list_portfolio_account_asset_settings() -> list[dict[str, Any]]:
+    return portfolio_manager.get_account_total_assets_settings()
+
+
+def update_portfolio_account_asset_settings(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    return portfolio_manager.set_account_total_assets_settings(payload.get("account_assets"))
+
 
 def list_portfolio_analysis_history(stock_id: int, limit: int = 10) -> list[dict[str, Any]]:
     return portfolio_manager.get_analysis_history(stock_id, limit=limit)
@@ -2356,7 +2421,7 @@ def create_price_alert(payload: dict[str, Any]) -> int:
         ),
         notification_enabled=bool(payload.get("notification_enabled", True)),
         trading_hours_only=bool(payload.get("trading_hours_only", True)),
-        account_name=str(payload.get("account_name") or DEFAULT_ACCOUNT_NAME).strip() or DEFAULT_ACCOUNT_NAME,
+        account_name=str(normalize_account_name(payload.get("account_name"))),
         origin_analysis_id=payload.get("origin_analysis_id"),
     )
 
@@ -2441,6 +2506,34 @@ def update_smart_monitor_runtime_config(payload: dict[str, Any]) -> dict[str, in
     }
 
 
+def get_smart_monitor_config() -> dict[str, Any]:
+    return monitoring_repository.get_shared_risk_profile()
+
+
+def update_smart_monitor_config(payload: dict[str, Any]) -> dict[str, Any]:
+    updated = monitoring_repository.set_shared_risk_profile(payload)
+    sync_result = investment_lifecycle_service.sync_position()
+    return {
+        **updated,
+        "sync_result": sync_result,
+    }
+
+
+def list_smart_monitor_account_configs() -> list[dict[str, Any]]:
+    shared = get_smart_monitor_config()
+    return [
+        {
+            "account_name": account_name,
+            **shared,
+        }
+        for account_name in SUPPORTED_ACCOUNT_NAMES
+    ]
+
+
+def update_smart_monitor_account_config(payload: dict[str, Any]) -> dict[str, Any]:
+    return update_smart_monitor_config(payload)
+
+
 def list_smart_monitor_tasks(
     enabled_only: bool = False,
     account_name: Optional[str] = None,
@@ -2455,7 +2548,7 @@ def list_smart_monitor_tasks(
 
 def upsert_smart_monitor_task(payload: dict[str, Any]) -> int:
     runtime_config = get_smart_monitor_runtime_config()
-    normalized_payload = dict(payload)
+    normalized_payload = _apply_smart_monitor_task_risk_defaults(payload, fill_missing=True)
     normalized_payload.setdefault(
         "check_interval",
         int(runtime_config["intraday_decision_interval_minutes"]) * 60,
@@ -2467,13 +2560,17 @@ def update_smart_monitor_task(task_id: int, payload: dict[str, Any]) -> bool:
     item = smart_monitor_db.monitoring_repository.get_item(task_id)
     if not item:
         return False
-    task_payload = dict(payload)
+    task_payload = _apply_smart_monitor_task_risk_defaults(
+        payload,
+        fill_missing=False,
+        fallback_account_name=item.get("account_name"),
+    )
     runtime_config = get_smart_monitor_runtime_config()
     task_payload.setdefault(
         "check_interval",
         int(runtime_config["intraday_decision_interval_minutes"]) * 60,
     )
-    task_payload.setdefault("account_name", item.get("account_name") or DEFAULT_ACCOUNT_NAME)
+    task_payload.setdefault("account_name", _normalize_smart_monitor_account_name(item.get("account_name")))
     task_payload.setdefault("asset_id", item.get("asset_id"))
     task_payload.setdefault("portfolio_stock_id", item.get("portfolio_stock_id"))
     task_payload.setdefault("origin_analysis_id", item.get("origin_analysis_id"))
@@ -2486,7 +2583,7 @@ def run_manual_smart_monitor_analysis(payload: dict[str, Any]) -> dict[str, Any]
         stock_code=str(payload.get("stock_code") or "").strip().upper(),
         notify=bool(payload.get("notify", False)),
         trading_hours_only=bool(payload.get("trading_hours_only", True)),
-        account_name=str(payload.get("account_name") or DEFAULT_ACCOUNT_NAME).strip() or DEFAULT_ACCOUNT_NAME,
+        account_name=str(normalize_account_name(payload.get("account_name"))),
         asset_id=payload.get("asset_id"),
         portfolio_stock_id=payload.get("portfolio_stock_id"),
     )
@@ -2551,6 +2648,22 @@ def run_smart_monitor_tasks_once(
     return summary
 
 
+def run_smart_monitor_task_once(task_id: int) -> dict[str, Any]:
+    item = smart_monitor_db.monitoring_repository.get_item(task_id)
+    if not item or item.get("monitor_type") != "ai_task":
+        raise ValueError("未找到智能盯盘任务")
+
+    success = bool(monitor_service.orchestrator.run_item_once(task_id))
+    refreshed = smart_monitor_db.monitoring_repository.get_item(task_id) or item
+    return {
+        "task_id": task_id,
+        "stock_code": refreshed.get("symbol") or "",
+        "stock_name": refreshed.get("name") or refreshed.get("symbol") or "",
+        "enabled": bool(refreshed.get("enabled", True)),
+        "success": success,
+    }
+
+
 def get_activity_snapshot() -> dict[str, Any]:
     return {
         "service_status": monitor_service.get_status(),
@@ -2564,10 +2677,11 @@ def get_activity_snapshot() -> dict[str, Any]:
 
 
 def save_config_values(values: dict[str, str]) -> tuple[bool, str]:
-    valid, message = config_manager.validate_config(values)
+    editable_values = config_manager.filter_system_config_values(values)
+    valid, message = config_manager.validate_config(editable_values)
     if not valid:
         return False, message
-    if not config_manager.write_env(values):
+    if not config_manager.write_env(editable_values):
         return False, "保存配置失败"
     config_manager.reload_config()
     notification_service.__init__()

@@ -12,6 +12,7 @@ from investment_db_utils import (
     DEFAULT_ACCOUNT_NAME,
     connect_sqlite,
     get_metadata,
+    normalize_account_name,
     resolve_investment_db_path,
     run_with_monitoring_write_lock,
     set_metadata,
@@ -24,6 +25,7 @@ from time_utils import local_now_str
 class SmartMonitorDB:
     """Repository-backed smart monitor facade."""
 
+    ACCOUNT_NORMALIZATION_KEY = "smart_monitor_history_account_normalization_v1"
     NOTIFICATION_CLEANUP_MIGRATION_KEY = "smart_monitor_notification_cleanup_v1"
     TASK_ENABLE_SYNC_MIGRATION_KEY = "smart_monitor_task_enable_sync_v1"
     VALID_NOTIFICATION_STATUSES = {"pending", "sent", "failed"}
@@ -55,6 +57,7 @@ class SmartMonitorDB:
         self._init_database()
         self.monitoring_repository.migrate_legacy_smart_db(self.legacy_db_file)
         self._migrate_legacy_history_db(self.legacy_db_file)
+        self._normalize_account_names()
         self._repair_ai_decision_history()
         self._cleanup_notification_history()
         self._reconcile_task_enable_projection()
@@ -128,6 +131,14 @@ class SmartMonitorDB:
         existing_columns = {row[1] for row in cursor.fetchall()}
         if column not in existing_columns:
             cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+    @staticmethod
+    def _normalize_account_name_value(
+        account_name: Optional[object],
+        *,
+        keep_none: bool = False,
+    ) -> Optional[str]:
+        return normalize_account_name(account_name, keep_none=keep_none)
 
     @staticmethod
     def _serialize_json_field(value, default):
@@ -239,12 +250,29 @@ class SmartMonitorDB:
         default_action_status: Optional[str] = None,
     ) -> Dict:
         payload = dict(decision_data)
+        normalized_account_name = self._normalize_account_name_value(
+            payload.get("account_name"),
+            keep_none=not default_account,
+        )
+        if normalized_account_name is not None:
+            payload["account_name"] = normalized_account_name
         binding = self._resolve_ai_decision_binding(cursor, payload)
         if binding:
             payload["asset_id"] = payload.get("asset_id") or binding["asset_id"]
             payload["account_name"] = payload.get("account_name") or binding["account_name"]
         if default_account and not payload.get("account_name"):
             payload["account_name"] = DEFAULT_ACCOUNT_NAME
+        if isinstance(payload.get("account_info"), dict):
+            account_info = dict(payload["account_info"])
+            normalized_info_account = self._normalize_account_name_value(
+                account_info.get("account_name"),
+                keep_none=True,
+            )
+            if normalized_info_account:
+                account_info["account_name"] = normalized_info_account
+            elif "account_name" in account_info:
+                account_info.pop("account_name", None)
+            payload["account_info"] = account_info
 
         action = str(payload.get("action") or "").upper()
         payload["execution_mode"] = payload.get("execution_mode") or "manual_only"
@@ -614,6 +642,53 @@ class SmartMonitorDB:
             legacy_conn.close()
         return migrated
 
+    def _normalize_account_names(self) -> int:
+        conn = self._connect()
+        try:
+            if get_metadata(conn, self.ACCOUNT_NORMALIZATION_KEY):
+                return 0
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, account_name, account_info FROM ai_decisions ORDER BY id ASC")
+            updated = 0
+            for row in cursor.fetchall():
+                normalized_account_name = self._normalize_account_name_value(row["account_name"])
+                current_account_name = str(row["account_name"] or "").strip()
+                account_info = self._serialize_json_field(row["account_info"], {})
+                parsed_account_info = json.loads(account_info) if account_info else {}
+                if not isinstance(parsed_account_info, dict):
+                    parsed_account_info = {}
+                normalized_info_account = self._normalize_account_name_value(
+                    parsed_account_info.get("account_name"),
+                    keep_none=True,
+                )
+                if normalized_info_account:
+                    parsed_account_info["account_name"] = normalized_info_account
+                elif "account_name" in parsed_account_info:
+                    parsed_account_info.pop("account_name", None)
+                if (
+                    normalized_account_name == current_account_name
+                    and json.dumps(parsed_account_info, ensure_ascii=False) == account_info
+                ):
+                    continue
+                cursor.execute(
+                    """
+                    UPDATE ai_decisions
+                    SET account_name = ?, account_info = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        normalized_account_name,
+                        json.dumps(parsed_account_info, ensure_ascii=False),
+                        int(row["id"]),
+                    ),
+                )
+                updated += 1 if cursor.rowcount > 0 else 0
+            set_metadata(conn, self.ACCOUNT_NORMALIZATION_KEY, str(updated))
+            conn.commit()
+            return updated
+        finally:
+            conn.close()
+
     @staticmethod
     def _seconds_to_interval_minutes(check_interval: Optional[int]) -> int:
         seconds = int(check_interval or 300)
@@ -629,27 +704,36 @@ class SmartMonitorDB:
         return 3600
 
     def _task_config_from_data(self, task_data: Dict) -> Dict:
+        account_name = self._normalize_account_name_value(task_data.get("account_name")) or DEFAULT_ACCOUNT_NAME
+        account_risk = self.monitoring_repository.resolve_account_risk_profile(account_name, task_data)
+        strategy_context = task_data.get("strategy_context")
         return {
             "task_name": task_data.get("task_name"),
-            "position_size_pct": task_data.get("position_size_pct", 20),
-            "stop_loss_pct": task_data.get("stop_loss_pct", 5),
-            "take_profit_pct": task_data.get("take_profit_pct", 10),
+            "position_size_pct": account_risk["position_size_pct"],
+            "total_position_pct": account_risk["total_position_pct"],
+            "stop_loss_pct": account_risk["stop_loss_pct"],
+            "take_profit_pct": account_risk["take_profit_pct"],
             "notify_email": task_data.get("notify_email"),
             "notify_webhook": task_data.get("notify_webhook"),
             "position_date": task_data.get("position_date"),
+            "strategy_context": strategy_context if isinstance(strategy_context, dict) else {},
         }
 
     def _item_to_task(self, item: Dict) -> Dict:
         config = item.get("config") or {}
+        account_name = self._normalize_account_name_value(item.get("account_name")) or DEFAULT_ACCOUNT_NAME
+        account_risk = self.monitoring_repository.resolve_account_risk_profile(account_name, config)
         interval_minutes = int(item.get("interval_minutes") or 1)
         asset = self.asset_repository.get_asset(item.get("asset_id")) if item.get("asset_id") else None
         has_position = bool(asset and asset.get("status") == STATUS_PORTFOLIO and (asset.get("quantity") or 0) > 0)
-        strategy_context = self.analysis_repository.get_latest_strategy_context(
+        config_strategy_context = config.get("strategy_context") if isinstance(config.get("strategy_context"), dict) else {}
+        latest_strategy_context = self.analysis_repository.get_latest_strategy_context(
             asset_id=item.get("asset_id"),
             portfolio_stock_id=item.get("portfolio_stock_id"),
             symbol=item.get("symbol"),
-            account_name=item.get("account_name") or DEFAULT_ACCOUNT_NAME,
+            account_name=account_name,
         ) or {}
+        strategy_context = config_strategy_context or latest_strategy_context or {}
         return {
             "id": item["id"],
             "task_name": config.get("task_name") or f"{item['symbol']} AI监控任务",
@@ -658,9 +742,10 @@ class SmartMonitorDB:
             "enabled": 1 if item.get("enabled", True) else 0,
             "check_interval": interval_minutes * 60,
             "trading_hours_only": 1 if item.get("trading_hours_only", True) else 0,
-            "position_size_pct": config.get("position_size_pct", 20),
-            "stop_loss_pct": config.get("stop_loss_pct", 5),
-            "take_profit_pct": config.get("take_profit_pct", 10),
+            "position_size_pct": account_risk["position_size_pct"],
+            "total_position_pct": account_risk["total_position_pct"],
+            "stop_loss_pct": account_risk["stop_loss_pct"],
+            "take_profit_pct": account_risk["take_profit_pct"],
             "notify_email": config.get("notify_email"),
             "notify_webhook": config.get("notify_webhook"),
             "has_position": 1 if has_position else 0,
@@ -668,7 +753,7 @@ class SmartMonitorDB:
             "position_quantity": asset.get("quantity") if asset else 0,
             "position_date": config.get("position_date"),
             "managed_by_portfolio": 1 if item.get("managed_by_portfolio", False) else 0,
-            "account_name": item.get("account_name") or DEFAULT_ACCOUNT_NAME,
+            "account_name": account_name,
             "asset_id": item.get("asset_id"),
             "asset_status": asset.get("status") if asset else None,
             "portfolio_stock_id": item.get("portfolio_stock_id"),
@@ -682,7 +767,7 @@ class SmartMonitorDB:
         stock_code = task_data.get("stock_code")
         if not stock_code:
             raise ValueError("stock_code 不能为空")
-        account_name = task_data.get("account_name") or DEFAULT_ACCOUNT_NAME
+        account_name = self._normalize_account_name_value(task_data.get("account_name")) or DEFAULT_ACCOUNT_NAME
         asset_id = task_data.get("asset_id")
         if asset_id is None:
             _, _, asset_id = self.asset_service.promote_to_watchlist(
@@ -730,7 +815,7 @@ class SmartMonitorDB:
         return tasks
 
     def update_monitor_task(self, stock_code: str, task_data: Dict):
-        account_name = task_data.get("account_name")
+        account_name = self._normalize_account_name_value(task_data.get("account_name"), keep_none=True)
         asset_id = task_data.get("asset_id")
         portfolio_stock_id = task_data.get("portfolio_stock_id")
         item = self.monitoring_repository.get_item_by_symbol(
@@ -763,7 +848,7 @@ class SmartMonitorDB:
             updates["managed_by_portfolio"] = managed
             updates["source"] = "portfolio" if managed else "ai_monitor"
         if "account_name" in task_data:
-            updates["account_name"] = task_data.get("account_name") or DEFAULT_ACCOUNT_NAME
+            updates["account_name"] = self._normalize_account_name_value(task_data.get("account_name")) or DEFAULT_ACCOUNT_NAME
         if "asset_id" in task_data:
             updates["asset_id"] = task_data.get("asset_id")
         if "portfolio_stock_id" in task_data:
@@ -774,11 +859,13 @@ class SmartMonitorDB:
         tracked_keys = {
             "task_name",
             "position_size_pct",
+            "total_position_pct",
             "stop_loss_pct",
             "take_profit_pct",
             "notify_email",
             "notify_webhook",
             "position_date",
+            "strategy_context",
         }
         if any(key in task_data for key in tracked_keys):
             for key in tracked_keys:
@@ -871,7 +958,7 @@ class SmartMonitorDB:
         if not stock_code:
             raise ValueError("stock_code 不能为空")
         managed_sync = bool(task_data.get("managed_by_portfolio"))
-        account_name = task_data.get("account_name") or DEFAULT_ACCOUNT_NAME
+        account_name = self._normalize_account_name_value(task_data.get("account_name")) or DEFAULT_ACCOUNT_NAME
         asset_id = task_data.get("asset_id")
         target_enabled = bool(task_data.get("enabled", 1))
         if asset_id is None:
@@ -973,13 +1060,18 @@ class SmartMonitorDB:
         portfolio_stock_id: Optional[int] = None,
     ) -> Optional[Dict]:
         decisions = self.get_ai_decisions(stock_code=stock_code, limit=20)
-        normalized_account = (account_name or DEFAULT_ACCOUNT_NAME).strip() or DEFAULT_ACCOUNT_NAME
+        normalized_account = self._normalize_account_name_value(account_name) or DEFAULT_ACCOUNT_NAME
         target_asset_id = int(asset_id) if asset_id is not None else None
         target_portfolio_stock_id = int(portfolio_stock_id) if portfolio_stock_id is not None else None
         for decision in decisions:
-            decision_account_name = str(decision.get("account_name") or "").strip() or str(
-                (decision.get("account_info") or {}).get("account_name") or DEFAULT_ACCOUNT_NAME
-            ).strip()
+            decision_account_name = (
+                self._normalize_account_name_value(decision.get("account_name"), keep_none=True)
+                or self._normalize_account_name_value(
+                    (decision.get("account_info") or {}).get("account_name"),
+                    keep_none=True,
+                )
+                or DEFAULT_ACCOUNT_NAME
+            )
             decision_asset_id = decision.get("asset_id")
             decision_portfolio_stock_id = decision.get("portfolio_stock_id")
             if decision_account_name != normalized_account:
@@ -1042,6 +1134,14 @@ class SmartMonitorDB:
             decision["monitor_levels"] = json.loads(decision["monitor_levels"]) if decision.get("monitor_levels") else {}
             decision["market_data"] = json.loads(decision["market_data"]) if decision.get("market_data") else {}
             decision["account_info"] = json.loads(decision["account_info"]) if decision.get("account_info") else {}
+            decision["account_name"] = self._normalize_account_name_value(decision.get("account_name")) or DEFAULT_ACCOUNT_NAME
+            if isinstance(decision.get("account_info"), dict):
+                normalized_info_account = self._normalize_account_name_value(
+                    decision["account_info"].get("account_name"),
+                    keep_none=True,
+                )
+                if normalized_info_account:
+                    decision["account_info"]["account_name"] = normalized_info_account
             decisions.append(decision)
         return decisions
 
@@ -1119,7 +1219,7 @@ class SmartMonitorDB:
         success, _, stock_id = self.asset_service.promote_to_portfolio(
             symbol=position_data.get("stock_code"),
             stock_name=position_data.get("stock_name") or position_data.get("stock_code"),
-            account_name=position_data.get("account_name") or DEFAULT_ACCOUNT_NAME,
+            account_name=self._normalize_account_name_value(position_data.get("account_name")) or DEFAULT_ACCOUNT_NAME,
             cost_price=position_data.get("cost_price"),
             quantity=position_data.get("quantity"),
             note=position_data.get("note") or "",
@@ -1143,7 +1243,7 @@ class SmartMonitorDB:
                     "holding_days": None,
                     "buy_date": None,
                     "status": "holding",
-                    "account_name": stock.get("account_name") or DEFAULT_ACCOUNT_NAME,
+                    "account_name": self._normalize_account_name_value(stock.get("account_name")) or DEFAULT_ACCOUNT_NAME,
                 }
             )
         if positions:

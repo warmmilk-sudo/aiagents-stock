@@ -732,6 +732,7 @@ class SectorStrategyDataFetcher:
                 # 将字典转换为DataFrame并映射必要列
                 sectors_df = pd.DataFrame([
                     {
+                        '板块代码': v.get('ts_code') or v.get('code') or v.get('name', k) or k,
                         '板块名称': v.get('name', k),
                         '涨跌幅': v.get('change_pct', 0),
                         '成交额': 0,
@@ -755,6 +756,7 @@ class SectorStrategyDataFetcher:
             if data.get("concepts"):
                 concepts_df = pd.DataFrame([
                     {
+                        '板块代码': v.get('ts_code') or v.get('code') or v.get('name', k) or k,
                         '板块名称': v.get('name', k),
                         '涨跌幅': v.get('change_pct', 0),
                         '成交额': 0,
@@ -801,9 +803,10 @@ class SectorStrategyDataFetcher:
             if data.get("market_overview"):
                 market = data["market_overview"]
                 mo_df = pd.DataFrame([
-                    {'名称': '上证指数', '最新价': market.get('sh_index', {}).get('close', 0), '涨跌幅': market.get('sh_index', {}).get('change_pct', 0), '成交量': market.get('sh_index', {}).get('volume', 0), '成交额': market.get('sh_index', {}).get('turnover', 0)},
-                    {'名称': '深证成指', '最新价': market.get('sz_index', {}).get('close', 0), '涨跌幅': market.get('sz_index', {}).get('change_pct', 0), '成交量': market.get('sz_index', {}).get('volume', 0), '成交额': market.get('sz_index', {}).get('turnover', 0)},
-                    {'名称': '创业板指', '最新价': market.get('cyb_index', {}).get('close', 0), '涨跌幅': market.get('cyb_index', {}).get('change_pct', 0), '成交量': market.get('cyb_index', {}).get('volume', 0), '成交额': market.get('cyb_index', {}).get('turnover', 0)}
+                    {'代码': '000001', '名称': '上证指数', '最新价': market.get('sh_index', {}).get('close', 0), '涨跌幅': market.get('sh_index', {}).get('change_pct', 0), '成交量': market.get('sh_index', {}).get('volume', 0), '成交额': market.get('sh_index', {}).get('turnover', 0), '总市值': 0, '市盈率': 0, '市净率': 0},
+                    {'代码': '399001', '名称': '深证成指', '最新价': market.get('sz_index', {}).get('close', 0), '涨跌幅': market.get('sz_index', {}).get('change_pct', 0), '成交量': market.get('sz_index', {}).get('volume', 0), '成交额': market.get('sz_index', {}).get('turnover', 0), '总市值': 0, '市盈率': 0, '市净率': 0},
+                    {'代码': '399006', '名称': '创业板指', '最新价': market.get('cyb_index', {}).get('close', 0), '涨跌幅': market.get('cyb_index', {}).get('change_pct', 0), '成交量': market.get('cyb_index', {}).get('volume', 0), '成交额': market.get('cyb_index', {}).get('turnover', 0), '总市值': 0, '市盈率': 0, '市净率': 0},
+                    {'代码': '__MARKET_BREADTH__', '名称': '__MARKET_BREADTH__', '最新价': market.get('total_stocks', 0), '涨跌幅': market.get('up_ratio', 0), '成交量': market.get('up_count', 0), '成交额': market.get('down_count', 0), '总市值': market.get('flat_count', 0), '市盈率': market.get('limit_up', 0), '市净率': market.get('limit_down', 0)},
                 ])
                 self.database.save_sector_raw_data(
                     data_date=datetime.now().strftime('%Y-%m-%d'),
@@ -944,4 +947,3 @@ if __name__ == "__main__":
         print(f"\n... (总长度: {len(formatted_text)} 字符)")
     else:
         print(f"\n数据采集失败: {data.get('error', '未知错误')}")
-

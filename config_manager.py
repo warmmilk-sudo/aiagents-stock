@@ -9,6 +9,8 @@ from typing import Any, Dict, Optional
 class ConfigManager:
     """Read, validate, and write `.env` configuration."""
 
+    _SYSTEM_CONFIG_HIDDEN_PREFIXES = ("SMART_MONITOR_",)
+
     _ENV_ASSIGNMENT_RE = re.compile(
         r"^(?P<leading>\s*)(?P<export>export\s+)?(?P<key>[A-Za-z_][A-Za-z0-9_]*)"
         r"(?P<separator>\s*=\s*)(?P<value>.*?)(?P<newline>\r?\n?)$"
@@ -62,6 +64,12 @@ class ConfigManager:
             "SMART_MONITOR_DEFAULT_POSITION_SIZE_PCT": {
                 "value": "20",
                 "description": "智能盯盘默认仓位百分比",
+                "required": False,
+                "type": "text",
+            },
+            "SMART_MONITOR_DEFAULT_TOTAL_POSITION_PCT": {
+                "value": "100",
+                "description": "智能盯盘默认总仓位百分比",
                 "required": False,
                 "type": "text",
             },
@@ -260,6 +268,16 @@ class ConfigManager:
             return ""
         return str(value)
 
+    def _is_system_config_visible_key(self, key: str) -> bool:
+        return not any(key.startswith(prefix) for prefix in self._SYSTEM_CONFIG_HIDDEN_PREFIXES)
+
+    def filter_system_config_values(self, config: Dict[str, str]) -> Dict[str, str]:
+        return {
+            key: value
+            for key, value in config.items()
+            if key in self.default_config and self._is_system_config_visible_key(key)
+        }
+
     def _split_value_and_comment(self, raw_value: str) -> tuple[str, str]:
         in_single_quote = False
         in_double_quote = False
@@ -446,6 +464,8 @@ class ConfigManager:
         config_info = {}
 
         for key, info in self.default_config.items():
+            if not self._is_system_config_visible_key(key):
+                continue
             config_info[key] = {
                 "value": current_values.get(key, info["value"]),
                 "description": info["description"],

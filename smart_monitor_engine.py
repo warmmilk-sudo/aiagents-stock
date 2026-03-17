@@ -18,7 +18,7 @@ from smart_monitor_db import SmartMonitorDB
 from notification_service import notification_service  # 复用主程序的通知服务
 from config_manager import config_manager  # 复用主程序的配置管理器
 from asset_repository import STATUS_PORTFOLIO
-from investment_db_utils import DEFAULT_ACCOUNT_NAME
+from investment_db_utils import DEFAULT_ACCOUNT_NAME, normalize_account_name
 from investment_lifecycle_service import InvestmentLifecycleService, investment_lifecycle_service
 from internal_events import event_bus, Events
 
@@ -90,30 +90,177 @@ class SmartMonitorEngine:
         )
 
     @staticmethod
-    def _build_manual_account_info(
-        asset: Optional[Dict],
+    def _safe_float(value: object) -> float:
+        try:
+            return float(value) if value not in (None, "") else 0.0
+        except (TypeError, ValueError):
+            return 0.0
+
+    @staticmethod
+    def _safe_int(value: object) -> int:
+        try:
+            return int(value) if value not in (None, "") else 0
+        except (TypeError, ValueError):
+            return 0
+
+    def _resolve_account_holding_price(
+        self,
+        stock: Dict,
         *,
+        account_name: str,
+        focus_asset_id: Optional[int],
+        focus_portfolio_stock_id: Optional[int],
+        focus_symbol: str,
+        current_market_price: float,
+    ) -> float:
+        stock_id = stock.get("id")
+        stock_symbol = str(stock.get("code") or stock.get("symbol") or "").strip().upper()
+        if (
+            current_market_price > 0
+            and (
+                (focus_asset_id and int(stock_id or 0) == int(focus_asset_id))
+                or (focus_portfolio_stock_id and int(stock_id or 0) == int(focus_portfolio_stock_id))
+                or (focus_symbol and stock_symbol == focus_symbol)
+            )
+        ):
+            return current_market_price
+
+        latest_record = self.db.analysis_repository.get_latest_linked_record(
+            asset_id=stock_id,
+            portfolio_stock_id=stock_id,
+            symbol=stock_symbol,
+            account_name=account_name,
+        ) or {}
+        stock_info = latest_record.get("stock_info") if isinstance(latest_record.get("stock_info"), dict) else {}
+        for candidate in (
+            latest_record.get("current_price"),
+            stock_info.get("current_price") if isinstance(stock_info, dict) else None,
+            stock.get("cost_price"),
+        ):
+            price = self._safe_float(candidate)
+            if price > 0:
+                return price
+        return 0.0
+
+    def _build_account_info(
+        self,
+        *,
+        account_name: str,
+        asset: Optional[Dict],
+        stock_code: str,
+        asset_id: Optional[int],
+        portfolio_stock_id: Optional[int],
         has_position: bool,
         position_cost: float,
         position_quantity: int,
+        current_market_price: float,
     ) -> Dict:
-        total_value = 0.0
-        if has_position:
-            total_value = round(position_cost * position_quantity, 3)
+        normalized_account_name = normalize_account_name(account_name) or DEFAULT_ACCOUNT_NAME
+        account_stocks = [
+            stock
+            for stock in self.db.portfolio_db.get_all_stocks(auto_monitor_only=False)
+            if normalize_account_name(stock.get("account_name")) == normalized_account_name
+        ]
 
-        account_info = {
-            "available_cash": 0.0,
-            "total_value": total_value,
-            "positions_count": 1 if has_position else 0,
-            "total_profit_loss": 0.0,
-        }
-        if has_position:
-            account_info["current_position"] = {
+        total_market_value = 0.0
+        total_profit_loss = 0.0
+        positions_count = 0
+        current_position: Optional[Dict[str, object]] = None
+        normalized_symbol = str(stock_code or "").strip().upper()
+
+        for stock in account_stocks:
+            quantity = self._safe_int(stock.get("quantity"))
+            if quantity <= 0:
+                continue
+            cost_price = self._safe_float(stock.get("cost_price"))
+            latest_price = self._resolve_account_holding_price(
+                stock,
+                account_name=normalized_account_name,
+                focus_asset_id=asset_id,
+                focus_portfolio_stock_id=portfolio_stock_id,
+                focus_symbol=normalized_symbol,
+                current_market_price=current_market_price,
+            )
+            if latest_price <= 0:
+                latest_price = cost_price
+            market_value = latest_price * quantity
+            cost_value = cost_price * quantity
+            total_market_value += market_value
+            total_profit_loss += market_value - cost_value
+            positions_count += 1
+
+            if (
+                (asset_id and int(stock.get("id") or 0) == int(asset_id))
+                or (portfolio_stock_id and int(stock.get("id") or 0) == int(portfolio_stock_id))
+                or str(stock.get("code") or stock.get("symbol") or "").strip().upper() == normalized_symbol
+            ):
+                current_position = {
+                    "quantity": quantity,
+                    "cost_price": cost_price,
+                    "current_price": latest_price,
+                    "market_value": market_value,
+                    "status": stock.get("status") or (asset or {}).get("status"),
+                }
+
+        configured_total_assets = self._safe_float(
+            getattr(self.db.portfolio_db, "get_account_total_assets", lambda *_args, **_kwargs: 0.0)(
+                normalized_account_name,
+                0.0,
+            )
+        )
+        fallback_position_value = position_cost * position_quantity if has_position else 0.0
+        effective_total_value = configured_total_assets if configured_total_assets > 0 else max(
+            total_market_value,
+            fallback_position_value,
+        )
+        available_cash = max(0.0, effective_total_value - total_market_value) if effective_total_value > 0 else 0.0
+        position_usage_pct = (total_market_value / effective_total_value) if effective_total_value > 0 else 0.0
+
+        if current_position is None and has_position:
+            latest_price = current_market_price if current_market_price > 0 else position_cost
+            current_market_value = latest_price * position_quantity
+            current_position = {
                 "quantity": position_quantity,
                 "cost_price": position_cost,
+                "current_price": latest_price,
+                "market_value": current_market_value,
                 "status": (asset or {}).get("status"),
             }
+            total_market_value += current_market_value
+            total_profit_loss += current_market_value - fallback_position_value
+            positions_count += 1
+            if configured_total_assets <= 0:
+                effective_total_value = max(effective_total_value, current_market_value)
+                available_cash = max(0.0, effective_total_value - total_market_value) if effective_total_value > 0 else 0.0
+                position_usage_pct = (total_market_value / effective_total_value) if effective_total_value > 0 else 0.0
+
+        account_info = {
+            "account_name": normalized_account_name,
+            "available_cash": available_cash,
+            "total_value": effective_total_value,
+            "configured_total_assets": configured_total_assets,
+            "total_market_value": total_market_value,
+            "position_usage_pct": position_usage_pct,
+            "positions_count": positions_count,
+            "total_profit_loss": total_profit_loss,
+        }
+        if current_position:
+            current_market_value = self._safe_float(current_position.get("market_value"))
+            account_info["current_position"] = {
+                **current_position,
+                "position_pct": (current_market_value / effective_total_value) if effective_total_value > 0 else 0.0,
+            }
         return account_info
+
+    def _resolve_task_risk_profile(self, account_name: str, task_context: Optional[Dict]) -> Dict[str, int]:
+        account_profile = self.db.monitoring_repository.resolve_shared_risk_profile()
+        overrides = task_context or {}
+        return {
+            "position_size_pct": int(overrides.get("position_size_pct") or account_profile["position_size_pct"]),
+            "total_position_pct": int(overrides.get("total_position_pct") or account_profile["total_position_pct"]),
+            "stop_loss_pct": int(overrides.get("stop_loss_pct") or account_profile["stop_loss_pct"]),
+            "take_profit_pct": int(overrides.get("take_profit_pct") or account_profile["take_profit_pct"]),
+        }
 
     @staticmethod
     def _run_with_timeout(func, timeout_seconds: int, *args, **kwargs):
@@ -162,6 +309,14 @@ class SmartMonitorEngine:
         provided_strategy_context: Optional[Dict],
         task_context: Optional[Dict],
     ) -> Dict:
+        task_strategy_context = (
+            (task_context or {}).get("strategy_context")
+            or ((task_context or {}).get("config") or {}).get("strategy_context")
+            or {}
+        )
+        if task_strategy_context:
+            return task_strategy_context
+
         latest_context = self.db.analysis_repository.get_latest_strategy_context(
             asset_id=asset_id,
             portfolio_stock_id=portfolio_stock_id,
@@ -170,10 +325,6 @@ class SmartMonitorEngine:
         ) or {}
         if latest_context:
             return latest_context
-
-        task_strategy_context = (task_context or {}).get("strategy_context") or {}
-        if task_strategy_context:
-            return task_strategy_context
 
         return provided_strategy_context or {}
 
@@ -393,11 +544,16 @@ class SmartMonitorEngine:
                 has_position = asset.get("status") == STATUS_PORTFOLIO and int(asset.get("quantity") or 0) > 0
                 position_cost = float(asset.get("cost_price") or 0)
                 position_quantity = int(asset.get("quantity") or 0)
-            account_info = self._build_manual_account_info(
-                asset,
+            account_info = self._build_account_info(
+                account_name=account_name,
+                asset=asset,
+                stock_code=stock_code,
+                asset_id=asset_id,
+                portfolio_stock_id=portfolio_stock_id,
                 has_position=has_position,
                 position_cost=position_cost,
                 position_quantity=position_quantity,
+                current_market_price=self._safe_float(market_data.get("current_price")),
             )
             portfolio_stock_id = portfolio_stock_id or task_context.get("portfolio_stock_id") or (
                 asset_id if asset and asset.get("status") == STATUS_PORTFOLIO else None
@@ -410,6 +566,7 @@ class SmartMonitorEngine:
                 provided_strategy_context=strategy_context,
                 task_context=task_context,
             )
+            risk_profile = self._resolve_task_risk_profile(account_name, task_context)
             if strategy_context:
                 self.logger.info(
                     "[%s] 使用最新分析基线: analysis_id=%s scope=%s time=%s",
@@ -433,6 +590,7 @@ class SmartMonitorEngine:
                 asset_id=asset_id,
                 portfolio_stock_id=portfolio_stock_id,
                 strategy_context=strategy_context,
+                risk_profile=risk_profile,
             )
             
             if not ai_result['success']:

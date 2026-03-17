@@ -9,6 +9,7 @@ from investment_db_utils import (
     connect_sqlite,
     get_metadata,
     is_legacy_seed_path,
+    normalize_account_name,
     resolve_investment_db_path,
     set_metadata,
 )
@@ -20,6 +21,7 @@ class AnalysisRepository:
     _MISSING_TEXT_VALUES = {"", "-", "--", "N/A", "NA", "未知", "未知行业", "null", "None", "nan"}
     _STOCK_INFO_INDUSTRY_KEYS = ("industry", "所属同花顺行业", "所属行业", "所处行业", "行业", "sector")
     _STOCK_INFO_ALIAS_KEYS = ("所属同花顺行业", "所属行业", "所处行业", "行业", "sector")
+    ACCOUNT_NORMALIZATION_KEY = "analysis_account_normalization_v1"
 
     def __init__(self, db_path: str = "investment.db", legacy_analysis_db_path: Optional[str] = None):
         self.seed_db_path = db_path
@@ -33,10 +35,15 @@ class AnalysisRepository:
         self.backfill_full_report_flags()
         self.cleanup_duplicate_records()
         self.migrate_stock_info_schema()
+        self.normalize_account_names()
 
     @staticmethod
     def _normalize_text(value: Any) -> str:
         return str(value or "").strip()
+
+    @staticmethod
+    def _normalize_account_name_value(account_name: Optional[object]) -> str:
+        return str(normalize_account_name(account_name))
 
     @classmethod
     def _clean_stock_info_text(cls, value: Any) -> str:
@@ -548,7 +555,7 @@ class AnalysisRepository:
         stock_info = self._normalize_stock_info_payload(stock_info or {}, symbol=symbol)
         analysis_date = analysis_date or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         created_at = datetime.now().isoformat()
-        effective_account_name = account_name or DEFAULT_ACCOUNT_NAME
+        effective_account_name = self._normalize_account_name_value(account_name)
 
         resolved_rating = self._normalize_text(final_decision.get("rating")) or None
         if extracted_from_decision_text:
@@ -876,8 +883,8 @@ class AnalysisRepository:
             symbol_clause = "symbol = ?"
             symbol_params: List[Any] = [symbol]
             if account_name:
-                symbol_clause += " AND (account_name = ? OR account_name = ? OR account_name IS NULL)"
-                symbol_params.extend([account_name, DEFAULT_ACCOUNT_NAME])
+                symbol_clause += " AND (account_name = ? OR account_name IS NULL OR TRIM(account_name) = '')"
+                symbol_params.append(self._normalize_account_name_value(account_name))
             match_clauses.append(f"({symbol_clause})")
             params.extend(symbol_params)
 
@@ -973,11 +980,35 @@ class AnalysisRepository:
             clauses = ["COALESCE(has_full_report, 0) = 1", "symbol = ?"]
             params: List[Any] = [symbol]
             if account_name:
-                clauses.append("(account_name = ? OR account_name = ? OR account_name IS NULL)")
-                params.extend([account_name, DEFAULT_ACCOUNT_NAME])
+                clauses.append("(account_name = ? OR account_name IS NULL OR TRIM(account_name) = '')")
+                params.append(self._normalize_account_name_value(account_name))
             record = _fetch_one(clauses, params)
         conn.close()
         return record
+
+    def normalize_account_names(self) -> int:
+        conn = self._connect()
+        try:
+            if get_metadata(conn, self.ACCOUNT_NORMALIZATION_KEY):
+                return 0
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, account_name FROM analysis_records ORDER BY id ASC")
+            updated = 0
+            for row in cursor.fetchall():
+                normalized_account_name = self._normalize_account_name_value(row["account_name"])
+                current_account_name = str(row["account_name"] or "").strip()
+                if normalized_account_name == current_account_name:
+                    continue
+                cursor.execute(
+                    "UPDATE analysis_records SET account_name = ? WHERE id = ?",
+                    (normalized_account_name, int(row["id"])),
+                )
+                updated += 1 if cursor.rowcount > 0 else 0
+            set_metadata(conn, self.ACCOUNT_NORMALIZATION_KEY, str(updated))
+            conn.commit()
+            return updated
+        finally:
+            conn.close()
 
     def migrate_legacy_analysis_db(self, legacy_db_path: Optional[str]) -> int:
         if not legacy_db_path or not os.path.exists(legacy_db_path):

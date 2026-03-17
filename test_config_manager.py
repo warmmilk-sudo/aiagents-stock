@@ -108,6 +108,30 @@ class ConfigManagerEnvFormatTests(unittest.TestCase):
             self.assertTrue(is_valid)
             self.assertEqual(message, "配置验证通过")
 
+    def test_get_config_info_hides_smart_monitor_fields(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            env_path = Path(temp_dir) / ".env"
+            manager = ConfigManager(str(env_path))
+
+            config_info = manager.get_config_info()
+
+            self.assertNotIn("SMART_MONITOR_AI_INTERVAL_MINUTES", config_info)
+            self.assertNotIn("SMART_MONITOR_DEFAULT_STOP_LOSS_PCT", config_info)
+            self.assertIn("DEEPSEEK_API_KEY", config_info)
+
+    def test_filter_system_config_values_excludes_smart_monitor_fields(self):
+        manager = ConfigManager()
+
+        filtered = manager.filter_system_config_values(
+            {
+                "DEEPSEEK_API_KEY": "key",
+                "SMART_MONITOR_AI_INTERVAL_MINUTES": "15",
+                "SMART_MONITOR_DEFAULT_STOP_LOSS_PCT": "6",
+            }
+        )
+
+        self.assertEqual(filtered, {"DEEPSEEK_API_KEY": "key"})
+
 
 if __name__ == "__main__":
     unittest.main()

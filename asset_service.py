@@ -95,10 +95,23 @@ class AssetService:
         )
         return any(normalized_search in value for value in haystacks)
 
+    def _resolve_account_risk_profile(self, account_name: Optional[str]) -> Dict[str, int]:
+        if self.monitoring_repository and hasattr(self.monitoring_repository, "get_account_risk_profile"):
+            profile = self.monitoring_repository.get_account_risk_profile(account_name)
+            return {
+                "position_size_pct": int(profile["position_size_pct"]),
+                "total_position_pct": int(profile["total_position_pct"]),
+                "stop_loss_pct": int(profile["stop_loss_pct"]),
+                "take_profit_pct": int(profile["take_profit_pct"]),
+            }
+        return dict(config.get_smart_monitor_risk_defaults())
+
     def _build_ai_task_payload(self, asset: Dict, existing_item: Optional[Dict] = None) -> Dict:
         existing_item = existing_item or {}
         existing_config = existing_item.get("config") or {}
         status = asset.get("status")
+        account_name = asset.get("account_name") or DEFAULT_ACCOUNT_NAME
+        account_risk = self._resolve_account_risk_profile(account_name)
         return {
             "symbol": asset["symbol"],
             "name": asset.get("name") or asset["symbol"],
@@ -111,15 +124,16 @@ class AssetService:
             "trading_hours_only": bool(existing_item.get("trading_hours_only", True)),
             "notification_enabled": bool(existing_item.get("notification_enabled", True)),
             "managed_by_portfolio": status == STATUS_PORTFOLIO,
-            "account_name": asset.get("account_name") or DEFAULT_ACCOUNT_NAME,
+            "account_name": account_name,
             "asset_id": asset["id"],
             "portfolio_stock_id": asset["id"] if status == STATUS_PORTFOLIO else None,
             "origin_analysis_id": asset.get("origin_analysis_id"),
             "config": {
                 "task_name": existing_config.get("task_name") or f"{asset.get('name') or asset['symbol']}盯盘",
-                "position_size_pct": existing_config.get("position_size_pct", 20),
-                "stop_loss_pct": existing_config.get("stop_loss_pct", 5),
-                "take_profit_pct": existing_config.get("take_profit_pct", 10),
+                "position_size_pct": account_risk["position_size_pct"],
+                "total_position_pct": account_risk["total_position_pct"],
+                "stop_loss_pct": account_risk["stop_loss_pct"],
+                "take_profit_pct": account_risk["take_profit_pct"],
                 "notify_email": existing_config.get("notify_email"),
                 "notify_webhook": existing_config.get("notify_webhook"),
                 "position_date": existing_config.get("position_date"),

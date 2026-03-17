@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from investment_db_utils import DEFAULT_ACCOUNT_NAME
 import smart_monitor_engine as smart_monitor_engine_module
 from monitor_db import StockMonitorDatabase
 from portfolio_db import PortfolioDB
@@ -30,7 +31,14 @@ class PortfolioIntegrationTests(unittest.TestCase):
     def tearDown(self):
         self.temp_dir.cleanup()
 
-    def _add_stock(self, code: str, auto_monitor: bool = True, cost_price: float = 10.0, quantity: int = 100):
+    def _add_stock(
+        self,
+        code: str,
+        auto_monitor: bool = True,
+        cost_price: float = 10.0,
+        quantity: int = 100,
+        account_name: str = DEFAULT_ACCOUNT_NAME,
+    ):
         success, msg, stock_id = self.manager.add_stock(
             code=code,
             name=None,
@@ -38,6 +46,7 @@ class PortfolioIntegrationTests(unittest.TestCase):
             quantity=quantity,
             note="test",
             auto_monitor=auto_monitor,
+            account_name=account_name,
         )
         self.assertTrue(success, msg)
         self.assertIsNotNone(stock_id)
@@ -54,9 +63,9 @@ class PortfolioIntegrationTests(unittest.TestCase):
 
     def test_add_and_update_stock_syncs_to_smart_monitor(self):
         stock_id = self._add_stock("000001", cost_price=10.5, quantity=200)
-        snapshots = self.portfolio_db.get_daily_snapshots(account_name="默认账户")
+        snapshots = self.portfolio_db.get_daily_snapshots(account_name=DEFAULT_ACCOUNT_NAME)
         self.assertTrue(snapshots)
-        self.assertEqual(snapshots[-1]["account_name"], "默认账户")
+        self.assertEqual(snapshots[-1]["account_name"], DEFAULT_ACCOUNT_NAME)
 
         task = self.smart_monitor_db.get_monitor_task_by_code("000001", managed_only=True)
         self.assertIsNotNone(task)
@@ -68,7 +77,7 @@ class PortfolioIntegrationTests(unittest.TestCase):
 
         success, msg = self.manager.update_stock(stock_id, cost_price=12.3, quantity=500, auto_monitor=True)
         self.assertTrue(success, msg)
-        updated_snapshots = self.portfolio_db.get_daily_snapshots(account_name="默认账户")
+        updated_snapshots = self.portfolio_db.get_daily_snapshots(account_name=DEFAULT_ACCOUNT_NAME)
         self.assertTrue(updated_snapshots[-1]["total_market_value"] >= 12.3 * 500)
 
         updated_task = self.smart_monitor_db.get_monitor_task_by_code("000001", managed_only=True)
@@ -83,7 +92,7 @@ class PortfolioIntegrationTests(unittest.TestCase):
         self.assertEqual(disabled_task["enabled"], 0)
         disabled_alert = self.realtime_monitor_db.get_monitor_by_code(
             "000001",
-            account_name="默认账户",
+            account_name=DEFAULT_ACCOUNT_NAME,
             asset_id=stock_id,
         )
         self.assertIsNotNone(disabled_alert)
@@ -129,6 +138,26 @@ class PortfolioIntegrationTests(unittest.TestCase):
         self.assertIsNotNone(stock)
         self.assertEqual(stock["code"], "688001")
 
+    def test_managed_task_sync_uses_shared_risk_profile(self):
+        self.smart_monitor_db.monitoring_repository.set_shared_risk_profile(
+            {
+                "position_size_pct": 30,
+                "total_position_pct": 75,
+                "stop_loss_pct": 6,
+                "take_profit_pct": 16,
+            }
+        )
+
+        stock_id = self._add_stock("002594", cost_price=220.0, quantity=100, account_name="账户A")
+        task = self.smart_monitor_db.get_monitor_task_by_code("002594", managed_only=True, account_name=DEFAULT_ACCOUNT_NAME)
+
+        self.assertIsNotNone(task)
+        self.assertEqual(task["asset_id"], stock_id)
+        self.assertEqual(task["position_size_pct"], 30)
+        self.assertEqual(task["total_position_pct"], 75)
+        self.assertEqual(task["stop_loss_pct"], 6)
+        self.assertEqual(task["take_profit_pct"], 16)
+
     def test_persist_analysis_results_saves_portfolio_history_and_syncs_realtime_monitor(self):
         stock_id = self._add_stock("300750", cost_price=150.0, quantity=100)
 
@@ -155,7 +184,7 @@ class PortfolioIntegrationTests(unittest.TestCase):
 
         result = self.manager.persist_analysis_results(analysis_results, sync_realtime_monitor=True)
         self.assertEqual(len(result["saved_ids"]), 1)
-        snapshots = self.portfolio_db.get_daily_snapshots(account_name="默认账户")
+        snapshots = self.portfolio_db.get_daily_snapshots(account_name=DEFAULT_ACCOUNT_NAME)
         self.assertTrue(snapshots)
 
         history = self.portfolio_db.get_analysis_history(stock_id, limit=10)
@@ -305,7 +334,7 @@ class PortfolioIntegrationTests(unittest.TestCase):
             }
         )
 
-        alert = self.realtime_monitor_db.get_monitor_by_code("300750", account_name="默认账户")
+        alert = self.realtime_monitor_db.get_monitor_by_code("300750", account_name=DEFAULT_ACCOUNT_NAME)
 
         self.assertIsNotNone(alert)
         self.assertTrue(alert["enabled"])
@@ -343,7 +372,7 @@ class PortfolioIntegrationTests(unittest.TestCase):
 
         decisions = self.smart_monitor_db.get_ai_decisions("600519", limit=5)
         self.assertEqual(decisions[0]["id"], decision_id)
-        self.assertEqual(decisions[0]["account_name"], "账户A")
+        self.assertEqual(decisions[0]["account_name"], DEFAULT_ACCOUNT_NAME)
         self.assertEqual(decisions[0]["asset_id"], asset_id)
         self.assertEqual(decisions[0]["execution_mode"], "manual_only")
         self.assertEqual(decisions[0]["action_status"], "pending")
@@ -517,7 +546,7 @@ class PortfolioIntegrationTests(unittest.TestCase):
         repaired_db = SmartMonitorDB(str(seed_path))
         decisions = repaired_db.get_ai_decisions("300136", limit=10)
         self.assertEqual(len(decisions), 1)
-        self.assertEqual(decisions[0]["account_name"], "账户B")
+        self.assertEqual(decisions[0]["account_name"], DEFAULT_ACCOUNT_NAME)
         self.assertEqual(decisions[0]["asset_id"], asset_id)
 
     def test_ai_runtime_thresholds_sync_and_clear_on_new_strategy_context(self):
@@ -555,7 +584,7 @@ class PortfolioIntegrationTests(unittest.TestCase):
             )
 
         self.assertTrue(synced)
-        monitor = self.realtime_monitor_db.get_monitor_by_code("600519", account_name="默认账户", asset_id=asset_id)
+        monitor = self.realtime_monitor_db.get_monitor_by_code("600519", account_name=DEFAULT_ACCOUNT_NAME, asset_id=asset_id)
         self.assertIsNotNone(monitor)
         self.assertEqual(monitor["threshold_source"], "ai_runtime")
         self.assertEqual(monitor["entry_range"]["min"], 1498.0)
@@ -563,7 +592,7 @@ class PortfolioIntegrationTests(unittest.TestCase):
         self.assertEqual(monitor["origin_decision_id"], 77)
 
         self.smart_monitor_db.asset_service.sync_managed_monitors(asset_id)
-        preserved = self.realtime_monitor_db.get_monitor_by_code("600519", account_name="默认账户", asset_id=asset_id)
+        preserved = self.realtime_monitor_db.get_monitor_by_code("600519", account_name=DEFAULT_ACCOUNT_NAME, asset_id=asset_id)
         self.assertEqual(preserved["threshold_source"], "ai_runtime")
         self.assertEqual(preserved["runtime_thresholds"]["stop_loss"], 1452.0)
 
@@ -586,7 +615,7 @@ class PortfolioIntegrationTests(unittest.TestCase):
         self.assertGreater(new_record_id, 0)
 
         self.smart_monitor_db.asset_service.sync_managed_monitors(asset_id)
-        refreshed = self.realtime_monitor_db.get_monitor_by_code("600519", account_name="默认账户", asset_id=asset_id)
+        refreshed = self.realtime_monitor_db.get_monitor_by_code("600519", account_name=DEFAULT_ACCOUNT_NAME, asset_id=asset_id)
         self.assertEqual(refreshed["threshold_source"], "strategy_context")
         self.assertEqual(refreshed["entry_range"]["min"], 1510.0)
         self.assertEqual(refreshed["take_profit"], 1618.0)

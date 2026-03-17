@@ -498,9 +498,11 @@ def normalize_sector_strategy_result(raw_result: Any, data_summary: Any = None) 
     if not payload and isinstance(raw_result, dict) and isinstance(raw_result.get("report_view"), dict):
         return raw_result["report_view"]
 
+    resolved_data_summary = _as_dict(data_summary) or _as_dict(payload.get("data_summary"))
+
     cache_meta = _as_dict(payload.get("cache_meta"))
     normalized_predictions = normalize_sector_strategy_predictions(payload.get("final_predictions"))
-    market_snapshot = _normalize_market_snapshot(data_summary)
+    market_snapshot = _normalize_market_snapshot(resolved_data_summary)
     reports = normalize_sector_strategy_reports(payload.get("agents_analysis"), payload.get("comprehensive_report"))
 
     meta = {
@@ -512,17 +514,17 @@ def normalize_sector_strategy_result(raw_result: Any, data_summary: Any = None) 
         "from_cache": bool(
             _first_non_empty(
                 cache_meta.get("from_cache"),
-                _as_dict(data_summary).get("from_cache") if isinstance(data_summary, dict) else None,
+                resolved_data_summary.get("from_cache"),
                 False,
             )
         ),
         "cache_warning": _normalize_text(
-            _first_non_empty(cache_meta.get("cache_warning"), _as_dict(data_summary).get("cache_warning")),
+            _first_non_empty(cache_meta.get("cache_warning"), resolved_data_summary.get("cache_warning")),
             fallback="",
             allow_english_only=True,
         ),
         "data_timestamp": _normalize_text(
-            _first_non_empty(cache_meta.get("data_timestamp"), _as_dict(data_summary).get("data_timestamp")),
+            _first_non_empty(cache_meta.get("data_timestamp"), resolved_data_summary.get("data_timestamp")),
             fallback="",
             allow_english_only=True,
         ),

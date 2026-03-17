@@ -5,11 +5,13 @@ import sqlite3
 from datetime import datetime, timedelta
 from typing import Dict, Iterable, List, Optional
 
+import config
 from investment_db_utils import (
     DEFAULT_ACCOUNT_NAME,
     SQLITE_BUSY_TIMEOUT_MILLISECONDS,
     SQLITE_TIMEOUT_SECONDS,
     configure_sqlite_connection,
+    normalize_account_name,
     resolve_investment_db_path,
     run_with_monitoring_write_lock,
 )
@@ -30,6 +32,77 @@ class MonitoringRepository:
     MANAGED_BINDING_REPAIR_KEY = "monitoring_managed_binding_repair_v1"
     CONFIG_CLEANUP_MIGRATION_KEY = "monitoring_config_cleanup_v1"
     DIRTY_DATA_CLEANUP_KEY = "monitoring_dirty_data_cleanup_v1"
+    ACCOUNT_NORMALIZATION_KEY = "monitoring_account_normalization_v1"
+    ACCOUNT_RISK_PROFILE_KEY_PREFIX = "smart_monitor_account_risk_profile::"
+    SHARED_RISK_PROFILE_KEY = "smart_monitor_shared_risk_profile"
+
+    @staticmethod
+    def _clamp_int(value: object, minimum: int, maximum: int, default: int) -> int:
+        try:
+            numeric = int(value)
+        except (TypeError, ValueError):
+            numeric = default
+        return max(minimum, min(maximum, numeric))
+
+    @staticmethod
+    def _normalize_account_name_value(account_name: Optional[str]) -> str:
+        return str(normalize_account_name(account_name))
+
+    @classmethod
+    def _normalize_item_account_name(
+        cls,
+        account_name: Optional[object],
+        *,
+        monitor_type: Optional[str] = None,
+        keep_none: bool = False,
+    ) -> Optional[str]:
+        normalized_monitor_type = str(monitor_type or "").strip().lower()
+        resolved_keep_none = keep_none and normalized_monitor_type != "ai_task"
+        return normalize_account_name(account_name, keep_none=resolved_keep_none)
+
+    @staticmethod
+    def _default_account_risk_profile() -> Dict[str, int]:
+        return dict(config.get_smart_monitor_risk_defaults())
+
+    @classmethod
+    def _normalize_account_risk_profile(
+        cls,
+        payload: Optional[Dict],
+        *,
+        defaults: Optional[Dict[str, int]] = None,
+    ) -> Dict[str, int]:
+        baseline = dict(defaults or cls._default_account_risk_profile())
+        source = payload or {}
+        return {
+            "position_size_pct": cls._clamp_int(
+                source.get("position_size_pct"),
+                0,
+                100,
+                baseline["position_size_pct"],
+            ),
+            "total_position_pct": cls._clamp_int(
+                source.get("total_position_pct"),
+                0,
+                100,
+                baseline["total_position_pct"],
+            ),
+            "stop_loss_pct": cls._clamp_int(
+                source.get("stop_loss_pct"),
+                0,
+                100,
+                baseline["stop_loss_pct"],
+            ),
+            "take_profit_pct": cls._clamp_int(
+                source.get("take_profit_pct"),
+                0,
+                100,
+                baseline["take_profit_pct"],
+            ),
+        }
+
+    @classmethod
+    def _account_risk_profile_key(cls, account_name: Optional[str]) -> str:
+        return f"{cls.ACCOUNT_RISK_PROFILE_KEY_PREFIX}{cls._normalize_account_name_value(account_name)}"
     VALID_MONITOR_TYPES = {"ai_task", "price_alert"}
     VALID_SOURCES = {"manual", "portfolio", "ai_monitor", "legacy_conflict"}
     DEPRECATED_CONFIG_KEYS = {
@@ -152,6 +225,7 @@ class MonitoringRepository:
             self._repair_managed_bindings_if_needed(cursor)
             self._repair_portfolio_state_drift(cursor)
             self._cleanup_deprecated_config_keys_if_needed(cursor)
+            self._normalize_account_data_if_needed(cursor)
             conn.commit()
         finally:
             conn.close()
@@ -370,7 +444,11 @@ class MonitoringRepository:
 
     def _resolve_asset_binding_for_managed_item(self, cursor: sqlite3.Cursor, item: Dict) -> Optional[Dict]:
         symbol = item.get("symbol")
-        account_name = str(item.get("account_name") or "").strip() or None
+        account_name = self._normalize_item_account_name(
+            item.get("account_name"),
+            monitor_type=item.get("monitor_type"),
+            keep_none=True,
+        )
         asset_id = item.get("asset_id")
         portfolio_stock_id = item.get("portfolio_stock_id")
 
@@ -639,9 +717,11 @@ class MonitoringRepository:
             symbol = str(item.get("symbol") or "").strip().upper()
             monitor_type = str(item.get("monitor_type") or "").strip().lower()
             name = str(item.get("name") or "").strip() or symbol
-            account_name = self._normalize_optional_text(item.get("account_name"))
-            if monitor_type == "ai_task":
-                account_name = account_name or DEFAULT_ACCOUNT_NAME
+            account_name = self._normalize_item_account_name(
+                item.get("account_name"),
+                monitor_type=monitor_type,
+                keep_none=True,
+            )
             source = self._normalize_optional_text(item.get("source"))
             normalized_source = source if source in self.VALID_SOURCES else self._normalize_source_for_row(item)
             interval_minutes = self._normalize_interval_minutes(item.get("interval_minutes"))
@@ -659,7 +739,7 @@ class MonitoringRepository:
             if monitor_type != item.get("monitor_type"):
                 updates.append("monitor_type = ?")
                 params.append(monitor_type)
-            if account_name != item.get("account_name"):
+            if account_name != self._normalize_optional_text(item.get("account_name")):
                 updates.append("account_name = ?")
                 params.append(account_name)
             if normalized_source != item.get("source"):
@@ -707,9 +787,11 @@ class MonitoringRepository:
                 continue
 
             normalized_source = self._normalize_source_for_row(row)
-            account_name = self._normalize_optional_text(row.get("account_name"))
-            if row.get("monitor_type") == "ai_task":
-                account_name = account_name or DEFAULT_ACCOUNT_NAME
+            account_name = self._normalize_item_account_name(
+                row.get("account_name"),
+                monitor_type=row.get("monitor_type"),
+                keep_none=True,
+            )
 
             cursor.execute(
                 """
@@ -744,12 +826,16 @@ class MonitoringRepository:
         keys: List[tuple] = []
         monitor_type = str(row.get("monitor_type") or "").strip().lower()
         symbol = str(row.get("symbol") or "").strip().upper()
-        account_name = cls._normalize_optional_text(row.get("account_name"))
+        account_name = cls._normalize_item_account_name(
+            row.get("account_name"),
+            monitor_type=monitor_type,
+            keep_none=True,
+        )
         asset_id = row.get("asset_id")
         portfolio_stock_id = row.get("portfolio_stock_id")
 
         if monitor_type == "ai_task":
-            keys.append(("ai_task_symbol", account_name or DEFAULT_ACCOUNT_NAME, symbol))
+            keys.append(("ai_task_symbol", cls._normalize_account_name_value(account_name), symbol))
         if asset_id is not None:
             keys.append(("asset_binding", int(asset_id), monitor_type))
         if monitor_type == "price_alert" and row.get("managed_by_portfolio") and portfolio_stock_id is not None:
@@ -793,9 +879,11 @@ class MonitoringRepository:
             drop_config = self._sanitize_monitor_config(self._safe_json_loads(drop_row.get("config_json"), {}))
             merged_config = dict(drop_config)
             merged_config.update(keep_config)
-            normalized_account_name = self._normalize_optional_text(keep_row.get("account_name"))
-            if keep_row.get("monitor_type") == "ai_task":
-                normalized_account_name = normalized_account_name or DEFAULT_ACCOUNT_NAME
+            normalized_account_name = self._normalize_item_account_name(
+                keep_row.get("account_name"),
+                monitor_type=keep_row.get("monitor_type"),
+                keep_none=True,
+            )
 
             cursor.execute(
                 """
@@ -943,6 +1031,79 @@ class MonitoringRepository:
             changed += 1 if cursor.rowcount > 0 else 0
         return changed
 
+    def _normalize_account_risk_profile_metadata(self, cursor: sqlite3.Cursor) -> int:
+        cursor.execute(
+            """
+            SELECT meta_key, meta_value, updated_at
+            FROM monitoring_metadata
+            WHERE meta_key LIKE ?
+            ORDER BY meta_key ASC
+            """,
+            (f"{self.ACCOUNT_RISK_PROFILE_KEY_PREFIX}%",),
+        )
+        rows = [dict(row) for row in cursor.fetchall()]
+        grouped_rows: Dict[str, List[Dict[str, str]]] = {}
+        for row in rows:
+            raw_account_name = str(row["meta_key"]).removeprefix(self.ACCOUNT_RISK_PROFILE_KEY_PREFIX).strip()
+            canonical_key = self._account_risk_profile_key(raw_account_name)
+            grouped_rows.setdefault(canonical_key, []).append(row)
+
+        changed = 0
+        for canonical_key, group_rows in grouped_rows.items():
+            canonical_row = next((row for row in group_rows if row["meta_key"] == canonical_key), None)
+            if canonical_row is None:
+                chosen_row = max(
+                    group_rows,
+                    key=lambda row: (
+                        self._parse_sortable_timestamp(row.get("updated_at")),
+                        str(row.get("meta_key") or ""),
+                    ),
+                )
+                cursor.execute(
+                    """
+                    INSERT INTO monitoring_metadata (meta_key, meta_value, updated_at)
+                    VALUES (?, ?, CURRENT_TIMESTAMP)
+                    ON CONFLICT(meta_key) DO UPDATE SET
+                        meta_value = excluded.meta_value,
+                        updated_at = CURRENT_TIMESTAMP
+                    """,
+                    (canonical_key, chosen_row.get("meta_value")),
+                )
+                changed += 1 if cursor.rowcount > 0 else 0
+            for row in group_rows:
+                if row["meta_key"] == canonical_key:
+                    continue
+                cursor.execute(
+                    "DELETE FROM monitoring_metadata WHERE meta_key = ?",
+                    (row["meta_key"],),
+                )
+                changed += 1 if cursor.rowcount > 0 else 0
+        return changed
+
+    def _normalize_account_data_if_needed(self, cursor: sqlite3.Cursor) -> None:
+        if self._get_metadata_from_cursor(cursor, self.ACCOUNT_NORMALIZATION_KEY):
+            return
+
+        normalized_items = self._normalize_monitoring_items(cursor)
+        deduplicated_items, rewired_events, rewired_price_history = self._dedupe_monitoring_items(cursor)
+        normalized_items += self._normalize_monitoring_items(cursor)
+        risk_profile_updates = self._normalize_account_risk_profile_metadata(cursor)
+        self._set_metadata_on_cursor(
+            cursor,
+            self.ACCOUNT_NORMALIZATION_KEY,
+            json.dumps(
+                {
+                    "normalized_items": normalized_items,
+                    "deduplicated_items": deduplicated_items,
+                    "rewired_events": rewired_events,
+                    "rewired_price_history": rewired_price_history,
+                    "risk_profile_updates": risk_profile_updates,
+                    "updated_at": local_now_str(),
+                },
+                ensure_ascii=False,
+            ),
+        )
+
     def _set_metadata(self, key: str, value: str) -> None:
         conn = self._connect()
         try:
@@ -971,11 +1132,171 @@ class MonitoringRepository:
         finally:
             conn.close()
 
+    def _list_metadata(self, prefix: Optional[str] = None) -> Dict[str, str]:
+        conn = self._connect()
+        try:
+            cursor = conn.cursor()
+            if prefix:
+                cursor.execute(
+                    "SELECT meta_key, meta_value FROM monitoring_metadata WHERE meta_key LIKE ? ORDER BY meta_key ASC",
+                    (f"{prefix}%",),
+                )
+            else:
+                cursor.execute("SELECT meta_key, meta_value FROM monitoring_metadata ORDER BY meta_key ASC")
+            return {
+                str(row["meta_key"]): str(row["meta_value"])
+                for row in cursor.fetchall()
+            }
+        finally:
+            conn.close()
+
     def get_metadata(self, key: str) -> Optional[str]:
         return self._get_metadata(key)
 
     def set_metadata(self, key: str, value: str) -> None:
         self._set_metadata(key, value)
+
+    def list_metadata(self, prefix: Optional[str] = None) -> Dict[str, str]:
+        return self._list_metadata(prefix=prefix)
+
+    def list_account_risk_profile_names(self) -> List[str]:
+        names: List[str] = []
+        entries = self._list_metadata(prefix=self.ACCOUNT_RISK_PROFILE_KEY_PREFIX)
+        for key in entries:
+            account_name = self._normalize_account_name_value(
+                key.removeprefix(self.ACCOUNT_RISK_PROFILE_KEY_PREFIX).strip()
+            )
+            if account_name and account_name not in names:
+                names.append(account_name)
+        return names
+
+    def _ensure_shared_risk_profile_exists(self) -> None:
+        if self._get_metadata(self.SHARED_RISK_PROFILE_KEY) is not None:
+            return
+
+        conn = self._connect()
+        try:
+            cursor = conn.cursor()
+            if self._get_metadata_from_cursor(cursor, self.SHARED_RISK_PROFILE_KEY) is not None:
+                return
+
+            default_key = self._account_risk_profile_key(DEFAULT_ACCOUNT_NAME)
+            cursor.execute(
+                """
+                SELECT meta_key, meta_value
+                FROM monitoring_metadata
+                WHERE meta_key LIKE ?
+                ORDER BY
+                    CASE WHEN meta_key = ? THEN 0 ELSE 1 END,
+                    datetime(updated_at) DESC,
+                    meta_key ASC
+                """,
+                (f"{self.ACCOUNT_RISK_PROFILE_KEY_PREFIX}%", default_key),
+            )
+            rows = [dict(row) for row in cursor.fetchall()]
+            if not rows:
+                return
+
+            chosen_profile: Dict = {}
+            for row in rows:
+                try:
+                    parsed = json.loads(row.get("meta_value") or "{}")
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    continue
+                if isinstance(parsed, dict):
+                    chosen_profile = parsed
+                    break
+
+            self._set_metadata_on_cursor(
+                cursor,
+                self.SHARED_RISK_PROFILE_KEY,
+                json.dumps(
+                    self._normalize_account_risk_profile(chosen_profile),
+                    ensure_ascii=False,
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def get_shared_risk_profile(self) -> Dict[str, object]:
+        self._ensure_shared_risk_profile_exists()
+        raw = self._get_metadata(self.SHARED_RISK_PROFILE_KEY)
+        parsed: Dict = {}
+        source = "global_default"
+        if raw:
+            try:
+                candidate = json.loads(raw)
+                if isinstance(candidate, dict):
+                    parsed = candidate
+                    source = "shared_custom"
+            except (TypeError, ValueError, json.JSONDecodeError):
+                parsed = {}
+        values = self._normalize_account_risk_profile(parsed)
+        return {
+            "source": source,
+            **values,
+        }
+
+    def resolve_shared_risk_profile(self, overrides: Optional[Dict] = None) -> Dict[str, object]:
+        shared_profile = self.get_shared_risk_profile()
+        merged = self._normalize_account_risk_profile(
+            overrides,
+            defaults={
+                "position_size_pct": int(shared_profile["position_size_pct"]),
+                "total_position_pct": int(shared_profile["total_position_pct"]),
+                "stop_loss_pct": int(shared_profile["stop_loss_pct"]),
+                "take_profit_pct": int(shared_profile["take_profit_pct"]),
+            },
+        )
+        return {
+            "source": str(shared_profile["source"]),
+            **merged,
+        }
+
+    def set_shared_risk_profile(self, profile: Dict) -> Dict[str, object]:
+        normalized_profile = self._normalize_account_risk_profile(profile)
+        self._set_metadata(
+            self.SHARED_RISK_PROFILE_KEY,
+            json.dumps(normalized_profile, ensure_ascii=False),
+        )
+        return self.get_shared_risk_profile()
+
+    def get_account_risk_profile(self, account_name: Optional[str]) -> Dict[str, object]:
+        normalized_account = self._normalize_account_name_value(account_name)
+        shared_profile = self.get_shared_risk_profile()
+        return {
+            "account_name": normalized_account,
+            "source": shared_profile["source"],
+            "position_size_pct": int(shared_profile["position_size_pct"]),
+            "total_position_pct": int(shared_profile["total_position_pct"]),
+            "stop_loss_pct": int(shared_profile["stop_loss_pct"]),
+            "take_profit_pct": int(shared_profile["take_profit_pct"]),
+        }
+
+    def resolve_account_risk_profile(self, account_name: Optional[str], overrides: Optional[Dict] = None) -> Dict[str, object]:
+        account_profile = self.get_account_risk_profile(account_name)
+        merged = self.resolve_shared_risk_profile(overrides)
+        return {
+            "account_name": str(account_profile["account_name"]),
+            "source": str(merged["source"]),
+            "position_size_pct": int(merged["position_size_pct"]),
+            "total_position_pct": int(merged["total_position_pct"]),
+            "stop_loss_pct": int(merged["stop_loss_pct"]),
+            "take_profit_pct": int(merged["take_profit_pct"]),
+        }
+
+    def set_account_risk_profile(self, account_name: Optional[str], profile: Dict) -> Dict[str, object]:
+        normalized_account = self._normalize_account_name_value(account_name)
+        shared_profile = self.set_shared_risk_profile(profile)
+        return {
+            "account_name": normalized_account,
+            "source": shared_profile["source"],
+            "position_size_pct": int(shared_profile["position_size_pct"]),
+            "total_position_pct": int(shared_profile["total_position_pct"]),
+            "stop_loss_pct": int(shared_profile["stop_loss_pct"]),
+            "take_profit_pct": int(shared_profile["take_profit_pct"]),
+        }
 
     def bulk_set_interval_minutes(self, monitor_type: str, interval_minutes: int) -> int:
         normalized_interval = max(1, int(interval_minutes or 1))
@@ -1012,7 +1333,11 @@ class MonitoringRepository:
 
         from asset_repository import AssetRepository, STATUS_PORTFOLIO, STATUS_RESEARCH
 
-        account_name = item_data.get("account_name") or DEFAULT_ACCOUNT_NAME
+        account_name = self._normalize_item_account_name(
+            item_data.get("account_name"),
+            monitor_type=monitor_type,
+        ) or DEFAULT_ACCOUNT_NAME
+        item_data["account_name"] = account_name
         asset_repo = AssetRepository(self.db_path)
         asset = asset_repo.get_asset_by_symbol(item_data["symbol"], account_name)
         if asset is None:
@@ -1046,7 +1371,11 @@ class MonitoringRepository:
         monitor_type = item_data["monitor_type"]
         symbol = item_data["symbol"]
         managed = bool(item_data.get("managed_by_portfolio", False))
-        account_name = item_data.get("account_name")
+        account_name = self._normalize_item_account_name(
+            item_data.get("account_name"),
+            monitor_type=monitor_type,
+            keep_none=True,
+        )
         asset_id = item_data.get("asset_id")
         portfolio_stock_id = item_data.get("portfolio_stock_id")
 
@@ -1062,7 +1391,7 @@ class MonitoringRepository:
                 return by_asset[0]
 
         if monitor_type == "ai_task":
-            target_account = account_name or DEFAULT_ACCOUNT_NAME
+            target_account = self._normalize_account_name_value(account_name)
             by_account_symbol = self.get_item_by_symbol(
                 symbol,
                 monitor_type="ai_task",
@@ -1128,9 +1457,13 @@ class MonitoringRepository:
                 "notification_enabled": item_data.get("notification_enabled", existing.get("notification_enabled", True)),
                 "managed_by_portfolio": item_data.get("managed_by_portfolio", existing.get("managed_by_portfolio", False)),
                 "account_name": (
-                    item_data.get("account_name") or existing.get("account_name") or DEFAULT_ACCOUNT_NAME
+                    self._normalize_account_name_value(item_data.get("account_name") or existing.get("account_name"))
                     if monitor_type == "ai_task"
-                    else item_data.get("account_name", existing.get("account_name"))
+                    else self._normalize_item_account_name(
+                        item_data.get("account_name", existing.get("account_name")),
+                        monitor_type=monitor_type,
+                        keep_none=True,
+                    )
                 ),
                 "asset_id": item_data.get("asset_id", existing.get("asset_id")),
                 "portfolio_stock_id": item_data.get("portfolio_stock_id", existing.get("portfolio_stock_id")),
@@ -1148,9 +1481,16 @@ class MonitoringRepository:
         def _create() -> int:
             bound_item = self._ensure_asset_binding(dict(item_data))
             config = self._sanitize_monitor_config(bound_item.get("config") or {})
-            account_name = bound_item.get("account_name")
-            if bound_item.get("monitor_type") == "ai_task":
-                account_name = account_name or DEFAULT_ACCOUNT_NAME
+            monitor_type = bound_item.get("monitor_type")
+            account_name = self._normalize_item_account_name(
+                bound_item.get("account_name"),
+                monitor_type=monitor_type,
+                keep_none=True,
+            )
+            if monitor_type == "ai_task":
+                account_name = self._normalize_account_name_value(account_name)
+                bound_item["account_name"] = account_name
+            else:
                 bound_item["account_name"] = account_name
             integrity_error = None
             item_id = None
@@ -1215,6 +1555,9 @@ class MonitoringRepository:
 
         fields: List[str] = []
         values: List[object] = []
+        existing_item = None
+        if "account_name" in updates and "monitor_type" not in updates:
+            existing_item = self.get_item(item_id)
         scalar_fields = {
             "symbol",
             "name",
@@ -1243,6 +1586,12 @@ class MonitoringRepository:
                 value = 1 if value else 0
             if key == "interval_minutes":
                 value = self._normalize_interval_minutes(value)
+            if key == "account_name":
+                value = self._normalize_item_account_name(
+                    value,
+                    monitor_type=updates.get("monitor_type") or (existing_item or {}).get("monitor_type"),
+                    keep_none=True,
+                )
             fields.append(f"{key} = ?")
             values.append(value)
 
@@ -1332,7 +1681,13 @@ class MonitoringRepository:
             params.append(symbol)
         if account_name is not None:
             clauses.append("account_name = ?")
-            params.append(account_name)
+            params.append(
+                self._normalize_item_account_name(
+                    account_name,
+                    monitor_type=monitor_type,
+                    keep_none=True,
+                )
+            )
         if asset_id is not None:
             clauses.append("asset_id = ?")
             params.append(asset_id)
@@ -1354,7 +1709,12 @@ class MonitoringRepository:
         item_data = self._ensure_asset_binding(dict(item_data))
         monitor_type = item_data["monitor_type"]
         managed = bool(item_data.get("managed_by_portfolio", False))
-        account_name = item_data.get("account_name")
+        account_name = self._normalize_item_account_name(
+            item_data.get("account_name"),
+            monitor_type=monitor_type,
+            keep_none=True,
+        )
+        item_data["account_name"] = account_name
         existing = self._find_existing_item_for_upsert(item_data)
 
         if not existing:
@@ -1372,9 +1732,13 @@ class MonitoringRepository:
             "notification_enabled": item_data.get("notification_enabled", existing["notification_enabled"]),
             "managed_by_portfolio": managed,
             "account_name": (
-                (account_name or DEFAULT_ACCOUNT_NAME)
+                self._normalize_account_name_value(account_name)
                 if monitor_type == "ai_task"
-                else item_data.get("account_name", existing.get("account_name"))
+                else self._normalize_item_account_name(
+                    item_data.get("account_name", existing.get("account_name")),
+                    monitor_type=monitor_type,
+                    keep_none=True,
+                )
             ),
             "asset_id": item_data.get("asset_id", existing.get("asset_id")),
             "portfolio_stock_id": item_data.get("portfolio_stock_id", existing.get("portfolio_stock_id")),
@@ -1890,11 +2254,13 @@ class MonitoringRepository:
                         payload=task,
                     )
 
+            account_risk = self.resolve_account_risk_profile(account_name, task)
             config = {
                 "task_name": task.get("task_name"),
-                "position_size_pct": task.get("position_size_pct", 20),
-                "stop_loss_pct": task.get("stop_loss_pct", 5),
-                "take_profit_pct": task.get("take_profit_pct", 10),
+                "position_size_pct": account_risk["position_size_pct"],
+                "total_position_pct": account_risk["total_position_pct"],
+                "stop_loss_pct": account_risk["stop_loss_pct"],
+                "take_profit_pct": account_risk["take_profit_pct"],
                 "notify_email": task.get("notify_email"),
                 "notify_webhook": task.get("notify_webhook"),
                 "has_position": bool(task.get("has_position", 0)),

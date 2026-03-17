@@ -9,6 +9,7 @@ from investment_db_utils import (
     DEFAULT_ACCOUNT_NAME,
     connect_sqlite,
     get_metadata,
+    normalize_account_name,
     resolve_investment_db_path,
     set_metadata,
 )
@@ -28,11 +29,14 @@ STATUS_PRIORITY = {
 class AssetRepository:
     """Canonical storage for the investment lifecycle domain."""
 
+    ACCOUNT_NORMALIZATION_KEY = "assets_account_normalization_v1"
+
     def __init__(self, db_path: str = "investment.db"):
         self.seed_db_path = db_path
         self.db_path = resolve_investment_db_path(db_path)
         self._init_database()
         self._migrate_existing_canonical_tables()
+        self._normalize_account_names_if_needed()
 
     def _connect(self) -> sqlite3.Connection:
         return connect_sqlite(self.db_path)
@@ -146,8 +150,7 @@ class AssetRepository:
 
     @staticmethod
     def _normalize_account_name(account_name: Optional[str]) -> str:
-        normalized = str(account_name or "").strip()
-        return normalized or DEFAULT_ACCOUNT_NAME
+        return str(normalize_account_name(account_name))
 
     @staticmethod
     def _normalize_symbol(symbol: Optional[str]) -> str:
@@ -188,6 +191,16 @@ class AssetRepository:
         normalized = str(status or "").strip().lower()
         return normalized if normalized in {STATUS_WATCHLIST, STATUS_RESEARCH} else STATUS_WATCHLIST
 
+    @staticmethod
+    def _parse_sortable_timestamp(raw_value: Optional[object]) -> datetime:
+        text = str(raw_value or "").strip()
+        if not text:
+            return datetime.min
+        try:
+            return datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return datetime.min
+
     def _row_to_asset(self, row: sqlite3.Row) -> Dict:
         asset = dict(row)
         asset["monitor_enabled"] = bool(asset.get("monitor_enabled", 1))
@@ -212,6 +225,275 @@ class AssetRepository:
             (table_name,),
         )
         return cursor.fetchone() is not None
+
+    def _asset_merge_priority(self, asset: Dict) -> tuple:
+        return (
+            STATUS_PRIORITY[self._normalize_status(asset.get("status"))],
+            1 if bool(asset.get("monitor_enabled", 1)) else 0,
+            self._parse_sortable_timestamp(asset.get("updated_at")),
+            self._parse_sortable_timestamp(asset.get("created_at")),
+            int(asset.get("id") or 0),
+        )
+
+    def _merge_asset_rows(self, rows: List[Dict], normalized_account_name: str) -> Dict[str, Any]:
+        ordered_rows = sorted(rows, key=self._asset_merge_priority, reverse=True)
+        portfolio_row = next(
+            (
+                row for row in ordered_rows
+                if self._normalize_status(row.get("status")) == STATUS_PORTFOLIO
+            ),
+            ordered_rows[0],
+        )
+        merged_status = self._normalize_status(ordered_rows[0].get("status"))
+        merged_name = next(
+            (str(row.get("name") or "").strip() for row in ordered_rows if str(row.get("name") or "").strip()),
+            self._normalize_symbol(ordered_rows[0].get("symbol")),
+        )
+        merged_note = next(
+            (row.get("note") for row in ordered_rows if row.get("note") not in (None, "")),
+            None,
+        )
+        merged_origin_analysis_id = next(
+            (
+                row.get("origin_analysis_id")
+                for row in ordered_rows
+                if row.get("origin_analysis_id") not in (None, "")
+            ),
+            None,
+        )
+        merged_last_trade_at = next(
+            (
+                str(row.get("last_trade_at") or "").strip()
+                for row in ordered_rows
+                if str(row.get("last_trade_at") or "").strip()
+            ),
+            None,
+        )
+        return {
+            "account_name": normalized_account_name,
+            "symbol": self._normalize_symbol(ordered_rows[0].get("symbol")),
+            "name": merged_name,
+            "status": merged_status,
+            "cost_price": portfolio_row.get("cost_price") if merged_status == STATUS_PORTFOLIO else None,
+            "quantity": portfolio_row.get("quantity") if merged_status == STATUS_PORTFOLIO else None,
+            "note": merged_note,
+            "monitor_enabled": self._bool_to_int(any(bool(row.get("monitor_enabled", 1)) for row in ordered_rows)),
+            "origin_analysis_id": merged_origin_analysis_id,
+            "last_trade_at": merged_last_trade_at,
+        }
+
+    def _rewire_table_reference(
+        self,
+        cursor: sqlite3.Cursor,
+        table_name: str,
+        column_name: str,
+        source_asset_id: int,
+        target_asset_id: int,
+    ) -> int:
+        if not self._table_exists(cursor.connection, table_name):
+            return 0
+        cursor.execute(f"PRAGMA table_info({table_name})")
+        columns = {str(row[1]) for row in cursor.fetchall()}
+        if column_name not in columns:
+            return 0
+        cursor.execute(
+            f"UPDATE {table_name} SET {column_name} = ? WHERE {column_name} = ?",
+            (target_asset_id, source_asset_id),
+        )
+        return int(cursor.rowcount or 0)
+
+    def _rewire_monitoring_items(
+        self,
+        cursor: sqlite3.Cursor,
+        source_asset_id: int,
+        target_asset_id: int,
+    ) -> int:
+        if not self._table_exists(cursor.connection, "monitoring_items"):
+            return 0
+
+        changed = 0
+        cursor.execute(
+            """
+            SELECT *
+            FROM monitoring_items
+            WHERE asset_id = ?
+            ORDER BY id ASC
+            """,
+            (source_asset_id,),
+        )
+        source_items = [dict(row) for row in cursor.fetchall()]
+        for item in source_items:
+            item_id = int(item["id"])
+            monitor_type = str(item.get("monitor_type") or "").strip().lower()
+            cursor.execute(
+                """
+                SELECT id
+                FROM monitoring_items
+                WHERE asset_id = ?
+                  AND monitor_type = ?
+                  AND id != ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (target_asset_id, monitor_type, item_id),
+            )
+            existing_row = cursor.fetchone()
+            if existing_row:
+                target_item_id = int(existing_row["id"])
+                if self._table_exists(cursor.connection, "monitoring_events"):
+                    cursor.execute(
+                        "UPDATE monitoring_events SET monitoring_item_id = ? WHERE monitoring_item_id = ?",
+                        (target_item_id, item_id),
+                    )
+                    changed += int(cursor.rowcount or 0)
+                if self._table_exists(cursor.connection, "monitoring_price_history"):
+                    cursor.execute(
+                        "UPDATE monitoring_price_history SET monitoring_item_id = ? WHERE monitoring_item_id = ?",
+                        (target_item_id, item_id),
+                    )
+                    changed += int(cursor.rowcount or 0)
+                cursor.execute("DELETE FROM monitoring_items WHERE id = ?", (item_id,))
+                changed += int(cursor.rowcount or 0)
+                continue
+
+            cursor.execute(
+                """
+                UPDATE monitoring_items
+                SET asset_id = ?,
+                    portfolio_stock_id = CASE WHEN portfolio_stock_id = ? THEN ? ELSE portfolio_stock_id END
+                WHERE id = ?
+                """,
+                (target_asset_id, source_asset_id, target_asset_id, item_id),
+            )
+            changed += int(cursor.rowcount or 0)
+
+        cursor.execute(
+            """
+            UPDATE monitoring_items
+            SET portfolio_stock_id = ?
+            WHERE portfolio_stock_id = ?
+            """,
+            (target_asset_id, source_asset_id),
+        )
+        changed += int(cursor.rowcount or 0)
+        return changed
+
+    def _rewire_asset_references(self, cursor: sqlite3.Cursor, source_asset_id: int, target_asset_id: int) -> int:
+        rewired = 0
+        rewired += self._rewire_monitoring_items(cursor, source_asset_id, target_asset_id)
+        reference_map = {
+            "asset_trade_history": ("asset_id",),
+            "asset_action_queue": ("asset_id",),
+            "analysis_records": ("asset_id", "portfolio_stock_id"),
+            "ai_decisions": ("asset_id", "portfolio_stock_id"),
+            "portfolio_trade_history": ("portfolio_stock_id",),
+            "portfolio_analysis_history": ("portfolio_stock_id",),
+        }
+        for table_name, columns in reference_map.items():
+            for column_name in columns:
+                rewired += self._rewire_table_reference(
+                    cursor,
+                    table_name,
+                    column_name,
+                    source_asset_id,
+                    target_asset_id,
+                )
+        return rewired
+
+    def _normalize_account_names_if_needed(self) -> None:
+        conn = self._connect()
+        try:
+            if get_metadata(conn, self.ACCOUNT_NORMALIZATION_KEY):
+                return
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT *
+                FROM assets
+                WHERE deleted_at IS NULL
+                ORDER BY id ASC
+                """
+            )
+            rows = [dict(row) for row in cursor.fetchall()]
+            groups: Dict[tuple[str, str], List[Dict]] = {}
+            for row in rows:
+                key = (
+                    self._normalize_account_name(row.get("account_name")),
+                    self._normalize_symbol(row.get("symbol")),
+                )
+                groups.setdefault(key, []).append(row)
+
+            updated_assets = 0
+            merged_assets = 0
+            rewired_references = 0
+            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+            for (normalized_account_name, _symbol), group_rows in groups.items():
+                ordered_rows = sorted(group_rows, key=self._asset_merge_priority, reverse=True)
+                target_row = ordered_rows[0]
+                duplicate_rows = ordered_rows[1:]
+
+                for duplicate_row in duplicate_rows:
+                    rewired_references += self._rewire_asset_references(
+                        cursor,
+                        int(duplicate_row["id"]),
+                        int(target_row["id"]),
+                    )
+                    cursor.execute(
+                        """
+                        UPDATE assets
+                        SET deleted_at = ?, updated_at = ?
+                        WHERE id = ? AND deleted_at IS NULL
+                        """,
+                        (now, now, int(duplicate_row["id"])),
+                    )
+                    merged_assets += 1 if cursor.rowcount > 0 else 0
+
+                merged_row = self._merge_asset_rows(ordered_rows, normalized_account_name)
+                fields: List[str] = []
+                values: List[Any] = []
+                for key in (
+                    "account_name",
+                    "symbol",
+                    "name",
+                    "status",
+                    "cost_price",
+                    "quantity",
+                    "note",
+                    "monitor_enabled",
+                    "origin_analysis_id",
+                    "last_trade_at",
+                ):
+                    if merged_row[key] != target_row.get(key):
+                        fields.append(f"{key} = ?")
+                        values.append(merged_row[key])
+                if not fields:
+                    continue
+                fields.append("updated_at = ?")
+                values.append(now)
+                values.append(int(target_row["id"]))
+                cursor.execute(
+                    f"UPDATE assets SET {', '.join(fields)} WHERE id = ?",
+                    tuple(values),
+                )
+                updated_assets += 1 if cursor.rowcount > 0 else 0
+
+            set_metadata(
+                conn,
+                self.ACCOUNT_NORMALIZATION_KEY,
+                json.dumps(
+                    {
+                        "updated_assets": updated_assets,
+                        "merged_assets": merged_assets,
+                        "rewired_references": rewired_references,
+                        "updated_at": now,
+                    },
+                    ensure_ascii=False,
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
 
     def _migrate_existing_canonical_tables(self) -> None:
         conn = self._connect()
@@ -431,6 +713,15 @@ class AssetRepository:
             )
             for row in cursor.fetchall():
                 trade = dict(row)
+                asset_id = trade.get("portfolio_stock_id")
+                if asset_id is None:
+                    continue
+                cursor.execute(
+                    "SELECT 1 FROM assets WHERE id = ? LIMIT 1",
+                    (asset_id,),
+                )
+                if cursor.fetchone() is None:
+                    continue
                 cursor.execute(
                     """
                     INSERT OR IGNORE INTO asset_trade_history (
@@ -440,7 +731,7 @@ class AssetRepository:
                     """,
                     (
                         trade.get("id"),
-                        trade.get("portfolio_stock_id"),
+                        asset_id,
                         trade.get("trade_date"),
                         trade.get("trade_type"),
                         trade.get("price"),

@@ -8,7 +8,7 @@
   box-sizing: border-box;
 }
 
-.stack > * {
+.stack>* {
   width: 100%;
   max-width: 100%;
   min-width: 0;
@@ -26,7 +26,7 @@
   box-sizing: border-box;
 }
 
-.grid > * {
+.grid>* {
   min-width: 0;
   max-width: 100%;
 }
@@ -62,7 +62,7 @@
   gap: 14px;
 }
 
-.moduleHeader > * {
+.moduleHeader>* {
   min-width: 0;
 }
 
@@ -89,7 +89,7 @@
   min-width: 0;
 }
 
-.moduleToolbar > * {
+.moduleToolbar>* {
   min-width: 0;
   max-width: 100%;
 }
@@ -265,6 +265,45 @@
   resize: vertical;
 }
 
+.field input[type="date"],
+.actions > input[type="date"],
+.responsiveActionGrid > input[type="date"] {
+  -webkit-appearance: none;
+  appearance: none;
+  display: block;
+  inline-size: 100%;
+  width: 100%;
+  max-width: 100%;
+  max-inline-size: 100%;
+  min-width: 0;
+  min-inline-size: 0;
+  padding-inline: 8px;
+  overflow: hidden;
+  text-align: left;
+}
+
+.field input[type="date"]::-webkit-datetime-edit,
+.actions > input[type="date"]::-webkit-datetime-edit,
+.responsiveActionGrid > input[type="date"]::-webkit-datetime-edit {
+  min-width: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+.field input[type="date"]::-webkit-datetime-edit-fields-wrapper,
+.actions > input[type="date"]::-webkit-datetime-edit-fields-wrapper,
+.responsiveActionGrid > input[type="date"]::-webkit-datetime-edit-fields-wrapper {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.field input[type="date"]::-webkit-calendar-picker-indicator,
+.actions > input[type="date"]::-webkit-calendar-picker-indicator,
+.responsiveActionGrid > input[type="date"]::-webkit-calendar-picker-indicator {
+  margin: 0;
+  padding: 0;
+}
+
 .newsFlowPage {
   width: 100%;
   max-width: 100%;
@@ -294,7 +333,7 @@
   box-sizing: border-box;
 }
 
-.newsFlowToolbar > * {
+.newsFlowToolbar>* {
   min-width: 0;
 }
 
@@ -302,18 +341,18 @@
   min-width: 0;
 }
 
-.newsFlowToolbar > .primaryButton,
-.newsFlowToolbar > .secondaryButton,
-.newsFlowToolbar > .dangerButton,
-.newsFlowToolbar > .tertiaryButton {
+.newsFlowToolbar>.primaryButton,
+.newsFlowToolbar>.secondaryButton,
+.newsFlowToolbar>.dangerButton,
+.newsFlowToolbar>.tertiaryButton {
   width: 100%;
   justify-content: center;
 }
 
-.newsFlowToolbar > .primaryButton:only-child,
-.newsFlowToolbar > .secondaryButton:only-child,
-.newsFlowToolbar > .dangerButton:only-child,
-.newsFlowToolbar > .tertiaryButton:only-child {
+.newsFlowToolbar>.primaryButton:only-child,
+.newsFlowToolbar>.secondaryButton:only-child,
+.newsFlowToolbar>.dangerButton:only-child,
+.newsFlowToolbar>.tertiaryButton:only-child {
   grid-column: 1 / -1;
 }
 
@@ -649,36 +688,126 @@
   line-height: 1.35;
 }
 
-.holdingMetricCell > div + div {
+.holdingMetricCell>div+div {
   margin-top: 2px;
 }
 
-.holdingSymbolButton {
-  display: grid;
-  gap: 2px;
-  width: 100%;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  text-align: left;
+.holdingRow {
   cursor: pointer;
 }
 
-.holdingSymbolButton:hover strong,
-.holdingSymbolButton:focus-visible strong {
-  color: color-mix(in srgb, var(--accent) 82%, var(--text-main));
+.holdingRow:hover td {
+  background: color-mix(in srgb, var(--bg-panel-strong) 92%, var(--accent) 8%);
 }
 
-.holdingSymbolButton:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--accent) 54%, white);
-  outline-offset: 2px;
-  border-radius: 8px;
+.holdingRowActive td {
+  background: color-mix(in srgb, var(--bg-panel-strong) 90%, var(--accent) 10%);
+}
+
+.holdingSymbolCell {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  text-align: left;
+}
+
+.holdingRow:hover .holdingSymbolCell strong,
+.holdingRowActive .holdingSymbolCell strong {
+  color: color-mix(in srgb, var(--accent) 82%, var(--text-main));
 }
 
 .holdingSymbolCode {
   color: var(--text-muted);
+}
+
+.holdingActionMenuRow td {
+  padding: 10px 0 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.holdingActionPanel {
+  display: grid;
+  gap: 0;
+}
+
+.holdingActionMenu {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0;
+  width: 100%;
+  overflow: hidden;
+  border: 1px solid var(--line-soft);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--bg-panel-strong) 92%, black 8%);
+}
+
+.holdingActionMenuButton {
+  min-height: 36px;
+  padding: 5px 4px;
+  border: 0;
+  border-left: 1px solid var(--line-soft);
+  background: transparent;
+  color: var(--text-main);
+  font-size: 13px;
+  line-height: 1.4;
+  text-align: center;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.holdingActionMenuButton:first-child {
+  border-left: 0;
+}
+
+.holdingActionMenuButtonActive {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--text-main);
+  font-weight: 700;
+}
+
+.holdingActionMenuButton:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.holdingActionMenuButton:disabled {
+  color: var(--text-muted);
+  cursor: not-allowed;
+}
+
+.holdingActionContent {
+  padding: 12px;
+  border: 1px solid var(--line-soft);
+  border-top: 0;
+  border-radius: 0 0 16px 16px;
+  background: color-mix(in srgb, var(--bg-panel) 96%, transparent);
+}
+
+.holdingInlineForm {
+  display: grid;
+  gap: 12px;
+}
+
+.holdingHistoryList {
+  display: grid;
+  gap: 8px;
+}
+
+.holdingHistoryListItem {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg-panel-strong) 94%, transparent);
+  color: var(--text-main);
+  text-align: left;
+}
+
+.holdingHistoryListItem span {
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 .numericCell {
@@ -776,6 +905,24 @@
 .smartMonitorTaskTitle {
   font-size: 15px;
   line-height: 1.5;
+}
+
+.smartMonitorStateToggleEnabled,
+.smartMonitorStateToggleDisabled {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: 13px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.smartMonitorStateToggleEnabled {
+  color: var(--success);
+}
+
+.smartMonitorStateToggleDisabled {
+  color: var(--text-muted);
 }
 
 .taskIndicatorText {
@@ -1027,7 +1174,7 @@
   width: 100%;
 }
 
-.dualToggleGrid > * {
+.dualToggleGrid>* {
   width: 100%;
   justify-content: center;
 }
@@ -1094,8 +1241,8 @@
   white-space: nowrap;
 }
 
-.historyDetailTabs > * + *::before,
-.historyDetailTabsGrid > * + *::before {
+.historyDetailTabs>*+*::before,
+.historyDetailTabsGrid>*+*::before {
   content: "";
   position: absolute;
   left: -1px;
@@ -1107,10 +1254,10 @@
   transition: opacity var(--shell-transition);
 }
 
-.historyDetailTabs > .nestedTabButtonActive::before,
-.historyDetailTabs > .nestedTabButtonActive + *::before,
-.historyDetailTabsGrid > .nestedTabButtonActive::before,
-.historyDetailTabsGrid > .nestedTabButtonActive + *::before {
+.historyDetailTabs>.nestedTabButtonActive::before,
+.historyDetailTabs>.nestedTabButtonActive+*::before,
+.historyDetailTabsGrid>.nestedTabButtonActive::before,
+.historyDetailTabsGrid>.nestedTabButtonActive+*::before {
   opacity: 0;
 }
 
@@ -1639,7 +1786,7 @@
   min-width: 0;
 }
 
-.schedulerControlActions > * {
+.schedulerControlActions>* {
   width: 100%;
 }
 
@@ -1665,7 +1812,7 @@
   flex: 0 0 auto;
 }
 
-.switchControl > input {
+.switchControl>input {
   position: absolute;
   inset: 0;
   opacity: 0;
@@ -1699,16 +1846,16 @@
   transition: transform var(--shell-transition);
 }
 
-.switchControl > input:checked + .switchTrack {
+.switchControl>input:checked+.switchTrack {
   background: #49e28c;
   border-color: #49e28c;
 }
 
-.switchControl > input:checked + .switchTrack .switchThumb {
+.switchControl>input:checked+.switchTrack .switchThumb {
   transform: translateX(36px);
 }
 
-.switchControl > input:focus-visible + .switchTrack {
+.switchControl>input:focus-visible+.switchTrack {
   outline: 2px solid color-mix(in srgb, var(--accent) 54%, white);
   outline-offset: 2px;
 }
@@ -1829,8 +1976,8 @@
     gap: 0;
   }
 
-  .moduleBody > * + *,
-  .schedulerControl > * + * {
+  .moduleBody>*+*,
+  .schedulerControl>*+* {
     margin-top: 12px;
   }
 
@@ -1843,8 +1990,8 @@
   }
 
   /* Flatten nested section cards into divider-separated blocks on phones. */
-  .moduleBody > .moduleSection + .moduleSection,
-  .schedulerControl > .moduleSection + .moduleSection {
+  .moduleBody>.moduleSection+.moduleSection,
+  .schedulerControl>.moduleSection+.moduleSection {
     margin-top: 0;
     padding-top: 14px;
     border-top: 1px solid color-mix(in srgb, var(--line-strong) 58%, transparent);
@@ -2004,8 +2151,8 @@
     font-size: 14px;
   }
 
-  .historyDetailTabs > * + *::before,
-  .historyDetailTabsGrid > * + *::before {
+  .historyDetailTabs>*+*::before,
+  .historyDetailTabsGrid>*+*::before {
     height: 24px;
   }
 
@@ -2068,6 +2215,12 @@
   .holdingsTableCompact th:nth-child(4),
   .holdingsTableCompact td:nth-child(4) {
     width: 18%;
+  }
+
+  .holdingActionMenuButton {
+    min-height: 26px;
+    padding: 4px 3px;
+    font-size: 12px;
   }
 
   .actions {
@@ -2207,6 +2360,12 @@
 
   .holdingsTableCompact .inlineMiniButton {
     padding: 3px 4px;
+    font-size: 11px;
+  }
+
+  .holdingActionMenuButton {
+    min-height: 26px;
+    padding: 4px 3px;
     font-size: 11px;
   }
 

@@ -18,6 +18,7 @@ from portfolio_analysis_tasks import (
     PORTFOLIO_ANALYSIS_GLOBAL_SESSION_ID,
     portfolio_analysis_task_manager,
 )
+from investment_db_utils import DEFAULT_ACCOUNT_NAME, normalize_account_name
 
 
 @dataclass
@@ -281,7 +282,7 @@ class PortfolioScheduler:
     def set_account_task_configs(self, configs: Optional[List[dict]]) -> None:
         normalized: dict[str, PortfolioAccountTaskConfig] = {}
         for item in configs or []:
-            account_name = str((item or {}).get("account_name") or "").strip()
+            account_name = normalize_account_name((item or {}).get("account_name"), keep_none=True)
             if not account_name or account_name == getattr(portfolio_manager, "AGGREGATE_ACCOUNT_NAME", "全部账户"):
                 continue
             normalized[account_name] = PortfolioAccountTaskConfig(
@@ -323,7 +324,7 @@ class PortfolioScheduler:
 
     def _collect_available_accounts(self) -> List[str]:
         stocks = portfolio_manager.get_all_stocks()
-        return sorted({stock.get("account_name", "默认账户") for stock in stocks if stock.get("code")})
+        return sorted({str(normalize_account_name(stock.get("account_name"))) for stock in stocks if stock.get("code")})
 
     def _run_scheduled_analysis_task(self, report_progress, *, trigger: str) -> dict:
         config = self.get_task_config()
@@ -369,7 +370,7 @@ class PortfolioScheduler:
                 account_stock_count = account_counts.get(account_name, 0)
                 if account_stock_count <= 0:
                     continue
-                account_label = account_name or "默认账户"
+                account_label = account_name or DEFAULT_ACCOUNT_NAME
 
                 def progress_callback(current, callback_total, code, status, *, offset=completed_offset, label=account_label):
                     absolute_current = min(stock_count, offset + int(current or 0))

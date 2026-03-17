@@ -548,8 +548,17 @@ class SectorStrategyEngine:
         try:
             # 提取数据日期范围
             data_date_range = f"{local_today_str()} 数据分析"
+            analysis_payload = dict(results)
+            analysis_payload["data_summary"] = {
+                "from_cache": bool(original_data.get("from_cache")),
+                "cache_warning": str(original_data.get("cache_warning") or ""),
+                "data_timestamp": str(original_data.get("timestamp") or ""),
+                "market_overview": original_data.get("market_overview", {}) or {},
+                "sectors": original_data.get("sectors", {}) or {},
+                "concepts": original_data.get("concepts", {}) or {},
+            }
 
-            report_view = normalize_sector_strategy_result(results)
+            report_view = normalize_sector_strategy_result(analysis_payload)
             summary_data = build_sector_strategy_summary(report_view)
             recommended_sectors = derive_sector_strategy_recommended_sectors(report_view)
             summary = summary_data.get("headline", "智策板块分析报告")
@@ -561,7 +570,7 @@ class SectorStrategyEngine:
             # 保存到数据库
             report_id = self.database.save_analysis_report(
                 data_date_range=data_date_range,
-                analysis_content=results,
+                analysis_content=analysis_payload,
                 recommended_sectors=recommended_sectors,
                 summary=summary,
                 confidence_score=confidence_score,

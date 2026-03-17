@@ -1,6 +1,13 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
+import {
+  ALL_ACCOUNT_NAME,
+  DEFAULT_ACCOUNT_NAME,
+  normalizeAccountName,
+  supportedAccountOptions,
+} from "../lib/accounts";
+
 interface DraftPosition {
   code: string;
   name?: string;
@@ -10,10 +17,6 @@ interface DraftPosition {
 
 export interface PortfolioPageCache {
   stocks: unknown[];
-  trades: unknown[];
-  tradePage: number;
-  tradeTotal: number;
-  tradePageSize: number;
   risk: unknown | null;
   scheduler: unknown | null;
   schedulerTimes: string;
@@ -39,20 +42,23 @@ interface PortfolioState {
 export const usePortfolioStore = create<PortfolioState>()(
   persist(
     (set) => ({
-      selectedAccount: "ly",
-      knownAccounts: ["ly", "zfy", "全部账户"],
+      selectedAccount: DEFAULT_ACCOUNT_NAME,
+      knownAccounts: supportedAccountOptions(true),
       draftPosition: null,
       holdingsAnalysisTaskId: null,
       schedulerTaskId: null,
       pageCacheByAccount: {},
-      setSelectedAccount: (selectedAccount) => set({ selectedAccount }),
+      setSelectedAccount: (selectedAccount) =>
+        set({
+          selectedAccount:
+            normalizeAccountName(selectedAccount, { allowAggregate: true }) || DEFAULT_ACCOUNT_NAME,
+        }),
       setKnownAccounts: (accounts) =>
         set((state) => ({
           knownAccounts: Array.from(
             new Set(
               [...state.knownAccounts, ...accounts]
-                .map((item) => item.trim())
-                .filter(Boolean),
+                .map((item) => normalizeAccountName(item, { allowAggregate: true }) || DEFAULT_ACCOUNT_NAME),
             ),
           ),
         })),
@@ -83,18 +89,19 @@ export const usePortfolioStore = create<PortfolioState>()(
         const typedState = (persistedState as Partial<PortfolioState> | undefined) ?? {};
         const knownAccounts = Array.from(
           new Set(
-            ["ly", "zfy", "全部账户", ...((typedState.knownAccounts ?? currentState.knownAccounts) || [])]
-              .map((item) => (item === "默认账户" ? "ly" : item).trim())
-              .filter(Boolean),
+            [
+              ...supportedAccountOptions(true),
+              ...((typedState.knownAccounts ?? currentState.knownAccounts) || []),
+            ]
+              .map((item) => normalizeAccountName(item, { allowAggregate: true }) || DEFAULT_ACCOUNT_NAME),
           ),
         );
         return {
           ...currentState,
           ...typedState,
           selectedAccount:
-            typedState.selectedAccount === "默认账户"
-              ? "ly"
-              : (typedState.selectedAccount ?? currentState.selectedAccount),
+            normalizeAccountName(typedState.selectedAccount, { allowAggregate: true })
+            || currentState.selectedAccount,
           knownAccounts: knownAccounts.length ? knownAccounts : currentState.knownAccounts,
         };
       },

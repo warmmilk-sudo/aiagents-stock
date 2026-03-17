@@ -596,6 +596,8 @@ class SectorStrategyDatabase:
     def _save_sector_data_raw(self, cursor, data_date, data_df, data_type, version):
         """保存板块原始数据"""
         for _, row in data_df.iterrows():
+            sector_name = str(row.get('板块名称', row.get('sector_name', '')))
+            sector_code = str(row.get('板块代码', row.get('sector_code', sector_name)))
             cursor.execute('''
             INSERT OR REPLACE INTO sector_raw_data 
             (data_date, sector_code, sector_name, price, change_pct, volume, 
@@ -603,8 +605,8 @@ class SectorStrategyDatabase:
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 data_date,
-                str(row.get('板块代码', row.get('sector_code', ''))),
-                str(row.get('板块名称', row.get('sector_name', ''))),
+                sector_code,
+                sector_name,
                 float(row.get('最新价', row.get('price', 0))) if pd.notna(row.get('最新价', row.get('price', 0))) else 0,
                 float(row.get('涨跌幅', row.get('change_pct', 0))) if pd.notna(row.get('涨跌幅', row.get('change_pct', 0))) else 0,
                 float(row.get('成交量', row.get('volume', 0))) if pd.notna(row.get('成交量', row.get('volume', 0))) else 0,
@@ -648,13 +650,15 @@ class SectorStrategyDatabase:
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'market_overview', ?)
             ''', (
                 data_date,
-                str(row.get('名称', '')),
+                str(row.get('代码', row.get('名称', ''))),
                 str(row.get('名称', '')),
                 float(row.get('最新价', 0)) if pd.notna(row.get('最新价', 0)) else 0,
                 float(row.get('涨跌幅', 0)) if pd.notna(row.get('涨跌幅', 0)) else 0,
                 float(row.get('成交量', 0)) if pd.notna(row.get('成交量', 0)) else 0,
                 float(row.get('成交额', 0)) if pd.notna(row.get('成交额', 0)) else 0,
-                0, 0, 0,
+                float(row.get('总市值', 0)) if pd.notna(row.get('总市值', 0)) else 0,
+                float(row.get('市盈率', 0)) if pd.notna(row.get('市盈率', 0)) else 0,
+                float(row.get('市净率', 0)) if pd.notna(row.get('市净率', 0)) else 0,
                 version
             ))
     
@@ -817,16 +821,105 @@ class SectorStrategyDatabase:
         finally:
             conn.close()
 
-    def get_latest_raw_data(self, key: str, within_hours: int = 24):
+    def _build_raw_data_payload(self, key: str, data_date: str, raw_df: pd.DataFrame):
+        if raw_df.empty:
+            return None
+
+        if key in ['sectors', 'concepts']:
+            result = {}
+            for _, row in raw_df.iterrows():
+                name = str(row.get('sector_name', ''))
+                result[name] = {
+                    'name': name,
+                    'change_pct': float(row.get('change_pct', 0) or 0),
+                    'price': float(row.get('price', 0) or 0),
+                    'volume': float(row.get('volume', 0) or 0),
+                    'turnover': float(row.get('turnover', 0) or 0),
+                    'market_cap': float(row.get('market_cap', 0) or 0),
+                    'pe_ratio': float(row.get('pe_ratio', 0) or 0),
+                    'pb_ratio': float(row.get('pb_ratio', 0) or 0),
+                }
+            return {
+                'data_date': data_date,
+                'data_content': result
+            }
+
+        if key == 'fund_flow':
+            today = []
+            for _, row in raw_df.iterrows():
+                name = str(row.get('sector_name', ''))
+                today.append({
+                    'sector': name,
+                    'main_net_inflow': float(row.get('price', 0) or 0),
+                    'main_net_inflow_pct': float(row.get('change_pct', 0) or 0),
+                    'super_large_net_inflow': float(row.get('volume', 0) or 0),
+                    'super_large_net_inflow_pct': float(row.get('turnover', 0) or 0),
+                    'large_net_inflow': float(row.get('market_cap', 0) or 0),
+                    'large_net_inflow_pct': float(row.get('pe_ratio', 0) or 0),
+                    'medium_net_inflow': 0,
+                    'small_net_inflow': 0
+                })
+            return {
+                'data_date': data_date,
+                'data_content': {
+                    'today': today
+                }
+            }
+
+        if key == 'market_overview':
+            overview = {}
+            for _, row in raw_df.iterrows():
+                name = str(row.get('sector_name', ''))
+                if name == '__MARKET_BREADTH__':
+                    overview['total_stocks'] = int(row.get('price', 0) or 0)
+                    overview['up_ratio'] = float(row.get('change_pct', 0) or 0)
+                    overview['up_count'] = int(row.get('volume', 0) or 0)
+                    overview['down_count'] = int(row.get('turnover', 0) or 0)
+                    overview['flat_count'] = int(row.get('market_cap', 0) or 0)
+                    overview['limit_up'] = int(row.get('pe_ratio', 0) or 0)
+                    overview['limit_down'] = int(row.get('pb_ratio', 0) or 0)
+                    continue
+
+                entry = {
+                    'price': float(row.get('price', 0) or 0),
+                    'close': float(row.get('price', 0) or 0),
+                    'change_pct': float(row.get('change_pct', 0) or 0),
+                    'turnover': float(row.get('turnover', 0) or 0),
+                    'volume': float(row.get('volume', 0) or 0)
+                }
+                if '上证' in name or '沪指' in name or 'SH' in name:
+                    overview['sh_index'] = entry
+                elif '深证' in name or 'SZ' in name:
+                    overview['sz_index'] = entry
+                elif '创业' in name or 'CYB' in name:
+                    overview['cyb_index'] = entry
+            return {
+                'data_date': data_date,
+                'data_content': overview
+            }
+
+        if key == 'north_flow':
+            total_value = float(raw_df['turnover'].sum()) if not raw_df.empty else 0
+            return {
+                'data_date': data_date,
+                'data_content': {
+                    'north_total_amount': total_value,
+                    'history': []
+                }
+            }
+
+        return None
+
+    def _get_raw_data_snapshot(self, key: str, *, data_date: str | None = None, within_hours: int | None = 24):
         """
-        获取最近within_hours小时内的原始数据并组装为分析所需结构
+        获取原始数据并组装为分析所需结构
         Args:
             key: 'sectors' | 'concepts' | 'fund_flow' | 'market_overview' | 'north_flow'
+            data_date: 指定日期（YYYY-MM-DD）
             within_hours: 有效缓存时长（小时）
         Returns:
             dict 或 None
         """
-        # 将key映射到内部data_type
         key_map = {
             'sectors': 'industry',
             'concepts': 'concept',
@@ -840,112 +933,66 @@ class SectorStrategyDatabase:
 
         conn = self.get_connection()
         try:
-            cutoff = (pd.Timestamp.now() - pd.Timedelta(hours=within_hours)).strftime('%Y-%m-%d %H:%M:%S')
-            # 选取最近版本的数据（同一天可能有多版本）
-            # 先查最近有效版本记录
-            version_df = pd.read_sql_query('''
-                SELECT data_date, version FROM data_versions
-                WHERE data_type = ? AND fetch_success = 1 
-                AND datetime(created_at) >= datetime(?)
-                ORDER BY data_date DESC, version DESC LIMIT 1
-            ''', conn, params=[data_type, cutoff])
+            if data_date:
+                version_df = pd.read_sql_query('''
+                    SELECT data_date, version FROM data_versions
+                    WHERE data_type = ? AND fetch_success = 1 AND data_date = ?
+                    ORDER BY version DESC LIMIT 1
+                ''', conn, params=[data_type, data_date])
+            else:
+                cutoff = (pd.Timestamp.now() - pd.Timedelta(hours=within_hours or 24)).strftime('%Y-%m-%d %H:%M:%S')
+                version_df = pd.read_sql_query('''
+                    SELECT data_date, version FROM data_versions
+                    WHERE data_type = ? AND fetch_success = 1 
+                    AND datetime(created_at) >= datetime(?)
+                    ORDER BY data_date DESC, version DESC LIMIT 1
+                ''', conn, params=[data_type, cutoff])
 
             if version_df.empty:
                 return None
 
-            data_date = version_df.iloc[0]['data_date']
+            resolved_date = version_df.iloc[0]['data_date']
             version = int(version_df.iloc[0]['version'])
 
-            # 读取具体行
             raw_df = pd.read_sql_query('''
                 SELECT * FROM sector_raw_data 
                 WHERE data_type = ? AND data_date = ? AND data_version = ?
-            ''', conn, params=[data_type, data_date, version])
+            ''', conn, params=[data_type, resolved_date, version])
 
-            if raw_df.empty:
-                return None
-
-            # 组装成预期结构
-            if key in ['sectors', 'concepts']:
-                result = {}
-                for _, row in raw_df.iterrows():
-                    name = str(row.get('sector_name', ''))
-                    result[name] = {
-                        'name': name,
-                        'change_pct': float(row.get('change_pct', 0) or 0),
-                        'price': float(row.get('price', 0) or 0),
-                        'volume': float(row.get('volume', 0) or 0),
-                        'turnover': float(row.get('turnover', 0) or 0),
-                        'market_cap': float(row.get('market_cap', 0) or 0),
-                        'pe_ratio': float(row.get('pe_ratio', 0) or 0),
-                        'pb_ratio': float(row.get('pb_ratio', 0) or 0),
-                    }
-                return {
-                    'data_date': data_date,
-                    'data_content': result
-                }
-
-            if key == 'fund_flow':
-                today = []
-                for _, row in raw_df.iterrows():
-                    name = str(row.get('sector_name', ''))
-                    today.append({
-                        'sector': name,
-                        'main_net_inflow': float(row.get('price', 0) or 0),  # 映射自主力净额
-                        'main_net_inflow_pct': float(row.get('change_pct', 0) or 0),
-                        'super_large_net_inflow': float(row.get('volume', 0) or 0),
-                        'super_large_net_inflow_pct': float(row.get('turnover', 0) or 0),
-                        'large_net_inflow': float(row.get('market_cap', 0) or 0),
-                        'large_net_inflow_pct': float(row.get('pe_ratio', 0) or 0),
-                        'medium_net_inflow': 0,
-                        'small_net_inflow': 0
-                    })
-                return {
-                    'data_date': data_date,
-                    'data_content': {
-                        'today': today
-                    }
-                }
-
-            if key == 'market_overview':
-                overview = {}
-                for _, row in raw_df.iterrows():
-                    name = str(row.get('sector_name', ''))
-                    entry = {
-                        'price': float(row.get('price', 0) or 0),
-                        'change_pct': float(row.get('change_pct', 0) or 0),
-                        'turnover': float(row.get('turnover', 0) or 0),
-                        'volume': float(row.get('volume', 0) or 0)
-                    }
-                    # 简单映射：名称包含上证/深证/创业板
-                    if '上证' in name or '沪指' in name or 'SH' in name:
-                        overview['sh_index'] = entry
-                    elif '深证' in name or 'SZ' in name:
-                        overview['sz_index'] = entry
-                    elif '创业' in name or 'CYB' in name:
-                        overview['cyb_index'] = entry
-                return {
-                    'data_date': data_date,
-                    'data_content': overview
-                }
-
-            if key == 'north_flow':
-                # 北向资金结构差异较大，返回最简结构用于提示
-                total_value = float(raw_df['turnover'].sum()) if not raw_df.empty else 0
-                return {
-                    'data_date': data_date,
-                    'data_content': {
-                        'north_total_amount': total_value,
-                        'history': []
-                    }
-                }
-
-            return None
+            return self._build_raw_data_payload(key, resolved_date, raw_df)
         except Exception as e:
-            self.logger.error(f"[智策板块] 获取最近原始数据失败: {e}")
+            self.logger.error(f"[智策板块] 获取原始数据失败: {e}")
             return None
         finally:
             conn.close()
+
+    def get_latest_raw_data(self, key: str, within_hours: int = 24):
+        return self._get_raw_data_snapshot(key, within_hours=within_hours)
+
+    def get_raw_data_by_date(self, key: str, data_date: str):
+        return self._get_raw_data_snapshot(key, data_date=data_date)
+
+    def build_data_summary(self, *, data_date: str | None = None, within_hours: int = 24):
+        loader = (
+            (lambda key: self.get_raw_data_by_date(key, data_date))
+            if data_date
+            else (lambda key: self.get_latest_raw_data(key, within_hours=within_hours))
+        )
+        sectors_data = loader('sectors')
+        concepts_data = loader('concepts')
+        market_data = loader('market_overview')
+
+        summary = {
+            'from_cache': True,
+            'cache_warning': f"市场快照由{'历史' if data_date else '缓存'}原始数据重建，缺失字段以可恢复内容为准。",
+            'data_timestamp': data_date or '',
+            'market_overview': (market_data or {}).get('data_content', {}) or {},
+            'sectors': (sectors_data or {}).get('data_content', {}) or {},
+            'concepts': (concepts_data or {}).get('data_content', {}) or {},
+        }
+        if not summary['market_overview'] and not summary['sectors'] and not summary['concepts']:
+            return {}
+        return summary
 
     def get_latest_news_data(self, within_hours: int = 24):
         """获取最近within_hours小时的新闻列表"""

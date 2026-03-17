@@ -12,7 +12,16 @@ import os
 
 from analysis_repository import AnalysisRepository
 from asset_repository import STATUS_PORTFOLIO, STATUS_RESEARCH, STATUS_WATCHLIST, AssetRepository
-from investment_db_utils import DEFAULT_ACCOUNT_NAME, connect_sqlite, get_metadata, resolve_investment_db_path, set_metadata
+from investment_db_utils import (
+    AGGREGATE_ACCOUNT_NAME,
+    DEFAULT_ACCOUNT_NAME,
+    SUPPORTED_ACCOUNT_NAMES,
+    connect_sqlite,
+    get_metadata,
+    normalize_account_name,
+    resolve_investment_db_path,
+    set_metadata,
+)
 
 # 数据库文件路径
 DB_PATH = "investment.db"
@@ -20,6 +29,9 @@ DB_PATH = "investment.db"
 
 class PortfolioDB:
     """持仓股票数据库管理类"""
+
+    SNAPSHOT_ACCOUNT_NORMALIZATION_KEY = "portfolio_snapshot_account_normalization_v1"
+    ACCOUNT_TOTAL_ASSETS_KEY = "portfolio_account_total_assets_v1"
     
     def __init__(self, db_path: str = DB_PATH):
         """
@@ -36,6 +48,7 @@ class PortfolioDB:
         self._migrate_legacy_db(db_path)
         if os.path.abspath(self.db_path) == os.path.abspath(resolve_investment_db_path(db_path)):
             self._migrate_legacy_db("portfolio_stocks.db")
+        self._normalize_snapshot_account_names()
     
     def _get_connection(self) -> sqlite3.Connection:
         """获取数据库连接"""
@@ -46,6 +59,14 @@ class PortfolioDB:
         existing_columns = {row[1] for row in cursor.fetchall()}
         if column not in existing_columns:
             cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+    @staticmethod
+    def _normalize_account_name_value(
+        account_name: Optional[object],
+        *,
+        allow_aggregate: bool = False,
+    ) -> str:
+        return str(normalize_account_name(account_name, allow_aggregate=allow_aggregate))
 
     def _serialize_json(self, value):
         if value is None:
@@ -82,6 +103,14 @@ class PortfolioDB:
         except json.JSONDecodeError:
             return raw_value
 
+    @staticmethod
+    def _normalize_total_assets_value(value: Any) -> float:
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            numeric = 0.0
+        return round(max(0.0, numeric), 2)
+
     def _deserialize_analysis_row(self, row) -> Dict:
         record = dict(row)
         record["stock_info"] = self._deserialize_json_object(record.pop("stock_info_json", None))
@@ -100,6 +129,98 @@ class PortfolioDB:
 
     def _deserialize_trade_row(self, row) -> Dict:
         return dict(row)
+
+    def _normalize_snapshot_account_names(self) -> int:
+        conn = self._get_connection()
+        try:
+            if get_metadata(conn, self.SNAPSHOT_ACCOUNT_NORMALIZATION_KEY):
+                return 0
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM portfolio_daily_snapshots ORDER BY snapshot_date ASC, id ASC")
+            rows = [dict(row) for row in cursor.fetchall()]
+            grouped_rows: Dict[tuple[str, str], List[Dict]] = {}
+            for row in rows:
+                normalized_account_name = self._normalize_account_name_value(
+                    row.get("account_name"),
+                    allow_aggregate=True,
+                )
+                grouped_rows.setdefault(
+                    (normalized_account_name, str(row.get("snapshot_date") or "").strip()),
+                    [],
+                ).append(row)
+
+            normalized_rows = 0
+            merged_rows = 0
+            for (normalized_account_name, snapshot_date), snapshot_rows in grouped_rows.items():
+                ordered_rows = sorted(
+                    snapshot_rows,
+                    key=lambda item: (
+                        str(item.get("updated_at") or ""),
+                        int(item.get("id") or 0),
+                    ),
+                    reverse=True,
+                )
+                target_row = ordered_rows[0]
+                merged_holdings: List[Dict] = []
+                total_market_value = 0.0
+                total_cost_value = 0.0
+                total_pnl = 0.0
+                for row in ordered_rows:
+                    total_market_value += float(row.get("total_market_value") or 0)
+                    total_cost_value += float(row.get("total_cost_value") or 0)
+                    total_pnl += float(row.get("total_pnl") or 0)
+                    for holding in self._deserialize_flexible_value(row.get("holdings_json"), default=[]):
+                        if not isinstance(holding, dict):
+                            continue
+                        normalized_holding = dict(holding)
+                        normalized_holding["account_name"] = normalized_account_name
+                        merged_holdings.append(normalized_holding)
+                cursor.execute(
+                    """
+                    UPDATE portfolio_daily_snapshots
+                    SET account_name = ?,
+                        total_market_value = ?,
+                        total_cost_value = ?,
+                        total_pnl = ?,
+                        holdings_json = ?,
+                        data_source = ?,
+                        updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        normalized_account_name,
+                        total_market_value,
+                        total_cost_value,
+                        total_pnl,
+                        self._serialize_json(merged_holdings),
+                        target_row.get("data_source") or "manual",
+                        datetime.now(),
+                        int(target_row["id"]),
+                    ),
+                )
+                normalized_rows += 1 if cursor.rowcount > 0 else 0
+                for duplicate_row in ordered_rows[1:]:
+                    cursor.execute(
+                        "DELETE FROM portfolio_daily_snapshots WHERE id = ?",
+                        (int(duplicate_row["id"]),),
+                    )
+                    merged_rows += 1 if cursor.rowcount > 0 else 0
+            set_metadata(
+                conn,
+                self.SNAPSHOT_ACCOUNT_NORMALIZATION_KEY,
+                json.dumps(
+                    {
+                        "normalized_rows": normalized_rows,
+                        "merged_rows": merged_rows,
+                        "updated_at": datetime.now().isoformat(),
+                    },
+                    ensure_ascii=False,
+                ),
+            )
+            conn.commit()
+            return normalized_rows + merged_rows
+        finally:
+            conn.close()
 
     def _migrate_legacy_db(self, legacy_db_path: str) -> int:
         if not legacy_db_path or not os.path.exists(legacy_db_path):
@@ -140,7 +261,7 @@ class PortfolioDB:
                         """,
                         (
                             stock.get("id"),
-                            stock.get("account_name", "默认账户"),
+                            self._normalize_account_name_value(stock.get("account_name")),
                             stock.get("code"),
                             stock.get("name"),
                             stock.get("cost_price"),
@@ -203,7 +324,10 @@ class PortfolioDB:
                         """,
                         (
                             snapshot.get("id"),
-                            snapshot.get("account_name", "默认账户"),
+                            self._normalize_account_name_value(
+                                snapshot.get("account_name"),
+                                allow_aggregate=True,
+                            ),
                             snapshot.get("snapshot_date"),
                             snapshot.get("total_market_value", 0),
                             snapshot.get("total_cost_value", 0),
@@ -261,10 +385,10 @@ class PortfolioDB:
             if columns and 'account_name' not in columns:
                 print("[INFO] 执行持仓表结构升级：支持多账户，更改唯一约束")
                 cursor.execute('ALTER TABLE portfolio_stocks RENAME TO portfolio_stocks_old')
-                cursor.execute('''
+                cursor.execute(f'''
                     CREATE TABLE IF NOT EXISTS portfolio_stocks (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        account_name TEXT DEFAULT '默认账户',
+                        account_name TEXT DEFAULT '{DEFAULT_ACCOUNT_NAME}',
                         code TEXT NOT NULL,
                         name TEXT NOT NULL,
                         cost_price REAL,
@@ -279,21 +403,21 @@ class PortfolioDB:
                         UNIQUE(code, account_name)
                     )
                 ''')
-                cursor.execute('''
+                cursor.execute(f'''
                     INSERT INTO portfolio_stocks (
                         id, account_name, code, name, cost_price, quantity, note, auto_monitor,
                         position_status, origin_analysis_id, last_trade_at, created_at, updated_at
                     )
-                    SELECT id, '默认账户', code, name, cost_price, quantity, note, auto_monitor,
+                    SELECT id, '{DEFAULT_ACCOUNT_NAME}', code, name, cost_price, quantity, note, auto_monitor,
                            'active', NULL, NULL, created_at, updated_at
                     FROM portfolio_stocks_old
                 ''')
                 cursor.execute('DROP TABLE portfolio_stocks_old')
             elif not columns:
-                cursor.execute('''
+                cursor.execute(f'''
                     CREATE TABLE IF NOT EXISTS portfolio_stocks (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        account_name TEXT DEFAULT '默认账户',
+                        account_name TEXT DEFAULT '{DEFAULT_ACCOUNT_NAME}',
                         code TEXT NOT NULL,
                         name TEXT NOT NULL,
                         cost_price REAL,
@@ -433,7 +557,7 @@ class PortfolioDB:
     
     def add_stock(self, code: str, name: str, cost_price: Optional[float] = None,
                   quantity: Optional[int] = None, note: str = "", 
-                  auto_monitor: bool = True, account_name: str = "默认账户") -> int:
+                  auto_monitor: bool = True, account_name: str = DEFAULT_ACCOUNT_NAME) -> int:
         """
         添加持仓股票
         
@@ -584,7 +708,7 @@ class PortfolioDB:
         """
         return self.asset_repository.get_asset(stock_id)
     
-    def get_stock_by_code(self, code: str, account_name: str = "默认账户") -> Optional[Dict]:
+    def get_stock_by_code(self, code: str, account_name: str = DEFAULT_ACCOUNT_NAME) -> Optional[Dict]:
         """
         根据股票代码获取持仓股票信息
         
@@ -703,7 +827,7 @@ class PortfolioDB:
         params: List[Any] = []
         if account_name:
             sql.append("AND a.account_name = ?")
-            params.append(account_name)
+            params.append(self._normalize_account_name_value(account_name))
         sql.append("ORDER BY t.trade_date DESC, t.id DESC LIMIT ?")
         params.append(limit)
         cursor.execute(" ".join(sql), tuple(params))
@@ -724,7 +848,7 @@ class PortfolioDB:
         params: List[Any] = []
         if account_name:
             clauses.append("a.account_name = ?")
-            params.append(account_name)
+            params.append(self._normalize_account_name_value(account_name))
 
         where_clause = " AND ".join(clauses)
         cursor.execute(
@@ -806,7 +930,7 @@ class PortfolioDB:
         params: List[Any] = []
         if account_name:
             sql.append("AND a.account_name = ?")
-            params.append(account_name)
+            params.append(self._normalize_account_name_value(account_name))
         if start_date:
             sql.append("AND t.trade_date >= ?")
             params.append(start_date)
@@ -887,7 +1011,7 @@ class PortfolioDB:
         analysis_id = self.analysis_repository.save_record(
             symbol=stock["code"],
             stock_name=stock.get("name") or stock["code"],
-            account_name=stock.get("account_name", "默认账户"),
+            account_name=stock.get("account_name", DEFAULT_ACCOUNT_NAME),
             asset_id=stock_id,
             portfolio_stock_id=stock_id,
             analysis_scope="portfolio",
@@ -1121,6 +1245,7 @@ class PortfolioDB:
         data_source: str = "manual",
     ) -> int:
         """按日写入或更新持仓快照。"""
+        normalized_account_name = self._normalize_account_name_value(account_name, allow_aggregate=True)
         conn = self._get_connection()
         cursor = conn.cursor()
 
@@ -1141,7 +1266,7 @@ class PortfolioDB:
                     updated_at = excluded.updated_at
                 ''',
                 (
-                    account_name,
+                    normalized_account_name,
                     snapshot_date,
                     total_market_value,
                     total_cost_value,
@@ -1160,7 +1285,7 @@ class PortfolioDB:
                     SELECT id FROM portfolio_daily_snapshots
                     WHERE account_name = ? AND snapshot_date = ?
                     ''',
-                    (account_name, snapshot_date),
+                    (normalized_account_name, snapshot_date),
                 )
                 row = cursor.fetchone()
                 row_id = row["id"] if row else 0
@@ -1173,6 +1298,7 @@ class PortfolioDB:
 
     def has_snapshot_for_date(self, account_name: str, snapshot_date: str) -> bool:
         """检查指定账户在某日是否已有快照。"""
+        normalized_account_name = self._normalize_account_name_value(account_name, allow_aggregate=True)
         conn = self._get_connection()
         cursor = conn.cursor()
 
@@ -1184,7 +1310,7 @@ class PortfolioDB:
                 WHERE account_name = ? AND snapshot_date = ?
                 LIMIT 1
                 ''',
-                (account_name, snapshot_date),
+                (normalized_account_name, snapshot_date),
             )
             return cursor.fetchone() is not None
         finally:
@@ -1205,7 +1331,7 @@ class PortfolioDB:
             params: List[Any] = []
             if account_name:
                 query.append('AND account_name = ?')
-                params.append(account_name)
+                params.append(self._normalize_account_name_value(account_name, allow_aggregate=True))
             if start_date:
                 query.append('AND snapshot_date >= ?')
                 params.append(start_date)
@@ -1260,6 +1386,42 @@ class PortfolioDB:
             return default if value in (None, "") else value
         finally:
             conn.close()
+
+    def get_account_total_assets_settings(self) -> Dict[str, float]:
+        raw_value = self.get_setting(self.ACCOUNT_TOTAL_ASSETS_KEY, {})
+        parsed = raw_value if isinstance(raw_value, dict) else {}
+        normalized: Dict[str, float] = {}
+        for account_name, total_assets in parsed.items():
+            normalized_account = self._normalize_account_name_value(account_name)
+            normalized[normalized_account] = self._normalize_total_assets_value(total_assets)
+        for account_name in SUPPORTED_ACCOUNT_NAMES:
+            normalized.setdefault(account_name, 0.0)
+        return normalized
+
+    def set_account_total_assets_settings(self, account_assets: Optional[Dict[str, Any]]) -> Dict[str, float]:
+        current = self.get_account_total_assets_settings()
+        if not isinstance(account_assets, dict):
+            return current
+
+        for account_name, total_assets in account_assets.items():
+            normalized_account = self._normalize_account_name_value(account_name)
+            current[normalized_account] = self._normalize_total_assets_value(total_assets)
+        for account_name in SUPPORTED_ACCOUNT_NAMES:
+            current.setdefault(account_name, 0.0)
+        self.set_setting(self.ACCOUNT_TOTAL_ASSETS_KEY, current)
+        return current
+
+    def get_account_total_assets(self, account_name: Optional[str], default: float = 0.0) -> float:
+        settings = self.get_account_total_assets_settings()
+        normalized_account_name = self._normalize_account_name_value(
+            account_name,
+            allow_aggregate=True,
+        )
+        if normalized_account_name == AGGREGATE_ACCOUNT_NAME:
+            return round(sum(settings.get(name, 0.0) for name in SUPPORTED_ACCOUNT_NAMES), 2)
+        if not normalized_account_name:
+            return self._normalize_total_assets_value(default)
+        return settings.get(normalized_account_name, self._normalize_total_assets_value(default))
 
 
 # 创建全局数据库实例

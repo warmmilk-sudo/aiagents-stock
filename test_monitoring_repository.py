@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from asset_repository import AssetRepository, STATUS_PORTFOLIO, STATUS_WATCHLIST
+from investment_db_utils import DEFAULT_ACCOUNT_NAME
 from monitoring_repository import MonitoringRepository
 
 
@@ -17,6 +18,28 @@ class MonitoringRepositoryTests(unittest.TestCase):
 
     def tearDown(self):
         self.temp_dir.cleanup()
+
+    def test_shared_risk_profile_migrates_from_legacy_account_metadata(self):
+        self.repo._set_metadata(
+            self.repo._account_risk_profile_key("默认账户"),
+            json.dumps(
+                {
+                    "position_size_pct": 28,
+                    "total_position_pct": 70,
+                    "stop_loss_pct": 6,
+                    "take_profit_pct": 15,
+                },
+                ensure_ascii=False,
+            ),
+        )
+
+        profile = self.repo.get_shared_risk_profile()
+
+        self.assertEqual(profile["source"], "shared_custom")
+        self.assertEqual(profile["position_size_pct"], 28)
+        self.assertEqual(profile["total_position_pct"], 70)
+        self.assertEqual(profile["stop_loss_pct"], 6)
+        self.assertEqual(profile["take_profit_pct"], 15)
 
     def test_ai_task_upsert_keeps_single_item_and_merges_config(self):
         first_id = self.repo.upsert_item(
@@ -91,6 +114,39 @@ class MonitoringRepositoryTests(unittest.TestCase):
             repaired_repo._get_metadata(repaired_repo.CONFIG_CLEANUP_MIGRATION_KEY)
         )
         self.assertEqual(cleanup_meta["changed"], 1)
+
+    def test_shared_risk_profile_migrates_from_legacy_account_metadata(self):
+        conn = self.repo._connect()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO monitoring_metadata (meta_key, meta_value, updated_at)
+            VALUES (?, ?, ?)
+            """,
+            (
+                self.repo._account_risk_profile_key("zfy"),
+                json.dumps(
+                    {
+                        "position_size_pct": 28,
+                        "total_position_pct": 70,
+                        "stop_loss_pct": 6,
+                        "take_profit_pct": 15,
+                    },
+                    ensure_ascii=False,
+                ),
+                "2026-03-15 09:30:00",
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+        profile = self.repo.get_shared_risk_profile()
+
+        self.assertEqual(profile["position_size_pct"], 28)
+        self.assertEqual(profile["total_position_pct"], 70)
+        self.assertEqual(profile["stop_loss_pct"], 6)
+        self.assertEqual(profile["take_profit_pct"], 15)
+        self.assertIsNotNone(self.repo.get_metadata(self.repo.SHARED_RISK_PROFILE_KEY))
 
     def test_repository_init_cleans_dirty_items_and_rewires_duplicate_history(self):
         seed_path = self.repo.db_path
@@ -219,7 +275,7 @@ class MonitoringRepositoryTests(unittest.TestCase):
         items = repaired_repo.list_items(monitor_type="ai_task")
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0]["symbol"], "600519")
-        self.assertEqual(items[0]["account_name"], "默认账户")
+        self.assertEqual(items[0]["account_name"], DEFAULT_ACCOUNT_NAME)
         self.assertEqual(items[0]["config"]["position_size_pct"], 20)
         self.assertEqual(items[0]["config"]["notify_email"], "ops@example.com")
 

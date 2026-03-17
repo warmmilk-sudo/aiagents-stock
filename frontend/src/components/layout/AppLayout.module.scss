@@ -252,7 +252,8 @@
   min-width: 0;
   width: 100%;
   max-width: 100%;
-  padding-top: 16px;
+  padding-top: 2px;
+  border-top: 2px solid #000;
 }
 
 .iconButton,
@@ -401,7 +402,7 @@
     display: none;
   }
 
-  .topbarRight > * {
+  .topbarRight>* {
     flex: 0 0 auto;
   }
 

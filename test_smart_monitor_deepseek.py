@@ -66,6 +66,37 @@ class SmartMonitorDeepSeekTests(unittest.TestCase):
         self.assertEqual(decision["risk_level"], "medium")
         self.assertEqual(decision["monitor_levels"]["stop_loss"], 11.7)
 
+    def test_parse_decision_falls_back_to_account_risk_profile(self):
+        client = SmartMonitorDeepSeek(api_key="test-key")
+        ai_response = """
+{
+  "action": "HOLD",
+  "confidence": 78,
+  "reasoning": "账户已有基准风控，当前没有新的偏离理由。",
+  "risk_level": "中",
+  "monitor_levels": {
+    "entry_min": 12.10,
+    "entry_max": 12.40,
+    "take_profit": 13.20,
+    "stop_loss": 11.70
+  }
+}
+"""
+
+        decision = client._parse_decision(
+            ai_response,
+            risk_profile={
+                "position_size_pct": 33,
+                "total_position_pct": 80,
+                "stop_loss_pct": 7,
+                "take_profit_pct": 18,
+            },
+        )
+
+        self.assertEqual(decision["position_size_pct"], 33)
+        self.assertEqual(decision["stop_loss_pct"], 7.0)
+        self.assertEqual(decision["take_profit_pct"], 18.0)
+
     @patch("smart_monitor_deepseek.requests.post")
     def test_chat_completion_defaults_to_lightweight_model(self, mock_post):
         response = MagicMock()

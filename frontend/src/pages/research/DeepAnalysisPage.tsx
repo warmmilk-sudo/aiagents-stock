@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { AnalystSelector } from "../../components/common/AnalystSelector";
 import { ModuleCard } from "../../components/common/ModuleCard";
@@ -174,6 +174,7 @@ function FollowupAssetList({
 
 export function DeepAnalysisPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const batchMode = useDeepAnalysisStore((state) => state.batchMode);
   const setBatchMode = useDeepAnalysisStore((state) => state.setBatchMode);
   const maxWorkers = useDeepAnalysisStore((state) => state.maxWorkers);
@@ -223,6 +224,15 @@ export function DeepAnalysisPage() {
   useEffect(() => {
     void loadFollowupAssets();
   }, [followupSearch]);
+
+  useEffect(() => {
+    const presetSymbol = searchParams.get("symbol");
+    if (!presetSymbol) {
+      return;
+    }
+    setStockInput(presetSymbol);
+    setSection("start");
+  }, [searchParams]);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();

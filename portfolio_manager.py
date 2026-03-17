@@ -19,7 +19,7 @@ import config
 from portfolio_db import portfolio_db
 from monitor_db import monitor_db as realtime_monitor_db
 from investment_lifecycle_service import InvestmentLifecycleService, investment_lifecycle_service
-from investment_db_utils import DEFAULT_ACCOUNT_NAME
+from investment_db_utils import DEFAULT_ACCOUNT_NAME, SUPPORTED_ACCOUNT_NAMES, normalize_account_name
 from smart_monitor_db import SmartMonitorDB
 
 
@@ -83,6 +83,72 @@ class PortfolioManager:
             except (TypeError, ValueError):
                 pass
         return max(3, int(getattr(config, "SMART_MONITOR_PRICE_ALERT_INTERVAL_MINUTES", 3) or 3))
+
+    @staticmethod
+    def _normalize_total_assets_value(value: Any) -> float:
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            numeric = 0.0
+        return round(max(0.0, numeric), 2)
+
+    def get_account_total_assets_settings(self) -> List[Dict[str, Any]]:
+        settings = (
+            self.db.get_account_total_assets_settings()
+            if hasattr(self.db, "get_account_total_assets_settings")
+            else {}
+        )
+        return [
+            {
+                "account_name": account_name,
+                "total_assets": self._normalize_total_assets_value(settings.get(account_name)),
+            }
+            for account_name in SUPPORTED_ACCOUNT_NAMES
+        ]
+
+    def set_account_total_assets_settings(self, account_assets: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        if hasattr(self.db, "set_account_total_assets_settings"):
+            self.db.set_account_total_assets_settings(account_assets or {})
+        return self.get_account_total_assets_settings()
+
+    def _get_account_total_assets(self, account_name: Optional[str]) -> float:
+        if account_name in (None, "", self.AGGREGATE_ACCOUNT_NAME):
+            settings = (
+                self.db.get_account_total_assets_settings()
+                if hasattr(self.db, "get_account_total_assets_settings")
+                else {}
+            )
+            return self._normalize_total_assets_value(
+                sum(self._normalize_total_assets_value(settings.get(item)) for item in SUPPORTED_ACCOUNT_NAMES)
+            )
+        if hasattr(self.db, "get_account_total_assets"):
+            return self._normalize_total_assets_value(self.db.get_account_total_assets(account_name, 0.0))
+        return 0.0
+
+    def _resolve_shared_monitor_risk_profile(self) -> Dict[str, int]:
+        repository = getattr(self.smart_monitor_db, "monitoring_repository", None)
+        if repository and hasattr(repository, "get_shared_risk_profile"):
+            profile = repository.get_shared_risk_profile()
+            return {
+                "position_size_pct": int(profile.get("position_size_pct") or 0),
+                "total_position_pct": int(profile.get("total_position_pct") or 0),
+                "stop_loss_pct": int(profile.get("stop_loss_pct") or 0),
+                "take_profit_pct": int(profile.get("take_profit_pct") or 0),
+            }
+        return dict(config.get_smart_monitor_risk_defaults())
+
+    def _build_total_assets_context(self, account_name: Optional[str], total_market_value: float) -> Dict[str, Any]:
+        configured_total_assets = self._get_account_total_assets(account_name)
+        effective_total_assets = configured_total_assets if configured_total_assets > 0 else total_market_value
+        available_cash = max(0.0, effective_total_assets - total_market_value) if effective_total_assets > 0 else 0.0
+        position_usage_pct = (total_market_value / effective_total_assets) if effective_total_assets > 0 else 0.0
+        return {
+            "configured_total_assets": configured_total_assets,
+            "total_assets": effective_total_assets,
+            "total_assets_configured": configured_total_assets > 0,
+            "available_cash": available_cash,
+            "position_usage_pct": position_usage_pct,
+        }
 
     def _mark_integrations_reconcile_pending(self) -> None:
         self._integrations_reconcile_pending = True
@@ -191,7 +257,7 @@ class PortfolioManager:
     
     def add_stock(self, code: str, name: Optional[str], cost_price: Optional[float] = None,
                   quantity: Optional[int] = None, note: str = "",
-                  auto_monitor: bool = True, account_name: str = "默认账户",
+                  auto_monitor: bool = True, account_name: str = DEFAULT_ACCOUNT_NAME,
                   origin_analysis_id: Optional[int] = None) -> Tuple[bool, str, Optional[int]]:
         """
         添加持仓股票
@@ -284,7 +350,7 @@ class PortfolioManager:
                 warning = ""
                 try:
                     self.capture_daily_snapshot(
-                        account_name=updated_stock.get("account_name", existing.get("account_name", "默认账户")),
+                        account_name=updated_stock.get("account_name", existing.get("account_name", DEFAULT_ACCOUNT_NAME)),
                         source="manual",
                     )
                     self.lifecycle_service.sync_position(stock_id=stock_id)
@@ -316,7 +382,7 @@ class PortfolioManager:
             if success:
                 self._mark_integrations_reconcile_pending()
                 self.capture_daily_snapshot(
-                    account_name=existing.get("account_name", "默认账户"),
+                    account_name=existing.get("account_name", DEFAULT_ACCOUNT_NAME),
                     source="manual",
                 )
                 warning = ""
@@ -361,7 +427,7 @@ class PortfolioManager:
         if not isinstance(corrections, list):
             raise ValueError("corrections 必须是数组")
 
-        normalized_default_account = str(default_account_name or DEFAULT_ACCOUNT_NAME).strip() or DEFAULT_ACCOUNT_NAME
+        normalized_default_account = str(normalize_account_name(default_account_name))
         results: List[Dict[str, Any]] = []
         succeeded = 0
         failed = 0
@@ -384,9 +450,11 @@ class PortfolioManager:
                     if not normalized_symbol:
                         raise ValueError("股票代码不能为空")
                     account_name = str(
-                        self._extract_first_present_value(item, ["account_name", "account", "账户"])
-                        or normalized_default_account
-                    ).strip() or normalized_default_account
+                        normalize_account_name(
+                            self._extract_first_present_value(item, ["account_name", "account", "账户"])
+                            or normalized_default_account
+                        )
+                    )
                     stock = self.db.get_stock_by_code(normalized_symbol, account_name)
                     if stock is None:
                         raise ValueError(f"未找到持仓: {normalized_symbol} ({account_name})")
@@ -600,7 +668,7 @@ class PortfolioManager:
 
             warning = ""
             try:
-                account_name = (updated_stock or stock).get("account_name", "默认账户")
+                account_name = (updated_stock or stock).get("account_name", DEFAULT_ACCOUNT_NAME)
                 self.capture_daily_snapshot(account_name=account_name, source="manual")
                 self.lifecycle_service.sync_position(stock_id=stock_id)
             except Exception as e:
@@ -707,12 +775,18 @@ class PortfolioManager:
         return parsed.strftime("%Y-%m-%d") if parsed is not None else None
 
     def _get_account_display_name(self, account_name: Optional[str]) -> str:
-        return account_name or self.AGGREGATE_ACCOUNT_NAME
+        normalized_account_name = normalize_account_name(account_name, allow_aggregate=True, keep_none=True)
+        return normalized_account_name or self.AGGREGATE_ACCOUNT_NAME
 
     def _filter_stocks_for_account(self, stocks: List[Dict], account_name: Optional[str] = None) -> List[Dict]:
-        if not account_name or account_name == self.AGGREGATE_ACCOUNT_NAME:
+        normalized_account_name = normalize_account_name(account_name, allow_aggregate=True, keep_none=True)
+        if not normalized_account_name or normalized_account_name == self.AGGREGATE_ACCOUNT_NAME:
             return list(stocks)
-        return [stock for stock in stocks if stock.get("account_name", "默认账户") == account_name]
+        return [
+            stock
+            for stock in stocks
+            if str(normalize_account_name(stock.get("account_name"))) == normalized_account_name
+        ]
 
     def _safe_int(self, value: Any) -> int:
         try:
@@ -893,6 +967,24 @@ class PortfolioManager:
             basic_info = self._get_basic_stock_info(stock.get("code") or stock.get("symbol"))
             industry = self._extract_industry_from_payload(basic_info) or industry
 
+        if current_price <= 0 or industry == "未知行业":
+            try:
+                stock_info = self._get_stock_data_fetcher().get_stock_info(
+                    normalized_code,
+                    max_age_seconds=self.REALTIME_QUOTE_CACHE_SECONDS,
+                    allow_stale_on_failure=True,
+                    cache_first=True,
+                )
+            except Exception as exc:
+                print(f"[WARN] 股票信息价格回补失败 ({normalized_code}): {exc}")
+                stock_info = {}
+            if isinstance(stock_info, dict):
+                if current_price <= 0:
+                    current_price = (
+                        self._extract_first_number(stock_info.get("current_price"), allow_zero=True) or current_price
+                    )
+                industry = self._extract_industry_from_payload(stock_info) or industry
+
         cost_price = self._safe_float(stock.get("cost_price"))
         if current_price <= 0:
             current_price = cost_price
@@ -921,7 +1013,7 @@ class PortfolioManager:
             holdings.append(
                 {
                     "stock_id": stock.get("id"),
-                    "account_name": stock.get("account_name", "默认账户"),
+                    "account_name": stock.get("account_name", DEFAULT_ACCOUNT_NAME),
                     "code": stock.get("code"),
                     "name": stock.get("name"),
                     "quantity": quantity,
@@ -935,6 +1027,14 @@ class PortfolioManager:
                 }
             )
 
+        assets_context = self._build_total_assets_context(account_name, total_market_value)
+        effective_total_assets = float(assets_context["total_assets"] or 0.0)
+        for holding in holdings:
+            holding["weight"] = (holding["market_value"] / total_market_value) if total_market_value > 0 else 0.0
+            holding["asset_weight"] = (
+                (holding["market_value"] / effective_total_assets) if effective_total_assets > 0 else 0.0
+            )
+
         holdings.sort(key=lambda item: item.get("market_value", 0), reverse=True)
         total_pnl = total_market_value - total_cost_value
         return {
@@ -943,6 +1043,7 @@ class PortfolioManager:
             "total_cost_value": total_cost_value,
             "total_pnl": total_pnl,
             "holdings": holdings,
+            **assets_context,
         }
 
     def _upsert_snapshot_for_account(
@@ -970,7 +1071,7 @@ class PortfolioManager:
         """采集当日持仓快照，并按日 upsert。"""
         snapshot_date = datetime.now().strftime("%Y-%m-%d")
         all_stocks = self.get_all_stocks()
-        accounts = sorted({stock.get("account_name", "默认账户") for stock in all_stocks})
+        accounts = sorted({stock.get("account_name", DEFAULT_ACCOUNT_NAME) for stock in all_stocks})
         captured_accounts: List[str] = []
 
         if account_name and account_name != self.AGGREGATE_ACCOUNT_NAME:
@@ -995,7 +1096,7 @@ class PortfolioManager:
         """确保今日快照存在，缺失时自动补采。"""
         snapshot_date = datetime.now().strftime("%Y-%m-%d")
         all_stocks = self.get_all_stocks()
-        accounts = sorted({stock.get("account_name", "默认账户") for stock in all_stocks})
+        accounts = sorted({stock.get("account_name", DEFAULT_ACCOUNT_NAME) for stock in all_stocks})
         required_accounts: List[str] = []
 
         if account_name and account_name != self.AGGREGATE_ACCOUNT_NAME:
@@ -1902,6 +2003,7 @@ class PortfolioManager:
         cost_price = stock.get("cost_price") or 0
         has_position = 1 if quantity > 0 and cost_price > 0 else 0
         existing_task = existing_task or {}
+        account_risk = self._resolve_shared_monitor_risk_profile()
 
         return {
             "task_name": existing_task.get("task_name") or f"{stock.get('name', stock['code'])}盯盘",
@@ -1913,9 +2015,10 @@ class PortfolioManager:
                 self.get_default_smart_monitor_check_interval(),
             ),
             "trading_hours_only": existing_task.get("trading_hours_only", 1),
-            "position_size_pct": existing_task.get("position_size_pct", 20),
-            "stop_loss_pct": existing_task.get("stop_loss_pct", 5),
-            "take_profit_pct": existing_task.get("take_profit_pct", 10),
+            "position_size_pct": account_risk["position_size_pct"],
+            "total_position_pct": account_risk["total_position_pct"],
+            "stop_loss_pct": account_risk["stop_loss_pct"],
+            "take_profit_pct": account_risk["take_profit_pct"],
             "notify_email": existing_task.get("notify_email"),
             "notify_webhook": existing_task.get("notify_webhook"),
             "has_position": has_position,
@@ -2113,7 +2216,7 @@ class PortfolioManager:
             if not code:
                 continue
             for stock in self._filter_stocks_for_account(self.db.get_stocks_by_code(code), account_name):
-                affected_accounts.add(stock.get("account_name", "默认账户"))
+                affected_accounts.add(stock.get("account_name", DEFAULT_ACCOUNT_NAME))
         if affected_accounts:
             for account in affected_accounts:
                 self.capture_daily_snapshot(account_name=account, source="analysis")
@@ -2555,7 +2658,7 @@ class PortfolioManager:
                     )
                     saved_ids.append(analysis_id)
                 except Exception as e:
-                    print(f"[ERROR] 保存分析结果失败 ({code}/{stock.get('account_name', '默认账户')}): {str(e)}")
+                    print(f"[ERROR] 保存分析结果失败 ({code}/{stock.get('account_name', DEFAULT_ACCOUNT_NAME)}): {str(e)}")
         
         print(f"\n[OK] 保存分析结果: {len(saved_ids)}条记录")
         return saved_ids
@@ -2609,6 +2712,12 @@ class PortfolioManager:
         snapshot = self._build_portfolio_snapshot_payload(stocks, account_name)
         total_market_value = snapshot["total_market_value"]
         total_cost_value = snapshot["total_cost_value"]
+        total_assets = float(snapshot.get("total_assets") or 0.0)
+        configured_total_assets = float(snapshot.get("configured_total_assets") or 0.0)
+        total_assets_configured = bool(snapshot.get("total_assets_configured"))
+        available_cash = float(snapshot.get("available_cash") or 0.0)
+        position_usage_pct = float(snapshot.get("position_usage_pct") or 0.0)
+        shared_risk_profile = self._resolve_shared_monitor_risk_profile()
         stock_values = []
         industry_values: Dict[str, float] = {}
 
@@ -2625,7 +2734,9 @@ class PortfolioManager:
                     "pnl": holding["pnl"],
                     "pnl_pct": holding["pnl_pct"],
                     "industry": holding["industry"],
-                    "weight": (holding["market_value"] / total_market_value) if total_market_value > 0 else 0.0,
+                    "account_name": holding.get("account_name"),
+                    "weight": float(holding.get("weight") or 0.0),
+                    "asset_weight": float(holding.get("asset_weight") or 0.0),
                 }
             )
             industry = holding["industry"] or "未知行业"
@@ -2638,7 +2749,8 @@ class PortfolioManager:
             industry_distribution.append({
                 "industry": ind,
                 "market_value": val,
-                "weight": val / total_market_value
+                "weight": val / total_market_value,
+                "asset_weight": (val / total_assets) if total_assets > 0 else 0.0,
             })
             
         industry_distribution.sort(key=lambda x: x["weight"], reverse=True)
@@ -2646,15 +2758,35 @@ class PortfolioManager:
         # 风险评估结果
         risk_warnings = []
         high_concentration = False
-        
-        if stock_values and stock_values[0]["weight"] > 0.3:
+
+        if total_assets_configured and position_usage_pct > (shared_risk_profile["total_position_pct"] / 100):
+            risk_warnings.append(
+                f"总仓位预警：持仓市值占总资产 {position_usage_pct*100:.1f}%，超过共享上限({shared_risk_profile['total_position_pct']}%)。"
+            )
+            high_concentration = True
+
+        if stock_values and total_assets_configured:
+            if stock_values[0]["asset_weight"] > (shared_risk_profile["position_size_pct"] / 100):
+                risk_warnings.append(
+                    f"单票超载预警：{stock_values[0]['name']} 占总资产 {stock_values[0]['asset_weight']*100:.1f}%，超过共享上限({shared_risk_profile['position_size_pct']}%)。"
+                )
+                high_concentration = True
+        elif stock_values and stock_values[0]["weight"] > 0.3:
             risk_warnings.append(f"单票超载预警：{stock_values[0]['name']} 占比达到 {stock_values[0]['weight']*100:.1f}%，超过安全线(30%)。")
             high_concentration = True
-            
-        if industry_distribution and industry_distribution[0]["weight"] > 0.4:
-            risk_warnings.append(f"行业集中度预警：{industry_distribution[0]['industry']} 占比达到 {industry_distribution[0]['weight']*100:.1f}%，超过安全线(40%)。")
+
+        top_industry_weight = (
+            industry_distribution[0]["asset_weight"] if total_assets_configured else industry_distribution[0]["weight"]
+        ) if industry_distribution else 0.0
+        if industry_distribution and top_industry_weight > 0.4:
+            risk_warnings.append(
+                f"行业集中度预警：{industry_distribution[0]['industry']} 占比达到 {top_industry_weight*100:.1f}%，超过安全线(40%)。"
+            )
             high_concentration = True
-            
+
+        if not total_assets_configured:
+            risk_warnings.append("未设置账户总资产，仓位利用率暂按当前持仓市值估算；设置后可获得更准确的仓位与风控计算。")
+
         if not risk_warnings:
             risk_warnings.append("仓位结构健康，未发现明显集中度风险。")
             
@@ -2679,10 +2811,17 @@ class PortfolioManager:
             "total_cost_value": total_cost_value,
             "total_pnl": total_pnl,
             "total_pnl_pct": total_pnl_pct,
+            "total_assets": total_assets,
+            "configured_total_assets": configured_total_assets,
+            "total_assets_configured": total_assets_configured,
+            "available_cash": available_cash,
+            "position_usage_pct": position_usage_pct,
             "stock_distribution": stock_values,
             "industry_distribution": industry_distribution,
             "high_concentration": high_concentration,
             "risk_warnings": risk_warnings,
+            "position_size_limit_pct": shared_risk_profile["position_size_pct"],
+            "total_position_limit_pct": shared_risk_profile["total_position_pct"],
             "annual_volatility": quant_metrics.get("annual_volatility"),
             "beta_hs300": quant_metrics.get("beta_hs300"),
             "sharpe_ratio": quant_metrics.get("sharpe_ratio"),

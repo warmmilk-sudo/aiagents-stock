@@ -178,6 +178,34 @@ class SectorStrategyNormalizationTests(unittest.TestCase):
         self.assertEqual(summary["bullish"], ["半导体"])
         self.assertEqual(summary["bearish"], ["煤炭"])
 
+    def test_embedded_data_summary_is_used_for_saved_report_snapshot(self) -> None:
+        saved_report = {
+            "analysis_content_parsed": {
+                **self.complete_result,
+                "data_summary": {
+                    "from_cache": True,
+                    "cache_warning": "基于缓存重建。",
+                    "data_timestamp": "2026-03-16 15:00:00",
+                    "market_overview": {
+                        "sh_index": {"close": 3388.12, "change_pct": 1.26},
+                        "up_count": 3123,
+                        "up_ratio": 61.2,
+                        "limit_up": 102,
+                        "limit_down": 4,
+                    },
+                    "sectors": {"半导体": {}, "AI算力": {}, "机器人": {}},
+                    "concepts": {"算力租赁": {}, "先进封装": {}},
+                },
+            }
+        }
+
+        report_view = normalize_sector_strategy_result(saved_report)
+
+        self.assertEqual(report_view["market_snapshot"]["sectors_count"], 3)
+        self.assertEqual(report_view["market_snapshot"]["concepts_count"], 2)
+        self.assertEqual(report_view["market_snapshot"]["market_overview"]["up_count"], 3123)
+        self.assertTrue(report_view["market_snapshot"]["from_cache"])
+
     def test_recommended_sectors_come_from_new_schema(self) -> None:
         report_view = normalize_sector_strategy_result(self.complete_result)
         recommended = derive_sector_strategy_recommended_sectors(report_view)

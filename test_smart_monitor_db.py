@@ -2,6 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from investment_db_utils import DEFAULT_ACCOUNT_NAME
 from monitor_db import StockMonitorDatabase
 from smart_monitor_db import SmartMonitorDB
 
@@ -71,6 +72,7 @@ class SmartMonitorDBTests(unittest.TestCase):
         decisions = self.db.get_ai_decisions(stock_code="600519", limit=2)
         self.assertEqual(len(decisions), 2)
         self.assertEqual(decisions[0]["id"], second_id)
+        self.assertEqual(decisions[0]["account_name"], DEFAULT_ACCOUNT_NAME)
         self.assertEqual(decisions[0]["decision_time"], "2026-03-12 09:35:00")
         self.assertEqual(decisions[0]["reasoning"], "第二次盘中分析")
         self.assertEqual(decisions[0]["monitor_levels"]["take_profit"], 1592.0)
@@ -157,6 +159,36 @@ class SmartMonitorDBTests(unittest.TestCase):
         self.assertEqual(task["strategy_context"]["analysis_scope"], "research")
         self.assertEqual(task["strategy_context"]["summary"], "更新深度分析")
 
+    def test_monitor_task_preserves_intent_strategy_context_when_no_history_exists(self):
+        task_id = self.db.upsert_monitor_task(
+            {
+                "stock_code": "300308",
+                "stock_name": "中际旭创",
+                "account_name": "默认账户",
+                "enabled": 1,
+                "trading_hours_only": 1,
+                "origin_analysis_id": 123,
+                "strategy_context": {
+                    "origin_analysis_id": 123,
+                    "analysis_scope": "research",
+                    "analysis_date": "2026-03-17 09:00:00",
+                    "entry_min": 118.0,
+                    "entry_max": 121.0,
+                    "take_profit": 132.0,
+                    "stop_loss": 112.0,
+                    "summary": "历史分析基线",
+                },
+            }
+        )
+
+        task = self.db.get_monitor_task_by_code("300308", account_name="默认账户")
+
+        self.assertEqual(task_id, task["id"])
+        self.assertEqual(task["origin_analysis_id"], 123)
+        self.assertEqual(task["strategy_context"]["entry_min"], 118.0)
+        self.assertEqual(task["strategy_context"]["take_profit"], 132.0)
+        self.assertEqual(task["strategy_context"]["summary"], "历史分析基线")
+
     def test_new_tasks_and_alerts_use_runtime_config_defaults_when_interval_missing(self):
         self.db.monitoring_repository.set_metadata("smart_monitor_intraday_decision_interval_minutes", "30")
         self.db.monitoring_repository.set_metadata("smart_monitor_realtime_monitor_interval_minutes", "2")
@@ -182,6 +214,34 @@ class SmartMonitorDBTests(unittest.TestCase):
 
         self.assertEqual(self.db.monitoring_repository.get_item(task_id)["interval_minutes"], 30)
         self.assertEqual(self.monitor_db.repository.get_item(alert_id)["interval_minutes"], 2)
+
+    def test_new_task_uses_shared_risk_profile_defaults(self):
+        self.db.monitoring_repository.set_shared_risk_profile(
+            {
+                "position_size_pct": 35,
+                "total_position_pct": 80,
+                "stop_loss_pct": 7,
+                "take_profit_pct": 18,
+            }
+        )
+
+        task_id = self.db.upsert_monitor_task(
+            {
+                "stock_code": "688256",
+                "stock_name": "寒武纪",
+                "account_name": "账户A",
+                "enabled": 1,
+                "trading_hours_only": 1,
+            }
+        )
+
+        task = self.db.get_monitor_task_by_code("688256", account_name=DEFAULT_ACCOUNT_NAME)
+        self.assertEqual(self.db.monitoring_repository.get_item(task_id)["account_name"], DEFAULT_ACCOUNT_NAME)
+        self.assertIsNotNone(task)
+        self.assertEqual(task["position_size_pct"], 35)
+        self.assertEqual(task["total_position_pct"], 80)
+        self.assertEqual(task["stop_loss_pct"], 7)
+        self.assertEqual(task["take_profit_pct"], 18)
 
     def test_delete_monitor_task_removes_linked_price_alert_and_disables_asset(self):
         task_id = self.db.upsert_monitor_task(

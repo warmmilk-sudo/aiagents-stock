@@ -34,6 +34,11 @@ def _safe_int_env(key: str, default: int) -> int:
         return default
 
 
+def _clamp_int(value: int, minimum: int, maximum: int) -> int:
+    """Clamp int values to an inclusive range."""
+    return max(minimum, min(maximum, int(value)))
+
+
 def _parse_model_options_env(key: str, fallback_model: str) -> list[str]:
     """Parse comma or newline separated model options from env."""
     raw_value = os.getenv(key, "")
@@ -116,6 +121,11 @@ SMART_MONITOR_DEFAULT_POSITION_SIZE_PCT = max(
     5,
     min(50, _safe_int_env("SMART_MONITOR_DEFAULT_POSITION_SIZE_PCT", 20)),
 )
+SMART_MONITOR_DEFAULT_TOTAL_POSITION_PCT = _clamp_int(
+    _safe_int_env("SMART_MONITOR_DEFAULT_TOTAL_POSITION_PCT", 100),
+    0,
+    100,
+)
 SMART_MONITOR_DEFAULT_STOP_LOSS_PCT = max(
     1,
     min(20, _safe_int_env("SMART_MONITOR_DEFAULT_STOP_LOSS_PCT", 5)),
@@ -131,3 +141,13 @@ TDX_CONFIG = {
     "base_url": _safe_str_env("TDX_BASE_URL", ""),
     "timeout_seconds": TDX_TIMEOUT_SECONDS,
 }
+
+
+def get_smart_monitor_risk_defaults() -> dict[str, int]:
+    """Return global fallback risk defaults for smart monitor tasks."""
+    return {
+        "position_size_pct": int(SMART_MONITOR_DEFAULT_POSITION_SIZE_PCT),
+        "total_position_pct": int(SMART_MONITOR_DEFAULT_TOTAL_POSITION_PCT),
+        "stop_loss_pct": int(SMART_MONITOR_DEFAULT_STOP_LOSS_PCT),
+        "take_profit_pct": int(SMART_MONITOR_DEFAULT_TAKE_PROFIT_PCT),
+    }

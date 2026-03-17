@@ -81,7 +81,13 @@ class PortfolioAnalyticsTests(unittest.TestCase):
             result = result[result.index <= pd.Timestamp(end_date)]
         return result
 
-    def _add_stock(self, code: str = "000001", cost_price: float = 10.0, quantity: int = 100) -> int:
+    def _add_stock(
+        self,
+        code: str = "000001",
+        cost_price: float = 10.0,
+        quantity: int = 100,
+        account_name: str = "zfy",
+    ) -> int:
         success, msg, stock_id = self.manager.add_stock(
             code=code,
             name=None,
@@ -89,6 +95,7 @@ class PortfolioAnalyticsTests(unittest.TestCase):
             quantity=quantity,
             note="analytics-test",
             auto_monitor=True,
+            account_name=account_name,
         )
         self.assertTrue(success, msg)
         self.assertIsNotNone(stock_id)
@@ -117,6 +124,19 @@ class PortfolioAnalyticsTests(unittest.TestCase):
         self.assertAlmostEqual(result["risk_free_rate_annual"], 0.02)
         self.assertGreater(result["data_coverage"]["available_days"], 20)
         self.assertEqual(result["benchmark_label"], "沪深300")
+
+    def test_calculate_portfolio_risk_uses_account_total_assets_settings(self):
+        self._add_stock(cost_price=10.0, quantity=100, account_name="ly")
+        self.manager.set_account_total_assets_settings({"ly": 5000})
+
+        result = self.manager.calculate_portfolio_risk(account_name="ly")
+
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["total_assets"], 5000)
+        self.assertEqual(result["available_cash"], 4000)
+        self.assertAlmostEqual(result["position_usage_pct"], 0.2)
+        self.assertAlmostEqual(result["stock_distribution"][0]["asset_weight"], 0.2)
+        self.assertTrue(result["total_assets_configured"])
 
     def test_save_analysis_normalizes_legacy_industry_alias(self):
         stock_id = self._add_stock()
@@ -185,6 +205,24 @@ class PortfolioAnalyticsTests(unittest.TestCase):
         result = self.manager.calculate_portfolio_risk(account_name="默认账户")
 
         self.assertEqual(result["industry_distribution"][0]["industry"], "银行")
+
+    def test_calculate_portfolio_risk_uses_stock_info_price_when_new_position_has_no_analysis(self):
+        self._add_stock(cost_price=10.0, quantity=100, account_name="zfy")
+        self.manager._get_realtime_quote = lambda code: {}
+        self.manager._get_basic_stock_info = lambda code: {}
+
+        class FakeStockDataFetcher:
+            def get_stock_info(self, symbol, **kwargs):
+                return {"current_price": 12.34, "industry": "半导体"}
+
+        self.manager._stock_data_fetcher = FakeStockDataFetcher()
+
+        result = self.manager.calculate_portfolio_risk(account_name="zfy")
+
+        self.assertEqual(result["status"], "success")
+        self.assertAlmostEqual(result["total_market_value"], 1234.0)
+        self.assertAlmostEqual(result["stock_distribution"][0]["market_value"], 1234.0)
+        self.assertEqual(result["industry_distribution"][0]["industry"], "半导体")
 
     def test_return_series_prefers_actual_snapshots_and_calendar_aggregates_daily_changes(self):
         self._add_stock()

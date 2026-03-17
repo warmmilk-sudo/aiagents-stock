@@ -4,7 +4,8 @@ import { useNavigate } from "react-router-dom";
 import { PageFeedback } from "../../components/common/PageFeedback";
 import { PageFrame } from "../../components/common/PageFrame";
 import { StatusBadge } from "../../components/common/StatusBadge";
-import { ApiRequestError } from "../../lib/api";
+import { ApiRequestError, apiFetch } from "../../lib/api";
+import { SUPPORTED_ACCOUNT_NAMES, normalizeAccountName } from "../../lib/accounts";
 import { type ConfigField, useConfigStore } from "../../stores/configStore";
 import styles from "../ConsolePage.module.scss";
 
@@ -21,21 +22,6 @@ const BASIC_PANELS = [
   {
     title: "模型配置",
     keys: ["LIGHTWEIGHT_MODEL_NAME", "LIGHTWEIGHT_MODEL_OPTIONS", "REASONING_MODEL_NAME", "REASONING_MODEL_OPTIONS"],
-  },
-  {
-    title: "盯盘默认",
-    keys: [
-      "SMART_MONITOR_HTTP_TIMEOUT_SECONDS",
-      "SMART_MONITOR_HTTP_RETRY_COUNT",
-      "SMART_MONITOR_AI_TIMEOUT_SECONDS",
-      "SMART_MONITOR_REASONING_MAX_TOKENS",
-      "SMART_MONITOR_INTRADAY_TDX_RETRY_COUNT",
-      "SMART_MONITOR_DEFAULT_POSITION_SIZE_PCT",
-      "SMART_MONITOR_DEFAULT_STOP_LOSS_PCT",
-      "SMART_MONITOR_DEFAULT_TAKE_PROFIT_PCT",
-      "SMART_MONITOR_AI_INTERVAL_MINUTES",
-      "SMART_MONITOR_PRICE_ALERT_INTERVAL_MINUTES",
-    ],
   },
   {
     title: "登录与系统",
@@ -61,6 +47,11 @@ const NOTIFICATION_PANELS = [
   { title: "邮件通知", keys: ["EMAIL_ENABLED", "SMTP_SERVER", "SMTP_PORT", "EMAIL_FROM", "EMAIL_PASSWORD", "EMAIL_TO"] },
   { title: "Webhook 通知", keys: ["WEBHOOK_ENABLED", "WEBHOOK_TYPE", "WEBHOOK_URL", "WEBHOOK_KEYWORD"] },
 ];
+
+interface AccountAssetSetting {
+  account_name: string;
+  total_assets: string;
+}
 
 function renderField(
   key: string,
@@ -130,16 +121,57 @@ export function ConfigPage() {
   const [section, setSection] = useState<SectionKey>("basic");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [accountAssets, setAccountAssets] = useState<AccountAssetSetting[]>(
+    () => SUPPORTED_ACCOUNT_NAMES.map((account_name) => ({ account_name, total_assets: "" })),
+  );
 
   useEffect(() => {
     void fetchConfig();
   }, [fetchConfig]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadAccountAssets = async () => {
+      try {
+        const settings = await apiFetch<Array<{ account_name: string; total_assets: number }>>("/api/portfolio/account-assets");
+        if (cancelled) {
+          return;
+        }
+        const nextSettings = SUPPORTED_ACCOUNT_NAMES.map((account_name) => {
+          const current = settings.find((item) => normalizeAccountName(item.account_name) === account_name);
+          return {
+            account_name,
+            total_assets: current ? String(current.total_assets ?? "") : "",
+          };
+        });
+        setAccountAssets(nextSettings);
+      } catch (requestError) {
+        if (!cancelled) {
+          setError(requestError instanceof ApiRequestError ? requestError.message : "加载账户总资产失败");
+        }
+      }
+    };
+
+    void loadAccountAssets();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const handleSave = async () => {
     setMessage("");
     setError("");
     try {
       await save();
+      await apiFetch("/api/portfolio/account-assets", {
+        method: "PUT",
+        body: JSON.stringify({
+          account_assets: Object.fromEntries(
+            accountAssets.map((item) => [item.account_name, Number(item.total_assets) || 0]),
+          ),
+        }),
+      });
       setMessage("配置已保存并重新加载");
     } catch (requestError) {
       setError(requestError instanceof ApiRequestError ? requestError.message : "保存失败");
@@ -158,6 +190,10 @@ export function ConfigPage() {
   };
 
   const fieldEntries = useMemo(() => Object.entries(fields), [fields]);
+  const systemConfigFieldEntries = useMemo(
+    () => fieldEntries.filter(([key]) => !key.startsWith("SMART_MONITOR_")),
+    [fieldEntries],
+  );
   const webhookStatusEntries = useMemo(() => {
     const normalizeValue = (value: unknown) => {
       if (typeof value === "boolean") {
@@ -231,12 +267,42 @@ export function ConfigPage() {
     );
   };
 
+  const renderAccountAssetsPanel = () => (
+    <section className={styles.card}>
+      <h2>账户总资产</h2>
+      <div className={styles.formGrid}>
+        {accountAssets.map((item) => (
+          <div className={styles.field} key={item.account_name}>
+            <label htmlFor={`account-assets-${item.account_name}`}>{`${item.account_name} 总资产`}</label>
+            <input
+              id={`account-assets-${item.account_name}`}
+              inputMode="decimal"
+              onChange={(event) =>
+                setAccountAssets((current) =>
+                  current.map((currentItem) => (
+                    currentItem.account_name === item.account_name
+                      ? { ...currentItem, total_assets: event.target.value }
+                      : currentItem
+                  )),
+                )
+              }
+              placeholder="例如 500000"
+              type="text"
+              value={item.total_assets}
+            />
+          </div>
+        ))}
+      </div>
+      <p className={styles.helperText}>用于持仓仓位利用率、单票占总资产比例，以及盯盘上下文中的账户资金参考。</p>
+    </section>
+  );
+
   const unmatchedKeys = useMemo(() => {
     const usedKeys = new Set(
       [...BASIC_PANELS, ...DATA_PANELS, ...NOTIFICATION_PANELS].flatMap((panel) => panel.keys),
     );
-    return fieldEntries.filter(([key]) => !usedKeys.has(key));
-  }, [fieldEntries]);
+    return systemConfigFieldEntries.filter(([key]) => !usedKeys.has(key));
+  }, [systemConfigFieldEntries]);
 
   return (
     <PageFrame
@@ -263,6 +329,7 @@ export function ConfigPage() {
         {section === "basic" ? (
           <>
             {BASIC_PANELS.map((panel) => renderPanel(panel.title, panel.keys))}
+            {renderAccountAssetsPanel()}
             {unmatchedKeys.length ? (
               <section className={styles.card}>
                 <h2>其他配置</h2>

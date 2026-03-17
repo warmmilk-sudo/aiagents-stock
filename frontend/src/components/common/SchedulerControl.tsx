@@ -8,6 +8,7 @@ interface SchedulerControlProps {
   label: string;
   scheduleFields: ReactNode;
   statusFields?: ReactNode;
+  showToggle?: boolean;
   onToggle: (next: boolean) => void | Promise<void>;
   onSave?: () => void | Promise<void>;
   onRunOnce?: () => void | Promise<void>;
@@ -21,6 +22,7 @@ export function SchedulerControl({
   label,
   scheduleFields,
   statusFields,
+  showToggle = true,
   onToggle,
   onSave,
   onRunOnce,
@@ -38,15 +40,17 @@ export function SchedulerControl({
             {saveLabel}
           </button>
         ) : null}
-        <label className={styles.switchField}>
-          <span className={styles.switchLabel}>{label}</span>
-          <span className={styles.switchControl}>
-            <input checked={enabled} onChange={(event) => void onToggle(event.target.checked)} type="checkbox" />
-            <span className={styles.switchTrack} aria-hidden="true">
-              <span className={styles.switchThumb} />
+        {showToggle ? (
+          <label className={styles.switchField}>
+            <span className={styles.switchLabel}>{label}</span>
+            <span className={styles.switchControl}>
+              <input checked={enabled} onChange={(event) => void onToggle(event.target.checked)} type="checkbox" />
+              <span className={styles.switchTrack} aria-hidden="true">
+                <span className={styles.switchThumb} />
+              </span>
             </span>
-          </span>
-        </label>
+          </label>
+        ) : null}
         {onRunOnce ? (
           <button className={styles.primaryButton} disabled={runOnceDisabled} onClick={() => void onRunOnce()} type="button">
             {runOnceLabel}

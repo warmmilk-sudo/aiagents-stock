@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
+from investment_db_utils import DEFAULT_ACCOUNT_NAME
 
 
 class LoginRequest(BaseModel):
@@ -223,7 +224,7 @@ class PortfolioStockCreateRequest(BaseModel):
     quantity: Optional[int] = None
     note: str = ""
     auto_monitor: bool = True
-    account_name: str = "默认账户"
+    account_name: str = DEFAULT_ACCOUNT_NAME
     origin_analysis_id: Optional[int] = None
     buy_date: Optional[str] = None
 
@@ -233,6 +234,7 @@ class PortfolioStockUpdateRequest(BaseModel):
     name: Optional[str] = None
     cost_price: Optional[float] = None
     quantity: Optional[int] = None
+    buy_date: Optional[str] = None
     note: Optional[str] = None
     auto_monitor: Optional[bool] = None
     account_name: Optional[str] = None
@@ -272,7 +274,7 @@ class PriceAlertCreateRequest(BaseModel):
     check_interval: Optional[int] = None
     notification_enabled: bool = True
     trading_hours_only: bool = True
-    account_name: str = "默认账户"
+    account_name: str = DEFAULT_ACCOUNT_NAME
     origin_analysis_id: Optional[int] = None
 
 
@@ -294,10 +296,11 @@ class SmartMonitorTaskRequest(BaseModel):
     enabled: bool = True
     check_interval: Optional[int] = None
     trading_hours_only: bool = True
-    position_size_pct: int = 20
-    stop_loss_pct: int = 5
-    take_profit_pct: int = 10
-    account_name: str = "默认账户"
+    position_size_pct: Optional[int] = None
+    total_position_pct: Optional[int] = None
+    stop_loss_pct: Optional[int] = None
+    take_profit_pct: Optional[int] = None
+    account_name: str = DEFAULT_ACCOUNT_NAME
     managed_by_portfolio: bool = False
     asset_id: Optional[int] = None
     portfolio_stock_id: Optional[int] = None
@@ -306,13 +309,14 @@ class SmartMonitorTaskRequest(BaseModel):
     notify_email: Optional[str] = None
     notify_webhook: Optional[str] = None
     position_date: Optional[str] = None
+    strategy_context: dict = Field(default_factory=dict)
 
 
 class SmartMonitorAnalyzeRequest(BaseModel):
     stock_code: str
     notify: bool = False
     trading_hours_only: bool = True
-    account_name: str = "默认账户"
+    account_name: str = DEFAULT_ACCOUNT_NAME
     asset_id: Optional[int] = None
     portfolio_stock_id: Optional[int] = None
 
@@ -320,6 +324,25 @@ class SmartMonitorAnalyzeRequest(BaseModel):
 class SmartMonitorRuntimeConfigRequest(BaseModel):
     intraday_decision_interval_minutes: int = 60
     realtime_monitor_interval_minutes: int = 3
+
+
+class SmartMonitorConfigRequest(BaseModel):
+    position_size_pct: int = 20
+    total_position_pct: int = 100
+    stop_loss_pct: int = 5
+    take_profit_pct: int = 10
+
+
+class SmartMonitorAccountRiskConfigRequest(BaseModel):
+    account_name: str = DEFAULT_ACCOUNT_NAME
+    position_size_pct: int = 20
+    total_position_pct: int = 100
+    stop_loss_pct: int = 5
+    take_profit_pct: int = 10
+
+
+class PortfolioAccountAssetsConfigRequest(BaseModel):
+    account_assets: dict[str, float] = Field(default_factory=dict)
 
 
 class PendingActionResolveRequest(BaseModel):

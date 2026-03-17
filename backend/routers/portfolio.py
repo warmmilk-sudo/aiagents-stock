@@ -8,6 +8,7 @@ import config
 from backend.api import ApiError, success_payload
 from backend.auth import build_session_key, require_session
 from backend.dto import (
+    PortfolioAccountAssetsConfigRequest,
     PortfolioAnalysisTaskRequest,
     PortfolioSchedulerConfigRequest,
     PortfolioStockCreateRequest,
@@ -97,6 +98,21 @@ def list_trades(
 def get_risk(request: Request, account_name: Optional[str] = None) -> dict:
     require_session(request)
     return success_payload(services.get_portfolio_risk(account_name=account_name))
+
+
+@router.get("/account-assets")
+def list_account_assets(request: Request) -> dict:
+    require_session(request)
+    return success_payload(services.list_portfolio_account_asset_settings())
+
+
+@router.put("/account-assets")
+def update_account_assets(request: Request, payload: PortfolioAccountAssetsConfigRequest) -> dict:
+    require_session(request)
+    return success_payload(
+        services.update_portfolio_account_asset_settings(payload.model_dump()),
+        message="账户总资产设置已更新",
+    )
 
 
 @router.get("/stocks/{stock_id}/history")

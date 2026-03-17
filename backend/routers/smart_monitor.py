@@ -8,7 +8,9 @@ from backend.api import ApiError, success_payload
 from backend.auth import require_session
 from backend.dto import (
     PendingActionResolveRequest,
+    SmartMonitorAccountRiskConfigRequest,
     SmartMonitorAnalyzeRequest,
+    SmartMonitorConfigRequest,
     SmartMonitorRuntimeConfigRequest,
     SmartMonitorTaskRequest,
 )
@@ -39,6 +41,36 @@ def list_tasks(
 def get_runtime_config(request: Request) -> dict:
     require_session(request)
     return success_payload(services.get_smart_monitor_runtime_config())
+
+
+@router.get("/config")
+def get_config(request: Request) -> dict:
+    require_session(request)
+    return success_payload(services.get_smart_monitor_config())
+
+
+@router.put("/config")
+def update_config(request: Request, payload: SmartMonitorConfigRequest) -> dict:
+    require_session(request)
+    return success_payload(
+        services.update_smart_monitor_config(payload.model_dump()),
+        message="盯盘配置已更新",
+    )
+
+
+@router.get("/account-configs")
+def list_account_configs(request: Request) -> dict:
+    require_session(request)
+    return success_payload(services.list_smart_monitor_account_configs())
+
+
+@router.put("/account-configs")
+def update_account_config(request: Request, payload: SmartMonitorAccountRiskConfigRequest) -> dict:
+    require_session(request)
+    return success_payload(
+        services.update_smart_monitor_account_config(payload.model_dump()),
+        message="盯盘配置已更新",
+    )
 
 
 @router.put("/runtime-config")
@@ -104,6 +136,18 @@ def run_all_tasks_once(
         ),
         message="已触发一次智能盯盘批量执行",
     )
+
+
+@router.post("/tasks/{task_id}/run-once")
+def run_task_once(request: Request, task_id: int) -> dict:
+    require_session(request)
+    try:
+        result = services.run_smart_monitor_task_once(task_id)
+    except ValueError as exc:
+        raise ApiError(404, str(exc), error_code="smart_monitor_task_not_found") from exc
+    if not result.get("success"):
+        raise ApiError(400, "单任务盘中决策失败", error_code="smart_monitor_run_once_failed", details=result)
+    return success_payload(result, message="已触发一次智能盯盘任务执行")
 
 
 @router.post("/analyze")
