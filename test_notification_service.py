@@ -1,7 +1,9 @@
 import sys
 import types
 import unittest
+from unittest.mock import patch
 
+import notification_service as notification_service_module
 from notification_service import NotificationService
 
 
@@ -103,6 +105,41 @@ class NotificationServiceTests(unittest.TestCase):
         self.assertTrue(success)
         payload_text = str(captured_payload)
         self.assertIn("aiagents通知", payload_text)
+
+    def test_send_notifications_skips_deleted_monitoring_items(self):
+        class _FakeMonitorDb:
+            def __init__(self):
+                self.repository = types.SimpleNamespace(get_item=lambda item_id: None)
+                self.ignored_ids = []
+                self.sent_ids = []
+
+            def get_pending_notifications(self):
+                return [
+                    {
+                        "id": 11,
+                        "stock_id": 99,
+                        "symbol": "600519",
+                        "type": "buy",
+                        "message": "已删除股票的遗留通知",
+                    }
+                ]
+
+            def ignore_notification(self, event_id):
+                self.ignored_ids.append(event_id)
+
+            def mark_notification_sent(self, event_id):
+                self.sent_ids.append(event_id)
+
+        fake_monitor_db = _FakeMonitorDb()
+        send_calls = []
+
+        with patch.object(notification_service_module, "monitor_db", fake_monitor_db):
+            self.service.send_notification = lambda notification: send_calls.append(notification) or True
+            self.service.send_notifications()
+
+        self.assertEqual(send_calls, [])
+        self.assertEqual(fake_monitor_db.ignored_ids, [11])
+        self.assertEqual(fake_monitor_db.sent_ids, [])
 
 
 if __name__ == "__main__":

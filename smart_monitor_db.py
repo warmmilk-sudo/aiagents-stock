@@ -1030,13 +1030,18 @@ class SmartMonitorDB:
         account_name: Optional[str] = None,
         portfolio_stock_id: Optional[int] = None,
     ) -> bool:
-        return self.monitoring_repository.delete_by_symbol(
-            stock_code,
+        tasks = self.monitoring_repository.list_items(
             monitor_type="ai_task",
-            managed_only=managed_only,
+            symbol=stock_code,
+            managed_by_portfolio=True if managed_only else None,
             account_name=account_name,
             portfolio_stock_id=portfolio_stock_id,
+            enabled_only=False,
         )
+        deleted = False
+        for item in tasks:
+            deleted = self.delete_monitor_task(int(item["id"])) or deleted
+        return deleted
 
     def save_ai_decision(self, decision_data: Dict) -> int:
         def _save() -> int:

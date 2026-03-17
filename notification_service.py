@@ -77,6 +77,9 @@ class NotificationService:
         for notification in notifications:
             try:
                 print(f"\n处理通知: {notification['symbol']} - {notification['type']}")
+                if not self._is_notification_target_active(notification):
+                    print(f"⏭️ 监控项已删除或停用，忽略通知: {notification['message']}")
+                    continue
                 if self.send_notification(notification):
                     monitor_db.mark_notification_sent(notification['id'])
                     print(f"✅ 通知已成功发送并标记: {notification['message']}")
@@ -110,6 +113,26 @@ class NotificationService:
             success = True
         
         return success
+
+    def _is_notification_target_active(self, notification: Dict) -> bool:
+        """仅向仍然有效的监控项发送通知，避免删除/停用后的遗留消息继续外发。"""
+        raw_item_id = notification.get("stock_id") or notification.get("monitoring_item_id")
+        try:
+            item_id = int(raw_item_id or 0)
+        except (TypeError, ValueError):
+            item_id = 0
+        if item_id <= 0:
+            return True
+
+        item = monitor_db.repository.get_item(item_id)
+        if item and bool(item.get("enabled", True)) and bool(item.get("notification_enabled", True)):
+            return True
+
+        try:
+            monitor_db.ignore_notification(int(notification.get("id") or 0))
+        except Exception:
+            pass
+        return False
     
     def _send_email_notification(self, notification: Dict) -> bool:
         """发送邮件通知"""
@@ -851,7 +874,6 @@ _此消息由AI股票分析系统自动发送_"""
 
 # 全局通知服务实例
 notification_service = NotificationService()
-
 
 
 
