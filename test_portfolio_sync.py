@@ -1,9 +1,61 @@
 import os
 import sqlite3
 import tempfile
+import sys
+import types
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+
+sys.modules.setdefault(
+    "numpy",
+    types.SimpleNamespace(
+        array=lambda *args, **kwargs: args[0] if args else None,
+        nan=float("nan"),
+        isfinite=lambda value: value == value,
+        mean=lambda values, *args, **kwargs: sum(values) / len(values) if values else 0,
+    ),
+)
+sys.modules.setdefault(
+    "pandas",
+    types.SimpleNamespace(
+        DataFrame=type("DataFrame", (), {}),
+        Series=type("Series", (), {}),
+        Timestamp=type("Timestamp", (), {}),
+        isna=lambda value: False,
+        to_datetime=lambda value, *args, **kwargs: value,
+        to_numeric=lambda value, *args, **kwargs: value,
+        bdate_range=lambda *args, **kwargs: [],
+        date_range=lambda *args, **kwargs: [],
+        concat=lambda *args, **kwargs: None,
+    ),
+)
+sys.modules.setdefault(
+    "smart_monitor_data",
+    types.SimpleNamespace(
+        SmartMonitorDataFetcher=type(
+            "SmartMonitorDataFetcher",
+            (),
+            {"__init__": lambda self, *args, **kwargs: None, "get_comprehensive_data": lambda self, *args, **kwargs: {}},
+        )
+    ),
+)
+sys.modules.setdefault(
+    "smart_monitor_deepseek",
+    types.SimpleNamespace(
+        SmartMonitorDeepSeek=type(
+            "SmartMonitorDeepSeek",
+            (),
+            {
+                "__init__": lambda self, *args, **kwargs: None,
+                "http_timeout_seconds": 15,
+                "set_model_overrides": lambda self, *args, **kwargs: None,
+                "get_trading_session": lambda self: {"session": "上午盘", "can_trade": True, "recommendation": ""},
+                "analyze_stock_and_decide": lambda self, **kwargs: {"success": False},
+            },
+        )
+    ),
+)
 
 from investment_db_utils import DEFAULT_ACCOUNT_NAME
 import smart_monitor_engine as smart_monitor_engine_module
@@ -220,6 +272,44 @@ class PortfolioIntegrationTests(unittest.TestCase):
         ]
         self.assertEqual(len(monitors), 1)
         self.assertEqual(monitors[0]["take_profit"], 170.0)
+
+    def test_persist_analysis_results_refreshes_managed_monitor_baseline(self):
+        self._add_stock("600519", cost_price=1500.0, quantity=10)
+
+        analysis_results = {
+            "success": True,
+            "results": [
+                {
+                    "code": "600519",
+                    "result": {
+                        "success": True,
+                        "stock_info": {"symbol": "600519", "name": "Stock600519", "current_price": 1520.0},
+                        "final_decision": {
+                            "rating": "买入",
+                            "confidence_level": 8.1,
+                            "entry_range": "1510-1530",
+                            "take_profit": "1600",
+                            "stop_loss": "1488",
+                            "operation_advice": "基线已更新，继续观察。",
+                        },
+                    },
+                }
+            ],
+        }
+
+        with patch.object(
+            self.manager.lifecycle_service.asset_service,
+            "sync_managed_monitors_for_symbol",
+            wraps=self.manager.lifecycle_service.asset_service.sync_managed_monitors_for_symbol,
+        ) as mock_sync:
+            result = self.manager.persist_analysis_results(analysis_results, sync_realtime_monitor=False)
+
+        self.assertEqual(result["baseline_sync_result"]["ai_tasks_upserted"], 1)
+        mock_sync.assert_called_once_with("600519", account_name=None)
+        task = self.smart_monitor_db.get_monitor_task_by_code("600519", managed_only=True)
+        self.assertIsNotNone(task)
+        self.assertIsInstance(task.get("strategy_context"), dict)
+        self.assertEqual(task["strategy_context"].get("rating"), "买入")
 
     def test_batch_analysis_can_persist_history_incrementally(self):
         first_stock_id = self._add_stock("000001", cost_price=10.0, quantity=100)

@@ -432,8 +432,14 @@ class MonitoringOrchestrator:
                     self.TDX_FETCH_TIMEOUT_SECONDS,
                     symbol,
                 )
-                if quote and quote.get("current_price"):
-                    return float(quote["current_price"])
+                if isinstance(quote, dict):
+                    current_price = quote.get("current_price", quote.get("price"))
+                    try:
+                        price_value = float(current_price)
+                    except (TypeError, ValueError):
+                        price_value = 0.0
+                    if price_value > 0:
+                        return price_value
             except TimeoutError:
                 self.logger.warning("[%s] TDX获取超时，降级默认数据源", symbol)
             except (ValueError, TypeError, RuntimeError, OSError, ConnectionError) as exc:
@@ -442,23 +448,25 @@ class MonitoringOrchestrator:
                 self.logger.exception("[%s] TDX获取出现未知异常，降级默认数据源", symbol)
 
         try:
-            stock_info = await self._await_to_thread(
-                self.fetcher.get_stock_info,
+            realtime_quote = await self._await_to_thread(
+                self.fetcher.get_realtime_quote,
                 self.PRICE_FETCH_TIMEOUT_SECONDS,
                 symbol,
-                max_age_seconds=30,
-                allow_stale_on_failure=True,
-                cache_first=True,
             )
-            current_price = stock_info.get("current_price")
-            if current_price and current_price != "N/A":
-                return float(current_price)
+            if isinstance(realtime_quote, dict):
+                current_price = realtime_quote.get("current_price", realtime_quote.get("price"))
+                try:
+                    price_value = float(current_price)
+                except (TypeError, ValueError):
+                    price_value = 0.0
+                if price_value > 0:
+                    return price_value
         except TimeoutError:
-            self.logger.warning("[%s] 默认数据源获取超时", symbol)
+            self.logger.warning("[%s] 默认实时数据源获取超时", symbol)
         except (ValueError, TypeError, RuntimeError, OSError, ConnectionError) as exc:
-            self.logger.warning("[%s] 默认数据源获取失败: %s", symbol, exc)
+            self.logger.warning("[%s] 默认实时数据源获取失败: %s", symbol, exc)
         except Exception:
-            self.logger.exception("[%s] 默认数据源获取出现未知异常", symbol)
+            self.logger.exception("[%s] 默认实时数据源获取出现未知异常", symbol)
         return None
 
     def _check_trigger_conditions(self, stock: Dict, current_price: float):

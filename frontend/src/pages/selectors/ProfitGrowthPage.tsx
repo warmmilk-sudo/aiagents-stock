@@ -110,6 +110,9 @@ export function ProfitGrowthPage() {
   const [section, setSection] = useState<SectionKey>("results");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [isSubmittingSelection, setIsSubmittingSelection] = useState(false);
+  const [isSendingNotification, setIsSendingNotification] = useState(false);
+  const [pendingMonitorCode, setPendingMonitorCode] = useState("");
 
   const loadTask = async () => {
     const data = await apiFetch<TaskDetail | null>("/api/selectors/profit-growth/tasks/latest");
@@ -162,6 +165,7 @@ export function ProfitGrowthPage() {
     event.preventDefault();
     setMessage("");
     setError("");
+    setIsSubmittingSelection(true);
     try {
       const data = await apiFetch<{ task_id: string }>("/api/selectors/profit-growth/tasks", {
         method: "POST",
@@ -179,15 +183,18 @@ export function ProfitGrowthPage() {
       });
       setSection("results");
       setMessage(`净利增长选股任务已提交: ${data.task_id}`);
-      await loadTask();
+      await loadTask().catch(() => undefined);
     } catch (requestError) {
       setError(requestError instanceof ApiRequestError ? requestError.message : "提交净利增长任务失败");
+    } finally {
+      setIsSubmittingSelection(false);
     }
   };
 
   const notifyWebhook = async () => {
     setMessage("");
     setError("");
+    setIsSendingNotification(true);
     try {
       await apiFetch("/api/selectors/profit-growth/notify", {
         method: "POST",
@@ -197,6 +204,8 @@ export function ProfitGrowthPage() {
       setMessage("钉钉通知已发送");
     } catch (requestError) {
       setError(requestError instanceof ApiRequestError ? requestError.message : "发送通知失败");
+    } finally {
+      setIsSendingNotification(false);
     }
   };
 
@@ -206,6 +215,29 @@ export function ProfitGrowthPage() {
     const price = asNumber(stock["股价"] ?? stock["最新价"]) ?? 0;
     setMessage("");
     setError("");
+    if (pendingMonitorCode === code) {
+      return;
+    }
+    const optimisticStock: MonitoredStock = {
+      stock_code: code,
+      stock_name: name,
+      buy_price: price,
+      buy_date: new Date().toISOString().slice(0, 10),
+      holding_days: 0,
+      add_time: new Date().toISOString(),
+    };
+    setPendingMonitorCode(code);
+    setMonitoredStocks((current) =>
+      current.some((item) => item.stock_code === code) ? current : [optimisticStock, ...current],
+    );
+    setMonitorStatus((current) =>
+      current
+        ? {
+            ...current,
+            monitored_count: Number(current.monitored_count ?? 0) + 1,
+          }
+        : current,
+    );
     try {
       await apiFetch("/api/selectors/profit-growth/monitor/stocks", {
         method: "POST",
@@ -213,22 +245,68 @@ export function ProfitGrowthPage() {
       });
       setSection("monitor");
       setMessage(`已加入策略监控: ${code}`);
-      await loadMonitorData();
+      await loadMonitorData().catch(() => undefined);
     } catch (requestError) {
+      setMonitoredStocks((current) => current.filter((item) => item.stock_code !== code));
+      setMonitorStatus((current) =>
+        current
+          ? {
+              ...current,
+              monitored_count: Math.max(0, Number(current.monitored_count ?? 0) - 1),
+            }
+          : current,
+      );
       setError(requestError instanceof ApiRequestError ? requestError.message : "加入监控失败");
+    } finally {
+      setPendingMonitorCode((current) => (current === code ? "" : current));
     }
   };
 
   const removeFromMonitor = async (stockCode: string) => {
     setMessage("");
     setError("");
+    if (pendingMonitorCode === stockCode) {
+      return;
+    }
+    const removedIndex = monitoredStocks.findIndex((item) => item.stock_code === stockCode);
+    const removedStock = monitoredStocks[removedIndex] ?? null;
+    setPendingMonitorCode(stockCode);
+    setMonitoredStocks((current) => current.filter((item) => item.stock_code !== stockCode));
+    setMonitorStatus((current) =>
+      current
+        ? {
+            ...current,
+            monitored_count: Math.max(0, Number(current.monitored_count ?? 0) - 1),
+          }
+        : current,
+    );
     try {
       await apiFetch(`/api/selectors/profit-growth/monitor/stocks/${stockCode}`, { method: "DELETE" });
       setSection("monitor");
       setMessage(`已移出监控: ${stockCode}`);
-      await loadMonitorData();
+      await loadMonitorData().catch(() => undefined);
     } catch (requestError) {
+      if (removedStock) {
+        setMonitoredStocks((current) => {
+          if (current.some((item) => item.stock_code === removedStock.stock_code)) {
+            return current;
+          }
+          const next = [...current];
+          next.splice(Math.max(0, Math.min(removedIndex, next.length)), 0, removedStock);
+          return next;
+        });
+      }
+      setMonitorStatus((current) =>
+        current
+          ? {
+              ...current,
+              monitored_count: Number(current.monitored_count ?? 0) + 1,
+            }
+          : current,
+      );
       setError(requestError instanceof ApiRequestError ? requestError.message : "移出监控失败");
+    } finally {
+      setPendingMonitorCode((current) => (current === stockCode ? "" : current));
     }
   };
 
@@ -288,8 +366,8 @@ export function ProfitGrowthPage() {
                 </div>
                 <p className={styles.muted}>当前筛选: {filterSummary}</p>
                 <div className={styles.actions}>
-                  <button className={styles.primaryButton} type="submit">
-                    开始净利增长选股
+                  <button className={styles.primaryButton} disabled={isSubmittingSelection} type="submit">
+                    {isSubmittingSelection ? "提交中..." : "开始净利增长选股"}
                   </button>
                   <button
                     className={styles.secondaryButton}
@@ -299,8 +377,8 @@ export function ProfitGrowthPage() {
                     下载 CSV
                   </button>
                   {!!stocks.length ? (
-                    <button className={styles.secondaryButton} onClick={() => void notifyWebhook()} type="button">
-                      发送钉钉通知
+                    <button className={styles.secondaryButton} disabled={isSendingNotification} onClick={() => void notifyWebhook()} type="button">
+                      {isSendingNotification ? "发送中..." : "发送钉钉通知"}
                     </button>
                   ) : null}
                 </div>
@@ -390,12 +468,12 @@ export function ProfitGrowthPage() {
                           </div>
                           <div className={styles.actions} style={{ marginTop: 12 }}>
                             {monitoredCodes.has(code) ? (
-                              <button className={styles.dangerButton} onClick={() => void removeFromMonitor(code)} type="button">
-                                移出监控
+                              <button className={styles.dangerButton} disabled={pendingMonitorCode === code} onClick={() => void removeFromMonitor(code)} type="button">
+                                {pendingMonitorCode === code ? "处理中..." : "移出监控"}
                               </button>
                             ) : (
-                              <button className={styles.primaryButton} onClick={() => void addToMonitor(stock)} type="button">
-                                加入策略监控
+                              <button className={styles.primaryButton} disabled={pendingMonitorCode === code} onClick={() => void addToMonitor(stock)} type="button">
+                                {pendingMonitorCode === code ? "处理中..." : "加入策略监控"}
                               </button>
                             )}
                           </div>
@@ -481,8 +559,8 @@ export function ProfitGrowthPage() {
                         <td>{item.holding_days}</td>
                         <td>{asText(item.add_time, "-")}</td>
                         <td>
-                          <button className={styles.dangerButton} onClick={() => void removeFromMonitor(item.stock_code)} type="button">
-                            移除
+                          <button className={styles.dangerButton} disabled={pendingMonitorCode === item.stock_code} onClick={() => void removeFromMonitor(item.stock_code)} type="button">
+                            {pendingMonitorCode === item.stock_code ? "处理中..." : "移除"}
                           </button>
                         </td>
                       </tr>

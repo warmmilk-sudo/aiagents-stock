@@ -2264,7 +2264,35 @@ def get_system_status() -> dict[str, Any]:
 
 def get_stock_info(symbol: str) -> dict[str, Any]:
     fetcher = StockDataFetcher()
-    return fetcher.get_stock_info(symbol, max_age_seconds=30, allow_stale_on_failure=True, cache_first=True)
+    stock_info = fetcher.get_stock_info(symbol, max_age_seconds=30, allow_stale_on_failure=True, cache_first=True)
+    realtime_quote = fetcher.get_realtime_quote(symbol)
+
+    if isinstance(stock_info, dict) and "error" not in stock_info:
+        stock_info = dict(stock_info)
+        if isinstance(realtime_quote, dict) and realtime_quote:
+            current_price = realtime_quote.get("current_price", realtime_quote.get("price"))
+            try:
+                current_price_value = float(current_price)
+            except (TypeError, ValueError):
+                current_price_value = 0.0
+            if current_price_value > 0:
+                stock_info["current_price"] = current_price_value
+                stock_info.pop("change_percent", None)
+                stock_info.pop("realtime_data_source", None)
+                if realtime_quote.get("change_percent") not in (None, ""):
+                    stock_info["change_percent"] = realtime_quote.get("change_percent")
+                if realtime_quote.get("data_source"):
+                    stock_info["realtime_data_source"] = realtime_quote.get("data_source")
+            else:
+                stock_info.pop("current_price", None)
+                stock_info.pop("change_percent", None)
+                stock_info.pop("realtime_data_source", None)
+        else:
+            stock_info.pop("current_price", None)
+            stock_info.pop("change_percent", None)
+            stock_info.pop("realtime_data_source", None)
+
+    return stock_info
 
 
 def list_portfolio_stocks(account_name: Optional[str] = None) -> list[dict[str, Any]]:

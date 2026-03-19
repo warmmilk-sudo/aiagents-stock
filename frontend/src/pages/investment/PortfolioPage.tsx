@@ -24,6 +24,7 @@ import {
 } from "../../lib/accounts";
 import { decodeIntent } from "../../lib/intents";
 import { usePortfolioStore, type PortfolioPageCache } from "../../stores/portfolioStore";
+import { useSmartMonitorStore } from "../../stores/smartMonitorStore";
 import styles from "../ConsolePage.module.scss";
 
 interface PortfolioStock {
@@ -319,6 +320,7 @@ export function PortfolioPage() {
   const setSchedulerTaskId = usePortfolioStore((state) => state.setSchedulerTaskId);
   const cachedPage = usePortfolioStore((state) => state.pageCacheByAccount[selectedAccount] ?? null);
   const setPageCache = usePortfolioStore((state) => state.setPageCache);
+  const clearSmartMonitorPageCache = useSmartMonitorStore((state) => state.clearPageCache);
 
   const [stocks, setStocks] = useState<PortfolioStock[]>(() => (cachedPage?.stocks as PortfolioStock[]) ?? []);
   const [risk, setRisk] = useState<PortfolioRisk | null>(() => (cachedPage?.risk as PortfolioRisk | null) ?? null);
@@ -341,6 +343,12 @@ export function PortfolioPage() {
   const [activeHoldingPanel, setActiveHoldingPanel] = useState<HoldingActionPanel>(null);
   const [historyLoadingStockId, setHistoryLoadingStockId] = useState<number | null>(null);
   const [isSubmittingHoldingsAnalysis, setIsSubmittingHoldingsAnalysis] = useState(false);
+  const [isSubmittingPosition, setIsSubmittingPosition] = useState(false);
+  const [isSubmittingTrade, setIsSubmittingTrade] = useState(false);
+  const [isUpdatingPosition, setIsUpdatingPosition] = useState(false);
+  const [deletingStockId, setDeletingStockId] = useState<number | null>(null);
+  const [isSavingScheduler, setIsSavingScheduler] = useState(false);
+  const [isTogglingScheduler, setIsTogglingScheduler] = useState(false);
   const [holdingsAnalysisTask, setHoldingsAnalysisTask] = useState<AnalysisTaskSummary | null>(null);
   const [schedulerTask, setSchedulerTask] = useState<AnalysisTaskSummary | null>(null);
   const [section, setSection] = useState<SectionKey>("overview");
@@ -354,6 +362,19 @@ export function PortfolioPage() {
     setSchedulerMode(schedulerData?.analysis_mode === "parallel" ? "parallel" : "sequential");
     setSchedulerMaxWorkers(schedulerData?.max_workers ?? DEFAULT_SCHEDULER_WORKERS);
     setSchedulerAnalysts(normalizeAnalystKeys(schedulerData?.selected_agents));
+  };
+
+  const setSchedulerRunningOptimistically = (running: boolean) => {
+    setScheduler((current) =>
+      current
+        ? {
+            ...current,
+            is_running: running,
+          }
+        : {
+            is_running: running,
+          },
+    );
   };
 
   const applyPageCache = (cache: PortfolioPageCache | null) => {
@@ -516,7 +537,8 @@ export function PortfolioPage() {
     }
     holdingsTerminalTaskRef.current = terminalKey;
     void loadAll(true);
-  }, [holdingsAnalysisTask?.id, holdingsAnalysisTask?.status]);
+    clearSmartMonitorPageCache();
+  }, [clearSmartMonitorPageCache, holdingsAnalysisTask?.id, holdingsAnalysisTask?.status]);
 
   useEffect(() => {
     if (!schedulerTask || isPendingTaskStatus(schedulerTask.status)) {
@@ -528,7 +550,8 @@ export function PortfolioPage() {
     }
     schedulerTerminalTaskRef.current = terminalKey;
     void loadAll(true);
-  }, [schedulerTask?.id, schedulerTask?.status]);
+    clearSmartMonitorPageCache();
+  }, [clearSmartMonitorPageCache, schedulerTask?.id, schedulerTask?.status]);
 
   const riskWarnings = risk?.risk_warnings ?? [];
   const holdingMetrics = useMemo(() => {
@@ -877,7 +900,7 @@ export function PortfolioPage() {
       });
       setHoldingsAnalysisTaskId(taskData.task_id);
       holdingsTerminalTaskRef.current = "";
-      await loadHoldingsAnalysisTask(taskData.task_id);
+      await loadHoldingsAnalysisTask(taskData.task_id).catch(() => undefined);
       showMessage(
         `${selectedAccount === UI.allAccounts ? "全部账户" : `${selectedAccount} 账户`}的持仓批量分析任务已提交，共 ${visibleHoldingSymbols.length} 只股票。`,
       );
@@ -891,6 +914,19 @@ export function PortfolioPage() {
   const submitPosition = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     clear();
+    setIsSubmittingPosition(true);
+    const nextPosition = {
+      id: -Date.now(),
+      code: positionForm.code.trim(),
+      name: positionForm.name.trim() || positionForm.code.trim(),
+      account_name: normalizeAccountName(positionForm.account_name) || UI.defaultAccount,
+      cost_price: positionForm.cost_price ? Number(positionForm.cost_price) : undefined,
+      quantity: positionForm.quantity ? Number(positionForm.quantity) : undefined,
+      note: positionForm.note,
+      analysis_record_id: positionForm.origin_analysis_id,
+      last_trade_at: positionForm.buy_date || undefined,
+    } satisfies PortfolioStock;
+    setStocks((current) => [nextPosition, ...current]);
     try {
       await apiFetch("/api/portfolio/stocks", {
         method: "POST",
@@ -911,9 +947,12 @@ export function PortfolioPage() {
       setActiveEditor(null);
       closeHoldingPanel();
       showMessage(`持仓已新增：${positionForm.code}`);
-      await loadAll(true);
+      await loadAll(true).catch(() => undefined);
     } catch (requestError) {
+      setStocks((current) => current.filter((item) => item.id !== nextPosition.id));
       showError(requestError instanceof ApiRequestError ? requestError.message : "新增持仓失败");
+    } finally {
+      setIsSubmittingPosition(false);
     }
   };
 
@@ -925,6 +964,7 @@ export function PortfolioPage() {
     }
 
     clear();
+    setIsSubmittingTrade(true);
     try {
       await apiFetch(`/api/portfolio/stocks/${tradeForm.stock_id}/trades`, {
         method: "POST",
@@ -939,9 +979,11 @@ export function PortfolioPage() {
       setTradeForm((current) => ({ ...defaultTradeForm, stock_id: current.stock_id }));
       closeHoldingPanel();
       showMessage("交易记录已保存。");
-      await loadAll(true);
+      await loadAll(true).catch(() => undefined);
     } catch (requestError) {
       showError(requestError instanceof ApiRequestError ? requestError.message : "登记交易失败");
+    } finally {
+      setIsSubmittingTrade(false);
     }
   };
 
@@ -957,25 +999,60 @@ export function PortfolioPage() {
     }
 
     clear();
+    setIsUpdatingPosition(true);
+    const nextCode = positionForm.code.trim();
+    const nextName = positionForm.name.trim() || nextCode;
+    const nextAccount = normalizeAccountName(positionForm.account_name) || UI.defaultAccount;
+    const nextCostPrice = positionForm.cost_price ? Number(positionForm.cost_price) : undefined;
+    const nextQuantity = positionForm.quantity ? Number(positionForm.quantity) : undefined;
+    const nextBuyDate = positionForm.buy_date || undefined;
+    const previousStock = stocks.find((item) => item.id === editingStockId) ?? null;
+    setStocks((current) =>
+      current.map((stock) =>
+        stock.id === editingStockId
+          ? {
+              ...stock,
+              code: nextCode,
+              name: nextName,
+              account_name: nextAccount,
+              cost_price: nextCostPrice,
+              quantity: nextQuantity,
+              note: positionForm.note,
+              last_trade_at: nextBuyDate ?? stock.last_trade_at,
+            }
+          : stock,
+      ),
+    );
     try {
       await apiFetch(`/api/portfolio/stocks/${editingStockId}`, {
         method: "PATCH",
         body: JSON.stringify({
-          code: positionForm.code.trim(),
-          name: positionForm.name.trim() || positionForm.code.trim(),
-          account_name: normalizeAccountName(positionForm.account_name) || UI.defaultAccount,
-          cost_price: positionForm.cost_price ? Number(positionForm.cost_price) : null,
-          quantity: positionForm.quantity ? Number(positionForm.quantity) : null,
+          code: nextCode,
+          name: nextName,
+          account_name: nextAccount,
+          cost_price: nextCostPrice ?? null,
+          quantity: nextQuantity ?? null,
           note: positionForm.note,
-          buy_date: positionForm.buy_date || null,
+          buy_date: nextBuyDate ?? null,
         }),
       });
       resetPositionEditor();
       closeHoldingPanel();
-      showMessage(`持仓已更新：${positionForm.code.trim()}`);
-      await loadAll(true);
+      showMessage(`持仓已更新：${nextCode}`);
+      await loadAll(true).catch(() => undefined);
     } catch (requestError) {
+      if (previousStock) {
+        setStocks((current) =>
+          current.map((stock) =>
+            stock.id === previousStock.id
+              ? previousStock
+              : stock,
+          ),
+        );
+      }
       showError(requestError instanceof ApiRequestError ? requestError.message : "修改持仓失败");
+    } finally {
+      setIsUpdatingPosition(false);
     }
   };
 
@@ -984,20 +1061,36 @@ export function PortfolioPage() {
       return;
     }
     clear();
+    setDeletingStockId(stockId);
+    const removedIndex = stocks.findIndex((item) => item.id === stockId);
+    const removedStock = stocks[removedIndex] ?? null;
+    setStocks((current) => current.filter((item) => item.id !== stockId));
+    if (editingStockId === stockId) {
+      resetPositionEditor();
+    }
+    if (activeHoldingMenuId === stockId) {
+      closeHoldingPanel();
+    }
     try {
       await apiFetch(`/api/portfolio/stocks/${stockId}`, {
         method: "DELETE",
       });
-      if (editingStockId === stockId) {
-        resetPositionEditor();
-      }
-      if (activeHoldingMenuId === stockId) {
-        closeHoldingPanel();
-      }
       showMessage("持仓已删除。");
-      await loadAll(true);
+      await loadAll(true).catch(() => undefined);
     } catch (requestError) {
+      if (removedStock) {
+        setStocks((current) => {
+          if (current.some((item) => item.id === removedStock.id)) {
+            return current;
+          }
+          const next = [...current];
+          next.splice(Math.max(0, Math.min(removedIndex, next.length)), 0, removedStock);
+          return next;
+        });
+      }
       showError(requestError instanceof ApiRequestError ? requestError.message : "删除持仓失败");
+    } finally {
+      setDeletingStockId((current) => current === stockId ? null : current);
     }
   };
 
@@ -1007,6 +1100,7 @@ export function PortfolioPage() {
       showError("请至少选择一位分析师。");
       return;
     }
+    setIsSavingScheduler(true);
     try {
       const nextScheduler = await apiFetch<SchedulerStatus>("/api/portfolio/scheduler", {
         method: "PUT",
@@ -1023,14 +1117,22 @@ export function PortfolioPage() {
       });
       applySchedulerState(nextScheduler);
       showMessage("定时分析配置已更新。");
-      await loadAll(true);
+      await loadAll(true).catch(() => undefined);
     } catch (requestError) {
       showError(requestError instanceof ApiRequestError ? requestError.message : "保存定时分析失败");
+    } finally {
+      setIsSavingScheduler(false);
     }
   };
 
   const toggleScheduler = async (running: boolean) => {
     clear();
+    if (isTogglingScheduler) {
+      return;
+    }
+    const previousScheduler = scheduler;
+    setIsTogglingScheduler(true);
+    setSchedulerRunningOptimistically(running);
     try {
       const nextScheduler = await apiFetch<SchedulerStatus>(
         running ? "/api/portfolio/scheduler/start" : "/api/portfolio/scheduler/stop",
@@ -1038,9 +1140,12 @@ export function PortfolioPage() {
       );
       applySchedulerState(nextScheduler);
       showMessage(running ? "定时分析已启动。" : "定时分析已停止。");
-      await loadAll(true);
+      await loadAll(true).catch(() => undefined);
     } catch (requestError) {
+      setScheduler(previousScheduler);
       showError(requestError instanceof ApiRequestError ? requestError.message : "更新定时分析状态失败");
+    } finally {
+      setIsTogglingScheduler(false);
     }
   };
 
@@ -1111,10 +1216,17 @@ export function PortfolioPage() {
         </label>
       ) : null}
       <div className={styles.actions}>
-        <button className={styles.primaryButton} type="submit">{isEdit ? "保存修改" : "保存持仓"}</button>
+        <button className={styles.primaryButton} disabled={isEdit ? isUpdatingPosition : isSubmittingPosition} type="submit">
+          {isEdit ? (isUpdatingPosition ? "保存中..." : "保存修改") : (isSubmittingPosition ? "保存中..." : "保存持仓")}
+        </button>
         {isEdit && editingStockId ? (
-          <button className={styles.dangerButton} onClick={() => void deletePositionAction(editingStockId)} type="button">
-            {UI.deletePosition}
+          <button
+            className={styles.dangerButton}
+            disabled={deletingStockId === editingStockId}
+            onClick={() => void deletePositionAction(editingStockId)}
+            type="button"
+          >
+            {deletingStockId === editingStockId ? "删除中..." : UI.deletePosition}
           </button>
         ) : null}
         <button className={styles.secondaryButton} onClick={resetPositionEditor} type="button">取消</button>
@@ -1174,10 +1286,17 @@ export function PortfolioPage() {
         </div>
       </div>
       <div className={styles.actions}>
-        <button className={styles.primaryButton} type="submit">保存修改</button>
+        <button className={styles.primaryButton} disabled={isUpdatingPosition} type="submit">
+          {isUpdatingPosition ? "保存中..." : "保存修改"}
+        </button>
         {editingStockId ? (
-          <button className={styles.dangerButton} onClick={() => void deletePositionAction(editingStockId)} type="button">
-            {UI.deletePosition}
+          <button
+            className={styles.dangerButton}
+            disabled={deletingStockId === editingStockId}
+            onClick={() => void deletePositionAction(editingStockId)}
+            type="button"
+          >
+            {deletingStockId === editingStockId ? "删除中..." : UI.deletePosition}
           </button>
         ) : null}
         <button className={styles.secondaryButton} onClick={closeHoldingPanel} type="button">取消</button>
@@ -1239,7 +1358,9 @@ export function PortfolioPage() {
         </div>
       </div>
       <div className={styles.actions}>
-        <button className={styles.primaryButton} type="submit">保存交易</button>
+        <button className={styles.primaryButton} disabled={isSubmittingTrade} type="submit">
+          {isSubmittingTrade ? "保存中..." : "保存交易"}
+        </button>
         <button className={styles.secondaryButton} onClick={closeHoldingPanel} type="button">取消</button>
       </div>
     </form>
@@ -1508,6 +1629,7 @@ export function PortfolioPage() {
             <SchedulerControl
               enabled={Boolean(scheduler?.is_running)}
               label="启用定时分析"
+              busy={isSavingScheduler || isTogglingScheduler}
               onSave={() => void saveScheduler()}
               onToggle={(next) => void toggleScheduler(next)}
               scheduleFields={(

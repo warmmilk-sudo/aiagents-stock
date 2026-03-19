@@ -114,6 +114,8 @@ export function MacroCyclePage() {
   const [selectedReport, setSelectedReport] = useState<MacroHistoryRecord | null>(null);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [isSubmittingAnalysis, setIsSubmittingAnalysis] = useState(false);
+  const [deletingHistoryId, setDeletingHistoryId] = useState<number | null>(null);
 
   const loadTask = async () => {
     const data = await apiFetch<TaskDetail<MacroTaskPayload> | null>("/api/strategies/macro-cycle/tasks/latest");
@@ -195,6 +197,7 @@ export function MacroCyclePage() {
   const submitAnalysis = async () => {
     setMessage("");
     setError("");
+    setIsSubmittingAnalysis(true);
     try {
       const data = await apiFetch<{ task_id: string }>("/api/strategies/macro-cycle/tasks", {
         method: "POST",
@@ -203,9 +206,11 @@ export function MacroCyclePage() {
       setSelectedReport(null);
       setPanel("analysis");
       setMessage(`宏观周期分析任务已提交: ${data.task_id}`);
-      await loadTask();
+      await loadTask().catch(() => undefined);
     } catch (requestError) {
       setError(requestError instanceof ApiRequestError ? requestError.message : "提交宏观周期分析失败");
+    } finally {
+      setIsSubmittingAnalysis(false);
     }
   };
 
@@ -224,15 +229,34 @@ export function MacroCyclePage() {
   const deleteHistory = async (reportId: number) => {
     setMessage("");
     setError("");
+    if (deletingHistoryId === reportId) {
+      return;
+    }
+    const removedIndex = history.findIndex((item) => item.id === reportId);
+    const removedRecord = history[removedIndex] ?? null;
+    setDeletingHistoryId(reportId);
+    setHistory((current) => current.filter((item) => item.id !== reportId));
     try {
       await apiFetch(`/api/strategies/macro-cycle/history/${reportId}`, { method: "DELETE" });
       if (selectedReport?.id === reportId) {
         setSelectedReport(null);
       }
       setMessage(`历史报告 #${reportId} 已删除`);
-      await loadHistory();
+      await loadHistory().catch(() => undefined);
     } catch (requestError) {
+      if (removedRecord) {
+        setHistory((current) => {
+          if (current.some((item) => item.id === removedRecord.id)) {
+            return current;
+          }
+          const next = [...current];
+          next.splice(Math.max(0, Math.min(removedIndex, next.length)), 0, removedRecord);
+          return next;
+        });
+      }
       setError(requestError instanceof ApiRequestError ? requestError.message : "删除历史报告失败");
+    } finally {
+      setDeletingHistoryId((current) => current === reportId ? null : current);
     }
   };
 
@@ -268,8 +292,8 @@ export function MacroCyclePage() {
           <>
             <section className={styles.card}>
               <div className={styles.actions}>
-                <button className={styles.secondaryButton} onClick={() => void submitAnalysis()} type="button">
-                  开始宏观周期分析
+                <button className={styles.secondaryButton} disabled={isSubmittingAnalysis} onClick={() => void submitAnalysis()} type="button">
+                  {isSubmittingAnalysis ? "提交中..." : "开始宏观周期分析"}
                 </button>
               </div>
             </section>
@@ -384,8 +408,13 @@ export function MacroCyclePage() {
                       <button className={styles.secondaryButton} onClick={() => void openHistory(item.id)} type="button">
                         查看
                       </button>
-                      <button className={styles.dangerButton} onClick={() => void deleteHistory(item.id)} type="button">
-                        删除
+                      <button
+                        className={styles.dangerButton}
+                        disabled={deletingHistoryId === item.id}
+                        onClick={() => void deleteHistory(item.id)}
+                        type="button"
+                      >
+                        {deletingHistoryId === item.id ? "删除中..." : "删除"}
                       </button>
                     </div>
                   </div>

@@ -421,6 +421,283 @@ class MonitoringRepositoryTests(unittest.TestCase):
         self.assertEqual(int(events[0]["notification_pending"] or 0), 0)
         self.assertEqual(int(events[0]["is_read"] or 0), 1)
 
+    def test_ignore_notification_clears_all_pending_events_for_same_item(self):
+        item_id = self.repo.create_item(
+            {
+                "symbol": "000001",
+                "name": "平安银行",
+                "monitor_type": "price_alert",
+                "account_name": "默认账户",
+            }
+        )
+
+        conn = sqlite3.connect(self.repo.db_path)
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO monitoring_events (
+                monitoring_item_id, symbol, name, monitor_type, event_type, message,
+                details_json, notification_pending, sent, is_read, read_at, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                item_id,
+                "000001",
+                "平安银行",
+                "price_alert",
+                "entry",
+                "进入预警区间",
+                "{}",
+                1,
+                0,
+                0,
+                None,
+                "2026-03-12 10:31:00",
+            ),
+        )
+        first_id = int(cursor.lastrowid)
+        cursor.execute(
+            """
+            INSERT INTO monitoring_events (
+                monitoring_item_id, symbol, name, monitor_type, event_type, message,
+                details_json, notification_pending, sent, is_read, read_at, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                item_id,
+                "000001",
+                "平安银行",
+                "price_alert",
+                "take_profit",
+                "达到止盈位",
+                "{}",
+                1,
+                0,
+                0,
+                None,
+                "2026-03-12 10:32:00",
+            ),
+        )
+        latest_id = int(cursor.lastrowid)
+        conn.commit()
+        conn.close()
+
+        self.repo.ignore_notification(latest_id)
+
+        self.assertEqual(self.repo.get_all_recent_notifications(limit=10), [])
+        events = self.repo.get_recent_events(limit=10)
+        event_map = {int(event["id"]): event for event in events}
+        self.assertEqual(int(event_map[first_id]["notification_pending"] or 0), 0)
+        self.assertEqual(int(event_map[first_id]["is_read"] or 0), 1)
+        self.assertEqual(int(event_map[latest_id]["notification_pending"] or 0), 0)
+        self.assertEqual(int(event_map[latest_id]["is_read"] or 0), 1)
+
+    def test_pending_notification_list_keeps_only_latest_event_per_item(self):
+        item_id = self.repo.create_item(
+            {
+                "symbol": "000001",
+                "name": "平安银行",
+                "monitor_type": "price_alert",
+                "account_name": "默认账户",
+            }
+        )
+
+        conn = sqlite3.connect(self.repo.db_path)
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO monitoring_events (
+                monitoring_item_id, symbol, name, monitor_type, event_type, message,
+                details_json, notification_pending, sent, is_read, read_at, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                item_id,
+                "000001",
+                "平安银行",
+                "price_alert",
+                "entry",
+                "进入预警区间",
+                "{}",
+                1,
+                0,
+                0,
+                None,
+                "2026-03-12 10:31:00",
+            ),
+        )
+        first_id = int(cursor.lastrowid)
+        cursor.execute(
+            """
+            INSERT INTO monitoring_events (
+                monitoring_item_id, symbol, name, monitor_type, event_type, message,
+                details_json, notification_pending, sent, is_read, read_at, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                item_id,
+                "000001",
+                "平安银行",
+                "price_alert",
+                "stop_loss",
+                "达到止损位",
+                "{}",
+                1,
+                0,
+                0,
+                None,
+                "2026-03-12 10:32:00",
+            ),
+        )
+        latest_id = int(cursor.lastrowid)
+        conn.commit()
+        conn.close()
+
+        notifications = self.repo.get_pending_notifications()
+        self.assertEqual(len(notifications), 1)
+        self.assertEqual(notifications[0]["id"], latest_id)
+
+        events = self.repo.get_recent_events(limit=10)
+        event_map = {int(event["id"]): event for event in events}
+        self.assertEqual(int(event_map[first_id]["notification_pending"] or 0), 0)
+        self.assertEqual(int(event_map[first_id]["is_read"] or 0), 1)
+        self.assertEqual(int(event_map[latest_id]["notification_pending"] or 0), 1)
+
+    def test_orphan_notification_event_is_hidden_from_notification_lists(self):
+        item_id = self.repo.create_item(
+            {
+                "symbol": "000001",
+                "name": "平安银行",
+                "monitor_type": "price_alert",
+                "account_name": "默认账户",
+            }
+        )
+        event_id = self.repo.record_event(
+            item_id=item_id,
+            event_type="entry",
+            message="进入预警区间",
+            notification_pending=True,
+            sent=False,
+            created_at="2026-03-12 10:32:00",
+        )
+
+        self.assertEqual(len(self.repo.get_pending_notifications()), 1)
+
+        conn = sqlite3.connect(self.repo.db_path)
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA foreign_keys = OFF")
+        cursor.execute(
+            "UPDATE monitoring_events SET monitoring_item_id = ? WHERE id = ?",
+            (item_id + 9999, event_id),
+        )
+        conn.commit()
+        conn.close()
+
+        self.assertEqual(self.repo.get_pending_notifications(), [])
+        self.assertEqual(self.repo.get_all_recent_notifications(limit=10), [])
+        self.assertEqual(self.repo.get_recent_events(limit=10), [])
+
+    def test_deleted_monitor_item_is_hidden_from_recent_events_and_notifications(self):
+        item_id = self.repo.create_item(
+            {
+                "symbol": "600519",
+                "name": "贵州茅台",
+                "monitor_type": "price_alert",
+                "account_name": "默认账户",
+            }
+        )
+        event_id = self.repo.record_event(
+            item_id=item_id,
+            event_type="take_profit",
+            message="达到止盈位",
+            notification_pending=True,
+            sent=False,
+            created_at="2026-03-12 10:35:00",
+        )
+
+        self.assertEqual(len(self.repo.get_pending_notifications()), 1)
+        self.assertEqual(len(self.repo.get_all_recent_notifications(limit=10)), 1)
+        self.assertEqual(len(self.repo.get_recent_events(limit=10)), 1)
+
+        self.repo.delete_item(item_id)
+
+        self.assertEqual(self.repo.get_pending_notifications(), [])
+        self.assertEqual(self.repo.get_all_recent_notifications(limit=10), [])
+        self.assertEqual(self.repo.get_recent_events(limit=10), [])
+
+    def test_record_event_skips_missing_monitor_item(self):
+        event_id = self.repo.record_event(
+            item_id=999999,
+            event_type="entry",
+            message="应被跳过",
+            notification_pending=True,
+            sent=False,
+            created_at="2026-03-12 10:36:00",
+        )
+
+        self.assertEqual(event_id, 0)
+        self.assertEqual(self.repo.get_pending_notifications(), [])
+        self.assertEqual(self.repo.get_all_recent_notifications(limit=10), [])
+        self.assertEqual(self.repo.get_recent_events(limit=10), [])
+
+    def test_disabled_monitor_item_is_hidden_from_notification_lists(self):
+        item_id = self.repo.create_item(
+            {
+                "symbol": "600519",
+                "name": "贵州茅台",
+                "monitor_type": "price_alert",
+                "account_name": "默认账户",
+                "notification_enabled": True,
+            }
+        )
+        event_id = self.repo.record_event(
+            item_id=item_id,
+            event_type="take_profit",
+            message="达到止盈位",
+            notification_pending=True,
+            sent=False,
+            created_at="2026-03-12 10:33:00",
+        )
+
+        self.repo.update_item(item_id, {"enabled": False})
+
+        self.assertEqual(self.repo.get_pending_notifications(), [])
+        self.assertEqual(self.repo.get_all_recent_notifications(limit=10), [])
+
+        events = self.repo.get_recent_events(limit=10)
+        self.assertEqual(events[0]["id"], event_id)
+        self.assertEqual(int(events[0]["notification_pending"] or 0), 0)
+        self.assertEqual(int(events[0]["is_read"] or 0), 1)
+
+    def test_notification_disabled_item_is_hidden_from_notification_lists(self):
+        item_id = self.repo.create_item(
+            {
+                "symbol": "300750",
+                "name": "宁德时代",
+                "monitor_type": "price_alert",
+                "account_name": "默认账户",
+                "notification_enabled": True,
+            }
+        )
+        event_id = self.repo.record_event(
+            item_id=item_id,
+            event_type="stop_loss",
+            message="达到止损位",
+            notification_pending=True,
+            sent=False,
+            created_at="2026-03-12 10:34:00",
+        )
+
+        self.repo.update_item(item_id, {"notification_enabled": False})
+
+        self.assertEqual(self.repo.get_pending_notifications(), [])
+        self.assertEqual(self.repo.get_all_recent_notifications(limit=10), [])
+
+        events = self.repo.get_recent_events(limit=10)
+        self.assertEqual(events[0]["id"], event_id)
+        self.assertEqual(int(events[0]["notification_pending"] or 0), 0)
+        self.assertEqual(int(events[0]["is_read"] or 0), 1)
+
     def test_record_event_can_skip_latest_same_type_notification(self):
         item_id = self.repo.create_item(
             {
@@ -483,6 +760,9 @@ class MonitoringRepositoryTests(unittest.TestCase):
         events = self.repo.get_recent_events(limit=10)
         self.assertEqual(len(events), 2)
         self.assertEqual(events[0]["id"], second_id)
+        notifications = self.repo.get_pending_notifications()
+        self.assertEqual(len(notifications), 1)
+        self.assertEqual(notifications[0]["id"], second_id)
 
     def test_price_alert_upsert_reuses_existing_asset_record_when_managed_state_changes(self):
         first_id = self.repo.create_item(

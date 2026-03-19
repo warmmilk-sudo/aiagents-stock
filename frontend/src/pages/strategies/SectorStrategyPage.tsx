@@ -87,6 +87,10 @@ export function SectorStrategyPage() {
   const [section, setSection] = useState<SectionKey>("overview");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [isSubmittingAnalysis, setIsSubmittingAnalysis] = useState(false);
+  const [isSavingScheduler, setIsSavingScheduler] = useState(false);
+  const [isRunningOnce, setIsRunningOnce] = useState(false);
+  const [deletingHistoryId, setDeletingHistoryId] = useState<number | null>(null);
 
   const detailView = searchParams.get("view") === "detail";
   const detailSource = searchParams.get("source");
@@ -108,6 +112,17 @@ export function SectorStrategyPage() {
     const data = await apiFetch<SchedulerStatus>("/api/strategies/sector-strategy/scheduler");
     setScheduler(data);
     setScheduleTime(data.schedule_time || "09:00");
+  };
+
+  const setSchedulerRunningOptimistically = (running: boolean) => {
+    setScheduler((current) =>
+      current
+        ? {
+            ...current,
+            running,
+          }
+        : current,
+    );
   };
 
   const loadHistoryDetail = async (reportId: number) => {
@@ -176,6 +191,7 @@ export function SectorStrategyPage() {
   const submitAnalysis = async () => {
     setMessage("");
     setError("");
+    setIsSubmittingAnalysis(true);
     try {
       const data = await apiFetch<{ task_id: string }>("/api/strategies/sector-strategy/tasks", {
         method: "POST",
@@ -184,15 +200,20 @@ export function SectorStrategyPage() {
       closeDetail();
       setSection("overview");
       setMessage(`智策分析任务已提交: ${data.task_id}`);
-      await loadTask();
+      await loadTask().catch(() => undefined);
     } catch (requestError) {
       setError(requestError instanceof ApiRequestError ? requestError.message : "提交智策分析失败");
+    } finally {
+      setIsSubmittingAnalysis(false);
     }
   };
 
   const saveScheduler = async (enabled: boolean) => {
     setMessage("");
     setError("");
+    setIsSavingScheduler(true);
+    const previousScheduler = scheduler;
+    setSchedulerRunningOptimistically(enabled);
     try {
       const data = await apiFetch<SchedulerStatus>("/api/strategies/sector-strategy/scheduler", {
         method: "PUT",
@@ -201,27 +222,40 @@ export function SectorStrategyPage() {
       setScheduler(data);
       setMessage(enabled ? `智策定时任务已更新为每天 ${scheduleTime}` : "智策定时任务已停止");
     } catch (requestError) {
+      setScheduler(previousScheduler);
       setError(requestError instanceof ApiRequestError ? requestError.message : "更新智策定时任务失败");
+    } finally {
+      setIsSavingScheduler(false);
     }
   };
 
   const runOnce = async () => {
     setMessage("");
     setError("");
+    setIsRunningOnce(true);
     try {
       await apiFetch("/api/strategies/sector-strategy/scheduler/run-once", { method: "POST" });
       setSection("overview");
       closeDetail();
       setMessage("已提交一次智策后台分析");
-      await loadTask();
+      await loadTask().catch(() => undefined);
     } catch (requestError) {
       setError(requestError instanceof ApiRequestError ? requestError.message : "提交后台分析失败");
+    } finally {
+      setIsRunningOnce(false);
     }
   };
 
   const deleteHistory = async (reportId: number) => {
     setMessage("");
     setError("");
+    if (deletingHistoryId === reportId) {
+      return;
+    }
+    const removedIndex = history.findIndex((item) => item.id === reportId);
+    const removedRecord = history[removedIndex] ?? null;
+    setDeletingHistoryId(reportId);
+    setHistory((current) => current.filter((item) => item.id !== reportId));
     try {
       await apiFetch(`/api/strategies/sector-strategy/history/${reportId}`, { method: "DELETE" });
       setHistoryDetails((current) => {
@@ -234,9 +268,21 @@ export function SectorStrategyPage() {
         setSection("history");
       }
       setMessage(`历史报告 #${reportId} 已删除`);
-      await loadHistory();
+      await loadHistory().catch(() => undefined);
     } catch (requestError) {
+      if (removedRecord) {
+        setHistory((current) => {
+          if (current.some((item) => item.id === removedRecord.id)) {
+            return current;
+          }
+          const next = [...current];
+          next.splice(Math.max(0, Math.min(removedIndex, next.length)), 0, removedRecord);
+          return next;
+        });
+      }
       setError(requestError instanceof ApiRequestError ? requestError.message : "删除智策历史报告失败");
+    } finally {
+      setDeletingHistoryId((current) => current === reportId ? null : current);
     }
   };
 
@@ -281,8 +327,8 @@ export function SectorStrategyPage() {
             <>
               <section className={styles.card}>
                 <div className={styles.actions}>
-                  <button className={styles.primaryButton} onClick={() => void submitAnalysis()} type="button">
-                    开始智策分析
+                  <button className={styles.primaryButton} disabled={isSubmittingAnalysis} onClick={() => void submitAnalysis()} type="button">
+                    {isSubmittingAnalysis ? "提交中..." : "开始智策分析"}
                   </button>
                   {latestReportView ? (
                     <button className={styles.secondaryButton} onClick={openLatestDetail} type="button">
@@ -379,8 +425,13 @@ export function SectorStrategyPage() {
                         <button className={styles.secondaryButton} onClick={() => openHistoryDetail(item.id)} type="button">
                           查看报告
                         </button>
-                        <button className={styles.dangerButton} onClick={() => void deleteHistory(item.id)} type="button">
-                          删除
+                        <button
+                          className={styles.dangerButton}
+                          disabled={deletingHistoryId === item.id}
+                          onClick={() => void deleteHistory(item.id)}
+                          type="button"
+                        >
+                          {deletingHistoryId === item.id ? "删除中..." : "删除"}
                         </button>
                       </div>
                     </div>
@@ -427,6 +478,7 @@ export function SectorStrategyPage() {
                   <span className={styles.switchControl}>
                     <input
                       checked={Boolean(scheduler?.running)}
+                      disabled={isSavingScheduler}
                       onChange={(event) => void saveScheduler(event.target.checked)}
                       type="checkbox"
                     />
@@ -435,8 +487,8 @@ export function SectorStrategyPage() {
                     </span>
                   </span>
                 </label>
-                <button className={styles.secondaryButton} onClick={() => void runOnce()} type="button">
-                  立即运行
+                <button className={styles.secondaryButton} disabled={isRunningOnce} onClick={() => void runOnce()} type="button">
+                  {isRunningOnce ? "提交中..." : "立即运行"}
                 </button>
               </div>
             </section>

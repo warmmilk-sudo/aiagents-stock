@@ -108,6 +108,13 @@ export function SmallCapPage() {
   const [section, setSection] = useState<SectionKey>("results");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [isSubmittingSelection, setIsSubmittingSelection] = useState(false);
+  const [isSendingNotification, setIsSendingNotification] = useState(false);
+  const [isSavingMonitorConfig, setIsSavingMonitorConfig] = useState(false);
+  const [isTogglingMonitor, setIsTogglingMonitor] = useState(false);
+  const [pendingMonitorCode, setPendingMonitorCode] = useState("");
+  const [pendingAlertId, setPendingAlertId] = useState<number | null>(null);
+  const [isCleaningHistory, setIsCleaningHistory] = useState(false);
 
   const loadTask = async () => {
     const data = await apiFetch<TaskDetail | null>("/api/selectors/small-cap/tasks/latest");
@@ -158,6 +165,7 @@ export function SmallCapPage() {
     event.preventDefault();
     setMessage("");
     setError("");
+    setIsSubmittingSelection(true);
     try {
       const data = await apiFetch<{ task_id: string }>("/api/selectors/small-cap/tasks", {
         method: "POST",
@@ -176,15 +184,18 @@ export function SmallCapPage() {
       });
       setSection("results");
       setMessage(`小市值选股任务已提交: ${data.task_id}`);
-      await loadTask();
+      await loadTask().catch(() => undefined);
     } catch (requestError) {
       setError(requestError instanceof ApiRequestError ? requestError.message : "提交小市值任务失败");
+    } finally {
+      setIsSubmittingSelection(false);
     }
   };
 
   const notifyWebhook = async () => {
     setMessage("");
     setError("");
+    setIsSendingNotification(true);
     try {
       await apiFetch("/api/selectors/small-cap/notify", {
         method: "POST",
@@ -194,6 +205,8 @@ export function SmallCapPage() {
       setMessage("钉钉通知已发送");
     } catch (requestError) {
       setError(requestError instanceof ApiRequestError ? requestError.message : "发送通知失败");
+    } finally {
+      setIsSendingNotification(false);
     }
   };
 
@@ -203,6 +216,28 @@ export function SmallCapPage() {
     const price = asNumber(stock["股价"] ?? stock["最新价"]) ?? 0;
     setMessage("");
     setError("");
+    if (pendingMonitorCode === code) {
+      return;
+    }
+    const optimisticStock: MonitoredStock = {
+      stock_code: code,
+      stock_name: name,
+      buy_price: price,
+      buy_date: new Date().toISOString().slice(0, 10),
+      holding_days: 0,
+    };
+    setPendingMonitorCode(code);
+    setMonitoredStocks((current) =>
+      current.some((item) => item.stock_code === code) ? current : [optimisticStock, ...current],
+    );
+    setMonitorStatus((current) =>
+      current
+        ? {
+            ...current,
+            monitored_count: Number(current.monitored_count ?? 0) + 1,
+          }
+        : current,
+    );
     try {
       await apiFetch("/api/selectors/small-cap/monitor/stocks", {
         method: "POST",
@@ -210,28 +245,75 @@ export function SmallCapPage() {
       });
       setSection("monitor");
       setMessage(`已加入策略监控: ${code}`);
-      await loadMonitorData();
+      await loadMonitorData().catch(() => undefined);
     } catch (requestError) {
+      setMonitoredStocks((current) => current.filter((item) => item.stock_code !== code));
+      setMonitorStatus((current) =>
+        current
+          ? {
+              ...current,
+              monitored_count: Math.max(0, Number(current.monitored_count ?? 0) - 1),
+            }
+          : current,
+      );
       setError(requestError instanceof ApiRequestError ? requestError.message : "加入监控失败");
+    } finally {
+      setPendingMonitorCode((current) => (current === code ? "" : current));
     }
   };
 
   const removeFromMonitor = async (stockCode: string) => {
     setMessage("");
     setError("");
+    if (pendingMonitorCode === stockCode) {
+      return;
+    }
+    const removedIndex = monitoredStocks.findIndex((item) => item.stock_code === stockCode);
+    const removedStock = monitoredStocks[removedIndex] ?? null;
+    setPendingMonitorCode(stockCode);
+    setMonitoredStocks((current) => current.filter((item) => item.stock_code !== stockCode));
+    setMonitorStatus((current) =>
+      current
+        ? {
+            ...current,
+            monitored_count: Math.max(0, Number(current.monitored_count ?? 0) - 1),
+          }
+        : current,
+    );
     try {
       await apiFetch(`/api/selectors/small-cap/monitor/stocks/${stockCode}`, { method: "DELETE" });
       setSection("monitor");
       setMessage(`已移出监控: ${stockCode}`);
-      await loadMonitorData();
+      await loadMonitorData().catch(() => undefined);
     } catch (requestError) {
+      if (removedStock) {
+        setMonitoredStocks((current) => {
+          if (current.some((item) => item.stock_code === removedStock.stock_code)) {
+            return current;
+          }
+          const next = [...current];
+          next.splice(Math.max(0, Math.min(removedIndex, next.length)), 0, removedStock);
+          return next;
+        });
+      }
+      setMonitorStatus((current) =>
+        current
+          ? {
+              ...current,
+              monitored_count: Number(current.monitored_count ?? 0) + 1,
+            }
+          : current,
+      );
       setError(requestError instanceof ApiRequestError ? requestError.message : "移出监控失败");
+    } finally {
+      setPendingMonitorCode((current) => (current === stockCode ? "" : current));
     }
   };
 
   const saveMonitorConfig = async () => {
     setMessage("");
     setError("");
+    setIsSavingMonitorConfig(true);
     try {
       const data = await apiFetch<MonitorStatus>("/api/selectors/small-cap/monitor/config", {
         method: "PUT",
@@ -242,12 +324,32 @@ export function SmallCapPage() {
       setMessage("监控配置已更新");
     } catch (requestError) {
       setError(requestError instanceof ApiRequestError ? requestError.message : "更新监控配置失败");
+    } finally {
+      setIsSavingMonitorConfig(false);
     }
   };
 
   const toggleMonitor = async (running: boolean) => {
     setMessage("");
     setError("");
+    if (isTogglingMonitor) {
+      return;
+    }
+    const previousStatus = monitorStatus;
+    setIsTogglingMonitor(true);
+    setMonitorStatus((current) =>
+      current
+        ? {
+            ...current,
+            running,
+          }
+        : {
+            running,
+            scan_interval: Number(scanInterval) || 60,
+            monitored_count: 0,
+            pending_alerts: 0,
+          },
+    );
     try {
       const data = await apiFetch<MonitorStatus>(
         running ? "/api/selectors/small-cap/monitor/start" : "/api/selectors/small-cap/monitor/stop",
@@ -257,13 +359,31 @@ export function SmallCapPage() {
       setSection("monitor");
       setMessage(running ? "监控服务已启动" : "监控服务已停止");
     } catch (requestError) {
+      setMonitorStatus(previousStatus);
       setError(requestError instanceof ApiRequestError ? requestError.message : "更新监控服务状态失败");
+    } finally {
+      setIsTogglingMonitor(false);
     }
   };
 
   const resolveAlert = async (alertId: number, status: "done" | "ignored") => {
     setMessage("");
     setError("");
+    if (pendingAlertId === alertId) {
+      return;
+    }
+    const removedIndex = pendingAlerts.findIndex((item) => item.id === alertId);
+    const removedAlert = pendingAlerts[removedIndex] ?? null;
+    setPendingAlertId(alertId);
+    setPendingAlerts((current) => current.filter((item) => item.id !== alertId));
+    setMonitorStatus((current) =>
+      current
+        ? {
+            ...current,
+            pending_alerts: Math.max(0, Number(current.pending_alerts ?? 0) - 1),
+          }
+        : current,
+    );
     try {
       await apiFetch(`/api/selectors/small-cap/monitor/alerts/${alertId}/resolve`, {
         method: "POST",
@@ -271,22 +391,45 @@ export function SmallCapPage() {
       });
       setSection("monitor");
       setMessage(status === "done" ? "已处理提醒并移出监控列表" : "已忽略提醒");
-      await loadMonitorData();
+      await loadMonitorData().catch(() => undefined);
     } catch (requestError) {
+      if (removedAlert) {
+        setPendingAlerts((current) => {
+          if (current.some((item) => item.id === removedAlert.id)) {
+            return current;
+          }
+          const next = [...current];
+          next.splice(Math.max(0, Math.min(removedIndex, next.length)), 0, removedAlert);
+          return next;
+        });
+      }
+      setMonitorStatus((current) =>
+        current
+          ? {
+              ...current,
+              pending_alerts: Number(current.pending_alerts ?? 0) + 1,
+            }
+          : current,
+      );
       setError(requestError instanceof ApiRequestError ? requestError.message : "处理提醒失败");
+    } finally {
+      setPendingAlertId((current) => (current === alertId ? null : current));
     }
   };
 
   const cleanupHistory = async () => {
     setMessage("");
     setError("");
+    setIsCleaningHistory(true);
     try {
       await apiFetch("/api/selectors/small-cap/monitor/alerts/cleanup?days=30", { method: "POST" });
       setSection("monitor");
       setMessage("已清理 30 天前提醒记录");
-      await loadMonitorData();
+      await loadMonitorData().catch(() => undefined);
     } catch (requestError) {
       setError(requestError instanceof ApiRequestError ? requestError.message : "清理历史提醒失败");
+    } finally {
+      setIsCleaningHistory(false);
     }
   };
 
@@ -349,8 +492,8 @@ export function SmallCapPage() {
                 </div>
                 <p className={styles.muted}>当前筛选: {filterSummary}</p>
                 <div className={styles.actions}>
-                  <button className={styles.primaryButton} type="submit">
-                    开始小市值选股
+                  <button className={styles.primaryButton} disabled={isSubmittingSelection} type="submit">
+                    {isSubmittingSelection ? "提交中..." : "开始小市值选股"}
                   </button>
                   <button
                     className={styles.secondaryButton}
@@ -360,8 +503,8 @@ export function SmallCapPage() {
                     下载 CSV
                   </button>
                   {!!stocks.length ? (
-                    <button className={styles.secondaryButton} onClick={() => void notifyWebhook()} type="button">
-                      发送钉钉通知
+                    <button className={styles.secondaryButton} disabled={isSendingNotification} onClick={() => void notifyWebhook()} type="button">
+                      {isSendingNotification ? "发送中..." : "发送钉钉通知"}
                     </button>
                   ) : null}
                 </div>
@@ -451,12 +594,12 @@ export function SmallCapPage() {
                       </div>
                       <div className={styles.actions} style={{ marginTop: 12 }}>
                         {monitoredCodes.has(code) ? (
-                          <button className={styles.dangerButton} onClick={() => void removeFromMonitor(code)} type="button">
-                            移出监控
+                          <button className={styles.dangerButton} disabled={pendingMonitorCode === code} onClick={() => void removeFromMonitor(code)} type="button">
+                            {pendingMonitorCode === code ? "处理中..." : "移出监控"}
                           </button>
                         ) : (
-                          <button className={styles.primaryButton} onClick={() => void addToMonitor(stock)} type="button">
-                            加入策略监控
+                          <button className={styles.primaryButton} disabled={pendingMonitorCode === code} onClick={() => void addToMonitor(stock)} type="button">
+                            {pendingMonitorCode === code ? "处理中..." : "加入策略监控"}
                           </button>
                         )}
                       </div>
@@ -519,19 +662,19 @@ export function SmallCapPage() {
                 </div>
               </div>
               <div className={styles.actions} style={{ marginTop: 16 }}>
-                <button className={styles.primaryButton} disabled={Boolean(monitorStatus?.running)} onClick={() => void toggleMonitor(true)} type="button">
-                  启动监控服务
+                <button className={styles.primaryButton} disabled={Boolean(monitorStatus?.running) || isTogglingMonitor || isSavingMonitorConfig} onClick={() => void toggleMonitor(true)} type="button">
+                  {isTogglingMonitor ? "处理中..." : "启动监控服务"}
                 </button>
-                <button className={styles.secondaryButton} disabled={!monitorStatus?.running} onClick={() => void toggleMonitor(false)} type="button">
-                  停止监控服务
+                <button className={styles.secondaryButton} disabled={!monitorStatus?.running || isTogglingMonitor || isSavingMonitorConfig} onClick={() => void toggleMonitor(false)} type="button">
+                  {isTogglingMonitor ? "处理中..." : "停止监控服务"}
                 </button>
                 <input
                   className={styles.shortInput}
                   value={scanInterval}
                   onChange={(event) => setScanInterval(event.target.value)}
                 />
-                <button className={styles.secondaryButton} onClick={() => void saveMonitorConfig()} type="button">
-                  保存扫描间隔
+                <button className={styles.secondaryButton} disabled={isSavingMonitorConfig} onClick={() => void saveMonitorConfig()} type="button">
+                  {isSavingMonitorConfig ? "保存中..." : "保存扫描间隔"}
                 </button>
               </div>
             </section>
@@ -601,11 +744,11 @@ export function SmallCapPage() {
                       </div>
                     </div>
                     <div className={styles.actions} style={{ marginTop: 12 }}>
-                      <button className={styles.primaryButton} onClick={() => void resolveAlert(alert.id, "done")} type="button">
-                        已处理
+                      <button className={styles.primaryButton} disabled={pendingAlertId === alert.id} onClick={() => void resolveAlert(alert.id, "done")} type="button">
+                        {pendingAlertId === alert.id ? "处理中..." : "已处理"}
                       </button>
-                      <button className={styles.secondaryButton} onClick={() => void resolveAlert(alert.id, "ignored")} type="button">
-                        忽略
+                      <button className={styles.secondaryButton} disabled={pendingAlertId === alert.id} onClick={() => void resolveAlert(alert.id, "ignored")} type="button">
+                        {pendingAlertId === alert.id ? "处理中..." : "忽略"}
                       </button>
                     </div>
                   </div>
@@ -617,8 +760,8 @@ export function SmallCapPage() {
             <section className={styles.card}>
               <div className={styles.actions}>
                 <h2>历史提醒记录</h2>
-                <button className={styles.secondaryButton} onClick={() => void cleanupHistory()} type="button">
-                  清理 30 天前记录
+                <button className={styles.secondaryButton} disabled={isCleaningHistory} onClick={() => void cleanupHistory()} type="button">
+                  {isCleaningHistory ? "清理中..." : "清理 30 天前记录"}
                 </button>
               </div>
               <div className={styles.tableWrap}>

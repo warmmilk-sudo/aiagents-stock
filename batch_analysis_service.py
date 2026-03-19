@@ -5,6 +5,7 @@ import sqlite3
 from typing import Callable, Dict, Optional
 
 from ai_agents import StockAnalysisAgents
+from asset_service import asset_service
 from database import db
 from stock_data import StockDataFetcher
 from stock_data_cache import strip_cache_meta
@@ -25,10 +26,36 @@ EXPECTED_OPTIONAL_ERRORS = (
 def _get_stock_data(symbol: str, period: str):
     fetcher = StockDataFetcher()
     stock_info = fetcher.get_stock_info(symbol)
+    realtime_quote = fetcher.get_realtime_quote(symbol)
     stock_data = fetcher.get_stock_data(symbol, period)
 
     if isinstance(stock_data, dict) and "error" in stock_data:
         return stock_info, None, None
+
+    if isinstance(stock_info, dict) and "error" not in stock_info:
+        stock_info = dict(stock_info)
+        if isinstance(realtime_quote, dict) and realtime_quote:
+            current_price = realtime_quote.get("current_price", realtime_quote.get("price"))
+            try:
+                current_price_value = float(current_price)
+            except (TypeError, ValueError):
+                current_price_value = 0.0
+            if current_price_value > 0:
+                stock_info["current_price"] = current_price_value
+                stock_info.pop("change_percent", None)
+                stock_info.pop("realtime_data_source", None)
+                if realtime_quote.get("change_percent") not in (None, ""):
+                    stock_info["change_percent"] = realtime_quote.get("change_percent")
+                if realtime_quote.get("data_source"):
+                    stock_info["realtime_data_source"] = realtime_quote.get("data_source")
+            else:
+                stock_info.pop("current_price", None)
+                stock_info.pop("change_percent", None)
+                stock_info.pop("realtime_data_source", None)
+        else:
+            stock_info.pop("current_price", None)
+            stock_info.pop("change_percent", None)
+            stock_info.pop("realtime_data_source", None)
 
     stock_data_with_indicators = fetcher.calculate_technical_indicators(stock_data)
     indicators = fetcher.get_latest_indicators(stock_data_with_indicators)
@@ -43,6 +70,20 @@ def _fetch_optional_data(symbol: str, source_name: str, fetch_func: Callable[[],
     except EXPECTED_OPTIONAL_ERRORS as exc:
         logger.warning("[%s] optional source '%s' downgraded: %s", symbol, source_name, exc)
         return None
+
+
+def _sync_managed_monitors_for_symbol(symbol: str) -> None:
+    try:
+        sync_result = asset_service.sync_managed_monitors_for_symbol(symbol)
+        logger.info(
+            "[%s] synced managed monitor baselines after research analysis: ai=%s alert=%s removed=%s",
+            symbol,
+            sync_result.get("ai_tasks_upserted", 0),
+            sync_result.get("price_alerts_upserted", 0),
+            sync_result.get("removed", 0),
+        )
+    except Exception as exc:
+        logger.warning("[%s] failed syncing managed monitor baselines: %s", symbol, exc)
 
 
 def analyze_single_stock_for_batch(
@@ -164,6 +205,7 @@ def analyze_single_stock_for_batch(
                 )
                 saved_to_db = True
                 logger.info("%s saved to global history (record_id=%s)", symbol, record_id)
+                _sync_managed_monitors_for_symbol(symbol)
             except (sqlite3.DatabaseError, OSError, RuntimeError, TypeError, ValueError) as exc:
                 db_error = str(exc)
                 logger.warning("%s failed saving to global history: %s", symbol, db_error)

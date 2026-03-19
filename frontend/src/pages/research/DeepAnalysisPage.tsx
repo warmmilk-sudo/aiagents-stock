@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { AnalystSelector } from "../../components/common/AnalystSelector";
@@ -18,6 +18,7 @@ import { ApiRequestError, apiFetch, apiFetchCached, buildQuery } from "../../lib
 import { formatDateTime } from "../../lib/datetime";
 import { encodeIntent } from "../../lib/intents";
 import { useDeepAnalysisStore } from "../../stores/deepAnalysisStore";
+import { useSmartMonitorStore } from "../../stores/smartMonitorStore";
 import styles from "../ConsolePage.module.scss";
 
 interface TaskResultRow {
@@ -99,6 +100,8 @@ function FollowupAssetList({
   assets,
   emptyText,
   followupSearch,
+  busy = false,
+  pendingSymbol = "",
   onSearchChange,
   onRefresh,
   onOpenMonitor,
@@ -108,6 +111,8 @@ function FollowupAssetList({
   assets: FollowupAsset[];
   emptyText: string;
   followupSearch: string;
+  busy?: boolean;
+  pendingSymbol?: string;
   onSearchChange: (value: string) => void;
   onRefresh: () => void;
   onOpenMonitor: (asset: FollowupAsset) => void;
@@ -150,8 +155,13 @@ function FollowupAssetList({
                 <button className={styles.secondaryButton} onClick={() => onOpenMonitor(asset)} type="button">
                   加入盯盘
                 </button>
-                <button className={styles.secondaryButton} onClick={() => onReAnalyze(asset.symbol)} type="button">
-                  再次分析
+                <button
+                  className={styles.secondaryButton}
+                  disabled={busy}
+                  onClick={() => onReAnalyze(asset.symbol)}
+                  type="button"
+                >
+                  {pendingSymbol === asset.symbol ? "分析中..." : "再次分析"}
                 </button>
                 {asset.latest_analysis_id ? (
                   <button
@@ -181,6 +191,7 @@ export function DeepAnalysisPage() {
   const setMaxWorkers = useDeepAnalysisStore((state) => state.setMaxWorkers);
   const analysts = useDeepAnalysisStore((state) => state.analysts);
   const setAnalysts = useDeepAnalysisStore((state) => state.setAnalysts);
+  const clearSmartMonitorPageCache = useSmartMonitorStore((state) => state.clearPageCache);
 
   const [stockInput, setStockInput] = useState("");
   const [section, setSection] = useState<SectionKey>("start");
@@ -188,7 +199,10 @@ export function DeepAnalysisPage() {
   const [singleRecord, setSingleRecord] = useState<AnalysisRecordDetail | null>(null);
   const [followupAssets, setFollowupAssets] = useState<FollowupAsset[]>([]);
   const [followupSearch, setFollowupSearch] = useState("");
+  const [isSubmittingAnalysis, setIsSubmittingAnalysis] = useState(false);
+  const [pendingReAnalyzeSymbol, setPendingReAnalyzeSymbol] = useState("");
   const { message, error, clear, showError, showMessage } = usePageFeedback();
+  const lastTerminalTaskRef = useRef<string>("");
 
   const selectedAnalysts = useMemo(
     () => analystConfigToKeys(analysts as Partial<Record<AnalystKey, boolean>>),
@@ -222,6 +236,18 @@ export function DeepAnalysisPage() {
   usePollingLoader({ load: loadTask, intervalMs: 2000 });
 
   useEffect(() => {
+    if (!task || task.status === "queued" || task.status === "running") {
+      return;
+    }
+    const terminalKey = `${task.id}:${task.status}:${task.result?.record_id ?? "na"}`;
+    if (lastTerminalTaskRef.current === terminalKey) {
+      return;
+    }
+    lastTerminalTaskRef.current = terminalKey;
+    clearSmartMonitorPageCache();
+  }, [clearSmartMonitorPageCache, task?.id, task?.status, task?.result?.record_id]);
+
+  useEffect(() => {
     void loadFollowupAssets();
   }, [followupSearch]);
 
@@ -237,6 +263,8 @@ export function DeepAnalysisPage() {
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     clear();
+    setIsSubmittingAnalysis(true);
+    setPendingReAnalyzeSymbol(stockInput.trim().split(/[\s,，\n]+/)[0] || "");
     try {
       await apiFetch<{ task_id: string }>("/api/analysis/tasks", {
         method: "POST",
@@ -248,15 +276,20 @@ export function DeepAnalysisPage() {
         }),
       });
       showMessage("分析任务已提交，正在准备执行...");
-      await loadTask();
+      await loadTask().catch(() => undefined);
     } catch (requestError) {
       showError(requestError instanceof ApiRequestError ? requestError.message : "提交任务失败");
+    } finally {
+      setIsSubmittingAnalysis(false);
+      setPendingReAnalyzeSymbol("");
     }
   };
 
   const handleReAnalyze = async (symbol: string) => {
     setStockInput(symbol);
     clear();
+    setIsSubmittingAnalysis(true);
+    setPendingReAnalyzeSymbol(symbol);
     try {
       await apiFetch<{ task_id: string }>("/api/analysis/tasks", {
         method: "POST",
@@ -269,9 +302,12 @@ export function DeepAnalysisPage() {
       });
       showMessage(`已重新提交 ${symbol} 的分析任务`);
       setSection("start");
-      await loadTask();
+      await loadTask().catch(() => undefined);
     } catch (requestError) {
       showError(requestError instanceof ApiRequestError ? requestError.message : "再次分析失败");
+    } finally {
+      setIsSubmittingAnalysis(false);
+      setPendingReAnalyzeSymbol("");
     }
   };
 
@@ -295,16 +331,10 @@ export function DeepAnalysisPage() {
       : "/investment/smart-monitor";
 
   const handleOpenMonitor = async (asset: FollowupAsset) => {
-    clear();
-    try {
-      if (!isWatchlistAsset(asset)) {
-        await handlePromoteWatchlist(asset.id);
-        showMessage(`${asset.symbol} 已加入智能盯盘`);
-      }
-      navigate(buildMonitorPath(asset.action_payload));
-    } catch (requestError) {
-      showError(requestError instanceof ApiRequestError ? requestError.message : "加入盯盘失败");
+    if (!isWatchlistAsset(asset)) {
+      void handlePromoteWatchlist(asset.id).catch(() => undefined);
     }
+    navigate(buildMonitorPath(asset.action_payload));
   };
 
   const taskSection = (
@@ -415,8 +445,8 @@ export function DeepAnalysisPage() {
                 />
               </div>
               <div className={styles.responsiveActionGrid}>
-                <button className={styles.primaryButton} type="submit">
-                  开始深度分析
+                <button className={styles.primaryButton} disabled={isSubmittingAnalysis} type="submit">
+                  {isSubmittingAnalysis ? "提交中..." : "开始深度分析"}
                 </button>
               </div>
             </form>
@@ -436,7 +466,9 @@ export function DeepAnalysisPage() {
             <FollowupAssetList
               assets={watchlistAssets}
               emptyText="暂无关注中的股票"
+              busy={isSubmittingAnalysis}
               followupSearch={followupSearch}
+              pendingSymbol={pendingReAnalyzeSymbol}
               onOpenHistory={(recordId) => navigate(`/research/history?recordId=${recordId}`)}
               onOpenMonitor={(asset) => void handleOpenMonitor(asset)}
               onReAnalyze={(symbol) => void handleReAnalyze(symbol)}
@@ -451,7 +483,9 @@ export function DeepAnalysisPage() {
             <FollowupAssetList
               assets={viewedAssets}
               emptyText="暂无看过的股票"
+              busy={isSubmittingAnalysis}
               followupSearch={followupSearch}
+              pendingSymbol={pendingReAnalyzeSymbol}
               onOpenHistory={(recordId) => navigate(`/research/history?recordId=${recordId}`)}
               onOpenMonitor={(asset) => void handleOpenMonitor(asset)}
               onReAnalyze={(symbol) => void handleReAnalyze(symbol)}

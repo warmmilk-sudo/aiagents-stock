@@ -36,6 +36,51 @@ class StockDataFetcher:
             )
         except Exception as e:
             return {"error": f"获取股票信息失败: {str(e)}"}
+
+    def get_realtime_quote(self, symbol, retry=1):
+        """获取实时行情，仅使用实时源，不回退到历史日线。"""
+        import math
+        import time
+
+        if not self._is_chinese_stock(symbol):
+            return None
+
+        for attempt in range(max(1, int(retry or 1))):
+            try:
+                quote = self.data_source_manager.get_realtime_quotes(symbol)
+                if isinstance(quote, dict) and quote:
+                    price = quote.get("price")
+                    try:
+                        price_value = float(price)
+                    except (TypeError, ValueError):
+                        return None
+
+                    if not math.isfinite(price_value) or price_value <= 0:
+                        return None
+
+                    return {
+                        "code": symbol,
+                        "symbol": symbol,
+                        "name": quote.get("name", f"股票{symbol}"),
+                        "current_price": price_value,
+                        "price": price_value,
+                        "change_percent": quote.get("change_percent", "N/A"),
+                        "change_amount": quote.get("change", quote.get("change_amount", "N/A")),
+                        "volume": quote.get("volume", "N/A"),
+                        "amount": quote.get("amount", "N/A"),
+                        "high": quote.get("high", "N/A"),
+                        "low": quote.get("low", "N/A"),
+                        "open": quote.get("open", "N/A"),
+                        "pre_close": quote.get("pre_close", "N/A"),
+                        "data_source": quote.get("data_source", "akshare"),
+                    }
+            except Exception as e:
+                print(f"[WARN] 获取实时行情失败 ({symbol}): {e}")
+
+            if attempt < max(1, int(retry or 1)) - 1:
+                time.sleep(1)
+
+        return None
     
     def get_stock_data(
         self,
@@ -179,65 +224,8 @@ class StockDataFetcher:
                     except Exception as te:
                         print(f"[Tushare] ❌ 获取失败: {te}")
             
-            # 方法2: 尝试获取历史价格和涨跌幅（如果网络允许）
-            # try:
-            #     # 使用更简单的接口获取实时价格
-            #     real_time_data = ak.stock_zh_a_spot_em()
-            #     if real_time_data is not None and not real_time_data.empty:
-            #         stock_real_time = real_time_data[real_time_data['代码'] == symbol]
-            #         if not stock_real_time.empty:
-            #             row = stock_real_time.iloc[0]
-            #             info['current_price'] = row.get('最新价', 'N/A')
-            #             info['change_percent'] = row.get('涨跌幅', 'N/A')
-            #             if info['name'] == '未知':
-            #                 info['name'] = row.get('名称', '未知')
-                        
-            #             # 如果实时数据中有市盈率和市净率，优先使用
-            #             if '市盈率-动态' in row and info['pe_ratio'] == 'N/A':
-            #                 try:
-            #                     pe_val = row['市盈率-动态']
-            #                     if pe_val and pe_val != '-':
-            #                         pe_val = float(pe_val)
-            #                         if 0 < pe_val <= 1000:
-            #                             info['pe_ratio'] = pe_val
-            #                 except:
-            #                     pass
-                        
-            #             if '市净率' in row and info['pb_ratio'] == 'N/A':
-            #                 try:
-            #                     pb_val = row['市净率']
-            #                     if pb_val and pb_val != '-':
-            #                         pb_val = float(pb_val)
-            #                         if 0 < pb_val <= 100:
-            #                             info['pb_ratio'] = pb_val
-            #                 except:
-            #                     pass
-                                
-            # except Exception as e:
-            #     print(f"[Akshare] 获取实时数据失败: {e}")
-            #     # 如果实时数据获取失败，尝试使用数据源管理器获取历史数据（支持tushare备用）
-            try:
-                print(f"[数据源管理器] 尝试获取最近交易数据...")
-                hist_data = self.data_source_manager.get_stock_hist_data(
-                    symbol=symbol,
-                    start_date=(datetime.now() - timedelta(days=30)).strftime('%Y%m%d'),
-                    end_date=datetime.now().strftime('%Y%m%d'),
-                    adjust='qfq'
-                )
-                
-                if hist_data is not None and not hist_data.empty:
-                    # 标准化列名
-                    if 'close' in hist_data.columns:
-                        latest = hist_data.iloc[-1]
-                        info['current_price'] = latest['close']
-                        # 计算涨跌幅
-                        if len(hist_data) > 1:
-                            prev_close = hist_data.iloc[-2]['close']
-                            change_pct = ((latest['close'] - prev_close) / prev_close) * 100
-                            info['change_percent'] = round(change_pct, 2)
-                        print(f"[数据源管理器] ✅ 成功获取价格数据")
-            except Exception as e2:
-                print(f"获取历史数据也失败: {e2}")
+            # 不再使用历史日线收盘价回填 current_price/change_percent。
+            # 如果实时源不可用，这里保持 N/A，避免把收盘价误当成盘中现价。
             
             # 方法3: 使用百度估值数据获取市盈率和市净率
             if info['pe_ratio'] == 'N/A':
@@ -333,22 +321,7 @@ class StockDataFetcher:
             except Exception as e:
                 print(f"获取港股实时数据失败: {e}")
             
-            # 方法2: 尝试使用历史数据获取价格信息
-            if info['current_price'] == 'N/A':
-                try:
-                    hist_df = ak.stock_hk_hist(symbol=hk_code, period="daily", 
-                                              start_date=(datetime.now() - timedelta(days=5)).strftime('%Y%m%d'),
-                                              end_date=datetime.now().strftime('%Y%m%d'), adjust="qfq")
-                    if hist_df is not None and not hist_df.empty:
-                        latest = hist_df.iloc[-1]
-                        info['current_price'] = latest['收盘']
-                        # 计算涨跌幅
-                        if len(hist_df) > 1:
-                            prev_close = hist_df.iloc[-2]['收盘']
-                            change_pct = ((latest['收盘'] - prev_close) / prev_close) * 100
-                            info['change_percent'] = round(change_pct, 2)
-                except Exception as e:
-                    print(f"获取港股历史数据失败: {e}")
+            # 不再使用历史日线收盘价回填 current_price/change_percent。
             
             return info
             
@@ -377,22 +350,9 @@ class StockDataFetcher:
             
             ticker = yf.Ticker(symbol)
             
-            # 先尝试获取历史数据（通常更稳定）
-            try:
-                hist = ticker.history(period="2d")
-                if not hist.empty:
-                    current_price = hist['Close'].iloc[-1]
-                    if len(hist) > 1:
-                        prev_close = hist['Close'].iloc[-2]
-                        change_percent = ((current_price - prev_close) / prev_close) * 100
-                    else:
-                        change_percent = 'N/A'
-                else:
-                    current_price = 'N/A'
-                    change_percent = 'N/A'
-            except:
-                current_price = 'N/A'
-                change_percent = 'N/A'
+            # 不再使用历史收盘价回填 current_price；只信任行情源或 ticker.info 的现价字段。
+            current_price = 'N/A'
+            change_percent = 'N/A'
             
             # 获取基本信息
             try:

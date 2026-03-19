@@ -224,6 +224,9 @@ export function LonghubangPage() {
   const [statistics, setStatistics] = useState<StatisticsPayload | null>(null);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [isSubmittingAnalysis, setIsSubmittingAnalysis] = useState(false);
+  const [isSubmittingBatch, setIsSubmittingBatch] = useState(false);
+  const [deletingHistoryId, setDeletingHistoryId] = useState<number | null>(null);
 
   const loadTask = async () => setTask(await apiFetch<TaskDetail<LonghubangTaskPayload> | null>("/api/strategies/longhubang/tasks/latest"));
   const loadBatchTask = async () =>
@@ -283,8 +286,11 @@ export function LonghubangPage() {
     }
   };
 
-  const submitAnalysis = async () =>
-    withRequest(async () => {
+  const submitAnalysis = async () => {
+    setMessage("");
+    setError("");
+    setIsSubmittingAnalysis(true);
+    try {
       if (analysisMode === "specified" && currentHint?.tone === "warning") {
         throw new ApiRequestError(400, currentHint.message);
       }
@@ -295,19 +301,32 @@ export function LonghubangPage() {
       setDismissedTaskId("");
       setPanel("analysis");
       setMessage(`龙虎榜分析任务已提交: ${data.task_id}`);
-      await loadTask();
-    }, "提交龙虎榜分析失败");
+      await loadTask().catch(() => undefined);
+    } catch (requestError) {
+      setError(requestError instanceof ApiRequestError ? requestError.message : "提交龙虎榜分析失败");
+    } finally {
+      setIsSubmittingAnalysis(false);
+    }
+  };
 
-  const submitBatch = async () =>
-    withRequest(async () => {
+  const submitBatch = async () => {
+    setMessage("");
+    setError("");
+    setIsSubmittingBatch(true);
+    try {
       const data = await apiFetch<{ task_id: string }>("/api/strategies/longhubang/batch-tasks", {
         method: "POST",
         body: JSON.stringify({ symbols: batchSymbols, analysis_mode: batchMode, max_workers: Math.max(1, Math.min(5, Number(maxWorkers) || 1)) }),
       });
       setDismissedBatchTaskId("");
       setMessage(`龙虎榜 TOP 批量分析任务已提交: ${data.task_id}`);
-      await loadBatchTask();
-    }, "提交龙虎榜批量分析失败");
+      await loadBatchTask().catch(() => undefined);
+    } catch (requestError) {
+      setError(requestError instanceof ApiRequestError ? requestError.message : "提交龙虎榜批量分析失败");
+    } finally {
+      setIsSubmittingBatch(false);
+    }
+  };
 
   const openHistory = async (reportId: number) =>
     withRequest(async () => {
@@ -316,15 +335,39 @@ export function LonghubangPage() {
       setPanel("history");
     }, "加载龙虎榜历史报告失败");
 
-  const deleteHistory = async (reportId: number) =>
-    withRequest(async () => {
+  const deleteHistory = async (reportId: number) => {
+    setMessage("");
+    setError("");
+    if (deletingHistoryId === reportId) {
+      return;
+    }
+    const removedIndex = history.findIndex((item) => item.id === reportId);
+    const removedRecord = history[removedIndex] ?? null;
+    setDeletingHistoryId(reportId);
+    setHistory((current) => current.filter((item) => item.id !== reportId));
+    try {
       await apiFetch(`/api/strategies/longhubang/history/${reportId}`, { method: "DELETE" });
       if (selectedReport?.id === reportId) {
         setSelectedReport(null);
       }
       setMessage(`龙虎榜历史报告 #${reportId} 已删除`);
-      await loadHistory();
-    }, "删除龙虎榜历史报告失败");
+      await loadHistory().catch(() => undefined);
+    } catch (requestError) {
+      if (removedRecord) {
+        setHistory((current) => {
+          if (current.some((item) => item.id === removedRecord.id)) {
+            return current;
+          }
+          const next = [...current];
+          next.splice(Math.max(0, Math.min(removedIndex, next.length)), 0, removedRecord);
+          return next;
+        });
+      }
+      setError(requestError instanceof ApiRequestError ? requestError.message : "删除龙虎榜历史报告失败");
+    } finally {
+      setDeletingHistoryId((current) => current === reportId ? null : current);
+    }
+  };
 
   const exportResult = async (result: LonghubangResult | null, kind: "pdf" | "markdown") =>
     withRequest(async () => {
@@ -372,7 +415,9 @@ export function LonghubangPage() {
               </div>
               {currentHint ? <p className={currentHint.tone === "warning" ? styles.dangerText : styles.muted}>{currentHint.message}</p> : null}
               <div className={styles.actions}>
-                <button className={styles.primaryButton} onClick={() => void submitAnalysis()} type="button">开始分析</button>
+                <button className={styles.primaryButton} disabled={isSubmittingAnalysis} onClick={() => void submitAnalysis()} type="button">
+                  {isSubmittingAnalysis ? "提交中..." : "开始分析"}
+                </button>
                 <button className={styles.secondaryButton} onClick={() => { if (task?.status === "success") setDismissedTaskId(task.id); setMessage("当前分析结果已清除。"); }} type="button">清除结果</button>
               </div>
               {task ? <div className={styles.listItem} style={{ marginTop: 16 }}><strong>任务状态</strong><div style={{ marginTop: 8 }}>{task.message || "等待任务执行..."}</div><div className={styles.muted}>进度: {task.current ?? 0} / {task.total ?? 0}</div>{task.error ? <div className={styles.dangerText}>{task.error}</div> : null}</div> : null}
@@ -404,7 +449,9 @@ export function LonghubangPage() {
                         value={maxWorkers}
                         onChange={(event) => setMaxWorkers(event.target.value)}
                       />
-                      <button className={styles.primaryButton} onClick={() => void submitBatch()} type="button">开始批量分析</button>
+                      <button className={styles.primaryButton} disabled={isSubmittingBatch} onClick={() => void submitBatch()} type="button">
+                        {isSubmittingBatch ? "提交中..." : "开始批量分析"}
+                      </button>
                     </div>
                     <p className={styles.muted}>将按 AI 评分排序对前 {batchSymbols.length} 只股票执行完整深度分析：{batchSymbols.join(", ") || "暂无"}</p>
                   </section>
@@ -486,7 +533,14 @@ export function LonghubangPage() {
                     <p>{asText(item.summary, "暂无摘要")}</p>
                     <div className={styles.actions}>
                       <button className={styles.secondaryButton} onClick={() => void openHistory(item.id)} type="button">查看详情</button>
-                      <button className={styles.dangerButton} onClick={() => void deleteHistory(item.id)} type="button">删除</button>
+                      <button
+                        className={styles.dangerButton}
+                        disabled={deletingHistoryId === item.id}
+                        onClick={() => void deleteHistory(item.id)}
+                        type="button"
+                      >
+                        {deletingHistoryId === item.id ? "删除中..." : "删除"}
+                      </button>
                     </div>
                   </div>
                 ))}

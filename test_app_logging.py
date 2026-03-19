@@ -3,7 +3,7 @@ import os
 import unittest
 from unittest import mock
 
-from app_logging import DEFAULT_LOG_FORMAT, configure_logging
+from app_logging import DEFAULT_LOG_FORMAT, configure_logging, suppress_uvicorn_access_logs
 
 
 class ConfigureLoggingTests(unittest.TestCase):
@@ -77,6 +77,28 @@ class ConfigureLoggingTests(unittest.TestCase):
             configure_logging()
 
         self.assertEqual(info_mock.call_count, 1)
+
+    def test_suppress_uvicorn_access_logs_drops_access_records(self):
+        access_logger = logging.getLogger("uvicorn.access")
+        original_handlers = list(access_logger.handlers)
+        original_filters = list(access_logger.filters)
+        original_propagate = access_logger.propagate
+        original_disabled = access_logger.disabled
+        original_level = access_logger.level
+
+        try:
+            suppress_uvicorn_access_logs()
+
+            self.assertTrue(access_logger.disabled)
+            self.assertFalse(access_logger.propagate)
+            self.assertEqual(access_logger.level, logging.CRITICAL + 1)
+            self.assertTrue(any(type(existing_filter).__name__ == "_DropAllFilter" for existing_filter in access_logger.filters))
+        finally:
+            access_logger.handlers[:] = original_handlers
+            access_logger.filters[:] = original_filters
+            access_logger.propagate = original_propagate
+            access_logger.disabled = original_disabled
+            access_logger.setLevel(original_level)
 
 
 if __name__ == "__main__":

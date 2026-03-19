@@ -12,7 +12,10 @@ sys.modules.setdefault(
         StockDataFetcher=type(
             "StockDataFetcher",
             (),
-            {"get_stock_info": lambda self, *args, **kwargs: {}},
+            {
+                "get_stock_info": lambda self, *args, **kwargs: {},
+                "get_realtime_quote": lambda self, *args, **kwargs: {},
+            },
         )
     ),
 )
@@ -57,8 +60,15 @@ class FakeAssetRepository:
 
 
 class FakeAssetService:
+    def __init__(self):
+        self.sync_calls = []
+
     def promote_to_watchlist(self, symbol, stock_name, account_name, note=""):
         return True, "ok", 101
+
+    def sync_managed_monitors_for_symbol(self, symbol, account_name=None):
+        self.sync_calls.append((symbol, account_name))
+        return {"ai_tasks_upserted": 0, "price_alerts_upserted": 0, "removed": 0}
 
 
 class FakeAnalysisRepository:
@@ -70,10 +80,20 @@ class FakeSmartMonitorDB:
     def __init__(self):
         self.asset_repository = FakeAssetRepository()
         self.asset_service = FakeAssetService()
+        self.portfolio_db = types.SimpleNamespace(
+            get_all_stocks=lambda auto_monitor_only=False: [],
+            get_account_total_assets=lambda *args, **kwargs: 0.0,
+        )
         self.analysis_repository = FakeAnalysisRepository()
         self.monitoring_repository = types.SimpleNamespace(
             get_item_by_symbol=lambda *args, **kwargs: None,
             record_event=lambda *args, **kwargs: 1,
+            resolve_shared_risk_profile=lambda: {
+                "position_size_pct": 20,
+                "total_position_pct": 60,
+                "stop_loss_pct": 5,
+                "take_profit_pct": 12,
+            },
         )
         self.saved_decisions = []
         self.pending_actions = []
@@ -140,6 +160,7 @@ class ManualOnlyMonitoringTests(unittest.TestCase):
             return_value=None,
         ):
             engine = smart_monitor_engine_module.SmartMonitorEngine(deepseek_api_key="stub")
+        engine.lifecycle_service.asset_service = fake_db.asset_service
 
         engine.deepseek.get_trading_session = lambda: {
             "session": "上午盘",
@@ -197,6 +218,7 @@ class ManualOnlyMonitoringTests(unittest.TestCase):
             return_value=None,
         ):
             engine = smart_monitor_engine_module.SmartMonitorEngine(deepseek_api_key="stub")
+        engine.lifecycle_service.asset_service = fake_db.asset_service
 
         engine.deepseek.get_trading_session = lambda: {
             "session": "涓婂崍鐩?",
@@ -245,6 +267,17 @@ class ManualOnlyMonitoringTests(unittest.TestCase):
 
     def test_intraday_analysis_refreshes_latest_strategy_context_before_decision(self):
         fake_db = FakeSmartMonitorDB()
+        stale_task_context = {
+            "origin_analysis_id": 1,
+            "analysis_scope": "portfolio",
+            "analysis_date": "2026-03-12 09:00:00",
+            "rating": "持有",
+            "entry_min": 1488.0,
+            "entry_max": 1498.0,
+            "take_profit": 1600.0,
+            "stop_loss": 1450.0,
+            "summary": "旧盯盘基线",
+        }
         latest_strategy_context = {
             "origin_analysis_id": 99,
             "analysis_scope": "research",
@@ -256,7 +289,26 @@ class ManualOnlyMonitoringTests(unittest.TestCase):
             "stop_loss": 1460.0,
             "summary": "最新深度分析基线",
         }
-        fake_db.analysis_repository.get_latest_strategy_context = lambda **kwargs: latest_strategy_context
+        context_state = {"strategy_context": stale_task_context}
+
+        def _latest_strategy_context(**kwargs):
+            return context_state["strategy_context"]
+
+        def _sync_managed_monitors_for_symbol(symbol, account_name=None):
+            fake_db.asset_service.sync_calls.append((symbol, account_name))
+            context_state["strategy_context"] = latest_strategy_context
+            return {"ai_tasks_upserted": 1, "price_alerts_upserted": 1, "removed": 0}
+
+        fake_db.analysis_repository.get_latest_strategy_context = _latest_strategy_context
+        fake_db.asset_service.sync_managed_monitors_for_symbol = _sync_managed_monitors_for_symbol
+        fake_db.get_monitor_task_by_code = lambda *args, **kwargs: {
+            "id": 1,
+            "enabled": True,
+            "account_name": "测试账户",
+            "asset_id": 101,
+            "portfolio_stock_id": 202,
+            "strategy_context": context_state["strategy_context"],
+        }
 
         captured_strategy_context = {}
 
@@ -266,6 +318,7 @@ class ManualOnlyMonitoringTests(unittest.TestCase):
             return_value=None,
         ):
             engine = smart_monitor_engine_module.SmartMonitorEngine(deepseek_api_key="stub")
+        engine.lifecycle_service.asset_service = fake_db.asset_service
 
         engine.deepseek.get_trading_session = lambda: {
             "session": "上午盘",
@@ -311,15 +364,11 @@ class ManualOnlyMonitoringTests(unittest.TestCase):
             "600519",
             notify=False,
             account_name="测试账户",
-            strategy_context={
-                "origin_analysis_id": 1,
-                "analysis_scope": "portfolio",
-                "analysis_date": "2026-03-12 09:00:00",
-                "summary": "旧持仓分析基线",
-            },
+            strategy_context={"origin_analysis_id": 7, "summary": "手工传入的旧基线"},
         )
 
         self.assertTrue(result["success"])
+        self.assertEqual(fake_db.asset_service.sync_calls, [("600519", "测试账户")])
         self.assertEqual(captured_strategy_context["origin_analysis_id"], 99)
         self.assertEqual(captured_strategy_context["analysis_date"], "2026-03-13 10:30:00")
         self.assertEqual(result["strategy_context"]["origin_analysis_id"], 99)
@@ -375,6 +424,7 @@ class ManualOnlyMonitoringTests(unittest.TestCase):
             return_value=None,
         ):
             engine = smart_monitor_engine_module.SmartMonitorEngine(deepseek_api_key="stub")
+        engine.lifecycle_service.asset_service = fake_db.asset_service
 
         engine.deepseek.get_trading_session = lambda: {
             "session": "上午盘",

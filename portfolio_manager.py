@@ -886,7 +886,7 @@ class PortfolioManager:
             return {}
 
         if not self._is_a_share_trading_time():
-            return self._get_cached_realtime_quote(normalized_code, allow_stale=True)
+            return self._get_cached_realtime_quote(normalized_code)
 
         cached_quote = self._get_cached_realtime_quote(normalized_code)
         if cached_quote:
@@ -899,7 +899,7 @@ class PortfolioManager:
                 self._realtime_quote_fetcher = SmartMonitorDataFetcher()
             quote = self._realtime_quote_fetcher.get_realtime_quote(normalized_code, retry=1)
             if not isinstance(quote, dict):
-                return self._get_cached_realtime_quote(normalized_code, allow_stale=True)
+                return {}
 
             cached_entry = self._realtime_quote_cache.get(normalized_code)
             cached_payload = cached_entry.get("quote") if isinstance(cached_entry, dict) else None
@@ -912,6 +912,8 @@ class PortfolioManager:
                     quote.get("current_price", quote.get("price")),
                     allow_zero=True,
                 )
+                if next_price is None or not math.isfinite(next_price) or next_price <= 0:
+                    return {}
                 if (
                     cached_payload.get("update_time")
                     and cached_payload.get("update_time") == quote.get("update_time")
@@ -927,10 +929,10 @@ class PortfolioManager:
             return dict(quote)
         except Exception as e:
             print(f"[WARN] 实时行情回补失败 ({normalized_code}): {e}")
-            return self._get_cached_realtime_quote(normalized_code, allow_stale=True)
+            return {}
 
     def _get_latest_price_and_industry(self, stock: Dict) -> Tuple[float, str]:
-        current_price = self._safe_float(stock.get("current_price"))
+        current_price = 0.0
         industry = self._extract_industry_from_payload(stock) or "未知行业"
         normalized_code = self._normalize_stock_code(str(stock.get("code") or stock.get("symbol") or ""))
 
@@ -947,20 +949,14 @@ class PortfolioManager:
 
         stock_info = stock.get("stock_info")
         if isinstance(stock_info, dict):
-            if current_price <= 0:
-                current_price = self._extract_first_number(stock_info.get("current_price"), allow_zero=True) or 0.0
             industry = self._extract_industry_from_payload(stock_info) or industry
 
+        # 价格只能从实时源补齐，基本信息只用于补行业等非实时字段。
         if current_price <= 0 or industry == "未知行业":
             latest_analysis = self.get_latest_analysis(stock["id"])
             if latest_analysis:
-                current_price = self._safe_float(latest_analysis.get("current_price"))
                 latest_stock_info = latest_analysis.get("stock_info")
                 if isinstance(latest_stock_info, dict):
-                    if current_price <= 0:
-                        current_price = (
-                            self._extract_first_number(latest_stock_info.get("current_price"), allow_zero=True) or 0.0
-                        )
                     industry = self._extract_industry_from_payload(latest_stock_info) or industry
 
         if industry == "未知行业":
@@ -969,6 +965,23 @@ class PortfolioManager:
 
         if current_price <= 0 or industry == "未知行业":
             try:
+                realtime_quote = self._get_stock_data_fetcher().get_realtime_quote(normalized_code)
+            except Exception as exc:
+                print(f"[WARN] 股票实时行情回补失败 ({normalized_code}): {exc}")
+                realtime_quote = {}
+            if isinstance(realtime_quote, dict):
+                if current_price <= 0:
+                    current_price = (
+                        self._extract_first_number(
+                            realtime_quote.get("current_price", realtime_quote.get("price")),
+                            allow_zero=True,
+                        )
+                        or current_price
+                    )
+                industry = self._extract_industry_from_payload(realtime_quote) or industry
+
+        if industry == "未知行业":
+            try:
                 stock_info = self._get_stock_data_fetcher().get_stock_info(
                     normalized_code,
                     max_age_seconds=self.REALTIME_QUOTE_CACHE_SECONDS,
@@ -976,13 +989,9 @@ class PortfolioManager:
                     cache_first=True,
                 )
             except Exception as exc:
-                print(f"[WARN] 股票信息价格回补失败 ({normalized_code}): {exc}")
+                print(f"[WARN] 股票行业信息回补失败 ({normalized_code}): {exc}")
                 stock_info = {}
             if isinstance(stock_info, dict):
-                if current_price <= 0:
-                    current_price = (
-                        self._extract_first_number(stock_info.get("current_price"), allow_zero=True) or current_price
-                    )
                 industry = self._extract_industry_from_payload(stock_info) or industry
 
         cost_price = self._safe_float(stock.get("cost_price"))
@@ -1911,13 +1920,8 @@ class PortfolioManager:
             quantity_value = None
 
         current_price = self._extract_first_number(latest_analysis.get("current_price"), allow_zero=True)
-        if current_price is None:
-            stock_info = latest_analysis.get("stock_info")
-            if isinstance(stock_info, dict):
-                current_price = self._extract_first_number(
-                    stock_info.get("current_price"),
-                    allow_zero=True,
-                )
+        if current_price is not None and (not math.isfinite(current_price) or current_price <= 0):
+            current_price = None
 
         rating = self._resolve_stock_card_rating(latest_analysis)
         summary_candidates = [
@@ -1934,8 +1938,13 @@ class PortfolioManager:
 
         pnl_amount = None
         pnl_percent = None
+        latest_stock_info = latest_analysis.get("stock_info") if isinstance(latest_analysis, dict) else {}
+        has_realtime_price = isinstance(latest_stock_info, dict) and bool(
+            self._normalize_optional_text(latest_stock_info.get("realtime_data_source"))
+        )
         if (
             latest_analysis
+            and has_realtime_price
             and current_price is not None
             and cost_price is not None
             and quantity_value
@@ -1971,7 +1980,9 @@ class PortfolioManager:
         """统一构建持仓分析历史落库数据。"""
         rating = self._normalize_analysis_rating(final_decision.get("rating"), default="持有")
         confidence = self._extract_confidence(final_decision.get("confidence_level", 5.0))
-        current_price = self._extract_first_number(stock_info.get("current_price"), allow_zero=True) or 0.0
+        current_price = self._extract_first_number(stock_info.get("current_price"), allow_zero=True)
+        if current_price is not None and (not math.isfinite(current_price) or current_price <= 0):
+            current_price = None
         target_price = self._extract_first_number(final_decision.get("target_price"))
         entry_min, entry_max = self._extract_entry_range(final_decision.get("entry_range"))
         take_profit = self._extract_first_number(final_decision.get("take_profit"))
@@ -2204,6 +2215,22 @@ class PortfolioManager:
             analysis_period=analysis_period,
             account_name=account_name,
         )
+        baseline_sync = {"ai_tasks_upserted": 0, "price_alerts_upserted": 0, "removed": 0}
+        if getattr(self.lifecycle_service, "asset_service", None):
+            for item in analysis_results.get("results", []):
+                code = item.get("code")
+                if not code:
+                    continue
+                try:
+                    sync_result = self.lifecycle_service.asset_service.sync_managed_monitors_for_symbol(
+                        code,
+                        account_name=account_name,
+                    )
+                except Exception as exc:
+                    print(f"[ERROR] 同步最新分析基线失败 ({code}): {exc}")
+                    continue
+                for key in baseline_sync:
+                    baseline_sync[key] += int(sync_result.get(key, 0) or 0)
         sync_result = None
 
         if sync_realtime_monitor:
@@ -2221,7 +2248,11 @@ class PortfolioManager:
             for account in affected_accounts:
                 self.capture_daily_snapshot(account_name=account, source="analysis")
 
-        return {"saved_ids": saved_ids, "sync_result": sync_result}
+        return {
+            "saved_ids": saved_ids,
+            "baseline_sync_result": baseline_sync,
+            "sync_result": sync_result,
+        }
 
     def persist_single_analysis_result(
         self,

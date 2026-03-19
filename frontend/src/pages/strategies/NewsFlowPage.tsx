@@ -128,6 +128,10 @@ export function NewsFlowPage() {
   const [taskIntervals, setTaskIntervals] = useState<Record<string, string>>({});
   const [platformsExpanded, setPlatformsExpanded] = useState(false);
   const [taskConfigExpanded, setTaskConfigExpanded] = useState(false);
+  const [isSubmittingAnalysis, setIsSubmittingAnalysis] = useState(false);
+  const [isRunningQuickAnalysis, setIsRunningQuickAnalysis] = useState(false);
+  const [isSavingScheduler, setIsSavingScheduler] = useState(false);
+  const [isTogglingScheduler, setIsTogglingScheduler] = useState(false);
   const { message, error, clear, showError, showMessage } = usePageFeedback();
 
   const currentResult = task?.status === "success" ? task.result?.result ?? null : null;
@@ -179,7 +183,9 @@ export function NewsFlowPage() {
   const loadDashboard = async () => {
     const data = await apiFetch<DashboardData>("/api/strategies/news-flow/dashboard");
     setDashboard(data);
-    setScheduler((data.scheduler_status as SchedulerStatus | null) ?? null);
+    if (!isSavingScheduler && !isTogglingScheduler) {
+      setScheduler((data.scheduler_status as SchedulerStatus | null) ?? null);
+    }
     setTrendData((data.flow_trend as Record<string, unknown> | null) ?? null);
   };
 
@@ -221,13 +227,28 @@ export function NewsFlowPage() {
       apiFetch<Array<Record<string, unknown>>>("/api/strategies/news-flow/scheduler/logs?days=7"),
     ]);
     setPlatforms(platformData);
-    setScheduler(schedulerData);
+    if (!isSavingScheduler && !isTogglingScheduler) {
+      setScheduler(schedulerData);
+      setTaskEnabled(schedulerData.task_enabled ?? {});
+      setTaskIntervals(
+        Object.fromEntries(
+          Object.entries(schedulerData.task_intervals ?? {}).map(([key, value]) => [key, String(value)]),
+        ),
+      );
+    }
     setSchedulerLogs(logData);
-    setTaskEnabled(schedulerData.task_enabled ?? {});
-    setTaskIntervals(
-      Object.fromEntries(
-        Object.entries(schedulerData.task_intervals ?? {}).map(([key, value]) => [key, String(value)]),
-      ),
+  };
+
+  const setSchedulerRunningOptimistically = (running: boolean) => {
+    setScheduler((current) =>
+      current
+        ? {
+            ...current,
+            running,
+          }
+        : {
+            running,
+          },
     );
   };
 
@@ -299,6 +320,7 @@ export function NewsFlowPage() {
 
   const submitAnalysis = async () => {
     clear();
+    setIsSubmittingAnalysis(true);
     try {
       await apiFetch<{ task_id: string }>("/api/strategies/news-flow/tasks", {
         method: "POST",
@@ -306,23 +328,28 @@ export function NewsFlowPage() {
       });
       setPanel("analysis");
       showMessage("新闻流量分析任务已提交，正在准备分析...");
-      await loadTask();
+      await loadTask().catch(() => undefined);
     } catch (requestError) {
       showError(requestError instanceof ApiRequestError ? requestError.message : "提交新闻流量分析失败");
+    } finally {
+      setIsSubmittingAnalysis(false);
     }
   };
 
   const runQuickAnalysis = async () => {
     clear();
+    setIsRunningQuickAnalysis(true);
     try {
       await apiFetch("/api/strategies/news-flow/quick-analysis", {
         method: "POST",
         body: JSON.stringify({ category: category || null }),
       });
       showMessage("热点同步已完成");
-      await Promise.all([loadDashboard(), loadHistory(), loadTrend()]);
+      await Promise.all([loadDashboard(), loadHistory(), loadTrend()]).catch(() => undefined);
     } catch (requestError) {
       showError(requestError instanceof ApiRequestError ? requestError.message : "热点同步失败");
+    } finally {
+      setIsRunningQuickAnalysis(false);
     }
   };
 
@@ -339,6 +366,7 @@ export function NewsFlowPage() {
 
   const saveSchedulerConfig = async () => {
     clear();
+    setIsSavingScheduler(true);
     try {
       const data = await apiFetch<SchedulerStatus>("/api/strategies/news-flow/scheduler", {
         method: "PUT",
@@ -360,11 +388,19 @@ export function NewsFlowPage() {
       showMessage("定时任务配置已更新");
     } catch (requestError) {
       showError(requestError instanceof ApiRequestError ? requestError.message : "保存定时任务配置失败");
+    } finally {
+      setIsSavingScheduler(false);
     }
   };
 
   const toggleScheduler = async (running: boolean) => {
     clear();
+    if (isTogglingScheduler) {
+      return;
+    }
+    const previousScheduler = scheduler;
+    setIsTogglingScheduler(true);
+    setSchedulerRunningOptimistically(running);
     try {
       setScheduler(
         await apiFetch<SchedulerStatus>(
@@ -374,7 +410,10 @@ export function NewsFlowPage() {
       );
       showMessage(running ? "调度器已启动" : "调度器已停止");
     } catch (requestError) {
+      setScheduler(previousScheduler);
       showError(requestError instanceof ApiRequestError ? requestError.message : "更新调度器状态失败");
+    } finally {
+      setIsTogglingScheduler(false);
     }
   };
 
@@ -425,8 +464,8 @@ export function NewsFlowPage() {
                 </div>
               </div>
               <div className={styles.responsiveActionGrid}>
-                <button className={styles.primaryButton} onClick={() => void runQuickAnalysis()} type="button">
-                  热点同步
+                <button className={styles.primaryButton} disabled={isRunningQuickAnalysis} onClick={() => void runQuickAnalysis()} type="button">
+                  {isRunningQuickAnalysis ? "同步中..." : "热点同步"}
                 </button>
               </div>
             </div>
@@ -546,8 +585,8 @@ export function NewsFlowPage() {
                     ))}
                   </div>
                   <div className={styles.responsiveActionGrid}>
-                    <button className={styles.secondaryButton} onClick={() => void saveSchedulerConfig()} type="button">
-                      保存任务配置
+                    <button className={styles.secondaryButton} disabled={isSavingScheduler} onClick={() => void saveSchedulerConfig()} type="button">
+                      {isSavingScheduler ? "保存中..." : "保存任务配置"}
                     </button>
                   </div>
                 </div>
@@ -579,6 +618,7 @@ export function NewsFlowPage() {
                 <span className={styles.switchControl}>
                   <input
                     checked={Boolean(scheduler?.running)}
+                    disabled={isSavingScheduler || isTogglingScheduler}
                     onChange={(event) => void toggleScheduler(event.target.checked)}
                     type="checkbox"
                   />
@@ -591,8 +631,8 @@ export function NewsFlowPage() {
 
             <div className={styles.moduleSection}>
               <div className={styles.responsiveActionGrid}>
-                <button className={styles.primaryButton} onClick={() => void submitAnalysis()} type="button">
-                  开始 AI 智能分析
+                <button className={styles.primaryButton} disabled={isSubmittingAnalysis} onClick={() => void submitAnalysis()} type="button">
+                  {isSubmittingAnalysis ? "提交中..." : "开始 AI 智能分析"}
                 </button>
               </div>
             </div>

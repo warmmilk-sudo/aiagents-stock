@@ -257,6 +257,13 @@ export function SmartMonitorPage() {
   const [activeResultPanel, setActiveResultPanel] = useState<ResultPanel>("decisions");
   const [section, setSection] = useState<SectionKey>("results");
   const [isRunningAllTasks, setIsRunningAllTasks] = useState(false);
+  const [isSavingTask, setIsSavingTask] = useState(false);
+  const [isSavingMonitorConfig, setIsSavingMonitorConfig] = useState(false);
+  const [isTogglingService, setIsTogglingService] = useState(false);
+  const [pendingRunTaskId, setPendingRunTaskId] = useState<number | null>(null);
+  const [pendingToggleTaskId, setPendingToggleTaskId] = useState<number | null>(null);
+  const [pendingDeleteTaskId, setPendingDeleteTaskId] = useState<number | null>(null);
+  const [pendingNotificationId, setPendingNotificationId] = useState<number | null>(null);
   const { message, error, clear, showError, showMessage } = usePageFeedback();
 
   const applyPageCache = (cache: SmartMonitorPageCache | null) => {
@@ -269,6 +276,21 @@ export function SmartMonitorPage() {
     setNotifications(cache.notifications as PriceAlertNotification[]);
     setMonitorConfig((cache.monitorConfig as MonitorConfig | null) ?? null);
     setRuntimeConfig((cache.runtimeConfig as RuntimeConfig | null) ?? defaultRuntimeConfig);
+  };
+
+  const setServiceEnabledOptimistically = (enabled: boolean) => {
+    setSystemStatus((current) => ({
+      ...(current ?? {}),
+      monitor_service: {
+        ...(current?.monitor_service ?? {}),
+        running: enabled,
+      },
+      monitor_scheduler: {
+        ...(current?.monitor_scheduler ?? {}),
+        scheduler_enabled: enabled,
+        monitor_service_running: enabled,
+      },
+    }));
   };
 
   const loadAll = async (force = false) => {
@@ -367,6 +389,7 @@ export function SmartMonitorPage() {
   const submitTask = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     clear();
+    setIsSavingTask(true);
     try {
       const savedTask = await apiFetch<{ task_id: number }>("/api/smart-monitor/tasks", {
         method: "POST",
@@ -392,14 +415,17 @@ export function SmartMonitorPage() {
       });
       setActivePanel(null);
       showMessage(`盯盘任务已保存并完成一次盘中决策：${taskForm.stock_code}`);
-      await loadAll(true);
+      await loadAll(true).catch(() => undefined);
     } catch (requestError) {
       showError(requestError instanceof ApiRequestError ? requestError.message : "保存任务失败");
+    } finally {
+      setIsSavingTask(false);
     }
   };
 
   const saveMonitorConfig = async () => {
     clear();
+    setIsSavingMonitorConfig(true);
     try {
       const [nextConfig, nextRuntime] = await Promise.all([
         apiFetch<MonitorConfig>("/api/smart-monitor/config", {
@@ -420,9 +446,11 @@ export function SmartMonitorPage() {
       setRuntimeConfig(nextRuntime);
       setTaskForm((current) => applySharedRiskDefaults(current, nextConfig));
       showMessage("盯盘配置已更新");
-      await loadAll(true);
+      await loadAll(true).catch(() => undefined);
     } catch (requestError) {
       showError(requestError instanceof ApiRequestError ? requestError.message : "保存盯盘配置失败");
+    } finally {
+      setIsSavingMonitorConfig(false);
     }
   };
 
@@ -479,36 +507,102 @@ export function SmartMonitorPage() {
     </div>
   );
 
-  const runMonitorCommand = async (path: string, successText: string, method: "POST" | "DELETE" = "POST") => {
+  const toggleMonitorService = async (enabled: boolean) => {
     clear();
+    if (isTogglingService) {
+      return;
+    }
+    const previousStatus = systemStatus;
+    setIsTogglingService(true);
+    setServiceEnabledOptimistically(enabled);
     try {
-      await apiFetch(path, { method });
-      showMessage(successText);
-      await loadAll(true);
+      await apiFetch(enabled ? "/api/system/monitor-service/start" : "/api/system/monitor-service/stop", { method: "POST" });
+      showMessage(enabled ? "监控服务已启动" : "监控服务已停止");
+      await loadAll(true).catch(() => undefined);
     } catch (requestError) {
+      setSystemStatus(previousStatus);
       showError(requestError instanceof ApiRequestError ? requestError.message : "操作失败");
+    } finally {
+      setIsTogglingService(false);
     }
   };
 
   const runTaskOnce = async (task: SmartMonitorTask) => {
     clear();
+    if (pendingRunTaskId === task.id) {
+      return;
+    }
+    setPendingRunTaskId(task.id);
     try {
       await apiFetch(`/api/smart-monitor/tasks/${task.id}/run-once`, { method: "POST" });
       showMessage(`已执行 ${task.stock_code} 的一次盘中决策`);
-      await loadAll(true);
+      await loadAll(true).catch(() => undefined);
     } catch (requestError) {
-      showError(requestError instanceof ApiRequestError ? requestError.message : "盘中决策失败");
+      showError(requestError instanceof ApiRequestError ? requestError.message : "操作失败");
+    } finally {
+      setPendingRunTaskId((current) => current === task.id ? null : current);
     }
   };
 
   const toggleTaskEnabled = async (task: SmartMonitorTask) => {
     clear();
+    if (pendingToggleTaskId === task.id) {
+      return;
+    }
+    const previousEnabled = Boolean(task.enabled);
+    setPendingToggleTaskId(task.id);
+    setTasks((current) =>
+      current.map((item) =>
+        item.id === task.id
+          ? { ...item, enabled: previousEnabled ? 0 : 1 }
+          : item,
+      ),
+    );
     try {
-      await apiFetch(`/api/smart-monitor/tasks/${task.id}/enable?enabled=${String(!task.enabled)}`, { method: "POST" });
-      showMessage(task.enabled ? "任务已停用" : "任务已启用");
-      await loadAll(true);
+      await apiFetch(`/api/smart-monitor/tasks/${task.id}/enable?enabled=${String(!previousEnabled)}`, { method: "POST" });
+      showMessage(previousEnabled ? "任务已停用" : "任务已启用");
+      await loadAll(true).catch(() => undefined);
     } catch (requestError) {
+      setTasks((current) =>
+        current.map((item) =>
+          item.id === task.id
+            ? { ...item, enabled: previousEnabled ? 1 : 0 }
+            : item,
+        ),
+      );
       showError(requestError instanceof ApiRequestError ? requestError.message : "更新任务状态失败");
+    } finally {
+      setPendingToggleTaskId((current) => current === task.id ? null : current);
+    }
+  };
+
+  const deleteTask = async (task: SmartMonitorTask) => {
+    clear();
+    if (pendingDeleteTaskId === task.id) {
+      return;
+    }
+    const removedIndex = tasks.findIndex((item) => item.id === task.id);
+    const removedTask = tasks[removedIndex];
+    setPendingDeleteTaskId(task.id);
+    setTasks((current) => current.filter((item) => item.id !== task.id));
+    try {
+      await apiFetch(`/api/smart-monitor/tasks/${task.id}`, { method: "DELETE" });
+      showMessage("任务已删除");
+      await loadAll(true).catch(() => undefined);
+    } catch (requestError) {
+      if (removedTask) {
+        setTasks((current) => {
+          if (current.some((item) => item.id === removedTask.id)) {
+            return current;
+          }
+          const next = [...current];
+          next.splice(Math.max(0, Math.min(removedIndex, next.length)), 0, removedTask);
+          return next;
+        });
+      }
+      showError(requestError instanceof ApiRequestError ? requestError.message : "删除任务失败");
+    } finally {
+      setPendingDeleteTaskId((current) => current === task.id ? null : current);
     }
   };
 
@@ -532,7 +626,7 @@ export function SmartMonitorPage() {
       showMessage(
         `已执行 ${result.task_total} 个盯盘任务、${result.price_alert_total} 个价格监控；AI成功 ${result.task_success} 个，价格检查成功 ${result.price_alert_success} 个。`,
       );
-      await loadAll(true);
+      await loadAll(true).catch(() => undefined);
     } catch (requestError) {
       showError(requestError instanceof ApiRequestError ? requestError.message : "批量盘中决策失败");
     } finally {
@@ -542,12 +636,31 @@ export function SmartMonitorPage() {
 
   const ignoreNotification = async (eventId: number) => {
     clear();
+    if (pendingNotificationId === eventId) {
+      return;
+    }
+    const removedIndex = notifications.findIndex((item) => item.id === eventId);
+    const removedNotification = notifications[removedIndex];
+    setPendingNotificationId(eventId);
+    setNotifications((current) => current.filter((item) => item.id !== eventId));
     try {
       await apiFetch(`/api/price-alerts/notifications/${eventId}/ignore`, { method: "POST" });
       showMessage("预警通知已忽略");
-      await loadAll(true);
+      await loadAll(true).catch(() => undefined);
     } catch (requestError) {
+      if (removedNotification) {
+        setNotifications((current) => {
+          if (current.some((item) => item.id === removedNotification.id)) {
+            return current;
+          }
+          const next = [...current];
+          next.splice(Math.max(0, Math.min(removedIndex, next.length)), 0, removedNotification);
+          return next;
+        });
+      }
       showError(requestError instanceof ApiRequestError ? requestError.message : "忽略预警通知失败");
+    } finally {
+      setPendingNotificationId((current) => current === eventId ? null : current);
     }
   };
 
@@ -606,7 +719,9 @@ export function SmartMonitorPage() {
         {renderRiskSlider("task-profit", "止盈", taskForm.take_profit_pct, (nextValue) => setTaskForm((current) => ({ ...current, take_profit_pct: nextValue })))}
       </div>
       <div className={styles.actions}>
-        <button className={styles.primaryButton} type="submit">保存任务</button>
+        <button className={styles.primaryButton} disabled={isSavingTask} type="submit">
+          {isSavingTask ? "保存中..." : "保存任务"}
+        </button>
         <button className={styles.secondaryButton} onClick={() => setActivePanel(null)} type="button">取消</button>
       </div>
     </form>
@@ -655,12 +770,8 @@ export function SmartMonitorPage() {
                 <span className={styles.switchControl}>
                   <input
                     checked={schedulerEnabled}
-                    onChange={(event) =>
-                      void runMonitorCommand(
-                        event.target.checked ? "/api/system/monitor-service/start" : "/api/system/monitor-service/stop",
-                        event.target.checked ? "监控服务已启动" : "监控服务已停止",
-                      )
-                    }
+                    disabled={isTogglingService || isSavingMonitorConfig}
+                    onChange={(event) => void toggleMonitorService(event.target.checked)}
                     type="checkbox"
                   />
                   <span className={styles.switchTrack} aria-hidden="true">
@@ -728,8 +839,13 @@ export function SmartMonitorPage() {
                             {formatDateTime(item.triggered_at, "暂无时间")} | {normalizeAccountName(item.account_name) || DEFAULT_ACCOUNT_NAME}
                           </small>
                           <div className={styles.actions}>
-                            <button className={styles.secondaryButton} onClick={() => void ignoreNotification(item.id)} type="button">
-                              忽略
+                            <button
+                              className={styles.secondaryButton}
+                              disabled={pendingNotificationId === item.id}
+                              onClick={() => void ignoreNotification(item.id)}
+                              type="button"
+                            >
+                              {pendingNotificationId === item.id ? "忽略中..." : "忽略"}
                             </button>
                           </div>
                         </div>
@@ -832,17 +948,32 @@ export function SmartMonitorPage() {
                         </strong>
                         <button
                           className={Boolean(task.enabled) ? styles.smartMonitorStateToggleEnabled : styles.smartMonitorStateToggleDisabled}
+                          disabled={pendingToggleTaskId === task.id}
                           onClick={() => void toggleTaskEnabled(task)}
                           type="button"
                         >
-                          {Boolean(task.enabled) ? "启用" : "停用"}
+                          {pendingToggleTaskId === task.id ? "处理中..." : Boolean(task.enabled) ? "启用" : "停用"}
                         </button>
                       </div>
                       <p className={styles.taskIndicatorText}>{formatThresholdSummary("分析基线", task.strategy_context)}</p>
                       <p className={styles.taskIndicatorText}>{formatThresholdSummary("盘中决策", latestDecision?.monitor_levels)}</p>
                       <div className={styles.actions}>
-                        <button className={styles.secondaryButton} onClick={() => void runTaskOnce(task)} type="button">立即分析</button>
-                        <button className={styles.dangerButton} onClick={() => void runMonitorCommand(`/api/smart-monitor/tasks/${task.id}`, "任务已删除", "DELETE")} type="button">删除</button>
+                        <button
+                          className={styles.secondaryButton}
+                          disabled={pendingRunTaskId === task.id}
+                          onClick={() => void runTaskOnce(task)}
+                          type="button"
+                        >
+                          {pendingRunTaskId === task.id ? "执行中..." : "立即分析"}
+                        </button>
+                        <button
+                          className={styles.dangerButton}
+                          disabled={pendingDeleteTaskId === task.id}
+                          onClick={() => void deleteTask(task)}
+                          type="button"
+                        >
+                          {pendingDeleteTaskId === task.id ? "删除中..." : "删除"}
+                        </button>
                       </div>
                     </div>
                   );
@@ -859,12 +990,10 @@ export function SmartMonitorPage() {
               enabled={schedulerEnabled}
               label="启用监控服务"
               showToggle={false}
+              busy={isSavingMonitorConfig || isTogglingService}
               onSave={() => void saveMonitorConfig()}
               onToggle={(next) =>
-                void runMonitorCommand(
-                  next ? "/api/system/monitor-service/start" : "/api/system/monitor-service/stop",
-                  next ? "监控服务已启动" : "监控服务已停止",
-                )
+                void toggleMonitorService(next)
               }
               saveLabel="保存盯盘配置"
               scheduleFields={(

@@ -1,9 +1,10 @@
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
 
 from backend.main import app
+import backend.services as services
 from backend.services import parse_stock_list
 
 
@@ -43,6 +44,27 @@ class BackendSplitApiTests(unittest.TestCase):
     def test_parse_stock_list_normalizes_and_deduplicates(self):
         values = parse_stock_list("000001, 600519\nAAPL；600519\n 00700 ")
         self.assertEqual(values, ["000001", "600519", "AAPL", "00700"])
+
+    def test_get_stock_info_prefers_realtime_quote(self):
+        mock_fetcher = MagicMock()
+        mock_fetcher.get_stock_info.return_value = {
+            "symbol": "600519",
+            "name": "贵州茅台",
+            "current_price": 12.34,
+            "industry": "白酒",
+        }
+        mock_fetcher.get_realtime_quote.return_value = {
+            "current_price": 18.88,
+            "change_percent": 1.2,
+            "data_source": "tdx",
+        }
+
+        with patch("backend.services.StockDataFetcher", return_value=mock_fetcher):
+            payload = services.get_stock_info("600519")
+
+        self.assertEqual(payload["current_price"], 18.88)
+        self.assertEqual(payload["realtime_data_source"], "tdx")
+        self.assertEqual(payload["industry"], "白酒")
 
     def test_submit_main_force_task_requires_auth_and_calls_service(self):
         self.login()

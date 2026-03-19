@@ -206,13 +206,16 @@ class PortfolioAnalyticsTests(unittest.TestCase):
 
         self.assertEqual(result["industry_distribution"][0]["industry"], "银行")
 
-    def test_calculate_portfolio_risk_uses_stock_info_price_when_new_position_has_no_analysis(self):
+    def test_calculate_portfolio_risk_uses_realtime_quote_when_new_position_has_no_analysis(self):
         self._add_stock(cost_price=10.0, quantity=100, account_name="zfy")
         self.manager._get_realtime_quote = lambda code: {}
         self.manager._get_basic_stock_info = lambda code: {}
 
         class FakeStockDataFetcher:
             def get_stock_info(self, symbol, **kwargs):
+                return {"industry": "半导体"}
+
+            def get_realtime_quote(self, symbol, **kwargs):
                 return {"current_price": 12.34, "industry": "半导体"}
 
         self.manager._stock_data_fetcher = FakeStockDataFetcher()

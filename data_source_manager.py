@@ -287,7 +287,7 @@ class DataSourceManager:
     
     def get_realtime_quotes(self, symbol):
         """
-        获取实时行情数据（优先akshare，失败时使用tushare）
+        获取实时行情数据（仅使用akshare实时接口，不回退到tushare日线）
         
         Args:
             symbol: 股票代码
@@ -318,42 +318,13 @@ class DataSourceManager:
                     'high': row['最高'],
                     'low': row['最低'],
                     'open': row['今开'],
-                    'pre_close': row['昨收']
+                    'pre_close': row['昨收'],
+                    'data_source': 'akshare'
                 }
                 print(f"[Akshare] 成功获取实时行情")
                 return quotes
         except Exception as e:
             print(f"[Akshare] 获取失败: {e}")
-        
-        # akshare失败，尝试tushare
-        if self.tushare_available:
-            try:
-                print(f"[Tushare] 正在获取 {symbol} 的实时行情（备用数据源）...")
-                
-                ts_code = self._convert_to_ts_code(symbol)
-                df = self.tushare_api.daily(
-                    ts_code=ts_code,
-                    start_date=datetime.now().strftime('%Y%m%d'),
-                    end_date=datetime.now().strftime('%Y%m%d')
-                )
-                
-                if df is not None and not df.empty:
-                    row = df.iloc[0]
-                    quotes = {
-                        'symbol': symbol,
-                        'price': row['close'],
-                        'change_percent': row['pct_chg'],
-                        'volume': row['vol'] * 100,
-                        'amount': row['amount'] * 1000,
-                        'high': row['high'],
-                        'low': row['low'],
-                        'open': row['open'],
-                        'pre_close': row['pre_close']
-                    }
-                    print(f"[Tushare] 成功获取实时行情")
-                    return quotes
-            except Exception as e:
-                print(f"[Tushare] 获取失败: {e}")
         
         return quotes
     
@@ -456,4 +427,3 @@ class DataSourceManager:
 
 # 全局数据源管理器实例
 data_source_manager = DataSourceManager()
-

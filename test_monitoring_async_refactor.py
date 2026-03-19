@@ -15,7 +15,10 @@ sys.modules.setdefault(
         StockDataFetcher=type(
             "StockDataFetcher",
             (),
-            {"get_stock_info": lambda self, *args, **kwargs: {}},
+            {
+                "get_stock_info": lambda self, *args, **kwargs: {},
+                "get_realtime_quote": lambda self, *args, **kwargs: {},
+            },
         )
     ),
 )
@@ -316,7 +319,7 @@ class MonitoringOrchestratorAsyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(repo.runtime_updates[-1]["last_status"], "hold")
         self.assertEqual(repo.events, [])
 
-    async def test_get_latest_price_falls_back_after_tdx_timeout(self):
+    async def test_get_latest_price_falls_back_after_tdx_timeout_using_realtime_source(self):
         repo = _FakeRepository([])
         fake_monitor_db = _FakeMonitorDB(repo, {})
 
@@ -330,7 +333,7 @@ class MonitoringOrchestratorAsyncTests(unittest.IsolatedAsyncioTestCase):
                 return {"current_price": 18.8}
 
         class _FallbackFetcher:
-            def get_stock_info(self, symbol, **kwargs):
+            def get_realtime_quote(self, symbol, **kwargs):
                 return {"current_price": 12.34}
 
         with patch.object(monitoring_orchestrator, "monitor_db", fake_monitor_db), patch.object(

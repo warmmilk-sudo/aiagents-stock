@@ -1870,6 +1870,8 @@ class MonitoringRepository:
     ) -> int:
         def _record() -> int:
             item = self.get_item(item_id) if item_id else None
+            if item_id is not None and item is None:
+                return 0
             conn = self._connect()
             try:
                 cursor = conn.cursor()
@@ -1887,6 +1889,18 @@ class MonitoringRepository:
                     latest = cursor.fetchone()
                     if latest and latest["event_type"] == event_type:
                         return int(latest["id"])
+                if notification_pending and item_id:
+                    cursor.execute(
+                        """
+                        UPDATE monitoring_events
+                        SET notification_pending = 0,
+                            is_read = 1,
+                            read_at = COALESCE(read_at, CURRENT_TIMESTAMP)
+                        WHERE monitoring_item_id = ?
+                          AND notification_pending = 1
+                        """,
+                        (item_id,),
+                    )
                 cursor.execute(
                     """
                     INSERT INTO monitoring_events (
@@ -1918,7 +1932,71 @@ class MonitoringRepository:
 
         return run_with_monitoring_write_lock(_record)
 
+    def _normalize_pending_notifications(self) -> int:
+        def _normalize() -> int:
+            conn = self._connect()
+            try:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    UPDATE monitoring_events AS current_event
+                    SET notification_pending = 0,
+                        is_read = 1,
+                        read_at = COALESCE(read_at, CURRENT_TIMESTAMP)
+                    WHERE notification_pending = 1
+                      AND monitoring_item_id IS NOT NULL
+                      AND EXISTS (
+                            SELECT 1
+                            FROM monitoring_events newer_event
+                            WHERE newer_event.monitoring_item_id = current_event.monitoring_item_id
+                              AND newer_event.notification_pending = 1
+                              AND (
+                                    datetime(newer_event.created_at) > datetime(current_event.created_at)
+                                 OR (
+                                        datetime(newer_event.created_at) = datetime(current_event.created_at)
+                                    AND newer_event.id > current_event.id
+                                 )
+                              )
+                      )
+                    """
+                )
+                superseded_changed = int(cursor.rowcount or 0)
+                cursor.execute(
+                    """
+                    UPDATE monitoring_events
+                    SET notification_pending = 0,
+                        is_read = 1,
+                        read_at = CURRENT_TIMESTAMP
+                    WHERE notification_pending = 1
+                      AND (
+                            monitoring_item_id IS NULL
+                         OR NOT EXISTS (
+                                SELECT 1
+                                FROM monitoring_items mi
+                                WHERE mi.id = monitoring_events.monitoring_item_id
+                            )
+                         OR EXISTS (
+                                SELECT 1
+                                FROM monitoring_items mi
+                                WHERE mi.id = monitoring_events.monitoring_item_id
+                                  AND (
+                                        COALESCE(mi.enabled, 1) = 0
+                                     OR COALESCE(mi.notification_enabled, 1) = 0
+                                  )
+                            )
+                      )
+                    """
+                )
+                inactive_changed = int(cursor.rowcount or 0)
+                conn.commit()
+                return superseded_changed + inactive_changed
+            finally:
+                conn.close()
+
+        return run_with_monitoring_write_lock(_normalize)
+
     def get_pending_notifications(self) -> List[Dict]:
+        self._normalize_pending_notifications()
         conn = self._connect()
         cursor = conn.cursor()
         cursor.execute(
@@ -1955,9 +2033,11 @@ class MonitoringRepository:
         cursor = conn.cursor()
         cursor.execute(
             """
-            SELECT *
-            FROM monitoring_events
-            ORDER BY datetime(created_at) DESC, id DESC
+            SELECT e.*
+            FROM monitoring_events e
+            INNER JOIN monitoring_items mi
+                ON mi.id = e.monitoring_item_id
+            ORDER BY datetime(e.created_at) DESC, e.id DESC
             LIMIT ?
             """,
             (limit,),
@@ -1967,6 +2047,7 @@ class MonitoringRepository:
         return [dict(row) for row in rows]
 
     def get_all_recent_notifications(self, limit: int = 10) -> List[Dict]:
+        self._normalize_pending_notifications()
         conn = self._connect()
         cursor = conn.cursor()
         cursor.execute(
@@ -2059,14 +2140,40 @@ class MonitoringRepository:
                 cursor = conn.cursor()
                 cursor.execute(
                     """
-                    UPDATE monitoring_events
-                    SET notification_pending = 0,
-                        is_read = 1,
-                        read_at = CURRENT_TIMESTAMP
+                    SELECT monitoring_item_id
+                    FROM monitoring_events
                     WHERE id = ?
                     """,
                     (event_id,),
                 )
+                event = cursor.fetchone()
+                if not event:
+                    conn.commit()
+                    return
+                monitoring_item_id = event["monitoring_item_id"]
+                if monitoring_item_id is not None:
+                    cursor.execute(
+                        """
+                        UPDATE monitoring_events
+                        SET notification_pending = 0,
+                            is_read = 1,
+                            read_at = CURRENT_TIMESTAMP
+                        WHERE monitoring_item_id = ?
+                          AND notification_pending = 1
+                        """,
+                        (monitoring_item_id,),
+                    )
+                else:
+                    cursor.execute(
+                        """
+                        UPDATE monitoring_events
+                        SET notification_pending = 0,
+                            is_read = 1,
+                            read_at = CURRENT_TIMESTAMP
+                        WHERE id = ?
+                        """,
+                        (event_id,),
+                    )
                 conn.commit()
             finally:
                 conn.close()

@@ -4,6 +4,12 @@ import os
 
 DEFAULT_LOG_FORMAT = "[%(asctime)s] %(levelname)s %(name)s: %(message)s"
 _LOGGING_CONFIGURED_ATTR = "_app_logging_configured"
+_UVICORN_ACCESS_LOGGER_NAME = "uvicorn.access"
+
+
+class _DropAllFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        return False
 
 
 def _resolve_log_level(level_name: str) -> int:
@@ -43,3 +49,15 @@ def configure_logging(default_level: str = "INFO") -> int:
         setattr(root_logger, _LOGGING_CONFIGURED_ATTR, True)
 
     return level
+
+
+def suppress_uvicorn_access_logs() -> None:
+    """Prevent uvicorn access log lines from reaching any configured handler."""
+    access_logger = logging.getLogger(_UVICORN_ACCESS_LOGGER_NAME)
+    access_logger.handlers.clear()
+    access_logger.propagate = False
+    access_logger.setLevel(logging.CRITICAL + 1)
+    access_logger.disabled = True
+
+    if not any(isinstance(existing_filter, _DropAllFilter) for existing_filter in access_logger.filters):
+        access_logger.addFilter(_DropAllFilter())

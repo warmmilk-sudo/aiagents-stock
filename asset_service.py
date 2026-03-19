@@ -297,6 +297,30 @@ class AssetService:
         self.monitoring_repository.upsert_item(alert_payload)
         return {"ai_tasks_upserted": 1, "price_alerts_upserted": 1, "removed": 0}
 
+    def sync_managed_monitors_for_symbol(
+        self,
+        symbol: str,
+        account_name: Optional[str] = None,
+    ) -> Dict[str, int]:
+        """Sync all managed monitors bound to a symbol after analysis refresh."""
+        if not symbol:
+            return {"ai_tasks_upserted": 0, "price_alerts_upserted": 0, "removed": 0}
+
+        assets = self.asset_repository.list_assets(
+            symbol=symbol,
+            account_name=account_name,
+            include_deleted=False,
+        )
+        totals = {"ai_tasks_upserted": 0, "price_alerts_upserted": 0, "removed": 0}
+        for asset in assets:
+            try:
+                result = self.sync_managed_monitors(int(asset["id"]))
+            except Exception:
+                continue
+            for key in totals:
+                totals[key] += int(result.get(key, 0) or 0)
+        return totals
+
     def set_monitoring_enabled(self, asset_id: int, enabled: bool) -> Dict[str, int]:
         asset = self.asset_repository.get_asset(asset_id)
         if not asset:

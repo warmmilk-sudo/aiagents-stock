@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 
+import { PageFeedback } from "../../components/common/PageFeedback";
 import { PageFrame } from "../../components/common/PageFrame";
 import { StatusBadge } from "../../components/common/StatusBadge";
 import { AnalysisActionButtons } from "../../components/research/AnalysisActionButtons";
 import { FormattedReport, extractReportKeyMetrics, splitReportSections } from "../../components/research/FormattedReport";
+import { usePageFeedback } from "../../hooks/usePageFeedback";
 import { apiFetch, apiFetchCached, buildQuery } from "../../lib/api";
 import { formatDateTime } from "../../lib/datetime";
 import styles from "../ConsolePage.module.scss";
@@ -393,6 +395,8 @@ export function HistoryPage() {
   const [portfolioState, setPortfolioState] = useState("全部");
   const [accountName, setAccountName] = useState("全部账户");
   const [searchTerm, setSearchTerm] = useState("");
+  const [deletingRecordId, setDeletingRecordId] = useState<number | null>(null);
+  const { message, error, clear, showError, showMessage } = usePageFeedback();
 
   const selectedRecordId = Number(searchParams.get("recordId") || 0);
   const selectedRecord = selectedRecordId ? (recordDetails[selectedRecordId] ?? null) : null;
@@ -441,16 +445,45 @@ export function HistoryPage() {
   };
 
   const handleDelete = async (recordId: number) => {
-    await apiFetch(`/api/analysis-history/${recordId}`, { method: "DELETE" });
-    if (selectedRecordId === recordId) {
-      setSearchParams({});
+    if (deletingRecordId === recordId) {
+      return;
     }
+    clear();
+    const removedIndex = records.findIndex((item) => item.id === recordId);
+    const removedRecord = records[removedIndex] ?? null;
+    const removedDetail = recordDetails[recordId] ?? null;
+    setDeletingRecordId(recordId);
+    setRecords((current) => current.filter((item) => item.id !== recordId));
     setRecordDetails((current) => {
       const next = { ...current };
       delete next[recordId];
       return next;
     });
-    await loadList();
+    try {
+      await apiFetch(`/api/analysis-history/${recordId}`, { method: "DELETE" });
+      if (selectedRecordId === recordId) {
+        setSearchParams({});
+      }
+      await loadList().catch(() => undefined);
+      showMessage("历史记录已删除");
+    } catch (requestError) {
+      if (removedRecord) {
+        setRecords((current) => {
+          if (current.some((item) => item.id === removedRecord.id)) {
+            return current;
+          }
+          const next = [...current];
+          next.splice(Math.max(0, Math.min(removedIndex, next.length)), 0, removedRecord);
+          return next;
+        });
+      }
+      if (removedDetail) {
+        setRecordDetails((current) => ({ ...current, [recordId]: removedDetail }));
+      }
+      showError(requestError instanceof Error ? requestError.message : "删除历史记录失败");
+    } finally {
+      setDeletingRecordId((current) => current === recordId ? null : current);
+    }
   };
 
   return (
@@ -458,6 +491,7 @@ export function HistoryPage() {
       title="分析历史"
     >
       <div className={selectedRecordId ? `${styles.stack} ${styles.historyDetailPageStack}` : styles.stack}>
+        <PageFeedback error={error} message={message} />
         {selectedRecordId ? (
           <>
             <section className={styles.card}>
@@ -491,8 +525,13 @@ export function HistoryPage() {
                               showPortfolioAction={false}
                               watchlistButtonClassName={styles.secondaryButton}
                             />
-                            <button className={styles.dangerButton} onClick={() => void handleDelete(selectedRecordId)} type="button">
-                              删除记录
+                            <button
+                              className={styles.dangerButton}
+                              disabled={deletingRecordId === selectedRecordId}
+                              onClick={() => void handleDelete(selectedRecordId)}
+                              type="button"
+                            >
+                              {deletingRecordId === selectedRecordId ? "删除中..." : "删除记录"}
                             </button>
                           </div>
                         </div>

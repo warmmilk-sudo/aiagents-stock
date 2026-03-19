@@ -124,22 +124,6 @@ class SmartMonitorEngine:
             )
         ):
             return current_market_price
-
-        latest_record = self.db.analysis_repository.get_latest_linked_record(
-            asset_id=stock_id,
-            portfolio_stock_id=stock_id,
-            symbol=stock_symbol,
-            account_name=account_name,
-        ) or {}
-        stock_info = latest_record.get("stock_info") if isinstance(latest_record.get("stock_info"), dict) else {}
-        for candidate in (
-            latest_record.get("current_price"),
-            stock_info.get("current_price") if isinstance(stock_info, dict) else None,
-            stock.get("cost_price"),
-        ):
-            price = self._safe_float(candidate)
-            if price > 0:
-                return price
         return 0.0
 
     def _build_account_info(
@@ -442,6 +426,31 @@ class SmartMonitorEngine:
                 details={"decision_id": decision_id, "price_alert_id": price_alert_id},
             )
         return updated
+
+    def _refresh_analysis_baseline_before_decision(
+        self,
+        *,
+        stock_code: str,
+        account_name: str,
+    ) -> bool:
+        asset_service = getattr(self.lifecycle_service, "asset_service", None)
+        sync_func = getattr(asset_service, "sync_managed_monitors_for_symbol", None)
+        if not callable(sync_func):
+            return False
+
+        try:
+            sync_result = sync_func(stock_code, account_name=account_name)
+            self.logger.info(
+                "[%s] 决策前已同步最新分析基线: ai=%s alert=%s removed=%s",
+                stock_code,
+                int((sync_result or {}).get("ai_tasks_upserted", 0) or 0),
+                int((sync_result or {}).get("price_alerts_upserted", 0) or 0),
+                int((sync_result or {}).get("removed", 0) or 0),
+            )
+            return True
+        except Exception as exc:
+            self.logger.warning("[%s] 决策前同步最新分析基线失败: %s", stock_code, exc)
+            return False
     
     def analyze_stock(self, stock_code: str, notify: bool = True, has_position: bool = False,
                       position_cost: float = 0, position_quantity: int = 0,
@@ -558,6 +567,18 @@ class SmartMonitorEngine:
             portfolio_stock_id = portfolio_stock_id or task_context.get("portfolio_stock_id") or (
                 asset_id if asset and asset.get("status") == STATUS_PORTFOLIO else None
             )
+
+            self._refresh_analysis_baseline_before_decision(
+                stock_code=stock_code,
+                account_name=account_name,
+            )
+
+            task_context = self.db.get_monitor_task_by_code(
+                stock_code,
+                account_name=account_name,
+                asset_id=asset_id,
+                portfolio_stock_id=portfolio_stock_id,
+            ) or task_context
             strategy_context = self._resolve_latest_strategy_context(
                 stock_code=stock_code,
                 account_name=account_name,
