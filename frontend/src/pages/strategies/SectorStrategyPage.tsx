@@ -200,7 +200,7 @@ export function SectorStrategyPage() {
       closeDetail();
       setSection("overview");
       setMessage(`智策分析任务已提交: ${data.task_id}`);
-      await loadTask().catch(() => undefined);
+      void loadTask().catch(() => undefined);
     } catch (requestError) {
       setError(requestError instanceof ApiRequestError ? requestError.message : "提交智策分析失败");
     } finally {
@@ -238,7 +238,7 @@ export function SectorStrategyPage() {
       setSection("overview");
       closeDetail();
       setMessage("已提交一次智策后台分析");
-      await loadTask().catch(() => undefined);
+      void loadTask().catch(() => undefined);
     } catch (requestError) {
       setError(requestError instanceof ApiRequestError ? requestError.message : "提交后台分析失败");
     } finally {
@@ -268,7 +268,7 @@ export function SectorStrategyPage() {
         setSection("history");
       }
       setMessage(`历史报告 #${reportId} 已删除`);
-      await loadHistory().catch(() => undefined);
+      void loadHistory().catch(() => undefined);
     } catch (requestError) {
       if (removedRecord) {
         setHistory((current) => {

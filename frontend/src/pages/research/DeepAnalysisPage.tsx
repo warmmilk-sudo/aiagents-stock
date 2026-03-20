@@ -276,7 +276,7 @@ export function DeepAnalysisPage() {
         }),
       });
       showMessage("分析任务已提交，正在准备执行...");
-      await loadTask().catch(() => undefined);
+      void loadTask().catch(() => undefined);
     } catch (requestError) {
       showError(requestError instanceof ApiRequestError ? requestError.message : "提交任务失败");
     } finally {
@@ -302,7 +302,7 @@ export function DeepAnalysisPage() {
       });
       showMessage(`已重新提交 ${symbol} 的分析任务`);
       setSection("start");
-      await loadTask().catch(() => undefined);
+      void loadTask().catch(() => undefined);
     } catch (requestError) {
       showError(requestError instanceof ApiRequestError ? requestError.message : "再次分析失败");
     } finally {

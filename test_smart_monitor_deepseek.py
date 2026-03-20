@@ -7,6 +7,14 @@ from smart_monitor_deepseek import SmartMonitorDeepSeek
 
 
 class SmartMonitorDeepSeekTests(unittest.TestCase):
+    def test_enforce_action_policy_keeps_buy_allowed(self):
+        client = SmartMonitorDeepSeek(api_key="test-key")
+
+        decision = client._enforce_action_policy({"action": "BUY", "reasoning": "test"}, has_position=True)
+
+        self.assertEqual(decision["action"], "BUY")
+        self.assertNotIn("降级为 HOLD", decision["reasoning"])
+
     def test_parse_decision_repairs_json_like_response(self):
         client = SmartMonitorDeepSeek(api_key="test-key")
         ai_response = """

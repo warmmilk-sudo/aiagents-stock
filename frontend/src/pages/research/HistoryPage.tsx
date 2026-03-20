@@ -464,7 +464,7 @@ export function HistoryPage() {
       if (selectedRecordId === recordId) {
         setSearchParams({});
       }
-      await loadList().catch(() => undefined);
+      void loadList().catch(() => undefined);
       showMessage("历史记录已删除");
     } catch (requestError) {
       if (removedRecord) {

@@ -106,7 +106,12 @@ class AssetService:
             }
         return dict(config.get_smart_monitor_risk_defaults())
 
-    def _build_ai_task_payload(self, asset: Dict, existing_item: Optional[Dict] = None) -> Dict:
+    def _build_ai_task_payload(
+        self,
+        asset: Dict,
+        existing_item: Optional[Dict] = None,
+        strategy_context: Optional[Dict] = None,
+    ) -> Dict:
         existing_item = existing_item or {}
         existing_config = existing_item.get("config") or {}
         status = asset.get("status")
@@ -137,6 +142,7 @@ class AssetService:
                 "notify_email": existing_config.get("notify_email"),
                 "notify_webhook": existing_config.get("notify_webhook"),
                 "position_date": existing_config.get("position_date"),
+                "strategy_context": strategy_context if isinstance(strategy_context, dict) else existing_config.get("strategy_context") or {},
             },
         }
 
@@ -148,9 +154,6 @@ class AssetService:
         entry_max = strategy_context.get("entry_max")
         take_profit = strategy_context.get("take_profit")
         stop_loss = strategy_context.get("stop_loss")
-        has_complete_strategy_levels = all(
-            value is not None for value in (entry_min, entry_max, take_profit, stop_loss)
-        )
         config = {
             "rating": strategy_context.get("rating") or existing_config.get("rating") or "持有",
             "entry_range": existing_config.get("entry_range") or {},
@@ -162,12 +165,15 @@ class AssetService:
             "runtime_thresholds": None,
             "origin_decision_id": None,
         }
-        if has_complete_strategy_levels:
+        if strategy_context:
             config.update(
                 {
-                    "entry_range": {"min": float(entry_min), "max": float(entry_max)},
-                    "take_profit": float(take_profit),
-                    "stop_loss": float(stop_loss),
+                    "entry_range": {
+                        "min": float(entry_min) if entry_min is not None else None,
+                        "max": float(entry_max) if entry_max is not None else None,
+                    },
+                    "take_profit": float(take_profit) if take_profit is not None else None,
+                    "stop_loss": float(stop_loss) if stop_loss is not None else None,
                     "strategy_context": strategy_context,
                     "threshold_source": "strategy_context",
                     "threshold_updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -285,8 +291,10 @@ class AssetService:
             account_name=asset.get("account_name"),
             asset_id=asset["id"],
         )
-        self.monitoring_repository.upsert_item(self._build_ai_task_payload(asset, existing_ai))
         strategy_context = self._get_strategy_context(asset) or {}
+        self.monitoring_repository.upsert_item(
+            self._build_ai_task_payload(asset, existing_ai, strategy_context)
+        )
         existing_alert = self.monitoring_repository.get_item_by_symbol(
             asset["symbol"],
             monitor_type="price_alert",

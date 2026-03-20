@@ -3,10 +3,12 @@
 实现akshare和tushare的自动切换机制
 """
 
+import logging
 import os
 import pandas as pd
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
+import config
 from tushare_utils import create_tushare_pro
 
 # 加载环境变量
@@ -31,10 +33,15 @@ class DataSourceManager:
     _INDUSTRY_LABEL_EXCLUDES = ("市盈率", "市净率", "涨跌", "换手", "资金", "排名", "概念", "指数")
     
     def __init__(self):
+        self.logger = logging.getLogger(__name__)
         self.tushare_token = os.getenv('TUSHARE_TOKEN', '')
         self.tushare_url = os.getenv('TUSHARE_URL', 'https://api.tushare.pro')
         self.tushare_available = False
         self.tushare_api = None
+        self.tdx_fetcher = None
+        self.tdx_enabled = bool(config.TDX_CONFIG.get('enabled', False) or config.TDX_CONFIG.get('base_url', ''))
+        self.tdx_base_url = str(config.TDX_CONFIG.get('base_url', '') or '').strip()
+        self.tdx_timeout_seconds = max(5, int(getattr(config, 'TDX_TIMEOUT_SECONDS', 10) or 10))
         
         # 初始化tushare
         if self.tushare_token:
@@ -53,6 +60,75 @@ class DataSourceManager:
                 self.tushare_available = False
         else:
             print("[INFO] 未配置Tushare Token，将仅使用Akshare数据源")
+
+    def _coerce_quote_number(self, value, default='N/A'):
+        if value is None:
+            return default
+        try:
+            if pd.isna(value):
+                return default
+        except Exception:
+            pass
+        if isinstance(value, str):
+            normalized = value.strip().replace(',', '')
+            if normalized in self._MISSING_TEXT_VALUES:
+                return default
+            value = normalized
+        try:
+            numeric = float(value)
+            return int(numeric) if numeric.is_integer() else numeric
+        except Exception:
+            return value if value not in (None, '') else default
+
+    def _get_tdx_fetcher(self):
+        if not self.tdx_enabled or not self.tdx_base_url:
+            return None
+        existing_fetcher = self.tdx_fetcher
+        if existing_fetcher is not None and getattr(existing_fetcher, 'available', True):
+            return existing_fetcher
+        try:
+            from smart_monitor_tdx_data import SmartMonitorTDXDataFetcher
+
+            candidate_fetcher = SmartMonitorTDXDataFetcher(
+                base_url=self.tdx_base_url,
+                timeout_seconds=self.tdx_timeout_seconds,
+            )
+            if getattr(candidate_fetcher, 'available', True):
+                self.tdx_fetcher = candidate_fetcher
+                return candidate_fetcher
+            self.logger.warning("TDX数据源可用性探测失败: %s", self.tdx_base_url)
+        except Exception as exc:
+            self.logger.warning("TDX数据源初始化失败: %s", exc)
+        self.tdx_fetcher = None
+        return None
+
+    def _normalize_tdx_quote(self, symbol, quote):
+        if not isinstance(quote, dict) or not quote:
+            return {}
+
+        price = self._coerce_quote_number(quote.get('price', quote.get('current_price')), default=None)
+        try:
+            if price is None or float(price) <= 0:
+                return {}
+        except Exception:
+            return {}
+
+        return {
+            'symbol': symbol,
+            'name': self._clean_text_value(quote.get('name')) or f'股票{symbol}',
+            'price': float(price),
+            'current_price': float(price),
+            'change_percent': self._coerce_quote_number(quote.get('change_percent', quote.get('change_pct'))),
+            'change': self._coerce_quote_number(quote.get('change', quote.get('change_amount'))),
+            'volume': self._coerce_quote_number(quote.get('volume')),
+            'amount': self._coerce_quote_number(quote.get('amount')),
+            'high': self._coerce_quote_number(quote.get('high')),
+            'low': self._coerce_quote_number(quote.get('low')),
+            'open': self._coerce_quote_number(quote.get('open')),
+            'pre_close': self._coerce_quote_number(quote.get('pre_close')),
+            'update_time': self._clean_text_value(quote.get('update_time')) or None,
+            'data_source': 'tdx',
+        }
 
     def _clean_text_value(self, value):
         if value is None:
@@ -287,7 +363,7 @@ class DataSourceManager:
     
     def get_realtime_quotes(self, symbol):
         """
-        获取实时行情数据（仅使用akshare实时接口，不回退到tushare日线）
+        获取实时行情数据（优先AkShare，失败时回退TDX，不回退到Tushare日线）
         
         Args:
             symbol: 股票代码
@@ -325,7 +401,20 @@ class DataSourceManager:
                 return quotes
         except Exception as e:
             print(f"[Akshare] 获取失败: {e}")
-        
+
+        # AkShare 失败时回退 TDX。
+        # TDX 在非交易时段通常仍能返回最近一次可靠撮合快照，可用于补充 Tushare 的非实时字段。
+        tdx_fetcher = self._get_tdx_fetcher()
+        if tdx_fetcher is not None:
+            try:
+                print(f"[TDX] AkShare失败，尝试获取 {symbol} 的实时行情补充数据...")
+                tdx_quote = self._normalize_tdx_quote(symbol, tdx_fetcher.get_realtime_quote(symbol))
+                if tdx_quote:
+                    print("[TDX] 成功获取实时行情补充数据")
+                    return tdx_quote
+            except Exception as e:
+                print(f"[TDX] 获取失败: {e}")
+
         return quotes
     
     def get_financial_data(self, symbol, report_type='income'):

@@ -183,7 +183,7 @@ export function ProfitGrowthPage() {
       });
       setSection("results");
       setMessage(`净利增长选股任务已提交: ${data.task_id}`);
-      await loadTask().catch(() => undefined);
+      void loadTask().catch(() => undefined);
     } catch (requestError) {
       setError(requestError instanceof ApiRequestError ? requestError.message : "提交净利增长任务失败");
     } finally {
@@ -245,7 +245,7 @@ export function ProfitGrowthPage() {
       });
       setSection("monitor");
       setMessage(`已加入策略监控: ${code}`);
-      await loadMonitorData().catch(() => undefined);
+      void loadMonitorData().catch(() => undefined);
     } catch (requestError) {
       setMonitoredStocks((current) => current.filter((item) => item.stock_code !== code));
       setMonitorStatus((current) =>
@@ -284,7 +284,7 @@ export function ProfitGrowthPage() {
       await apiFetch(`/api/selectors/profit-growth/monitor/stocks/${stockCode}`, { method: "DELETE" });
       setSection("monitor");
       setMessage(`已移出监控: ${stockCode}`);
-      await loadMonitorData().catch(() => undefined);
+      void loadMonitorData().catch(() => undefined);
     } catch (requestError) {
       if (removedStock) {
         setMonitoredStocks((current) => {

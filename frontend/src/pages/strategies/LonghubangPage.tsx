@@ -301,7 +301,7 @@ export function LonghubangPage() {
       setDismissedTaskId("");
       setPanel("analysis");
       setMessage(`龙虎榜分析任务已提交: ${data.task_id}`);
-      await loadTask().catch(() => undefined);
+      void loadTask().catch(() => undefined);
     } catch (requestError) {
       setError(requestError instanceof ApiRequestError ? requestError.message : "提交龙虎榜分析失败");
     } finally {
@@ -320,7 +320,7 @@ export function LonghubangPage() {
       });
       setDismissedBatchTaskId("");
       setMessage(`龙虎榜 TOP 批量分析任务已提交: ${data.task_id}`);
-      await loadBatchTask().catch(() => undefined);
+      void loadBatchTask().catch(() => undefined);
     } catch (requestError) {
       setError(requestError instanceof ApiRequestError ? requestError.message : "提交龙虎榜批量分析失败");
     } finally {
@@ -351,7 +351,7 @@ export function LonghubangPage() {
         setSelectedReport(null);
       }
       setMessage(`龙虎榜历史报告 #${reportId} 已删除`);
-      await loadHistory().catch(() => undefined);
+      void loadHistory().catch(() => undefined);
     } catch (requestError) {
       if (removedRecord) {
         setHistory((current) => {

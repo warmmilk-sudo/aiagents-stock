@@ -273,7 +273,7 @@ export function LowPriceBullPage() {
       setSimulation(null);
       setSection("results");
       setMessage(`低价擒牛选股任务已提交: ${data.task_id}`);
-      await loadTask();
+      void loadTask().catch(() => undefined);
     } catch (requestError) {
       setError(requestError instanceof ApiRequestError ? requestError.message : "提交低价擒牛任务失败");
     }
@@ -312,7 +312,7 @@ export function LowPriceBullPage() {
       });
       setSection("monitor");
       setMessage(`已加入策略监控: ${code}`);
-      await loadMonitorData();
+      void loadMonitorData().catch(() => undefined);
     } catch (requestError) {
       setError(requestError instanceof ApiRequestError ? requestError.message : "加入监控失败");
     }
@@ -325,7 +325,7 @@ export function LowPriceBullPage() {
       await apiFetch(`/api/selectors/low-price-bull/monitor/stocks/${stockCode}`, { method: "DELETE" });
       setSection("monitor");
       setMessage(`已移出监控: ${stockCode}`);
-      await loadMonitorData();
+      void loadMonitorData().catch(() => undefined);
     } catch (requestError) {
       setError(requestError instanceof ApiRequestError ? requestError.message : "移出监控失败");
     }
@@ -373,7 +373,7 @@ export function LowPriceBullPage() {
       });
       setSection("monitor");
       setMessage(status === "done" ? "已处理提醒并移出监控列表" : "已忽略提醒");
-      await loadMonitorData();
+      void loadMonitorData().catch(() => undefined);
     } catch (requestError) {
       setError(requestError instanceof ApiRequestError ? requestError.message : "处理提醒失败");
     }
@@ -386,7 +386,7 @@ export function LowPriceBullPage() {
       await apiFetch("/api/selectors/low-price-bull/monitor/alerts/cleanup?days=30", { method: "POST" });
       setSection("monitor");
       setMessage("已清理 30 天前提醒记录");
-      await loadMonitorData();
+      void loadMonitorData().catch(() => undefined);
     } catch (requestError) {
       setError(requestError instanceof ApiRequestError ? requestError.message : "清理历史提醒失败");
     }

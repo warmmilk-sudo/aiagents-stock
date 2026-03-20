@@ -184,7 +184,7 @@ export function SmallCapPage() {
       });
       setSection("results");
       setMessage(`小市值选股任务已提交: ${data.task_id}`);
-      await loadTask().catch(() => undefined);
+      void loadTask().catch(() => undefined);
     } catch (requestError) {
       setError(requestError instanceof ApiRequestError ? requestError.message : "提交小市值任务失败");
     } finally {
@@ -245,7 +245,7 @@ export function SmallCapPage() {
       });
       setSection("monitor");
       setMessage(`已加入策略监控: ${code}`);
-      await loadMonitorData().catch(() => undefined);
+      void loadMonitorData().catch(() => undefined);
     } catch (requestError) {
       setMonitoredStocks((current) => current.filter((item) => item.stock_code !== code));
       setMonitorStatus((current) =>
@@ -284,7 +284,7 @@ export function SmallCapPage() {
       await apiFetch(`/api/selectors/small-cap/monitor/stocks/${stockCode}`, { method: "DELETE" });
       setSection("monitor");
       setMessage(`已移出监控: ${stockCode}`);
-      await loadMonitorData().catch(() => undefined);
+      void loadMonitorData().catch(() => undefined);
     } catch (requestError) {
       if (removedStock) {
         setMonitoredStocks((current) => {
@@ -391,7 +391,7 @@ export function SmallCapPage() {
       });
       setSection("monitor");
       setMessage(status === "done" ? "已处理提醒并移出监控列表" : "已忽略提醒");
-      await loadMonitorData().catch(() => undefined);
+      void loadMonitorData().catch(() => undefined);
     } catch (requestError) {
       if (removedAlert) {
         setPendingAlerts((current) => {
@@ -425,7 +425,7 @@ export function SmallCapPage() {
       await apiFetch("/api/selectors/small-cap/monitor/alerts/cleanup?days=30", { method: "POST" });
       setSection("monitor");
       setMessage("已清理 30 天前提醒记录");
-      await loadMonitorData().catch(() => undefined);
+      void loadMonitorData().catch(() => undefined);
     } catch (requestError) {
       setError(requestError instanceof ApiRequestError ? requestError.message : "清理历史提醒失败");
     } finally {

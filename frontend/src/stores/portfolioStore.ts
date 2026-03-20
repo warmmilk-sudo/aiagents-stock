@@ -96,6 +96,10 @@ export const usePortfolioStore = create<PortfolioState>()(
               .map((item) => normalizeAccountName(item, { allowAggregate: true }) || DEFAULT_ACCOUNT_NAME),
           ),
         );
+        const pageCacheByAccount =
+          typedState.pageCacheByAccount && typeof typedState.pageCacheByAccount === "object"
+            ? typedState.pageCacheByAccount
+            : currentState.pageCacheByAccount;
         return {
           ...currentState,
           ...typedState,
@@ -103,6 +107,7 @@ export const usePortfolioStore = create<PortfolioState>()(
             normalizeAccountName(typedState.selectedAccount, { allowAggregate: true })
             || currentState.selectedAccount,
           knownAccounts: knownAccounts.length ? knownAccounts : currentState.knownAccounts,
+          pageCacheByAccount,
         };
       },
       partialize: (state) => ({
@@ -110,6 +115,7 @@ export const usePortfolioStore = create<PortfolioState>()(
         knownAccounts: state.knownAccounts,
         holdingsAnalysisTaskId: state.holdingsAnalysisTaskId,
         schedulerTaskId: state.schedulerTaskId,
+        pageCacheByAccount: state.pageCacheByAccount,
       }),
     },
   ),

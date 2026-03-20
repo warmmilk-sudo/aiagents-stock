@@ -733,7 +733,7 @@ class SmartMonitorDB:
             symbol=item.get("symbol"),
             account_name=account_name,
         ) or {}
-        strategy_context = config_strategy_context or latest_strategy_context or {}
+        strategy_context = latest_strategy_context or config_strategy_context or {}
         return {
             "id": item["id"],
             "task_name": config.get("task_name") or f"{item['symbol']} AI监控任务",

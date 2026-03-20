@@ -120,6 +120,24 @@ def toggle_all_tasks(request: Request, enabled: bool) -> dict:
     return success_payload({"changed": changed, "enabled": enabled}, message="批量任务状态已更新")
 
 
+@router.post("/tasks/sync-baselines")
+def sync_task_baselines(
+    request: Request,
+    enabled_only: bool = False,
+    account_name: Optional[str] = None,
+    has_position: Optional[bool] = None,
+) -> dict:
+    require_session(request)
+    return success_payload(
+        services.sync_smart_monitor_analysis_baselines(
+            enabled_only=enabled_only,
+            account_name=account_name,
+            has_position=has_position,
+        ),
+        message="已强制同步智能盯盘分析基线",
+    )
+
+
 @router.post("/tasks/run-once")
 def run_all_tasks_once(
     request: Request,

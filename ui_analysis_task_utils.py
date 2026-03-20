@@ -50,10 +50,6 @@ def start_ui_analysis_task(
     runner: TaskRunner,
     metadata: Optional[Dict[str, Any]] = None,
 ) -> str:
-    active_task = get_active_ui_analysis_task(task_type)
-    if active_task:
-        status_text = "正在分析" if active_task.get("status") == "running" else "已在队列中"
-        raise RuntimeError(f"{label}{status_text}，请勿重复提交。")
     return enqueue_ui_analysis_task(
         task_type=task_type,
         label=label,

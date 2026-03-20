@@ -206,7 +206,7 @@ export function MacroCyclePage() {
       setSelectedReport(null);
       setPanel("analysis");
       setMessage(`宏观周期分析任务已提交: ${data.task_id}`);
-      await loadTask().catch(() => undefined);
+      void loadTask().catch(() => undefined);
     } catch (requestError) {
       setError(requestError instanceof ApiRequestError ? requestError.message : "提交宏观周期分析失败");
     } finally {
@@ -242,7 +242,7 @@ export function MacroCyclePage() {
         setSelectedReport(null);
       }
       setMessage(`历史报告 #${reportId} 已删除`);
-      await loadHistory().catch(() => undefined);
+      void loadHistory().catch(() => undefined);
     } catch (requestError) {
       if (removedRecord) {
         setHistory((current) => {

@@ -1048,7 +1048,7 @@ KDJ:
         return normalized
 
     def _enforce_action_policy(self, decision: Dict, has_position: bool) -> Dict:
-        allowed_actions = {"SELL", "HOLD"} if has_position else {"BUY", "HOLD"}
+        allowed_actions = {"BUY", "SELL", "HOLD"}
         action = str(decision.get("action", "HOLD") or "HOLD").upper()
         if action not in allowed_actions:
             decision["action"] = "HOLD"

@@ -177,7 +177,7 @@ export function ValueStockPage() {
       setSimulation(null);
       setSection("results");
       setMessage(`低估值选股任务已提交: ${data.task_id}`);
-      await loadTask();
+      void loadTask().catch(() => undefined);
     } catch (requestError) {
       setError(requestError instanceof ApiRequestError ? requestError.message : "提交低估值任务失败");
     }

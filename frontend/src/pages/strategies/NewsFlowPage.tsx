@@ -328,7 +328,7 @@ export function NewsFlowPage() {
       });
       setPanel("analysis");
       showMessage("新闻流量分析任务已提交，正在准备分析...");
-      await loadTask().catch(() => undefined);
+      void loadTask().catch(() => undefined);
     } catch (requestError) {
       showError(requestError instanceof ApiRequestError ? requestError.message : "提交新闻流量分析失败");
     } finally {

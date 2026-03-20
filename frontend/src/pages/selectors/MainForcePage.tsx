@@ -349,7 +349,7 @@ export function MainForcePage() {
       setLoadedHistoryRecord(null);
       setSection("batch");
       setMessage(`主力 TOP 批量分析任务已提交: ${data.task_id}`);
-      await loadBatchTask();
+      void loadBatchTask();
     } catch (requestError) {
       setError(requestError instanceof ApiRequestError ? requestError.message : "提交批量分析任务失败");
     }
@@ -376,7 +376,7 @@ export function MainForcePage() {
         setLoadedHistoryRecord(null);
       }
       setMessage(`历史记录 #${recordId} 已删除`);
-      await loadHistory();
+      void loadHistory();
     } catch (requestError) {
       setError(requestError instanceof ApiRequestError ? requestError.message : "删除历史记录失败");
     }

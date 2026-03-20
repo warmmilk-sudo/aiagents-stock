@@ -278,10 +278,6 @@ def submit_research_analysis_task(
     if not getattr(config, "DEEPSEEK_API_KEY", ""):
         raise ValueError("请先配置 DeepSeek API Key")
 
-    existing_task = portfolio_analysis_task_manager.get_active_task(session_key)
-    if existing_task:
-        raise ValueError("当前已有分析任务在执行或排队中，请稍后再试")
-
     if len(normalized_symbols) == 1:
         symbol = normalized_symbols[0]
 
@@ -426,10 +422,6 @@ def submit_portfolio_analysis_task(
         raise ValueError("请至少选择一位分析师参与分析")
     if not getattr(config, "DEEPSEEK_API_KEY", ""):
         raise ValueError("请先配置 DeepSeek API Key")
-
-    existing_task = portfolio_analysis_task_manager.get_active_task(session_key)
-    if existing_task:
-        raise ValueError("当前已有分析任务在执行或排队中，请稍后再试")
 
     selected_analysts = _selected_analyst_keys(analysts)
     worker_count = _clamp_int(max_workers, 1, 5, 3)
@@ -2690,6 +2682,86 @@ def run_smart_monitor_task_once(task_id: int) -> dict[str, Any]:
         "enabled": bool(refreshed.get("enabled", True)),
         "success": success,
     }
+
+
+def sync_smart_monitor_analysis_baselines(
+    *,
+    enabled_only: bool = False,
+    account_name: Optional[str] = None,
+    has_position: Optional[bool] = None,
+) -> dict[str, Any]:
+    tasks = smart_monitor_db.get_monitor_tasks(
+        enabled_only=enabled_only,
+        account_name=account_name,
+        has_position=has_position,
+    )
+    processed_asset_ids: set[int] = set()
+    summary = {
+        "task_total": 0,
+        "asset_total": 0,
+        "asset_synced": 0,
+        "ai_tasks_upserted": 0,
+        "price_alerts_upserted": 0,
+        "removed": 0,
+        "skipped": 0,
+        "resolved_from_symbol": 0,
+        "enabled_only": enabled_only,
+        "account_name": account_name or "",
+        "has_position": has_position,
+    }
+
+    for task in tasks:
+        summary["task_total"] += 1
+        candidate_asset_ids: list[int] = []
+        asset_id = task.get("asset_id")
+        if asset_id is not None:
+            try:
+                candidate_asset_ids.append(int(asset_id))
+            except (TypeError, ValueError):
+                pass
+        else:
+            symbol = str(task.get("stock_code") or "").strip().upper()
+            if symbol:
+                task_account_name = task.get("account_name")
+                assets = asset_service.asset_repository.list_assets(
+                    symbol=symbol,
+                    account_name=task_account_name,
+                    include_deleted=False,
+                )
+                if not assets and task_account_name is None:
+                    assets = asset_service.asset_repository.list_assets(
+                        symbol=symbol,
+                        include_deleted=False,
+                    )
+                if assets:
+                    summary["resolved_from_symbol"] += 1
+                candidate_asset_ids.extend(
+                    int(asset["id"])
+                    for asset in assets
+                    if asset.get("id") is not None
+                )
+
+        if not candidate_asset_ids:
+            summary["skipped"] += 1
+            continue
+
+        for candidate_asset_id in candidate_asset_ids:
+            if candidate_asset_id in processed_asset_ids:
+                continue
+            processed_asset_ids.add(candidate_asset_id)
+            summary["asset_total"] += 1
+            try:
+                result = asset_service.sync_managed_monitors(candidate_asset_id)
+            except Exception:
+                summary["skipped"] += 1
+                continue
+
+            summary["asset_synced"] += 1
+            summary["ai_tasks_upserted"] += int(result.get("ai_tasks_upserted", 0) or 0)
+            summary["price_alerts_upserted"] += int(result.get("price_alerts_upserted", 0) or 0)
+            summary["removed"] += int(result.get("removed", 0) or 0)
+
+    return summary
 
 
 def get_activity_snapshot() -> dict[str, Any]:

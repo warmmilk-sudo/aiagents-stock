@@ -22,6 +22,7 @@ import {
   SUPPORTED_ACCOUNT_NAMES,
   supportedAccountOptions,
 } from "../../lib/accounts";
+import { formatDateTime } from "../../lib/datetime";
 import { decodeIntent } from "../../lib/intents";
 import { usePortfolioStore, type PortfolioPageCache } from "../../stores/portfolioStore";
 import { useSmartMonitorStore } from "../../stores/smartMonitorStore";
@@ -349,12 +350,16 @@ export function PortfolioPage() {
   const [deletingStockId, setDeletingStockId] = useState<number | null>(null);
   const [isSavingScheduler, setIsSavingScheduler] = useState(false);
   const [isTogglingScheduler, setIsTogglingScheduler] = useState(false);
+  const [isRefreshingPage, setIsRefreshingPage] = useState(false);
   const [holdingsAnalysisTask, setHoldingsAnalysisTask] = useState<AnalysisTaskSummary | null>(null);
   const [schedulerTask, setSchedulerTask] = useState<AnalysisTaskSummary | null>(null);
   const [section, setSection] = useState<SectionKey>("overview");
   const { message, error, clear, showError, showMessage } = usePageFeedback();
   const holdingsTerminalTaskRef = useRef<string>("");
   const schedulerTerminalTaskRef = useRef<string>("");
+  const selectedAccountRef = useRef(selectedAccount);
+  const pageLoadRequestRef = useRef(0);
+  selectedAccountRef.current = selectedAccount;
 
   const applySchedulerState = (schedulerData: SchedulerStatus | null) => {
     setScheduler(schedulerData);
@@ -368,12 +373,12 @@ export function PortfolioPage() {
     setScheduler((current) =>
       current
         ? {
-            ...current,
-            is_running: running,
-          }
+          ...current,
+          is_running: running,
+        }
         : {
-            is_running: running,
-          },
+          is_running: running,
+        },
     );
   };
 
@@ -386,45 +391,67 @@ export function PortfolioPage() {
     applySchedulerState((cache.scheduler as SchedulerStatus | null) ?? null);
   };
 
-  const loadAll = async (force = false) => {
+  const loadAll = async (force = false, options?: { background?: boolean }) => {
     if (!force && cachedPage && Date.now() - cachedPage.updatedAt < PAGE_CACHE_TTL_MS) {
       applyPageCache(cachedPage);
       return;
     }
-    const accountParam = selectedAccount === UI.allAccounts ? "" : selectedAccount;
-    const fetchStocks = force ? apiFetch<PortfolioStock[]> : apiFetchCached<PortfolioStock[]>;
-    const fetchRisk = force ? apiFetch<PortfolioRisk> : apiFetchCached<PortfolioRisk>;
-    const [stockData, riskData, schedulerData] = await Promise.all([
-      fetchStocks(`/api/portfolio/stocks${buildQuery({ account_name: accountParam })}`),
-      fetchRisk(`/api/portfolio/risk${buildQuery({ account_name: accountParam })}`),
-      apiFetch<SchedulerStatus>("/api/portfolio/scheduler"),
-    ]);
+    const accountKey = selectedAccount;
+    const requestId = pageLoadRequestRef.current + 1;
+    pageLoadRequestRef.current = requestId;
+    selectedAccountRef.current = accountKey;
+    setIsRefreshingPage(true);
+    try {
+      const accountParam = accountKey === UI.allAccounts ? "" : accountKey;
+      const useFreshRequest = force || options?.background;
+      const fetchStocks = useFreshRequest ? apiFetch<PortfolioStock[]> : apiFetchCached<PortfolioStock[]>;
+      const fetchRisk = useFreshRequest ? apiFetch<PortfolioRisk> : apiFetchCached<PortfolioRisk>;
+      const [stockData, riskData, schedulerData] = await Promise.all([
+        fetchStocks(`/api/portfolio/stocks${buildQuery({ account_name: accountParam })}`),
+        fetchRisk(`/api/portfolio/risk${buildQuery({ account_name: accountParam })}`),
+        apiFetch<SchedulerStatus>("/api/portfolio/scheduler"),
+      ]);
 
-    setStocks(stockData);
-    setRisk(riskData);
-    applySchedulerState(schedulerData);
-    setKnownAccounts(
-      stockData
-        .map((item) => normalizeAccountName(item.account_name) || UI.defaultAccount)
-        .concat(selectedAccount === UI.allAccounts ? [] : [selectedAccount]),
-    );
-    setPageCache(selectedAccount, {
-      stocks: stockData,
-      risk: riskData,
-      scheduler: schedulerData,
-      schedulerTimes: (schedulerData?.schedule_times ?? [])[0] || DEFAULT_SCHEDULER_TIME,
-      updatedAt: Date.now(),
-    });
-    if (!tradeForm.stock_id && stockData[0]) {
-      setTradeForm((current) => ({ ...current, stock_id: String(stockData[0].id) }));
+      if (pageLoadRequestRef.current !== requestId || selectedAccountRef.current !== accountKey) {
+        return;
+      }
+
+      setStocks(stockData);
+      setRisk(riskData);
+      applySchedulerState(schedulerData);
+      setKnownAccounts(
+        stockData
+          .map((item) => normalizeAccountName(item.account_name) || UI.defaultAccount)
+          .concat(accountKey === UI.allAccounts ? [] : [accountKey]),
+      );
+      setPageCache(accountKey, {
+        stocks: stockData,
+        risk: riskData,
+        scheduler: schedulerData,
+        schedulerTimes: (schedulerData?.schedule_times ?? [])[0] || DEFAULT_SCHEDULER_TIME,
+        updatedAt: Date.now(),
+      });
+      setTradeForm((current) => {
+        if (current.stock_id || !stockData[0]) {
+          return current;
+        }
+        return { ...current, stock_id: String(stockData[0].id) };
+      });
+    } finally {
+      if (pageLoadRequestRef.current === requestId && selectedAccountRef.current === accountKey) {
+        setIsRefreshingPage(false);
+      }
     }
   };
 
   useEffect(() => {
     if (cachedPage) {
       applyPageCache(cachedPage);
+    } else {
+      setStocks([]);
+      setRisk(null);
     }
-    void loadAll(true);
+    void loadAll(Boolean(cachedPage), { background: Boolean(cachedPage) }).catch(() => undefined);
   }, [selectedAccount]);
 
   useEffect(() => {
@@ -536,7 +563,7 @@ export function PortfolioPage() {
       return;
     }
     holdingsTerminalTaskRef.current = terminalKey;
-    void loadAll(true);
+    void loadAll(true).catch(() => undefined);
     clearSmartMonitorPageCache();
   }, [clearSmartMonitorPageCache, holdingsAnalysisTask?.id, holdingsAnalysisTask?.status]);
 
@@ -549,9 +576,24 @@ export function PortfolioPage() {
       return;
     }
     schedulerTerminalTaskRef.current = terminalKey;
-    void loadAll(true);
+    void loadAll(true).catch(() => undefined);
     clearSmartMonitorPageCache();
   }, [clearSmartMonitorPageCache, schedulerTask?.id, schedulerTask?.status]);
+
+  const cachedUpdatedAtText = cachedPage?.updatedAt
+    ? formatDateTime(cachedPage.updatedAt, "暂无缓存")
+    : "暂无缓存";
+  const pageDataStatus = isRefreshingPage
+    ? { label: cachedPage ? "更新中" : "加载中", tone: "warning" as const }
+    : cachedPage
+      ? { label: "缓存可用", tone: "default" as const }
+      : { label: "实时数据", tone: "default" as const };
+  const handleManualRefresh = () => {
+    clear();
+    void loadAll(true).catch((requestError) => {
+      showError(requestError instanceof ApiRequestError ? requestError.message : "刷新持仓数据失败");
+    });
+  };
 
   const riskWarnings = risk?.risk_warnings ?? [];
   const holdingMetrics = useMemo(() => {
@@ -900,7 +942,7 @@ export function PortfolioPage() {
       });
       setHoldingsAnalysisTaskId(taskData.task_id);
       holdingsTerminalTaskRef.current = "";
-      await loadHoldingsAnalysisTask(taskData.task_id).catch(() => undefined);
+      void loadHoldingsAnalysisTask(taskData.task_id).catch(() => undefined);
       showMessage(
         `${selectedAccount === UI.allAccounts ? "全部账户" : `${selectedAccount} 账户`}的持仓批量分析任务已提交，共 ${visibleHoldingSymbols.length} 只股票。`,
       );
@@ -947,7 +989,7 @@ export function PortfolioPage() {
       setActiveEditor(null);
       closeHoldingPanel();
       showMessage(`持仓已新增：${positionForm.code}`);
-      await loadAll(true).catch(() => undefined);
+      void loadAll(true).catch(() => undefined);
     } catch (requestError) {
       setStocks((current) => current.filter((item) => item.id !== nextPosition.id));
       showError(requestError instanceof ApiRequestError ? requestError.message : "新增持仓失败");
@@ -979,7 +1021,7 @@ export function PortfolioPage() {
       setTradeForm((current) => ({ ...defaultTradeForm, stock_id: current.stock_id }));
       closeHoldingPanel();
       showMessage("交易记录已保存。");
-      await loadAll(true).catch(() => undefined);
+      void loadAll(true).catch(() => undefined);
     } catch (requestError) {
       showError(requestError instanceof ApiRequestError ? requestError.message : "登记交易失败");
     } finally {
@@ -1011,15 +1053,15 @@ export function PortfolioPage() {
       current.map((stock) =>
         stock.id === editingStockId
           ? {
-              ...stock,
-              code: nextCode,
-              name: nextName,
-              account_name: nextAccount,
-              cost_price: nextCostPrice,
-              quantity: nextQuantity,
-              note: positionForm.note,
-              last_trade_at: nextBuyDate ?? stock.last_trade_at,
-            }
+            ...stock,
+            code: nextCode,
+            name: nextName,
+            account_name: nextAccount,
+            cost_price: nextCostPrice,
+            quantity: nextQuantity,
+            note: positionForm.note,
+            last_trade_at: nextBuyDate ?? stock.last_trade_at,
+          }
           : stock,
       ),
     );
@@ -1039,7 +1081,7 @@ export function PortfolioPage() {
       resetPositionEditor();
       closeHoldingPanel();
       showMessage(`持仓已更新：${nextCode}`);
-      await loadAll(true).catch(() => undefined);
+      void loadAll(true).catch(() => undefined);
     } catch (requestError) {
       if (previousStock) {
         setStocks((current) =>
@@ -1076,7 +1118,7 @@ export function PortfolioPage() {
         method: "DELETE",
       });
       showMessage("持仓已删除。");
-      await loadAll(true).catch(() => undefined);
+      void loadAll(true).catch(() => undefined);
     } catch (requestError) {
       if (removedStock) {
         setStocks((current) => {
@@ -1117,7 +1159,7 @@ export function PortfolioPage() {
       });
       applySchedulerState(nextScheduler);
       showMessage("定时分析配置已更新。");
-      await loadAll(true).catch(() => undefined);
+      void loadAll(true).catch(() => undefined);
     } catch (requestError) {
       showError(requestError instanceof ApiRequestError ? requestError.message : "保存定时分析失败");
     } finally {
@@ -1140,7 +1182,7 @@ export function PortfolioPage() {
       );
       applySchedulerState(nextScheduler);
       showMessage(running ? "定时分析已启动。" : "定时分析已停止。");
-      await loadAll(true).catch(() => undefined);
+      void loadAll(true).catch(() => undefined);
     } catch (requestError) {
       setScheduler(previousScheduler);
       showError(requestError instanceof ApiRequestError ? requestError.message : "更新定时分析状态失败");
@@ -1372,6 +1414,18 @@ export function PortfolioPage() {
       sectionTabs={sectionTabs}
       activeSectionKey={section}
       onSectionChange={(nextSection) => setSection(nextSection as SectionKey)}
+      actions={(
+        <>
+          <button
+            className={styles.secondaryButton}
+            disabled={isRefreshingPage}
+            onClick={handleManualRefresh}
+            type="button"
+          >
+            {isRefreshingPage ? "更新中..." : "刷新"}
+          </button>
+        </>
+      )}
     >
       <div className={styles.stack}>
         <PageFeedback error={error} message={message} />

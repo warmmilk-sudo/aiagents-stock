@@ -37,6 +37,14 @@ interface SmartMonitorTask {
     entry_max?: number;
     take_profit?: number;
     stop_loss?: number;
+    entry_range?: unknown;
+    final_decision?: {
+      entry_min?: unknown;
+      entry_max?: unknown;
+      entry_range?: unknown;
+      take_profit?: unknown;
+      stop_loss?: unknown;
+    };
   };
 }
 
@@ -149,19 +157,51 @@ const notificationToneClass: Record<NotificationTone, string> = {
   info: styles.noticeInfo,
 };
 
-function decisionBadge(value?: string): { label: string; tone: "success" | "danger" | "warning" | "default" } {
+function decisionBadge(
+  value?: string,
+  isHolding = false,
+): { label: string; tone: "success" | "danger" | "warning" | "default" } {
   const normalized = String(value || "").toLowerCase();
-  if (normalized === "buy") return { label: "买入", tone: "success" };
-  if (normalized === "sell") return { label: "卖出", tone: "danger" };
-  if (normalized === "hold") return { label: "观望", tone: "warning" };
+  if (normalized === "buy") return { label: isHolding ? "加仓" : "买入", tone: "success" };
+  if (normalized === "sell") return { label: isHolding ? "卖出" : "卖出信号", tone: "danger" };
+  if (normalized === "hold") return { label: isHolding ? "持有" : "观望", tone: "warning" };
   return { label: value || "未知", tone: "default" };
 }
 
-const formatLevelNumber = (value?: unknown) => {
-  const numeric = Number(value);
-  return Number.isFinite(numeric) && numeric > 0
-    ? numeric.toLocaleString("zh-CN", { maximumFractionDigits: 2 })
-    : "N/A";
+const formatThresholdValue = (value?: unknown): string => {
+  if (value == null) {
+    return "N/A";
+  }
+  if (typeof value === "number") {
+    return Number.isFinite(value) && value > 0
+      ? value.toLocaleString("zh-CN", { maximumFractionDigits: 2 })
+      : "N/A";
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed ? trimmed : "N/A";
+  }
+  if (typeof value === "object" && !Array.isArray(value)) {
+    const record = value as Record<string, unknown>;
+    const min = record.min ?? record.low ?? record.start;
+    const max = record.max ?? record.high ?? record.end;
+    if (min != null || max != null) {
+      const minText: string = formatThresholdValue(min);
+      const maxText: string = formatThresholdValue(max);
+      if (minText === "N/A" && maxText === "N/A") {
+        return "N/A";
+      }
+      if (minText === maxText) {
+        return minText;
+      }
+      return `${minText}-${maxText}`;
+    }
+    const text = record.text ?? record.value ?? record.range;
+    if (typeof text === "string" || typeof text === "number") {
+      return formatThresholdValue(text);
+    }
+  }
+  return "N/A";
 };
 
 const formatThresholdSummary = (
@@ -171,19 +211,35 @@ const formatThresholdSummary = (
     entry_max?: unknown;
     take_profit?: unknown;
     stop_loss?: unknown;
+    entry_range?: unknown;
+    final_decision?: {
+      entry_min?: unknown;
+      entry_max?: unknown;
+      entry_range?: unknown;
+      take_profit?: unknown;
+      stop_loss?: unknown;
+    };
   } | null,
 ) => {
   if (!levels) {
     return `${label}：暂无关键指标`;
   }
-  const entryMin = formatLevelNumber(levels.entry_min);
-  const entryMax = formatLevelNumber(levels.entry_max);
-  const takeProfit = formatLevelNumber(levels.take_profit);
-  const stopLoss = formatLevelNumber(levels.stop_loss);
-  if ([entryMin, entryMax, takeProfit, stopLoss].every((value) => value === "N/A")) {
+  const fallback = levels.final_decision ?? {};
+  const entryRange = formatThresholdValue(levels.entry_range ?? fallback.entry_range);
+  const entryMin = formatThresholdValue(levels.entry_min ?? fallback.entry_min);
+  const entryMax = formatThresholdValue(levels.entry_max ?? fallback.entry_max);
+  const takeProfit = formatThresholdValue(levels.take_profit ?? fallback.take_profit);
+  const stopLoss = formatThresholdValue(levels.stop_loss ?? fallback.stop_loss);
+  if ([entryRange, entryMin, entryMax, takeProfit, stopLoss].every((value) => value === "N/A")) {
     return `${label}：暂无关键指标`;
   }
-  return `${label}：入场[${entryMin}-${entryMax}] | 止盈:${takeProfit} | 止损:${stopLoss}`;
+  const entryText =
+    entryRange !== "N/A"
+      ? entryRange
+      : [entryMin, entryMax].every((value) => value === "N/A")
+        ? "N/A"
+        : `${entryMin}-${entryMax}`;
+  return `${label}：入场${entryText} | 止盈:${takeProfit} | 止损:${stopLoss}`;
 };
 
 const taskPortfolioLabel = (task: SmartMonitorTask) =>
@@ -202,9 +258,22 @@ const matchesTaskDecision = (task: SmartMonitorTask, decision: DecisionItem) => 
   return normalizeAccountName(task.account_name) === normalizeAccountName(decision.account_name);
 };
 
+const isDecisionHolding = (decision: DecisionItem, tasks: SmartMonitorTask[]) => {
+  const matchedTask = tasks.find((task) => matchesTaskDecision(task, decision));
+  if (matchedTask) {
+    return Boolean(matchedTask.has_position) || matchedTask.asset_status === "portfolio";
+  }
+  return decision.portfolio_stock_id != null;
+};
+
+const isSellDecision = (decision: DecisionItem) => String(decision.action || "").toUpperCase() === "SELL";
+
+const isVisibleDecision = (decision: DecisionItem, tasks: SmartMonitorTask[]) =>
+  isDecisionHolding(decision, tasks) || !isSellDecision(decision);
+
 const findLatestDecisionForTask = (task: SmartMonitorTask, decisions: DecisionItem[]) =>
-  decisions.find((decision) => matchesTaskDecision(task, decision))
-  || decisions.find((decision) => decision.stock_code === task.stock_code);
+  decisions.find((decision) => matchesTaskDecision(task, decision) && (Boolean(task.has_position) || task.asset_status === "portfolio" || !isSellDecision(decision)))
+  || decisions.find((decision) => decision.stock_code === task.stock_code && !isSellDecision(decision));
 
 const notificationMeta = (message: string): { tone: NotificationTone; label: string } => {
   if (/(止损|跌破|下破|失守|回撤)/.test(message)) return { tone: "danger", label: "风险预警" };
@@ -415,7 +484,7 @@ export function SmartMonitorPage() {
       });
       setActivePanel(null);
       showMessage(`盯盘任务已保存并完成一次盘中决策：${taskForm.stock_code}`);
-      await loadAll(true).catch(() => undefined);
+      void loadAll(true).catch(() => undefined);
     } catch (requestError) {
       showError(requestError instanceof ApiRequestError ? requestError.message : "保存任务失败");
     } finally {
@@ -446,7 +515,7 @@ export function SmartMonitorPage() {
       setRuntimeConfig(nextRuntime);
       setTaskForm((current) => applySharedRiskDefaults(current, nextConfig));
       showMessage("盯盘配置已更新");
-      await loadAll(true).catch(() => undefined);
+      void loadAll(true).catch(() => undefined);
     } catch (requestError) {
       showError(requestError instanceof ApiRequestError ? requestError.message : "保存盯盘配置失败");
     } finally {
@@ -518,7 +587,7 @@ export function SmartMonitorPage() {
     try {
       await apiFetch(enabled ? "/api/system/monitor-service/start" : "/api/system/monitor-service/stop", { method: "POST" });
       showMessage(enabled ? "监控服务已启动" : "监控服务已停止");
-      await loadAll(true).catch(() => undefined);
+      void loadAll(true).catch(() => undefined);
     } catch (requestError) {
       setSystemStatus(previousStatus);
       showError(requestError instanceof ApiRequestError ? requestError.message : "操作失败");
@@ -536,7 +605,7 @@ export function SmartMonitorPage() {
     try {
       await apiFetch(`/api/smart-monitor/tasks/${task.id}/run-once`, { method: "POST" });
       showMessage(`已执行 ${task.stock_code} 的一次盘中决策`);
-      await loadAll(true).catch(() => undefined);
+      void loadAll(true).catch(() => undefined);
     } catch (requestError) {
       showError(requestError instanceof ApiRequestError ? requestError.message : "操作失败");
     } finally {
@@ -561,7 +630,7 @@ export function SmartMonitorPage() {
     try {
       await apiFetch(`/api/smart-monitor/tasks/${task.id}/enable?enabled=${String(!previousEnabled)}`, { method: "POST" });
       showMessage(previousEnabled ? "任务已停用" : "任务已启用");
-      await loadAll(true).catch(() => undefined);
+      void loadAll(true).catch(() => undefined);
     } catch (requestError) {
       setTasks((current) =>
         current.map((item) =>
@@ -588,7 +657,7 @@ export function SmartMonitorPage() {
     try {
       await apiFetch(`/api/smart-monitor/tasks/${task.id}`, { method: "DELETE" });
       showMessage("任务已删除");
-      await loadAll(true).catch(() => undefined);
+      void loadAll(true).catch(() => undefined);
     } catch (requestError) {
       if (removedTask) {
         setTasks((current) => {
@@ -626,7 +695,7 @@ export function SmartMonitorPage() {
       showMessage(
         `已执行 ${result.task_total} 个盯盘任务、${result.price_alert_total} 个价格监控；AI成功 ${result.task_success} 个，价格检查成功 ${result.price_alert_success} 个。`,
       );
-      await loadAll(true).catch(() => undefined);
+      void loadAll(true).catch(() => undefined);
     } catch (requestError) {
       showError(requestError instanceof ApiRequestError ? requestError.message : "批量盘中决策失败");
     } finally {
@@ -646,7 +715,7 @@ export function SmartMonitorPage() {
     try {
       await apiFetch(`/api/price-alerts/notifications/${eventId}/ignore`, { method: "POST" });
       showMessage("预警通知已忽略");
-      await loadAll(true).catch(() => undefined);
+      void loadAll(true).catch(() => undefined);
     } catch (requestError) {
       if (removedNotification) {
         setNotifications((current) => {
@@ -685,6 +754,7 @@ export function SmartMonitorPage() {
     }
     return accumulator;
   }, []);
+  const visibleDecisions = latestDecisions.filter((item) => isVisibleDecision(item, tasks));
   const latestNotifications = notifications.reduce<PriceAlertNotification[]>((accumulator, item) => {
     const key = `${item.symbol || ""}::${normalizeAccountName(item.account_name) || DEFAULT_ACCOUNT_NAME}`;
     if (!accumulator.some((existing) => `${existing.symbol || ""}::${normalizeAccountName(existing.account_name) || DEFAULT_ACCOUNT_NAME}` === key)) {
@@ -790,7 +860,7 @@ export function SmartMonitorPage() {
                   type="button"
                 >
                   最新决策
-                  {latestDecisions.length ? ` (${latestDecisions.length})` : ""}
+                  {visibleDecisions.length ? ` (${visibleDecisions.length})` : ""}
                 </button>
                 <button
                   className={activeResultPanel === "notifications" ? styles.primaryButton : styles.secondaryButton}
@@ -804,8 +874,8 @@ export function SmartMonitorPage() {
               <div className={styles.list}>
                 {activeResultPanel === "decisions"
                   ? (
-                    latestDecisions.map((item) => {
-                      const badge = decisionBadge(item.action);
+                    visibleDecisions.map((item) => {
+                      const badge = decisionBadge(item.action, isDecisionHolding(item, tasks));
                       const toneClass =
                         badge.tone === "success"
                           ? styles.noticeSuccess
@@ -852,7 +922,7 @@ export function SmartMonitorPage() {
                       );
                     })
                   )}
-                {activeResultPanel === "decisions" && !latestDecisions.length ? <div className={styles.muted}>暂无盘中决策</div> : null}
+                {activeResultPanel === "decisions" && !visibleDecisions.length ? <div className={styles.muted}>暂无盘中决策</div> : null}
                 {activeResultPanel === "notifications" && !latestNotifications.length ? <div className={styles.noticeCard}><div>当前没有需要处理的预警通知。</div></div> : null}
               </div>
             </div>
