@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 
 import { PageFeedback } from "../../components/common/PageFeedback";
@@ -9,7 +9,7 @@ import {
   type SectorStrategyReportView,
   type SectorStrategySummaryView,
 } from "../../components/research/SectorReportDetailView";
-import { ApiRequestError, apiFetch, apiFetchCached, downloadApiFile } from "../../lib/api";
+import { ApiRequestError, apiFetch, downloadApiFile } from "../../lib/api";
 import { formatDateTime } from "../../lib/datetime";
 import styles from "../ConsolePage.module.scss";
 
@@ -91,6 +91,7 @@ export function SectorStrategyPage() {
   const [isSavingScheduler, setIsSavingScheduler] = useState(false);
   const [isRunningOnce, setIsRunningOnce] = useState(false);
   const [deletingHistoryId, setDeletingHistoryId] = useState<number | null>(null);
+  const syncedHistoryReportIdRef = useRef<number | null>(null);
 
   const detailView = searchParams.get("view") === "detail";
   const detailSource = searchParams.get("source");
@@ -104,7 +105,7 @@ export function SectorStrategyPage() {
   };
 
   const loadHistory = async () => {
-    const data = await apiFetchCached<SectorHistoryRecord[]>("/api/strategies/sector-strategy/history");
+    const data = await apiFetch<SectorHistoryRecord[]>("/api/strategies/sector-strategy/history");
     setHistory(data);
   };
 
@@ -129,7 +130,7 @@ export function SectorStrategyPage() {
     if (!reportId) {
       return;
     }
-    const data = await apiFetchCached<SectorHistoryDetail>(`/api/strategies/sector-strategy/history/${reportId}`);
+    const data = await apiFetch<SectorHistoryDetail>(`/api/strategies/sector-strategy/history/${reportId}`);
     setHistoryDetails((current) => ({ ...current, [reportId]: data }));
   };
 
@@ -142,6 +143,15 @@ export function SectorStrategyPage() {
       window.clearInterval(schedulerTimer);
     };
   }, []);
+
+  useEffect(() => {
+    const reportId = Number(task?.result?.result?.report_id ?? 0);
+    if (task?.status !== "success" || !reportId || syncedHistoryReportIdRef.current === reportId) {
+      return;
+    }
+    syncedHistoryReportIdRef.current = reportId;
+    void loadHistory().catch(() => undefined);
+  }, [task?.status, task?.result?.result?.report_id]);
 
   useEffect(() => {
     if (!detailReportId || historyDetails[detailReportId]) {

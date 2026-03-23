@@ -94,6 +94,41 @@ class SmartMonitorDataFetcher:
             "tdx_retry_count": self.intraday_tdx_retry_count,
         }
 
+    def _get_latest_turnover_rate(self, stock_code: str) -> Optional[float]:
+        """Return the latest real turnover rate from Tushare or AKShare."""
+        ts_code = self._stock_code_to_ts_code(stock_code)
+        if self.ts_pro and ts_code:
+            try:
+                end_date = datetime.now().strftime("%Y%m%d")
+                start_date = (datetime.now() - timedelta(days=10)).strftime("%Y%m%d")
+                df = self.ts_pro.daily_basic(
+                    ts_code=ts_code,
+                    start_date=start_date,
+                    end_date=end_date,
+                    fields="ts_code,trade_date,turnover_rate",
+                )
+                if df is not None and not df.empty and "turnover_rate" in df.columns:
+                    df = df.sort_values("trade_date", ascending=False).reset_index(drop=True)
+                    for _, row in df.iterrows():
+                        value = row.get("turnover_rate")
+                        if value is None or pd.isna(value):
+                            continue
+                        return float(value)
+            except Exception as exc:
+                self.logger.warning("Tushare换手率获取失败 %s: %s", stock_code, exc)
+
+        try:
+            hist_df = ak.stock_zh_a_hist(symbol=stock_code, period="daily", adjust="")
+            if hist_df is not None and not hist_df.empty and "换手率" in hist_df.columns:
+                latest = hist_df.iloc[-1]
+                value = latest.get("换手率")
+                if value is not None and not pd.isna(value):
+                    return float(value)
+        except Exception as exc:
+            self.logger.warning("AKShare换手率获取失败 %s: %s", stock_code, exc)
+
+        return None
+
     def _call_tdx_with_retry(self, stock_code: str, operation_label: str, callback):
         last_error = ""
         for attempt in range(1, self.intraday_tdx_retry_count + 1):
@@ -160,6 +195,15 @@ class SmartMonitorDataFetcher:
         result = {}
         result.update(quote)
         result.update(indicators)
+        turnover_rate = result.get("turnover_rate")
+        if turnover_rate in (None, ""):
+            turnover_rate = self._get_latest_turnover_rate(stock_code)
+        if turnover_rate is None:
+            return self._build_precision_error(
+                "盘中分析必须获取真实换手率，但Tushare/AKShare均未返回有效数据。",
+                stock_code,
+            )
+        result["turnover_rate"] = turnover_rate
         result.setdefault("technical_data_source", "tushare")
         result["precision_status"] = "validated"
         result["precision_mode"] = "tdx_quote_tushare_daily"
@@ -257,7 +301,7 @@ class SmartMonitorDataFetcher:
             self.logger.debug(traceback.format_exc())
             return None
 
-    def _resolve_stock_name(self, stock_code: str) -> str:
+    def _resolve_stock_name(self, stock_code: str) -> Optional[str]:
         """解析股票名称，AKShare失败时降级到Tushare。"""
         try:
             info_df = ak.stock_individual_info_em(symbol=stock_code)
@@ -279,7 +323,7 @@ class SmartMonitorDataFetcher:
             except Exception as e:
                 self.logger.warning(f"Tushare获取股票名称失败 {stock_code}: {type(e).__name__}: {str(e)[:80]}")
 
-        return stock_code
+        return None
     
     def get_realtime_quote(self, stock_code: str, retry: int = 1) -> Optional[Dict]:
         """
@@ -334,6 +378,12 @@ class SmartMonitorDataFetcher:
                 
                 # 1.3 获取历史数据（计算昨收）
                 hist_df = ak.stock_zh_a_hist(symbol=stock_code, period='daily', adjust='')
+                if hist_df is None or hist_df.empty or len(hist_df.columns) == 0:
+                    self.logger.warning(f"AKShare未找到股票 {stock_code} 的日线历史数据")
+                    if attempt < retry - 1:
+                        time.sleep(2)
+                        continue
+                    return None
                 
                 # 提取最新分钟数据
                 latest = min_df.iloc[-1]
@@ -345,29 +395,33 @@ class SmartMonitorDataFetcher:
                 if len(hist_df) >= 2:
                     pre_close = float(hist_df.iloc[-2]['收盘'])
                 else:
-                    pre_close = current_price
+                    self.logger.warning(f"AKShare历史数据不足 {stock_code}，无法计算昨收")
+                    return None
                 
                 change_amount = current_price - pre_close
                 change_pct = (change_amount / pre_close * 100) if pre_close > 0 else 0
                 
                 # 从历史数据获取今天的统计数据
-                if len(hist_df) >= 1:
-                    today_data = hist_df.iloc[-1]
-                    daily_volume = float(today_data.get('成交量', 0))
-                    daily_amount = float(today_data.get('成交额', 0))
-                    daily_high = float(today_data.get('最高', 0))
-                    daily_low = float(today_data.get('最低', 0))
-                    daily_open = float(today_data.get('开盘', 0))
-                    turnover_rate = float(today_data.get('换手率', 0))
-                else:
-                    # 使用分钟数据
-                    daily_volume = min_df['成交量'].sum()
-                    daily_amount = min_df['成交额'].sum()
-                    daily_high = min_df['最高'].max()
-                    daily_low = min_df['最低'].min()
-                    daily_open = float(min_df.iloc[0]['开盘'])
-                    turnover_rate = 0.0
-                
+                today_data = hist_df.iloc[-1]
+                required_fields = ('成交量', '成交额', '最高', '最低', '开盘')
+                if any(field not in today_data.index or pd.isna(today_data[field]) for field in required_fields):
+                    self.logger.warning(f"AKShare历史数据缺少关键字段 {stock_code}: {required_fields}")
+                    return None
+
+                daily_volume = float(today_data['成交量'])
+                daily_amount = float(today_data['成交额'])
+                daily_high = float(today_data['最高'])
+                daily_low = float(today_data['最低'])
+                daily_open = float(today_data['开盘'])
+                turnover_value = today_data.get('换手率')
+                turnover_rate = float(turnover_value) if turnover_value is not None and not pd.isna(turnover_value) else None
+
+                if turnover_rate is None:
+                    turnover_rate = self._get_latest_turnover_rate(stock_code)
+                if turnover_rate is None:
+                    self.logger.warning(f"AKShare未能获取真实换手率 {stock_code}")
+                    return None
+
                 self.logger.info(f"✅ AKShare成功获取 {stock_code} ({stock_name}) 实时行情")
                 
                 return {
@@ -676,8 +730,18 @@ class SmartMonitorDataFetcher:
                 row = stock_data.iloc[0]
                 
                 # 主力净额
-                main_net = float(row.get('主力净流入-净额', 0)) / 10000  # 转换为万元
-                main_net_pct = float(row.get('主力净流入-净占比', 0))
+                required_fields = (
+                    '主力净流入-净额',
+                    '主力净流入-净占比',
+                    '超大单净流入-净额',
+                    '大单净流入-净额',
+                    '中单净流入-净额',
+                    '小单净流入-净额',
+                )
+                if any(field not in row.index or pd.isna(row[field]) for field in required_fields):
+                    return None
+                main_net = float(row['主力净流入-净额']) / 10000  # 转换为万元
+                main_net_pct = float(row['主力净流入-净占比'])
                 
                 # 判断主力动向
                 if main_net > 0 and main_net_pct > 5:
@@ -694,10 +758,10 @@ class SmartMonitorDataFetcher:
                 return {
                     'main_net': main_net,  # 万元
                     'main_net_pct': main_net_pct,  # 百分比
-                    'super_net': float(row.get('超大单净流入-净额', 0)) / 10000,
-                    'big_net': float(row.get('大单净流入-净额', 0)) / 10000,
-                    'mid_net': float(row.get('中单净流入-净额', 0)) / 10000,
-                    'small_net': float(row.get('小单净流入-净额', 0)) / 10000,
+                    'super_net': float(row['超大单净流入-净额']) / 10000,
+                    'big_net': float(row['大单净流入-净额']) / 10000,
+                    'mid_net': float(row['中单净流入-净额']) / 10000,
+                    'small_net': float(row['小单净流入-净额']) / 10000,
                     'trend': trend,
                     'data_source': 'akshare'
                 }
@@ -849,16 +913,32 @@ class SmartMonitorDataFetcher:
             row = df.iloc[0]
             
             # 计算主力净额（大单+超大单）
-            buy_lg_amount = float(row.get('buy_lg_amount', 0))
-            buy_elg_amount = float(row.get('buy_elg_amount', 0))
-            sell_lg_amount = float(row.get('sell_lg_amount', 0))
-            sell_elg_amount = float(row.get('sell_elg_amount', 0))
+            required_fields = (
+                'buy_lg_amount',
+                'buy_elg_amount',
+                'sell_lg_amount',
+                'sell_elg_amount',
+                'net_mf_amount',
+                'buy_md_amount',
+                'sell_md_amount',
+                'buy_sm_amount',
+                'sell_sm_amount',
+            )
+            if any(field not in row.index or pd.isna(row[field]) for field in required_fields):
+                return None
+
+            buy_lg_amount = float(row['buy_lg_amount'])
+            buy_elg_amount = float(row['buy_elg_amount'])
+            sell_lg_amount = float(row['sell_lg_amount'])
+            sell_elg_amount = float(row['sell_elg_amount'])
             
             main_net = (buy_lg_amount + buy_elg_amount - sell_lg_amount - sell_elg_amount) / 10000
             
             # 计算净占比
-            net_mf_amount = float(row.get('net_mf_amount', 0))
-            main_net_pct = (main_net / net_mf_amount * 100) if net_mf_amount != 0 else 0
+            net_mf_amount = float(row['net_mf_amount'])
+            if net_mf_amount == 0:
+                return None
+            main_net_pct = (main_net / net_mf_amount * 100)
             
             # 判断主力动向
             if main_net > 0 and main_net_pct > 5:
@@ -879,8 +959,8 @@ class SmartMonitorDataFetcher:
                 'main_net_pct': main_net_pct,
                 'super_net': (buy_elg_amount - sell_elg_amount) / 10000,
                 'big_net': (buy_lg_amount - sell_lg_amount) / 10000,
-                'mid_net': float(row.get('buy_md_amount', 0) - row.get('sell_md_amount', 0)) / 10000,
-                'small_net': float(row.get('buy_sm_amount', 0) - row.get('sell_sm_amount', 0)) / 10000,
+                'mid_net': float(row['buy_md_amount'] - row['sell_md_amount']) / 10000,
+                'small_net': float(row['buy_sm_amount'] - row['sell_sm_amount']) / 10000,
                 'trend': trend
             }
             

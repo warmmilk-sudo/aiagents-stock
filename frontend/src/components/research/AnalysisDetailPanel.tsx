@@ -114,14 +114,11 @@ export function AnalysisDetailPanel({
 
       <section className={styles.block}>
         <h3>关键位置</h3>
-        <div className={styles.detailMetricGrid}>
+        <ul className={styles.reportList}>
           {locationMetrics.map((item) => (
-            <div className={styles.detailMetricCell} key={item.label}>
-              <span>{item.label}</span>
-              <strong>{item.value}</strong>
-            </div>
+            <li key={item.label}>{item.label}：{item.value}</li>
           ))}
-        </div>
+        </ul>
       </section>
 
       <section className={styles.block}>

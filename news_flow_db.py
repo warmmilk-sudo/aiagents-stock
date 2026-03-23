@@ -476,6 +476,14 @@ class NewsFlowDatabase:
             topic = dict(row)
             topic['sources'] = json.loads(topic['sources']) if topic['sources'] else []
             hot_topics.append(topic)
+
+        cursor.execute('''
+        SELECT * FROM platform_news
+        WHERE snapshot_id = ?
+        ORDER BY platform ASC, rank ASC, created_at ASC
+        ''', (snapshot_id,))
+
+        platform_news = [dict(row) for row in cursor.fetchall()]
         
         # 获取情绪记录
         cursor.execute('''
@@ -504,6 +512,7 @@ class NewsFlowDatabase:
         
         return {
             'snapshot': snapshot,
+            'platform_news': platform_news,
             'stock_news': stock_news,
             'hot_topics': hot_topics,
             'sentiment': sentiment,

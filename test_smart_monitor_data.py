@@ -88,7 +88,11 @@ class SmartMonitorDataFetcherTests(unittest.TestCase):
                 "technical_data_source": "tushare",
                 "technical_period": "daily",
             },
-        ) as tushare_mock, patch("smart_monitor_data.time.sleep", return_value=None):
+        ) as tushare_mock, patch.object(
+            fetcher,
+            "_get_latest_turnover_rate",
+            return_value=0.75,
+        ) as turnover_mock, patch("smart_monitor_data.time.sleep", return_value=None):
             result = fetcher.get_comprehensive_data("600519", intraday_strict=True)
 
         self.assertEqual(result["precision_status"], "validated")
@@ -99,8 +103,10 @@ class SmartMonitorDataFetcherTests(unittest.TestCase):
         self.assertEqual(result["tdx_retry_count"], 3)
         self.assertEqual(result["tdx_quote_retry_attempts"], 3)
         self.assertNotIn("tdx_indicators_retry_attempts", result)
+        self.assertEqual(result["turnover_rate"], 0.75)
         self.assertEqual(fetcher.tdx_fetcher.quote_calls, 3)
         tushare_mock.assert_called_once_with("600519", "daily")
+        turnover_mock.assert_called_once_with("600519")
 
     def test_intraday_strict_fails_when_tdx_unavailable(self):
         fetcher = self._build_fetcher(None, retry_count=3)

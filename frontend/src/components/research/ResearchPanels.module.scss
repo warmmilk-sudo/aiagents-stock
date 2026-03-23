@@ -169,6 +169,67 @@
   line-height: 1.7;
 }
 
+.reportListTree {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 8px;
+}
+
+.reportListTree .reportListTree {
+  margin-top: 6px;
+  padding-left: 0;
+  margin-left: 0;
+  border-left: 0;
+  gap: 4px;
+}
+
+.reportListItem {
+  list-style: none;
+}
+
+.reportListItemLine {
+  display: grid;
+  grid-template-columns: minmax(2.2em, auto) minmax(0, 1fr);
+  align-items: start;
+  gap: 4px;
+  line-height: 1.75;
+}
+
+.reportListMarker {
+  min-width: 0;
+  color: var(--text-muted);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.reportListItem[data-level="1"] > .reportListItemLine,
+.reportListItem[data-level="2"] > .reportListItemLine,
+.reportListItem[data-level="3"] > .reportListItemLine {
+  grid-template-columns: minmax(2.2em, auto) minmax(0, 1fr);
+}
+
+.reportListContent {
+  min-width: 0;
+  color: var(--text-main);
+}
+
+.reportListItem[data-level="0"] > .reportListItemLine > .reportListMarker {
+  color: color-mix(in srgb, var(--accent) 72%, var(--text-main));
+}
+
+.reportListItem[data-level="1"] > .reportListItemLine > .reportListMarker {
+  color: color-mix(in srgb, var(--info) 70%, var(--text-main));
+}
+
+.reportListItem[data-level="2"] > .reportListItemLine > .reportListMarker,
+.reportListItem[data-level="3"] > .reportListItemLine > .reportListMarker {
+  color: color-mix(in srgb, var(--warning) 68%, var(--text-main));
+}
+
 .reportTableWrap {
   overflow-x: auto;
 }

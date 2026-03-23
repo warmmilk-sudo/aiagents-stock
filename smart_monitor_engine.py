@@ -862,7 +862,7 @@ class SmartMonitorEngine:
                 'change_pct': f"{market_data.get('change_pct', 0):+.2f}",
                 'change_amount': f"{market_data.get('change_amount', 0):+.2f}",
                 'volume': market_data.get('volume', 'N/A'),
-                'turnover_rate': f"{market_data.get('turnover_rate', 0):.2f}",
+                'turnover_rate': market_data.get('turnover_rate'),
                 'position_status': '已持仓' if has_position else '未持仓',
                 'position_cost': f"{position_cost:.2f}" if has_position and position_cost else 'N/A',
                 'position_quantity': position_quantity if has_position else 0,

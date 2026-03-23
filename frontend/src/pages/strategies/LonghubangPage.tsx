@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { PageFeedback } from "../../components/common/PageFeedback";
 import { PageFrame } from "../../components/common/PageFrame";
 import { AnalysisActionButtons, type ActionPayload } from "../../components/research/AnalysisActionButtons";
 import { LonghubangReportDetailView } from "../../components/research/LonghubangReportDetailView";
-import { ApiRequestError, apiFetch, apiFetchCached, downloadApiFile } from "../../lib/api";
+import { ApiRequestError, apiFetch, downloadApiFile } from "../../lib/api";
 import styles from "../ConsolePage.module.scss";
 
 type Panel = "analysis" | "history" | "statistics";
@@ -227,13 +227,15 @@ export function LonghubangPage() {
   const [isSubmittingAnalysis, setIsSubmittingAnalysis] = useState(false);
   const [isSubmittingBatch, setIsSubmittingBatch] = useState(false);
   const [deletingHistoryId, setDeletingHistoryId] = useState<number | null>(null);
+  const lastTerminalTaskRef = useRef<string>("");
+  const lastTerminalBatchTaskRef = useRef<string>("");
 
   const loadTask = async () => setTask(await apiFetch<TaskDetail<LonghubangTaskPayload> | null>("/api/strategies/longhubang/tasks/latest"));
   const loadBatchTask = async () =>
     setBatchTask(await apiFetch<TaskDetail<BatchResult> | null>("/api/strategies/longhubang/batch-tasks/latest"));
-  const loadHistory = async () => setHistory(await apiFetchCached<HistoryRecord[]>("/api/strategies/longhubang/history"));
+  const loadHistory = async () => setHistory(await apiFetch<HistoryRecord[]>("/api/strategies/longhubang/history"));
   const loadStatistics = async () =>
-    setStatistics(await apiFetchCached<StatisticsPayload>("/api/strategies/longhubang/statistics?days=30"));
+    setStatistics(await apiFetch<StatisticsPayload>("/api/strategies/longhubang/statistics?days=30"));
 
   useEffect(() => {
     void Promise.all([loadTask(), loadBatchTask(), loadHistory(), loadStatistics()]);
@@ -250,6 +252,30 @@ export function LonghubangPage() {
       window.clearInterval(dataTimer);
     };
   }, []);
+
+  useEffect(() => {
+    if (!task || task.status === "queued" || task.status === "running") {
+      return;
+    }
+    const terminalKey = `${task.id}:${task.status}:${task.result?.result?.report_id ?? "na"}`;
+    if (lastTerminalTaskRef.current === terminalKey) {
+      return;
+    }
+    lastTerminalTaskRef.current = terminalKey;
+    void Promise.all([loadHistory(), loadStatistics()]).catch(() => undefined);
+  }, [task?.id, task?.status, task?.result?.result?.report_id]);
+
+  useEffect(() => {
+    if (!batchTask || batchTask.status === "queued" || batchTask.status === "running") {
+      return;
+    }
+    const terminalKey = `${batchTask.id}:${batchTask.status}:${batchTask.result?.analysis_date ?? "na"}`;
+    if (lastTerminalBatchTaskRef.current === terminalKey) {
+      return;
+    }
+    lastTerminalBatchTaskRef.current = terminalKey;
+    void Promise.all([loadHistory(), loadStatistics()]).catch(() => undefined);
+  }, [batchTask?.id, batchTask?.status, batchTask?.result?.analysis_date]);
 
   const visibleTaskResult = task?.status === "success" && task.id !== dismissedTaskId ? task.result?.result ?? null : null;
   const visibleBatchResult = batchTask?.status === "success" && batchTask.id !== dismissedBatchTaskId ? batchTask.result ?? null : null;
@@ -330,7 +356,7 @@ export function LonghubangPage() {
 
   const openHistory = async (reportId: number) =>
     withRequest(async () => {
-      const data = await apiFetchCached<HistoryRecord>(`/api/strategies/longhubang/history/${reportId}`);
+      const data = await apiFetch<HistoryRecord>(`/api/strategies/longhubang/history/${reportId}`);
       setSelectedReport(data);
       setPanel("history");
     }, "加载龙虎榜历史报告失败");

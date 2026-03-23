@@ -102,6 +102,8 @@ class NewsFlowEngine:
         try:
             logger.info("🚀 开始快速分析...")
             start_time = time.time()
+            data_warning = ""
+            data_from_cache = False
             
             # 1. 获取多平台新闻数据
             logger.info("📊 获取新闻数据...")
@@ -112,11 +114,31 @@ class NewsFlowEngine:
                 platforms=platforms, category=category
             )
             
+            platforms_data = multi_result.get('platforms_data', [])
+            success_count = multi_result.get('success_count', 0)
+
             if not multi_result['success']:
-                return {'success': False, 'error': '获取新闻数据失败'}
-            
-            platforms_data = multi_result['platforms_data']
-            success_count = multi_result['success_count']
+                logger.warning(
+                    "⚠️ 实时新闻接口全部失败: %s",
+                    "；".join(
+                        f"{item.get('platform')}: {item.get('error')}"
+                        for item in multi_result.get('errors', [])
+                    ) or "无可用明细",
+                )
+                cached_detail = self._get_latest_cached_news_detail()
+                cached_platforms = self._build_platforms_data_from_snapshot_detail(cached_detail)
+                if cached_platforms:
+                    platforms_data = cached_platforms
+                    success_count = len(cached_platforms)
+                    data_from_cache = True
+                    cached_fetch_time = cached_detail.get('snapshot', {}).get('fetch_time')
+                    data_warning = (
+                        "实时新闻接口不可用，已回退到最近一次缓存新闻数据"
+                        + (f"（{cached_fetch_time}）" if cached_fetch_time else "")
+                    )
+                else:
+                    data_warning = "实时新闻接口不可用，且暂无缓存新闻数据"
+                    logger.warning("⚠️ %s", data_warning)
             
             # 2. 提取股票相关新闻
             logger.info("🔍 提取股票相关新闻...")
@@ -153,8 +175,11 @@ class NewsFlowEngine:
             logger.info("💾 保存分析结果...")
             snapshot_id = None
             if self.db:
+                analysis_text = flow_data.get('analysis', '')
+                if data_warning:
+                    analysis_text = f"{analysis_text}\n\n{data_warning}".strip()
                 snapshot_id = self.db.save_flow_snapshot(
-                    flow_data, platforms_data, stock_news, hot_topics
+                    {**flow_data, 'analysis': analysis_text}, platforms_data, stock_news, hot_topics
                 )
                 
                 # 保存情绪记录
@@ -183,6 +208,8 @@ class NewsFlowEngine:
                 'stock_news': stock_news,
                 'hot_topics': hot_topics,
                 'platforms_data': platforms_data,
+                'data_warning': data_warning,
+                'data_from_cache': data_from_cache,
                 'fetch_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                 'duration': round(duration, 2),
             }
@@ -573,6 +600,56 @@ class NewsFlowEngine:
                 'snapshot': detail.get('snapshot', {}),
             }
         return None
+
+    def _get_latest_cached_news_detail(self) -> Optional[Dict]:
+        """获取最近一条缓存快照详情"""
+        if not self.db:
+            return None
+
+        latest_snapshot = self.db.get_latest_snapshot()
+        if not latest_snapshot:
+            return None
+
+        return self.db.get_snapshot_detail(latest_snapshot['id'])
+
+    def _build_platforms_data_from_snapshot_detail(self, detail: Optional[Dict]) -> List[Dict]:
+        """从快照详情重建平台数据结构"""
+        if not detail:
+            return []
+
+        platform_news = detail.get('platform_news') or []
+        if not platform_news:
+            return []
+
+        grouped: Dict[str, Dict] = {}
+        for item in platform_news:
+            platform = item.get('platform')
+            if not platform:
+                continue
+
+            platform_entry = grouped.setdefault(platform, {
+                'success': True,
+                'platform': platform,
+                'platform_name': item.get('platform_name') or platform,
+                'category': item.get('category') or 'other',
+                'weight': item.get('weight') or 5,
+                'influence': 'medium',
+                'data': [],
+                'count': 0,
+                'fetch_time': detail.get('snapshot', {}).get('fetch_time') or datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            })
+            platform_entry['data'].append({
+                'title': item.get('title') or '',
+                'content': item.get('content') or '',
+                'url': item.get('url') or '',
+                'source': item.get('source') or item.get('platform_name') or platform,
+                'publish_time': item.get('publish_time') or '',
+                'rank': item.get('rank') or 0,
+                'platform': platform,
+            })
+            platform_entry['count'] += 1
+
+        return list(grouped.values())
     
     def compare_with_history(self, current_score: int) -> Dict:
         """与历史数据对比"""

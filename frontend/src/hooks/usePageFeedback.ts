@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 const FEEDBACK_TIMEOUT_MS = 5000;
 
@@ -21,25 +21,25 @@ export function usePageFeedback() {
     };
   }, [message, error]);
 
-  const clear = () => {
+  const clear = useCallback(() => {
     setMessage("");
     setError("");
-  };
+  }, []);
 
-  const showMessage = (nextMessage: string) => {
+  const showMessage = useCallback((nextMessage: string) => {
     setMessage(nextMessage);
     setError("");
-  };
+  }, []);
 
-  const showError = (nextError: string) => {
+  const showError = useCallback((nextError: string) => {
     setError(nextError);
     setMessage("");
-  };
+  }, []);
 
-  const setFeedback = (nextMessage = "", nextError = "") => {
+  const setFeedback = useCallback((nextMessage = "", nextError = "") => {
     setMessage(nextMessage);
     setError(nextError);
-  };
+  }, []);
 
   return {
     message,

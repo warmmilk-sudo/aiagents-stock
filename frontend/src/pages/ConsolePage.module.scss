@@ -1277,9 +1277,35 @@
 .historyDetailSummary {
   width: 100%;
   box-sizing: border-box;
-  cursor: default;
+  cursor: pointer;
   padding: 14px 16px;
   font-weight: 700;
+}
+
+details > .historyDetailSummary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  user-select: none;
+  transition:
+    background var(--shell-transition),
+    color var(--shell-transition);
+}
+
+details > .historyDetailSummary::after {
+  content: "▾";
+  color: var(--text-muted);
+  font-size: 12px;
+  transition: transform var(--shell-transition);
+}
+
+details:not([open]) > .historyDetailSummary::after {
+  transform: rotate(-90deg);
+}
+
+details > .historyDetailSummary:hover {
+  background: color-mix(in srgb, var(--bg-panel-strong) 94%, transparent);
 }
 
 .historyDetailPanelBody {

@@ -1,10 +1,10 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import { PageFeedback } from "../../components/common/PageFeedback";
 import { PageFrame } from "../../components/common/PageFrame";
 import { StatusBadge } from "../../components/common/StatusBadge";
 import { AnalysisActionButtons, type ActionPayload } from "../../components/research/AnalysisActionButtons";
-import { ApiRequestError, apiFetch, apiFetchCached, downloadApiFile } from "../../lib/api";
+import { ApiRequestError, apiFetch, downloadApiFile } from "../../lib/api";
 import styles from "../ConsolePage.module.scss";
 
 
@@ -234,6 +234,7 @@ export function MainForcePage() {
   const [section, setSection] = useState<SectionKey>("selection");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const lastTerminalBatchTaskRef = useRef<string>("");
 
   const loadSelectionTask = async () => {
     const data = await apiFetch<TaskDetail<MainForceSelectionTaskPayload> | null>("/api/selectors/main-force/tasks/latest");
@@ -249,7 +250,7 @@ export function MainForcePage() {
   };
 
   const loadHistory = async () => {
-    const data = await apiFetchCached<MainForceHistoryResponse>("/api/selectors/main-force/history");
+    const data = await apiFetch<MainForceHistoryResponse>("/api/selectors/main-force/history");
     setHistory(data);
   };
 
@@ -261,6 +262,18 @@ export function MainForcePage() {
     }, 2000);
     return () => window.clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    if (!batchTask || batchTask.status === "queued" || batchTask.status === "running") {
+      return;
+    }
+    const terminalKey = `${batchTask.id}:${batchTask.status}:${batchTask.result?.history_record_id ?? "na"}`;
+    if (lastTerminalBatchTaskRef.current === terminalKey) {
+      return;
+    }
+    lastTerminalBatchTaskRef.current = terminalKey;
+    void loadHistory().catch(() => undefined);
+  }, [batchTask?.id, batchTask?.status, batchTask?.result?.history_record_id]);
 
   const selectionResult = selectionTask?.status === "success" ? selectionTask.result?.result ?? null : null;
   const selectionContext = selectionTask?.status === "success" ? selectionTask.result?.context_snapshot ?? null : null;
@@ -359,7 +372,7 @@ export function MainForcePage() {
     setMessage("");
     setError("");
     try {
-      const data = await apiFetchCached<MainForceHistoryRecord>(`/api/selectors/main-force/history/${recordId}`);
+      const data = await apiFetch<MainForceHistoryRecord>(`/api/selectors/main-force/history/${recordId}`);
       setLoadedHistoryRecord(data);
       setSection("batch");
     } catch (requestError) {

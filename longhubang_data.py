@@ -56,7 +56,8 @@ class LonghubangDataFetcher:
                     if data.get('code') == 20000:
                         return data
                     else:
-                        print(f"    API返回错误: {data.get('msg', '未知错误')}")
+                        msg = data.get('msg')
+                        print(f"    API返回错误: {msg}" if msg else "    API返回错误")
                         return None
                 else:
                     print(f"    HTTP错误: {response.status_code}")
@@ -260,18 +261,36 @@ class LonghubangDataFetcher:
             summary = self.analyze_data_summary(data_list)
         
         text_parts = []
+
+        def _fmt_number(value, digits=0):
+            if value is None:
+                return None
+            try:
+                return f"{float(value):,.{digits}f}"
+            except Exception:
+                return None
         
         # 总体概况
-        text_parts.append(f"""
-【龙虎榜总体概况】
-数据时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-记录总数: {summary.get('total_records', 0)}
-涉及股票: {summary.get('total_stocks', 0)} 只
-涉及游资: {summary.get('total_youzi', 0)} 个
-总买入金额: {summary.get('total_buy_amount', 0):,.2f} 元
-总卖出金额: {summary.get('total_sell_amount', 0):,.2f} 元
-净流入金额: {summary.get('total_net_inflow', 0):,.2f} 元
-""")
+        overview_lines = ["【龙虎榜总体概况】", f"数据时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"]
+        total_records = summary.get("total_records")
+        if total_records is not None:
+            overview_lines.append(f"记录总数: {total_records}")
+        total_stocks = summary.get("total_stocks")
+        if total_stocks is not None:
+            overview_lines.append(f"涉及股票: {total_stocks} 只")
+        total_youzi = summary.get("total_youzi")
+        if total_youzi is not None:
+            overview_lines.append(f"涉及游资: {total_youzi} 个")
+        total_buy_amount = _fmt_number(summary.get("total_buy_amount"), 2)
+        if total_buy_amount is not None:
+            overview_lines.append(f"总买入金额: {total_buy_amount} 元")
+        total_sell_amount = _fmt_number(summary.get("total_sell_amount"), 2)
+        if total_sell_amount is not None:
+            overview_lines.append(f"总卖出金额: {total_sell_amount} 元")
+        total_net_inflow = _fmt_number(summary.get("total_net_inflow"), 2)
+        if total_net_inflow is not None:
+            overview_lines.append(f"净流入金额: {total_net_inflow} 元")
+        text_parts.append("\n".join(overview_lines))
         
         # Top游资
         if summary.get('top_youzi'):
@@ -296,13 +315,22 @@ class LonghubangDataFetcher:
         # 详细交易记录（前50条）
         text_parts.append("\n【详细交易记录 TOP50】")
         for idx, row in df.head(50).iterrows():
+            buyer = row.get("游资名称")
+            stock_name = row.get("股票名称")
+            stock_code = row.get("股票代码")
+            buy_amount = _fmt_number(row.get("买入金额"), 0)
+            sell_amount = _fmt_number(row.get("卖出金额"), 0)
+            net_inflow = _fmt_number(row.get("净流入金额"), 0)
+            trade_date = row.get("日期")
+            if None in (buyer, stock_name, stock_code, buy_amount, sell_amount, net_inflow, trade_date):
+                continue
             text_parts.append(
-                f"{row.get('游资名称', 'N/A')} | "
-                f"{row.get('股票名称', 'N/A')}({row.get('股票代码', 'N/A')}) | "
-                f"买入:{row.get('买入金额', 0):,.0f} "
-                f"卖出:{row.get('卖出金额', 0):,.0f} "
-                f"净流入:{row.get('净流入金额', 0):,.0f} | "
-                f"日期:{row.get('日期', 'N/A')}"
+                f"{buyer} | "
+                f"{stock_name}({stock_code}) | "
+                f"买入:{buy_amount} "
+                f"卖出:{sell_amount} "
+                f"净流入:{net_inflow} | "
+                f"日期:{trade_date}"
             )
         
         return "\n".join(text_parts)
@@ -334,4 +362,3 @@ if __name__ == "__main__":
         print(f"\n... (总长度: {len(formatted_text)} 字符)")
     else:
         print("\n数据采集失败")
-

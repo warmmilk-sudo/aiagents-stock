@@ -5,6 +5,19 @@ from __future__ import annotations
 from time_utils import format_display_timestamp, local_now_str
 
 
+def _fmt_text(value):
+    return "" if value is None else str(value)
+
+
+def _fmt_number(value, digits=0):
+    if value is None:
+        return None
+    try:
+        return f"{float(value):,.{digits}f}"
+    except Exception:
+        return None
+
+
 def generate_sector_markdown_report(result_data: dict) -> str:
     """Generate sector strategy markdown report."""
 
@@ -29,7 +42,7 @@ def generate_sector_markdown_report(result_data: dict) -> str:
 
 ## 市场概况
 
-本报告基于{result_data.get('timestamp', 'N/A')}的实时市场数据，
+本报告基于{_fmt_text(result_data.get('timestamp'))}的实时市场数据，
 通过四位AI智能体的多维度分析，为您提供板块投资策略建议。
 
 ### 分析师团队:
@@ -62,16 +75,40 @@ def generate_sector_markdown_report(result_data: dict) -> str:
         if bullish:
             markdown_content += "#### 看多板块\n\n"
             for idx, item in enumerate(bullish, 1):
-                markdown_content += f"{idx}. **{item.get('sector', 'N/A')}** (信心度: {item.get('confidence', 0)}/10)\n"
-                markdown_content += f"   - 理由: {item.get('reason', 'N/A')}\n"
-                markdown_content += f"   - 风险: {item.get('risk', 'N/A')}\n\n"
+                sector = item.get("sector")
+                if sector is None:
+                    continue
+                markdown_content += f"{idx}. **{sector}**"
+                confidence = item.get("confidence")
+                if confidence is not None:
+                    markdown_content += f" (信心度: {confidence}/10)"
+                markdown_content += "\n"
+                reason = item.get("reason")
+                if reason is not None:
+                    markdown_content += f"   - 理由: {reason}\n"
+                risk = item.get("risk")
+                if risk is not None:
+                    markdown_content += f"   - 风险: {risk}\n"
+                markdown_content += "\n"
 
         if bearish:
             markdown_content += "#### 看空板块\n\n"
             for idx, item in enumerate(bearish, 1):
-                markdown_content += f"{idx}. **{item.get('sector', 'N/A')}** (信心度: {item.get('confidence', 0)}/10)\n"
-                markdown_content += f"   - 理由: {item.get('reason', 'N/A')}\n"
-                markdown_content += f"   - 风险: {item.get('risk', 'N/A')}\n\n"
+                sector = item.get("sector")
+                if sector is None:
+                    continue
+                markdown_content += f"{idx}. **{sector}**"
+                confidence = item.get("confidence")
+                if confidence is not None:
+                    markdown_content += f" (信心度: {confidence}/10)"
+                markdown_content += "\n"
+                reason = item.get("reason")
+                if reason is not None:
+                    markdown_content += f"   - 理由: {reason}\n"
+                risk = item.get("risk")
+                if risk is not None:
+                    markdown_content += f"   - 风险: {risk}\n"
+                markdown_content += "\n"
 
         rotation = predictions.get("rotation", {})
         current_strong = rotation.get("current_strong", [])
@@ -83,26 +120,56 @@ def generate_sector_markdown_report(result_data: dict) -> str:
         if current_strong:
             markdown_content += "#### 当前强势板块\n\n"
             for item in current_strong:
-                markdown_content += f"- **{item.get('sector', 'N/A')}**\n"
-                markdown_content += f"  - 轮动逻辑: {item.get('logic', 'N/A')}\n"
-                markdown_content += f"  - 时间窗口: {item.get('time_window', 'N/A')}\n"
-                markdown_content += f"  - 操作建议: {item.get('advice', 'N/A')}\n\n"
+                sector = item.get("sector")
+                if sector is None:
+                    continue
+                markdown_content += f"- **{sector}**\n"
+                logic = item.get("logic")
+                if logic is not None:
+                    markdown_content += f"  - 轮动逻辑: {logic}\n"
+                time_window = item.get("time_window")
+                if time_window is not None:
+                    markdown_content += f"  - 时间窗口: {time_window}\n"
+                advice = item.get("advice")
+                if advice is not None:
+                    markdown_content += f"  - 操作建议: {advice}\n"
+                markdown_content += "\n"
 
         if potential:
             markdown_content += "#### 潜力接力板块\n\n"
             for item in potential:
-                markdown_content += f"- **{item.get('sector', 'N/A')}**\n"
-                markdown_content += f"  - 轮动逻辑: {item.get('logic', 'N/A')}\n"
-                markdown_content += f"  - 时间窗口: {item.get('time_window', 'N/A')}\n"
-                markdown_content += f"  - 操作建议: {item.get('advice', 'N/A')}\n\n"
+                sector = item.get("sector")
+                if sector is None:
+                    continue
+                markdown_content += f"- **{sector}**\n"
+                logic = item.get("logic")
+                if logic is not None:
+                    markdown_content += f"  - 轮动逻辑: {logic}\n"
+                time_window = item.get("time_window")
+                if time_window is not None:
+                    markdown_content += f"  - 时间窗口: {time_window}\n"
+                advice = item.get("advice")
+                if advice is not None:
+                    markdown_content += f"  - 操作建议: {advice}\n"
+                markdown_content += "\n"
 
         if declining:
             markdown_content += "#### 衰退板块\n\n"
             for item in declining:
-                markdown_content += f"- **{item.get('sector', 'N/A')}**\n"
-                markdown_content += f"  - 轮动逻辑: {item.get('logic', 'N/A')}\n"
-                markdown_content += f"  - 时间窗口: {item.get('time_window', 'N/A')}\n"
-                markdown_content += f"  - 操作建议: {item.get('advice', 'N/A')}\n\n"
+                sector = item.get("sector")
+                if sector is None:
+                    continue
+                markdown_content += f"- **{sector}**\n"
+                logic = item.get("logic")
+                if logic is not None:
+                    markdown_content += f"  - 轮动逻辑: {logic}\n"
+                time_window = item.get("time_window")
+                if time_window is not None:
+                    markdown_content += f"  - 时间窗口: {time_window}\n"
+                advice = item.get("advice")
+                if advice is not None:
+                    markdown_content += f"  - 操作建议: {advice}\n"
+                markdown_content += "\n"
 
         heat = predictions.get("heat", {})
         hottest = heat.get("hottest", [])
@@ -114,19 +181,33 @@ def generate_sector_markdown_report(result_data: dict) -> str:
         if hottest:
             markdown_content += "#### 最热板块\n\n| 排名 | 板块 | 热度评分 | 趋势 | 持续性 |\n|------|------|----------|------|--------|\n"
             for idx, item in enumerate(hottest[:10], 1):
-                markdown_content += f"| {idx} | {item.get('sector', 'N/A')} | {item.get('score', 0)} | {item.get('trend', 'N/A')} | {item.get('sustainability', 'N/A')} |\n"
+                sector = item.get("sector")
+                score = item.get("score")
+                trend = item.get("trend")
+                sustainability = item.get("sustainability")
+                if None in (sector, score, trend, sustainability):
+                    continue
+                markdown_content += f"| {idx} | {sector} | {score} | {trend} | {sustainability} |\n"
             markdown_content += "\n"
 
         if heating:
             markdown_content += "#### 升温板块\n\n"
             for idx, item in enumerate(heating[:5], 1):
-                markdown_content += f"{idx}. {item.get('sector', 'N/A')} (评分: {item.get('score', 0)})\n"
+                sector = item.get("sector")
+                score = item.get("score")
+                if sector is None or score is None:
+                    continue
+                markdown_content += f"{idx}. {sector} (评分: {score})\n"
             markdown_content += "\n"
 
         if cooling:
             markdown_content += "#### 降温板块\n\n"
             for idx, item in enumerate(cooling[:5], 1):
-                markdown_content += f"{idx}. {item.get('sector', 'N/A')} (评分: {item.get('score', 0)})\n"
+                sector = item.get("sector")
+                score = item.get("score")
+                if sector is None or score is None:
+                    continue
+                markdown_content += f"{idx}. {sector} (评分: {score})\n"
             markdown_content += "\n"
 
         summary = predictions.get("summary", {})
@@ -145,13 +226,20 @@ def generate_sector_markdown_report(result_data: dict) -> str:
     if agents_analysis:
         markdown_content += "## AI智能体分析\n\n"
         for _key, agent_data in agents_analysis.items():
-            agent_name = agent_data.get("agent_name", "未知分析师")
-            agent_role = agent_data.get("agent_role", "")
-            focus_areas = ", ".join(agent_data.get("focus_areas", []))
-            analysis = agent_data.get("analysis", "")
+            agent_name = agent_data.get("agent_name")
+            if agent_name is None:
+                continue
+            agent_role = agent_data.get("agent_role")
+            focus_areas_list = agent_data.get("focus_areas")
+            focus_areas = ", ".join(focus_areas_list) if focus_areas_list else ""
+            analysis = agent_data.get("analysis")
+            if analysis is None:
+                continue
             markdown_content += f"### {agent_name}\n\n"
-            markdown_content += f"- **职责**: {agent_role}\n"
-            markdown_content += f"- **关注领域**: {focus_areas}\n\n"
+            if agent_role:
+                markdown_content += f"- **职责**: {agent_role}\n"
+            if focus_areas:
+                markdown_content += f"- **关注领域**: {focus_areas}\n\n"
             markdown_content += f"{analysis}\n\n"
             markdown_content += "---\n\n"
 
@@ -181,9 +269,9 @@ def generate_longhubang_markdown_report(result_data: dict) -> str:
 ## 📊 报告概览
 
 - **生成时间**: {current_time}
-- **数据记录**: {result_data.get('data_info', {}).get('total_records', 0)} 条
-- **涉及股票**: {result_data.get('data_info', {}).get('total_stocks', 0)} 只
-- **涉及游资**: {result_data.get('data_info', {}).get('total_youzi', 0)} 个
+- **数据记录**: {result_data.get('data_info', {}).get('total_records')} 条
+- **涉及股票**: {result_data.get('data_info', {}).get('total_stocks')} 只
+- **涉及游资**: {result_data.get('data_info', {}).get('total_youzi')} 个
 - **AI分析师**: 5位专业分析师团队
 - **分析模型**: DeepSeek AI Multi-Agent System
 
@@ -193,21 +281,24 @@ def generate_longhubang_markdown_report(result_data: dict) -> str:
 
 ## 📈 数据概况
 
-本次分析共涵盖 **{result_data.get('data_info', {}).get('total_records', 0)}** 条龙虎榜记录，
-涉及 **{result_data.get('data_info', {}).get('total_stocks', 0)}** 只股票和 
-**{result_data.get('data_info', {}).get('total_youzi', 0)}** 个游资席位。
+本次分析共涵盖 **{result_data.get('data_info', {}).get('total_records')}** 条龙虎榜记录，
+涉及 **{result_data.get('data_info', {}).get('total_stocks')}** 只股票和 
+**{result_data.get('data_info', {}).get('total_youzi')}** 个游资席位。
 
 """
 
     summary = result_data.get("data_info", {}).get("summary", {})
-    markdown_content += f"""
-### 💰 资金概况
-
-- **总买入金额**: {summary.get('total_buy_amount', 0):,.2f} 元
-- **总卖出金额**: {summary.get('total_sell_amount', 0):,.2f} 元
-- **净流入金额**: {summary.get('total_net_inflow', 0):,.2f} 元
-
-"""
+    markdown_content += "\n### 💰 资金概况\n\n"
+    total_buy_amount = _fmt_number(summary.get("total_buy_amount"), 2)
+    total_sell_amount = _fmt_number(summary.get("total_sell_amount"), 2)
+    total_net_inflow = _fmt_number(summary.get("total_net_inflow"), 2)
+    if total_buy_amount is not None:
+        markdown_content += f"- **总买入金额**: {total_buy_amount} 元\n"
+    if total_sell_amount is not None:
+        markdown_content += f"- **总卖出金额**: {total_sell_amount} 元\n"
+    if total_net_inflow is not None:
+        markdown_content += f"- **净流入金额**: {total_net_inflow} 元\n"
+    markdown_content += "\n"
 
     if summary.get("top_youzi"):
         markdown_content += "### 🏆 活跃游资 TOP10\n\n| 排名 | 游资名称 | 净流入金额(元) |\n|------|----------|---------------|\n"
@@ -218,7 +309,12 @@ def generate_longhubang_markdown_report(result_data: dict) -> str:
     if summary.get("top_stocks"):
         markdown_content += "### 📈 资金净流入 TOP20 股票\n\n| 排名 | 股票代码 | 股票名称 | 净流入金额(元) |\n|------|----------|----------|---------------|\n"
         for idx, stock in enumerate(summary["top_stocks"][:20], 1):
-            markdown_content += f"| {idx} | {stock['code']} | {stock['name']} | {stock['net_inflow']:,.2f} |\n"
+            code = stock.get("code")
+            name = stock.get("name")
+            net_inflow = _fmt_number(stock.get("net_inflow"), 2)
+            if None in (code, name, net_inflow):
+                continue
+            markdown_content += f"| {idx} | {code} | {name} | {net_inflow} |\n"
         markdown_content += "\n"
 
     if summary.get("hot_concepts"):
@@ -241,14 +337,34 @@ def generate_longhubang_markdown_report(result_data: dict) -> str:
 |------|----------|----------|------------|--------|----------|
 """
         for stock in recommended[:10]:
-            markdown_content += f"| {stock.get('rank', '-')} | {stock.get('code', '-')} | {stock.get('name', '-')} | {stock.get('net_inflow', 0):,.0f} | {stock.get('confidence', '-')} | {stock.get('hold_period', '-')} |\n"
+            rank = stock.get("rank")
+            code = stock.get("code")
+            name = stock.get("name")
+            net_inflow = _fmt_number(stock.get("net_inflow"), 0)
+            confidence = stock.get("confidence")
+            hold_period = stock.get("hold_period")
+            if None in (rank, code, name, net_inflow, confidence, hold_period):
+                continue
+            markdown_content += f"| {rank} | {code} | {name} | {net_inflow} | {confidence} | {hold_period} |\n"
 
         markdown_content += "\n### 推荐理由详解\n\n"
         for stock in recommended[:5]:
-            markdown_content += f"**{stock.get('rank', '-')}. {stock.get('name', '-')} ({stock.get('code', '-')})**\n\n"
-            markdown_content += f"- 推荐理由: {stock.get('reason', '暂无')}\n"
-            markdown_content += f"- 确定性: {stock.get('confidence', '-')}\n"
-            markdown_content += f"- 持有周期: {stock.get('hold_period', '-')}\n\n"
+            rank = stock.get("rank")
+            name = stock.get("name")
+            code = stock.get("code")
+            if None in (rank, name, code):
+                continue
+            markdown_content += f"**{rank}. {name} ({code})**\n\n"
+            reason = stock.get("reason")
+            if reason is not None:
+                markdown_content += f"- 推荐理由: {reason}\n"
+            confidence = stock.get("confidence")
+            if confidence is not None:
+                markdown_content += f"- 确定性: {confidence}\n"
+            hold_period = stock.get("hold_period")
+            if hold_period is not None:
+                markdown_content += f"- 持有周期: {hold_period}\n"
+            markdown_content += "\n"
 
     agents_analysis = result_data.get("agents_analysis", {})
     if agents_analysis:
@@ -272,7 +388,10 @@ def generate_longhubang_markdown_report(result_data: dict) -> str:
             if not agent_data:
                 continue
             markdown_content += f"### {agent_title}\n\n"
-            analysis_text = agent_data.get("analysis", "暂无分析").replace("\n", "\n\n")
+            analysis_text = agent_data.get("analysis")
+            if analysis_text is None:
+                continue
+            analysis_text = analysis_text.replace("\n", "\n\n")
             markdown_content += f"{analysis_text}\n\n"
 
     markdown_content += """

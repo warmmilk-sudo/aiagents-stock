@@ -49,6 +49,19 @@ class SectorStrategyPDFGenerator:
         except Exception as e:
             print(f"[PDF] 字体设置失败: {e}")
             self.chinese_font = 'Helvetica'
+
+    @staticmethod
+    def _fmt_text(value):
+        return "" if value is None else str(value)
+
+    @staticmethod
+    def _fmt_number(value, digits=0):
+        if value is None:
+            return None
+        try:
+            return f"{float(value):,.{digits}f}"
+        except Exception:
+            return None
     
     def generate_pdf(self, result_data: dict, output_path: str = None) -> str:
         """
@@ -131,7 +144,7 @@ class SectorStrategyPDFGenerator:
         elements.append(Spacer(1, 1*inch))
         
         # 报告信息
-        timestamp = data.get('timestamp', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+        timestamp = data.get('timestamp') or datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         info_text = f"""
         <para align=center>
         <b>生成时间:</b> {timestamp}<br/>
@@ -166,12 +179,12 @@ class SectorStrategyPDFGenerator:
         # 这里需要从原始数据中提取市场概况
         # 由于result_data中可能没有直接的市场数据，我们从agents_analysis中提取
         
-        overview_text = f"""
-        <para>
-        本报告基于{data.get('timestamp', 'N/A')}的实时市场数据，
-        通过四位AI智能体的多维度分析，为您提供板块投资策略建议。
-        </para>
-        """
+        timestamp = data.get("timestamp")
+        overview_text = "<para>"
+        if timestamp is not None:
+            overview_text += f"本报告基于{timestamp}的实时市场数据，"
+        overview_text += "通过四位AI智能体的多维度分析，为您提供板块投资策略建议。"
+        overview_text += "</para>"
         elements.append(Paragraph(overview_text, styles['Normal']))
         elements.append(Spacer(1, 0.2*inch))
         
@@ -239,11 +252,20 @@ class SectorStrategyPDFGenerator:
             elements.append(Paragraph("<b>看多板块:</b>", styles['Normal']))
             
             for idx, item in enumerate(bullish, 1):
-                text = f"""
-                {idx}. <b>{item.get('sector', 'N/A')}</b> (信心度: {item.get('confidence', 0)}/10)<br/>
-                   理由: {item.get('reason', 'N/A')}<br/>
-                   风险: {item.get('risk', 'N/A')}
-                """
+                sector = item.get("sector")
+                if sector is None:
+                    continue
+                text = f"{idx}. <b>{sector}</b>"
+                confidence = item.get("confidence")
+                if confidence is not None:
+                    text += f" (信心度: {confidence}/10)"
+                text += "<br/>"
+                reason = item.get("reason")
+                if reason is not None:
+                    text += f"   理由: {reason}<br/>"
+                risk = item.get("risk")
+                if risk is not None:
+                    text += f"   风险: {risk}"
                 elements.append(Paragraph(text, styles['Small']))
                 elements.append(Spacer(1, 0.05*inch))
         
@@ -254,11 +276,20 @@ class SectorStrategyPDFGenerator:
             elements.append(Paragraph("<b>看空板块:</b>", styles['Normal']))
             
             for idx, item in enumerate(bearish, 1):
-                text = f"""
-                {idx}. <b>{item.get('sector', 'N/A')}</b> (信心度: {item.get('confidence', 0)}/10)<br/>
-                   理由: {item.get('reason', 'N/A')}<br/>
-                   风险: {item.get('risk', 'N/A')}
-                """
+                sector = item.get("sector")
+                if sector is None:
+                    continue
+                text = f"{idx}. <b>{sector}</b>"
+                confidence = item.get("confidence")
+                if confidence is not None:
+                    text += f" (信心度: {confidence}/10)"
+                text += "<br/>"
+                reason = item.get("reason")
+                if reason is not None:
+                    text += f"   理由: {reason}<br/>"
+                risk = item.get("risk")
+                if risk is not None:
+                    text += f"   风险: {risk}"
                 elements.append(Paragraph(text, styles['Small']))
                 elements.append(Spacer(1, 0.05*inch))
         
@@ -278,12 +309,19 @@ class SectorStrategyPDFGenerator:
         if current_strong:
             elements.append(Paragraph("<b>当前强势板块:</b>", styles['Normal']))
             for item in current_strong:
-                text = f"""
-                • <b>{item.get('sector', 'N/A')}</b><br/>
-                  轮动逻辑: {item.get('logic', 'N/A')[:100]}...<br/>
-                  时间窗口: {item.get('time_window', 'N/A')}<br/>
-                  操作建议: {item.get('advice', 'N/A')}
-                """
+                sector = item.get("sector")
+                if sector is None:
+                    continue
+                text = f"• <b>{sector}</b><br/>"
+                logic = item.get("logic")
+                if logic is not None:
+                    text += f"  轮动逻辑: {str(logic)[:100]}...<br/>"
+                time_window = item.get("time_window")
+                if time_window is not None:
+                    text += f"  时间窗口: {time_window}<br/>"
+                advice = item.get("advice")
+                if advice is not None:
+                    text += f"  操作建议: {advice}"
                 elements.append(Paragraph(text, styles['Small']))
                 elements.append(Spacer(1, 0.05*inch))
         
@@ -293,12 +331,19 @@ class SectorStrategyPDFGenerator:
             elements.append(Spacer(1, 0.1*inch))
             elements.append(Paragraph("<b>潜力接力板块:</b>", styles['Normal']))
             for item in potential:
-                text = f"""
-                • <b>{item.get('sector', 'N/A')}</b><br/>
-                  轮动逻辑: {item.get('logic', 'N/A')[:100]}...<br/>
-                  时间窗口: {item.get('time_window', 'N/A')}<br/>
-                  操作建议: {item.get('advice', 'N/A')}
-                """
+                sector = item.get("sector")
+                if sector is None:
+                    continue
+                text = f"• <b>{sector}</b><br/>"
+                logic = item.get("logic")
+                if logic is not None:
+                    text += f"  轮动逻辑: {str(logic)[:100]}...<br/>"
+                time_window = item.get("time_window")
+                if time_window is not None:
+                    text += f"  时间窗口: {time_window}<br/>"
+                advice = item.get("advice")
+                if advice is not None:
+                    text += f"  操作建议: {advice}"
                 elements.append(Paragraph(text, styles['Small']))
                 elements.append(Spacer(1, 0.05*inch))
         
@@ -319,12 +364,18 @@ class SectorStrategyPDFGenerator:
         # 最热板块
         hottest = heat.get('hottest', [])
         for idx, item in enumerate(hottest[:5], 1):
+            sector = item.get("sector")
+            score = item.get("score")
+            trend = item.get("trend")
+            sustainability = item.get("sustainability")
+            if None in (sector, score, trend, sustainability):
+                continue
             table_data.append([
                 str(idx),
-                item.get('sector', 'N/A'),
-                str(item.get('score', 0)),
-                item.get('trend', 'N/A'),
-                item.get('sustainability', 'N/A')
+                sector,
+                str(score),
+                trend,
+                sustainability
             ])
         
         if len(table_data) > 1:
@@ -394,13 +445,18 @@ class SectorStrategyPDFGenerator:
         agents_analysis = data.get('agents_analysis', {})
         
         for key, agent_data in agents_analysis.items():
-            agent_name = agent_data.get('agent_name', '未知分析师')
-            agent_role = agent_data.get('agent_role', '')
-            analysis = agent_data.get('analysis', '')
+            agent_name = agent_data.get('agent_name')
+            if agent_name is None:
+                continue
+            agent_role = agent_data.get('agent_role')
+            analysis = agent_data.get('analysis')
+            if analysis is None:
+                continue
             
             # 分析师名称和职责
             elements.append(Paragraph(f"<b>{agent_name}</b>", styles['Heading2']))
-            elements.append(Paragraph(f"<i>{agent_role}</i>", styles['Small']))
+            if agent_role is not None:
+                elements.append(Paragraph(f"<i>{agent_role}</i>", styles['Small']))
             elements.append(Spacer(1, 0.1*inch))
             
             # 分析内容（截取前500字）
@@ -535,4 +591,3 @@ if __name__ == "__main__":
     generator = SectorStrategyPDFGenerator()
     output_path = generator.generate_pdf(test_data)
     print(f"测试PDF生成: {output_path}")
-

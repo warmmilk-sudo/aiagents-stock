@@ -4,10 +4,14 @@
 """
 
 import logging
+import os
 import requests
 import pandas as pd
 from typing import Dict, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
+
+from tushare_utils import create_tushare_pro
 
 
 class SmartMonitorTDXDataFetcher:
@@ -25,7 +29,15 @@ class SmartMonitorTDXDataFetcher:
         if not self.base_url:
             raise ValueError("TDX_BASE_URL 未配置")
         self.timeout = max(5, int(timeout_seconds or 10))  # 请求超时时间（秒）
-        
+        self.ts_pro = None
+        tushare_token = os.getenv("TUSHARE_TOKEN", "")
+        if tushare_token:
+            try:
+                self.ts_pro, tushare_url = create_tushare_pro(token=tushare_token)
+                self.logger.info("Tushare换手率数据源初始化成功，地址: %s", tushare_url)
+            except Exception as exc:
+                self.logger.warning("Tushare换手率数据源初始化失败: %s", exc)
+
         self.logger.info(f"TDX数据源初始化成功，接口地址: {self.base_url}")
         self.available = self.check_connection(log_on_success=True)
         if not self.available:
@@ -49,6 +61,56 @@ class SmartMonitorTDXDataFetcher:
             response.status_code,
             response.headers.get("Content-Type", ""),
         )
+
+    @staticmethod
+    def _normalize_response_time(date_header: Optional[str]) -> Optional[str]:
+        if not date_header:
+            return None
+        try:
+            parsed = parsedate_to_datetime(date_header)
+            if parsed is None:
+                return None
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M:%S")
+        except Exception:
+            return None
+
+    def _stock_code_to_ts_code(self, stock_code: str) -> Optional[str]:
+        if stock_code.startswith("6"):
+            return f"{stock_code}.SH"
+        if stock_code.startswith(("0", "3")):
+            return f"{stock_code}.SZ"
+        return None
+
+    def _get_latest_turnover_rate(self, stock_code: str) -> Optional[float]:
+        if not self.ts_pro:
+            return None
+
+        ts_code = self._stock_code_to_ts_code(stock_code)
+        if not ts_code:
+            return None
+
+        end_date = datetime.now().strftime("%Y%m%d")
+        start_date = (datetime.now() - timedelta(days=10)).strftime("%Y%m%d")
+        try:
+            df = self.ts_pro.daily_basic(
+                ts_code=ts_code,
+                start_date=start_date,
+                end_date=end_date,
+                fields="ts_code,trade_date,turnover_rate",
+            )
+            if df is None or df.empty or "turnover_rate" not in df.columns:
+                return None
+            df = df.sort_values("trade_date", ascending=False).reset_index(drop=True)
+            for _, row in df.iterrows():
+                value = row.get("turnover_rate")
+                if value is None or pd.isna(value):
+                    continue
+                return float(value)
+        except Exception as exc:
+            self.logger.warning("Tushare换手率获取失败 %s: %s", stock_code, exc)
+        return None
 
     def _probe_quote_endpoint(self) -> bool:
         """部分旧版 TDX 服务没有 /api/health，退化到行情接口探测。"""
@@ -132,31 +194,44 @@ class SmartMonitorTDXDataFetcher:
             if not data_list:
                 self.logger.warning(f"TDX未返回股票 {stock_code} 的行情数据")
                 return None
-            
+
             # 获取第一条数据
             quote_data = data_list[0]
             k_data = quote_data.get('K', {})
-            
+
+            required_k_fields = ("Close", "Last", "Open", "High", "Low")
+            if any(field not in k_data or k_data.get(field) is None for field in required_k_fields):
+                self.logger.error("TDX行情缺少关键K线字段 %s: %s", stock_code, required_k_fields)
+                return None
+            if "TotalHand" not in quote_data or quote_data.get("TotalHand") is None:
+                self.logger.error("TDX行情缺少成交量字段 %s: TotalHand", stock_code)
+                return None
+            if "Amount" not in quote_data or quote_data.get("Amount") is None:
+                self.logger.error("TDX行情缺少成交额字段 %s: Amount", stock_code)
+                return None
+
             # 价格单位转换：厘 -> 元（1元 = 1000厘）
-            current_price = k_data.get('Close', 0) / 1000
-            pre_close = k_data.get('Last', 0) / 1000
-            open_price = k_data.get('Open', 0) / 1000
-            high_price = k_data.get('High', 0) / 1000
-            low_price = k_data.get('Low', 0) / 1000
-            
+            current_price = k_data["Close"] / 1000
+            pre_close = k_data["Last"] / 1000
+            open_price = k_data["Open"] / 1000
+            high_price = k_data["High"] / 1000
+            low_price = k_data["Low"] / 1000
+
             # 成交量单位：手（已是手，无需转换）
-            volume = quote_data.get('TotalHand', 0)
-            
+            volume = quote_data["TotalHand"]
+
             # 成交额单位转换：厘 -> 元
-            amount = quote_data.get('Amount', 0) / 1000
+            amount = quote_data["Amount"] / 1000
             
             # 计算涨跌幅
             change_amount = current_price - pre_close
             change_pct = (change_amount / pre_close * 100) if pre_close > 0 else 0
             
-            # 计算换手率（需要流通股本，TDX不提供，暂时设为0）
-            turnover_rate = 0.0
-            
+            turnover_rate = self._get_latest_turnover_rate(stock_code)
+            if turnover_rate is None:
+                self.logger.error("TDX实时行情未能获取真实换手率 %s", stock_code)
+                return None
+
             # 计算量比（现量/均量，这里用总手数/平均手数估算）
             vol_ma5 = volume / 1.2  # 简化估算
             volume_ratio = volume / vol_ma5 if vol_ma5 > 0 else 1.0
@@ -170,10 +245,11 @@ class SmartMonitorTDXDataFetcher:
                 current_price,
                 change_pct,
                 volume,
-                datetime.fromtimestamp(int(quote_data.get('ServerTime', 0))).strftime('%Y-%m-%d %H:%M:%S'),
+                self._normalize_response_time(response.headers.get("Date"))
+                or datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M:%S"),
             )
             self.logger.debug(f"✅ TDX成功获取 {stock_code} ({stock_name}) 实时行情")
-            
+
             return {
                 'code': stock_code,
                 'name': stock_name,
@@ -188,7 +264,7 @@ class SmartMonitorTDXDataFetcher:
                 'pre_close': pre_close,
                 'turnover_rate': turnover_rate,
                 'volume_ratio': volume_ratio,
-                'update_time': datetime.fromtimestamp(int(quote_data.get('ServerTime', 0))).strftime('%Y-%m-%d %H:%M:%S'),
+                'update_time': self._normalize_response_time(response.headers.get("Date")),
                 'data_source': 'tdx'
             }
             
@@ -225,13 +301,13 @@ class SmartMonitorTDXDataFetcher:
                 data_list = result.get('data', [])
                 for item in data_list:
                     if item.get('code') == stock_code:
-                        return item.get('name', 'N/A')
+                        return item.get('name')
             
-            return 'N/A'
+            return None
             
         except Exception as e:
             self.logger.warning(f"获取股票名称失败 {stock_code}: {e}")
-            return 'N/A'
+            return None
     
     def get_kline_data(self, stock_code: str, kline_type: str = 'day', limit: int = 200) -> Optional[pd.DataFrame]:
         """
@@ -269,14 +345,18 @@ class SmartMonitorTDXDataFetcher:
             # 转换为DataFrame
             rows = []
             for item in kline_list:
+                required_fields = ("Time", "Open", "Close", "High", "Low", "Volume", "Amount")
+                if any(field not in item or item.get(field) is None for field in required_fields):
+                    self.logger.error("TDX K线缺少关键字段 %s: %s", stock_code, required_fields)
+                    return None
                 rows.append({
-                    '日期': item.get('Time', '').split('T')[0],  # 只取日期部分
-                    '开盘': item.get('Open', 0) / 1000,  # 厘转元
-                    '收盘': item.get('Close', 0) / 1000,
-                    '最高': item.get('High', 0) / 1000,
-                    '最低': item.get('Low', 0) / 1000,
-                    '成交量': item.get('Volume', 0),  # 手
-                    '成交额': item.get('Amount', 0) / 1000,  # 厘转元
+                    '日期': item['Time'].split('T')[0],  # 只取日期部分
+                    '开盘': item['Open'] / 1000,  # 厘转元
+                    '收盘': item['Close'] / 1000,
+                    '最高': item['High'] / 1000,
+                    '最低': item['Low'] / 1000,
+                    '成交量': item['Volume'],  # 手
+                    '成交额': item['Amount'] / 1000,  # 厘转元
                 })
             
             df = pd.DataFrame(rows)
@@ -537,4 +617,3 @@ if __name__ == '__main__':
         print(f"  趋势: {data.get('trend')}")
     else:
         print("获取数据失败")
-

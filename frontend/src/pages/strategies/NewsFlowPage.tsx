@@ -340,11 +340,12 @@ export function NewsFlowPage() {
     clear();
     setIsRunningQuickAnalysis(true);
     try {
-      await apiFetch("/api/strategies/news-flow/quick-analysis", {
+      const result = await apiFetch<Record<string, unknown>>("/api/strategies/news-flow/quick-analysis", {
         method: "POST",
         body: JSON.stringify({ category: category || null }),
       });
-      showMessage("热点同步已完成");
+      const warning = asText(result.data_warning, "");
+      showMessage(warning ? `热点同步已完成（${warning}）` : "热点同步已完成");
       await Promise.all([loadDashboard(), loadHistory(), loadTrend()]).catch(() => undefined);
     } catch (requestError) {
       showError(requestError instanceof ApiRequestError ? requestError.message : "热点同步失败");

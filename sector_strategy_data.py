@@ -199,7 +199,7 @@ class SectorStrategyDataFetcher:
         return df
 
     @staticmethod
-    def _clean_value(value, default=0):
+    def _clean_value(value, default=None):
         if pd.isna(value):
             return default
         return value
@@ -210,20 +210,20 @@ class SectorStrategyDataFetcher:
             return boards
 
         for _, row in df.iterrows():
-            board_name = row.get('name', '')
+            board_name = self._clean_value(row['name'])
             if not board_name:
                 continue
 
             boards[board_name] = {
                 "name": board_name,
-                "change_pct": self._clean_value(row.get('pct_change')),
-                "turnover": self._clean_value(row.get('turnover_rate')),
-                "total_market_cap": self._clean_value(row.get('total_mv')),
-                "top_stock": self._clean_value(row.get('leading'), ''),
-                "top_stock_change": self._clean_value(row.get('leading_pct')),
-                "up_count": self._clean_value(row.get('up_num')),
-                "down_count": self._clean_value(row.get('down_num')),
-                "ts_code": self._clean_value(row.get('ts_code'), ''),
+                "change_pct": self._clean_value(row['pct_change']),
+                "turnover": self._clean_value(row['turnover_rate']),
+                "total_market_cap": self._clean_value(row['total_mv']),
+                "top_stock": self._clean_value(row['leading']),
+                "top_stock_change": self._clean_value(row['leading_pct']),
+                "up_count": self._clean_value(row['up_num']),
+                "down_count": self._clean_value(row['down_num']),
+                "ts_code": self._clean_value(row['ts_code']),
             }
 
         return boards
@@ -240,17 +240,17 @@ class SectorStrategyDataFetcher:
             # 转换为字典格式
             sectors = {}
             for idx, row in df.iterrows():
-                sector_name = row.get('板块名称', '')
+                sector_name = row['板块名称']
                 if sector_name:
                     sectors[sector_name] = {
                         "name": sector_name,
-                        "change_pct": row.get('涨跌幅', 0),
-                        "turnover": row.get('换手率', 0),
-                        "total_market_cap": row.get('总市值', 0),
-                        "top_stock": row.get('领涨股票', ''),
-                        "top_stock_change": row.get('领涨股票涨跌幅', 0),
-                        "up_count": row.get('上涨家数', 0),
-                        "down_count": row.get('下跌家数', 0)
+                        "change_pct": row['涨跌幅'],
+                        "turnover": row['换手率'],
+                        "total_market_cap": row['总市值'],
+                        "top_stock": row['领涨股票'],
+                        "top_stock_change": row['领涨股票涨跌幅'],
+                        "up_count": row['上涨家数'],
+                        "down_count": row['下跌家数']
                     }
             
             return sectors
@@ -275,17 +275,17 @@ class SectorStrategyDataFetcher:
             # 转换为字典格式
             concepts = {}
             for idx, row in df.iterrows():
-                concept_name = row.get('板块名称', '')
+                concept_name = row['板块名称']
                 if concept_name:
                     concepts[concept_name] = {
                         "name": concept_name,
-                        "change_pct": row.get('涨跌幅', 0),
-                        "turnover": row.get('换手率', 0),
-                        "total_market_cap": row.get('总市值', 0),
-                        "top_stock": row.get('领涨股票', ''),
-                        "top_stock_change": row.get('领涨股票涨跌幅', 0),
-                        "up_count": row.get('上涨家数', 0),
-                        "down_count": row.get('下跌家数', 0)
+                        "change_pct": row['涨跌幅'],
+                        "turnover": row['换手率'],
+                        "total_market_cap": row['总市值'],
+                        "top_stock": row['领涨股票'],
+                        "top_stock_change": row['领涨股票涨跌幅'],
+                        "up_count": row['上涨家数'],
+                        "down_count": row['下跌家数']
                     }
             
             return concepts
@@ -315,14 +315,14 @@ class SectorStrategyDataFetcher:
             
             for idx, row in df.head(50).iterrows():  # 取前50个
                 fund_flow["today"].append({
-                    "sector": row.get('名称', ''),
-                    "main_net_inflow": row.get('今日主力净流入-净额', 0),
-                    "main_net_inflow_pct": row.get('今日主力净流入-净占比', 0),
-                    "super_large_net_inflow": row.get('今日超大单净流入-净额', 0),
-                    "large_net_inflow": row.get('今日大单净流入-净额', 0),
-                    "medium_net_inflow": row.get('今日中单净流入-净额', 0),
-                    "small_net_inflow": row.get('今日小单净流入-净额', 0),
-                    "change_pct": row.get('今日涨跌幅', 0)
+                    "sector": row['名称'],
+                    "main_net_inflow": row['今日主力净流入-净额'],
+                    "main_net_inflow_pct": row['今日主力净流入-净占比'],
+                    "super_large_net_inflow": row['今日超大单净流入-净额'],
+                    "large_net_inflow": row['今日大单净流入-净额'],
+                    "medium_net_inflow": row['今日中单净流入-净额'],
+                    "small_net_inflow": row['今日小单净流入-净额'],
+                    "change_pct": row['今日涨跌幅']
                 })
             
             return fund_flow
@@ -340,7 +340,7 @@ class SectorStrategyDataFetcher:
             pct_map = {}
             if sector_snapshot is not None and not sector_snapshot.empty:
                 pct_map = {
-                    self._clean_value(row.get('name'), ''): self._clean_value(row.get('pct_change'))
+                    self._clean_value(row['name']): self._clean_value(row['pct_change'])
                     for _, row in sector_snapshot.iterrows()
                 }
 
@@ -350,20 +350,26 @@ class SectorStrategyDataFetcher:
             }
 
             for _, row in tushare_df.head(50).iterrows():
-                sector_name = self._clean_value(row.get('name'), '')
+                sector_name = self._clean_value(row['name'])
+                if sector_name in pct_map:
+                    change_pct = pct_map[sector_name]
+                elif 'pct_change' in row.index:
+                    change_pct = self._clean_value(row['pct_change'])
+                else:
+                    change_pct = None
                 fund_flow["today"].append({
                     "sector": sector_name,
-                    "main_net_inflow": self._clean_value(row.get('net_amount')),
-                    "main_net_inflow_pct": self._clean_value(row.get('net_amount_rate')),
-                    "super_large_net_inflow": self._clean_value(row.get('buy_elg_amount')),
-                    "super_large_net_inflow_pct": self._clean_value(row.get('buy_elg_amount_rate')),
-                    "large_net_inflow": self._clean_value(row.get('buy_lg_amount')),
-                    "large_net_inflow_pct": self._clean_value(row.get('buy_lg_amount_rate')),
-                    "medium_net_inflow": self._clean_value(row.get('buy_md_amount')),
-                    "medium_net_inflow_pct": self._clean_value(row.get('buy_md_amount_rate')),
-                    "small_net_inflow": self._clean_value(row.get('buy_sm_amount')),
-                    "small_net_inflow_pct": self._clean_value(row.get('buy_sm_amount_rate')),
-                    "change_pct": pct_map.get(sector_name, self._clean_value(row.get('pct_change'))),
+                    "main_net_inflow": self._clean_value(row['net_amount']),
+                    "main_net_inflow_pct": self._clean_value(row['net_amount_rate']),
+                    "super_large_net_inflow": self._clean_value(row['buy_elg_amount']),
+                    "super_large_net_inflow_pct": self._clean_value(row['buy_elg_amount_rate']),
+                    "large_net_inflow": self._clean_value(row['buy_lg_amount']),
+                    "large_net_inflow_pct": self._clean_value(row['buy_lg_amount_rate']),
+                    "medium_net_inflow": self._clean_value(row['buy_md_amount']),
+                    "medium_net_inflow_pct": self._clean_value(row['buy_md_amount_rate']),
+                    "small_net_inflow": self._clean_value(row['buy_sm_amount']),
+                    "small_net_inflow_pct": self._clean_value(row['buy_sm_amount_rate']),
+                    "change_pct": change_pct,
                 })
 
             print(f"    [Tushare] 行业资金流向获取成功，共 {len(fund_flow['today'])} 条")
@@ -388,7 +394,8 @@ class SectorStrategyDataFetcher:
                     overview["up_count"] = up_count
                     overview["down_count"] = down_count
                     overview["flat_count"] = flat_count
-                    overview["up_ratio"] = round(up_count / total_count * 100, 2) if total_count > 0 else 0
+                    if total_count > 0:
+                        overview["up_ratio"] = round(up_count / total_count * 100, 2)
                     
                     # 涨停跌停
                     limit_up = len(df_stat[df_stat['涨跌幅'] >= 9.5])
@@ -403,34 +410,37 @@ class SectorStrategyDataFetcher:
                 # 上证指数
                 df_sh = ak.stock_zh_index_spot_em(symbol="上证指数")
                 if df_sh is not None and not df_sh.empty:
+                    row = df_sh.iloc[0]
                     overview["sh_index"] = {
                         "code": "000001",
                         "name": "上证指数",
-                        "close": df_sh.iloc[0].get('最新价', 0),
-                        "change_pct": df_sh.iloc[0].get('涨跌幅', 0),
-                        "change": df_sh.iloc[0].get('涨跌额', 0)
+                        "close": row['最新价'],
+                        "change_pct": row['涨跌幅'],
+                        "change": row['涨跌额']
                     }
                 
                 # 深证成指
                 df_sz = self._safe_request(ak.stock_zh_index_spot_em, symbol="深证成指")
                 if df_sz is not None and not df_sz.empty:
+                    row = df_sz.iloc[0]
                     overview["sz_index"] = {
                         "code": "399001",
                         "name": "深证成指",
-                        "close": df_sz.iloc[0].get('最新价', 0),
-                        "change_pct": df_sz.iloc[0].get('涨跌幅', 0),
-                        "change": df_sz.iloc[0].get('涨跌额', 0)
+                        "close": row['最新价'],
+                        "change_pct": row['涨跌幅'],
+                        "change": row['涨跌额']
                     }
                 
                 # 创业板指
                 df_cyb = self._safe_request(ak.stock_zh_index_spot_em, symbol="创业板指")
                 if df_cyb is not None and not df_cyb.empty:
+                    row = df_cyb.iloc[0]
                     overview["cyb_index"] = {
                         "code": "399006",
                         "name": "创业板指",
-                        "close": df_cyb.iloc[0].get('最新价', 0),
-                        "change_pct": df_cyb.iloc[0].get('涨跌幅', 0),
-                        "change": df_cyb.iloc[0].get('涨跌额', 0)
+                        "close": row['最新价'],
+                        "change_pct": row['涨跌幅'],
+                        "change": row['涨跌额']
                     }
             except:
                 pass
@@ -520,19 +530,19 @@ class SectorStrategyDataFetcher:
                 latest = df.iloc[0]
                 
                 north_flow = {
-                    "date": str(latest.get('日期', '')),
-                    "north_net_inflow": latest.get('北向资金-成交净买额', 0),
-                    "hgt_net_inflow": latest.get('沪股通-成交净买额', 0),
-                    "sgt_net_inflow": latest.get('深股通-成交净买额', 0),
-                    "north_total_amount": latest.get('北向资金-成交金额', 0)
+                    "date": str(latest['日期']),
+                    "north_net_inflow": latest['北向资金-成交净买额'],
+                    "hgt_net_inflow": latest['沪股通-成交净买额'],
+                    "sgt_net_inflow": latest['深股通-成交净买额'],
+                    "north_total_amount": latest['北向资金-成交金额']
                 }
                 
                 # 获取历史趋势（最近20天）
                 history = []
                 for idx, row in df.head(20).iterrows():
                     history.append({
-                        "date": str(row.get('日期', '')),
-                        "net_inflow": row.get('北向资金-成交净买额', 0)
+                        "date": str(row['日期']),
+                        "net_inflow": row['北向资金-成交净买额']
                     })
                 north_flow["history"] = history
                 
@@ -558,11 +568,11 @@ class SectorStrategyDataFetcher:
             news_list = []
             for idx, row in df.head(150).iterrows():  # 取前150条
                 news_list.append({
-                    "title": row.get('新闻标题', ''),
-                    "content": row.get('新闻内容', ''),
-                    "publish_time": str(row.get('发布时间', '')),
-                    "source": row.get('文章来源', ''),
-                    "url": row.get('新闻链接', '')
+                    "title": row['新闻标题'],
+                    "content": row['新闻内容'],
+                    "publish_time": str(row['发布时间']),
+                    "source": row['文章来源'],
+                    "url": row['新闻链接']
                 })
             
             return news_list
@@ -595,17 +605,17 @@ class SectorStrategyDataFetcher:
                     continue
 
                 for _, row in df.iterrows():
-                    title = self._clean_value(row.get('title'), '')
-                    pub_time = self._clean_value(row.get('pub_time'), '')
+                    title = self._clean_value(row['title'])
+                    pub_time = self._clean_value(row['pub_time'])
                     key = (title, pub_time)
                     if not title or key in seen:
                         continue
                     seen.add(key)
                     merged.append({
                         "title": title,
-                        "content": self._clean_value(row.get('content'), ''),
+                        "content": self._clean_value(row['content']),
                         "publish_time": str(pub_time),
-                        "source": self._clean_value(row.get('src'), src),
+                        "source": self._clean_value(row['src']) or src,
                         "url": "",
                     })
                     if len(merged) >= 150:
@@ -624,47 +634,85 @@ class SectorStrategyDataFetcher:
             return "数据获取失败"
         
         text_parts = []
+
+        def _fmt_num(value, digits=2):
+            if value is None:
+                return None
+            try:
+                return f"{float(value):.{digits}f}"
+            except Exception:
+                return None
         
         # 市场概况
         if data.get("market_overview"):
             market = data["market_overview"]
-            text_parts.append(f"""
-【市场总体情况】
-时间: {data.get('timestamp', 'N/A')}
+            block = ["【市场总体情况】"]
+            timestamp = data.get("timestamp")
+            if timestamp:
+                block.append(f"时间: {timestamp}")
+            block.append("")
+            block.append("大盘指数:")
 
-大盘指数:
-""")
-            if market.get("sh_index"):
-                sh = market["sh_index"]
-                text_parts.append(f"  上证指数: {sh['close']} ({sh['change_pct']:+.2f}%)")
-            if market.get("sz_index"):
-                sz = market["sz_index"]
-                text_parts.append(f"  深证成指: {sz['close']} ({sz['change_pct']:+.2f}%)")
-            if market.get("cyb_index"):
-                cyb = market["cyb_index"]
-                text_parts.append(f"  创业板指: {cyb['close']} ({cyb['change_pct']:+.2f}%)")
+            sh = market.get("sh_index")
+            if sh:
+                close = _fmt_num(sh.get("close"))
+                change_pct = _fmt_num(sh.get("change_pct"))
+                if close is not None and change_pct is not None:
+                    block.append(f"  上证指数: {close} ({float(change_pct):+.2f}%)")
+            sz = market.get("sz_index")
+            if sz:
+                close = _fmt_num(sz.get("close"))
+                change_pct = _fmt_num(sz.get("change_pct"))
+                if close is not None and change_pct is not None:
+                    block.append(f"  深证成指: {close} ({float(change_pct):+.2f}%)")
+            cyb = market.get("cyb_index")
+            if cyb:
+                close = _fmt_num(cyb.get("close"))
+                change_pct = _fmt_num(cyb.get("change_pct"))
+                if close is not None and change_pct is not None:
+                    block.append(f"  创业板指: {close} ({float(change_pct):+.2f}%)")
             
             if market.get("total_stocks"):
-                text_parts.append(f"""
-市场统计:
-  总股票数: {market['total_stocks']}
-  上涨: {market['up_count']} ({market['up_ratio']:.1f}%)
-  下跌: {market['down_count']}
-  平盘: {market['flat_count']}
-  涨停: {market['limit_up']}
-  跌停: {market['limit_down']}
-""")
+                stats = ["", "市场统计:"]
+                total_stocks = market.get("total_stocks")
+                if total_stocks is not None:
+                    stats.append(f"  总股票数: {total_stocks}")
+                up_count = market.get("up_count")
+                up_ratio = market.get("up_ratio")
+                if up_count is not None and up_ratio is not None:
+                    stats.append(f"  上涨: {up_count} ({up_ratio:.1f}%)")
+                down_count = market.get("down_count")
+                if down_count is not None:
+                    stats.append(f"  下跌: {down_count}")
+                flat_count = market.get("flat_count")
+                if flat_count is not None:
+                    stats.append(f"  平盘: {flat_count}")
+                limit_up = market.get("limit_up")
+                if limit_up is not None:
+                    stats.append(f"  涨停: {limit_up}")
+                limit_down = market.get("limit_down")
+                if limit_down is not None:
+                    stats.append(f"  跌停: {limit_down}")
+                block.extend(stats)
+            text_parts.append("\n".join(block))
         
         # 北向资金
         if data.get("north_flow"):
             north = data["north_flow"]
-            text_parts.append(f"""
-【北向资金流向】
-日期: {north.get('date', 'N/A')}
-北向资金净流入: {north.get('north_net_inflow', 0):.2f} 万元
-  沪股通: {north.get('hgt_net_inflow', 0):.2f} 万元
-  深股通: {north.get('sgt_net_inflow', 0):.2f} 万元
-""")
+            block = ["【北向资金流向】"]
+            date = north.get("date")
+            if date:
+                block.append(f"日期: {date}")
+            north_net_inflow = _fmt_num(north.get("north_net_inflow"))
+            if north_net_inflow is not None:
+                block.append(f"北向资金净流入: {north_net_inflow} 万元")
+            hgt_net_inflow = _fmt_num(north.get("hgt_net_inflow"))
+            if hgt_net_inflow is not None:
+                block.append(f"  沪股通: {hgt_net_inflow} 万元")
+            sgt_net_inflow = _fmt_num(north.get("sgt_net_inflow"))
+            if sgt_net_inflow is not None:
+                block.append(f"  深股通: {sgt_net_inflow} 万元")
+            text_parts.append("\n".join(block))
         
         # 行业板块表现（前20）
         if data.get("sectors"):
@@ -676,13 +724,21 @@ class SectorStrategyDataFetcher:
 涨幅榜前10:
 """)
             for name, info in sorted_sectors[:10]:
-                text_parts.append(f"  {name}: {info['change_pct']:+.2f}% | 领涨: {info['top_stock']} ({info['top_stock_change']:+.2f}%)")
+                change_pct = _fmt_num(info.get("change_pct"))
+                top_stock = info.get("top_stock")
+                top_stock_change = _fmt_num(info.get("top_stock_change"))
+                if change_pct is not None and top_stock_change is not None:
+                    text_parts.append(f"  {name}: {float(change_pct):+.2f}% | 领涨: {top_stock} ({float(top_stock_change):+.2f}%)")
             
             text_parts.append(f"""
 跌幅榜前10:
 """)
             for name, info in sorted_sectors[-10:]:
-                text_parts.append(f"  {name}: {info['change_pct']:+.2f}% | 领跌: {info['top_stock']} ({info['top_stock_change']:+.2f}%)")
+                change_pct = _fmt_num(info.get("change_pct"))
+                top_stock = info.get("top_stock")
+                top_stock_change = _fmt_num(info.get("top_stock_change"))
+                if change_pct is not None and top_stock_change is not None:
+                    text_parts.append(f"  {name}: {float(change_pct):+.2f}% | 领跌: {top_stock} ({float(top_stock_change):+.2f}%)")
         
         # 概念板块表现（前20）
         if data.get("concepts"):
@@ -694,7 +750,11 @@ class SectorStrategyDataFetcher:
 涨幅榜前10:
 """)
             for name, info in sorted_concepts[:10]:
-                text_parts.append(f"  {name}: {info['change_pct']:+.2f}% | 领涨: {info['top_stock']} ({info['top_stock_change']:+.2f}%)")
+                change_pct = _fmt_num(info.get("change_pct"))
+                top_stock = info.get("top_stock")
+                top_stock_change = _fmt_num(info.get("top_stock_change"))
+                if change_pct is not None and top_stock_change is not None:
+                    text_parts.append(f"  {name}: {float(change_pct):+.2f}% | 领涨: {top_stock} ({float(top_stock_change):+.2f}%)")
         
         # 板块资金流向（前15）
         if data.get("sector_fund_flow") and data["sector_fund_flow"].get("today"):
@@ -706,7 +766,11 @@ class SectorStrategyDataFetcher:
 """)
             sorted_flow = sorted(flow, key=lambda x: x["main_net_inflow"], reverse=True)
             for item in sorted_flow[:15]:
-                text_parts.append(f"  {item['sector']}: {item['main_net_inflow']:.2f}万 ({item['main_net_inflow_pct']:+.2f}%) | 涨跌: {item['change_pct']:+.2f}%")
+                main_net_inflow = _fmt_num(item.get("main_net_inflow"))
+                main_net_inflow_pct = _fmt_num(item.get("main_net_inflow_pct"))
+                change_pct = _fmt_num(item.get("change_pct"))
+                if main_net_inflow is not None and main_net_inflow_pct is not None and change_pct is not None:
+                    text_parts.append(f"  {item.get('sector')}: {float(main_net_inflow):.2f}万 ({float(main_net_inflow_pct):+.2f}%) | 涨跌: {float(change_pct):+.2f}%")
         
         # 重要新闻（前20条）
         if data.get("news"):
@@ -732,16 +796,16 @@ class SectorStrategyDataFetcher:
                 # 将字典转换为DataFrame并映射必要列
                 sectors_df = pd.DataFrame([
                     {
-                        '板块代码': v.get('ts_code') or v.get('code') or v.get('name', k) or k,
-                        '板块名称': v.get('name', k),
-                        '涨跌幅': v.get('change_pct', 0),
-                        '成交额': 0,
-                        '总市值': v.get('total_market_cap', 0),
-                        '市盈率': v.get('pe_ratio', 0),
-                        '市净率': v.get('pb_ratio', 0),
-                        '最新价': 0,
-                        '成交量': 0,
-                        'turnover': v.get('turnover', 0)  # 兼容保存方法中的fallback
+                        '板块代码': v.get('ts_code') or v.get('code') or v.get('name') or k,
+                        '板块名称': v.get('name') or k,
+                        '涨跌幅': v.get('change_pct'),
+                        '成交额': None,
+                        '总市值': v.get('total_market_cap'),
+                        '市盈率': v.get('pe_ratio'),
+                        '市净率': v.get('pb_ratio'),
+                        '最新价': None,
+                        '成交量': None,
+                        'turnover': v.get('turnover')
                     }
                     for k, v in data["sectors"].items()
                 ])
@@ -756,16 +820,16 @@ class SectorStrategyDataFetcher:
             if data.get("concepts"):
                 concepts_df = pd.DataFrame([
                     {
-                        '板块代码': v.get('ts_code') or v.get('code') or v.get('name', k) or k,
-                        '板块名称': v.get('name', k),
-                        '涨跌幅': v.get('change_pct', 0),
-                        '成交额': 0,
-                        '总市值': v.get('total_market_cap', 0),
-                        '市盈率': v.get('pe_ratio', 0),
-                        '市净率': v.get('pb_ratio', 0),
-                        '最新价': 0,
-                        '成交量': 0,
-                        'turnover': v.get('turnover', 0)
+                        '板块代码': v.get('ts_code') or v.get('code') or v.get('name') or k,
+                        '板块名称': v.get('name') or k,
+                        '涨跌幅': v.get('change_pct'),
+                        '成交额': None,
+                        '总市值': v.get('total_market_cap'),
+                        '市盈率': v.get('pe_ratio'),
+                        '市净率': v.get('pb_ratio'),
+                        '最新价': None,
+                        '成交量': None,
+                        'turnover': v.get('turnover')
                     }
                     for k, v in data["concepts"].items()
                 ])
@@ -781,13 +845,13 @@ class SectorStrategyDataFetcher:
                 flow_today = data["sector_fund_flow"].get("today", [])
                 fund_df = pd.DataFrame([
                     {
-                        '行业': item.get('sector', ''),
-                        '主力净流入-净额': item.get('main_net_inflow', 0),
-                        '主力净流入-净占比': item.get('main_net_inflow_pct', 0),
-                        '超大单净流入-净额': item.get('super_large_net_inflow', 0),
-                        '超大单净流入-净占比': item.get('super_large_net_inflow_pct', 0),
-                        '大单净流入-净额': item.get('large_net_inflow', 0),
-                        '大单净流入-净占比': item.get('large_net_inflow_pct', 0)
+                        '行业': item.get('sector'),
+                        '主力净流入-净额': item.get('main_net_inflow'),
+                        '主力净流入-净占比': item.get('main_net_inflow_pct'),
+                        '超大单净流入-净额': item.get('super_large_net_inflow'),
+                        '超大单净流入-净占比': item.get('super_large_net_inflow_pct'),
+                        '大单净流入-净额': item.get('large_net_inflow'),
+                        '大单净流入-净占比': item.get('large_net_inflow_pct')
                     }
                     for item in flow_today
                 ])
@@ -802,11 +866,14 @@ class SectorStrategyDataFetcher:
             # 保存市场概况数据
             if data.get("market_overview"):
                 market = data["market_overview"]
+                sh_index = market.get("sh_index")
+                sz_index = market.get("sz_index")
+                cyb_index = market.get("cyb_index")
                 mo_df = pd.DataFrame([
-                    {'代码': '000001', '名称': '上证指数', '最新价': market.get('sh_index', {}).get('close', 0), '涨跌幅': market.get('sh_index', {}).get('change_pct', 0), '成交量': market.get('sh_index', {}).get('volume', 0), '成交额': market.get('sh_index', {}).get('turnover', 0), '总市值': 0, '市盈率': 0, '市净率': 0},
-                    {'代码': '399001', '名称': '深证成指', '最新价': market.get('sz_index', {}).get('close', 0), '涨跌幅': market.get('sz_index', {}).get('change_pct', 0), '成交量': market.get('sz_index', {}).get('volume', 0), '成交额': market.get('sz_index', {}).get('turnover', 0), '总市值': 0, '市盈率': 0, '市净率': 0},
-                    {'代码': '399006', '名称': '创业板指', '最新价': market.get('cyb_index', {}).get('close', 0), '涨跌幅': market.get('cyb_index', {}).get('change_pct', 0), '成交量': market.get('cyb_index', {}).get('volume', 0), '成交额': market.get('cyb_index', {}).get('turnover', 0), '总市值': 0, '市盈率': 0, '市净率': 0},
-                    {'代码': '__MARKET_BREADTH__', '名称': '__MARKET_BREADTH__', '最新价': market.get('total_stocks', 0), '涨跌幅': market.get('up_ratio', 0), '成交量': market.get('up_count', 0), '成交额': market.get('down_count', 0), '总市值': market.get('flat_count', 0), '市盈率': market.get('limit_up', 0), '市净率': market.get('limit_down', 0)},
+                    {'代码': '000001', '名称': '上证指数', '最新价': sh_index.get('close') if sh_index else None, '涨跌幅': sh_index.get('change_pct') if sh_index else None, '成交量': sh_index.get('volume') if sh_index else None, '成交额': sh_index.get('turnover') if sh_index else None, '总市值': None, '市盈率': None, '市净率': None},
+                    {'代码': '399001', '名称': '深证成指', '最新价': sz_index.get('close') if sz_index else None, '涨跌幅': sz_index.get('change_pct') if sz_index else None, '成交量': sz_index.get('volume') if sz_index else None, '成交额': sz_index.get('turnover') if sz_index else None, '总市值': None, '市盈率': None, '市净率': None},
+                    {'代码': '399006', '名称': '创业板指', '最新价': cyb_index.get('close') if cyb_index else None, '涨跌幅': cyb_index.get('change_pct') if cyb_index else None, '成交量': cyb_index.get('volume') if cyb_index else None, '成交额': cyb_index.get('turnover') if cyb_index else None, '总市值': None, '市盈率': None, '市净率': None},
+                    {'代码': '__MARKET_BREADTH__', '名称': '__MARKET_BREADTH__', '最新价': market.get('total_stocks'), '涨跌幅': market.get('up_ratio'), '成交量': market.get('up_count'), '成交额': market.get('down_count'), '总市值': market.get('flat_count'), '市盈率': market.get('limit_up'), '市净率': market.get('limit_down')},
                 ])
                 self.database.save_sector_raw_data(
                     data_date=datetime.now().strftime('%Y-%m-%d'),

@@ -1,8 +1,5 @@
-import { FormEvent, Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, Fragment, lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { ArcElement, Chart as ChartJS, Legend, Tooltip } from "chart.js";
-import { Doughnut } from "react-chartjs-2";
-
 import { AnalystSelector } from "../../components/common/AnalystSelector";
 import { ModuleCard } from "../../components/common/ModuleCard";
 import { PageFeedback } from "../../components/common/PageFeedback";
@@ -50,6 +47,14 @@ interface PortfolioStockDistribution {
   pnl_pct?: number;
   weight?: number;
   asset_weight?: number;
+}
+
+interface HoldingMetricSummary {
+  pnl?: number;
+  pnlPct?: number;
+  marketValue?: number;
+  assetWeight?: number;
+  investedWeight?: number;
 }
 
 interface PortfolioRisk {
@@ -164,8 +169,16 @@ const UI = {
 
 const PAGE_CACHE_TTL_MS = 30_000;
 const PIE_COLORS = ["#c65d4b", "#db7c57", "#d6a45f", "#7f9b6d", "#4f7c82", "#6f6d9b", "#9a5f7c", "#8b7d64"];
+const PIE_CHART_OPTIONS = {
+  responsive: true,
+  maintainAspectRatio: false,
+  cutout: "58%",
+  plugins: { legend: { position: "bottom" as const } },
+};
 
-ChartJS.register(ArcElement, Legend, Tooltip);
+const LazyDoughnutChart = lazy(() =>
+  import("../../components/common/DoughnutChart").then((module) => ({ default: module.DoughnutChart })),
+);
 
 const defaultPositionForm = {
   code: "",
@@ -188,17 +201,30 @@ const defaultTradeForm = {
   note: "",
 };
 
+const numberFormatters = new Map<number, Intl.NumberFormat>();
+
+function getNumberFormatter(digits = 2) {
+  const cachedFormatter = numberFormatters.get(digits);
+  if (cachedFormatter) {
+    return cachedFormatter;
+  }
+
+  const formatter = new Intl.NumberFormat("zh-CN", { maximumFractionDigits: digits });
+  numberFormatters.set(digits, formatter);
+  return formatter;
+}
+
 function numberText(value: unknown, digits = 2) {
   const numeric = Number(value);
   return Number.isFinite(numeric)
-    ? numeric.toLocaleString("zh-CN", { maximumFractionDigits: digits })
+    ? getNumberFormatter(digits).format(numeric)
     : "N/A";
 }
 
 function percentText(value: unknown) {
   const numeric = Number(value);
   return Number.isFinite(numeric)
-    ? `${(numeric * 100).toLocaleString("zh-CN", { maximumFractionDigits: 2 })}%`
+    ? `${getNumberFormatter(2).format(numeric * 100)}%`
     : "N/A";
 }
 
@@ -308,6 +334,251 @@ function normalizeDateInput(value?: string | null) {
   }
   return String(value).slice(0, 10);
 }
+
+function buildHoldingMetricKey(accountName?: string, code?: string, name?: string) {
+  return `${normalizeAccountName(accountName) || UI.defaultAccount}::${code || ""}::${name || ""}`;
+}
+
+interface PortfolioDoughnutChartProps {
+  data: {
+    labels: string[];
+    datasets: Array<{
+      data: number[];
+      backgroundColor: string[];
+      borderWidth: number;
+    }>;
+  };
+  emptyText: string;
+}
+
+const PortfolioDoughnutChart = memo(function PortfolioDoughnutChart({ data, emptyText }: PortfolioDoughnutChartProps) {
+  if (!data.labels.length) {
+    return <div className={styles.muted}>{emptyText}</div>;
+  }
+
+  return (
+    <div className={styles.chartRingWrap}>
+      <Suspense fallback={<div className={styles.muted}>图表加载中...</div>}>
+        <LazyDoughnutChart data={data} options={PIE_CHART_OPTIONS} />
+      </Suspense>
+    </div>
+  );
+});
+
+interface PortfolioHoldingRowProps {
+  stock: PortfolioStock;
+  selectedAccount: string;
+  metrics?: HoldingMetricSummary;
+  isMenuOpen: boolean;
+  activeHoldingPanel: HoldingActionPanel;
+  isEditingRow: boolean;
+  isTradingRow: boolean;
+  isHistoryLoading: boolean;
+  inlineEditForm: ReactNode;
+  inlineTradeForm: ReactNode;
+  onToggleHoldingMenu: (stockId: number) => void;
+  onOpenEditPosition: (stock: PortfolioStock) => void;
+  onOpenTradeEditor: (stock: PortfolioStock) => void;
+  onOpenDeepAnalysis: (stock: PortfolioStock) => void;
+  onOpenHistoryAnalysis: (stock: PortfolioStock) => void;
+}
+
+function areHoldingRowPropsEqual(prev: PortfolioHoldingRowProps, next: PortfolioHoldingRowProps) {
+  if (
+    prev.stock !== next.stock
+    || prev.selectedAccount !== next.selectedAccount
+    || prev.metrics !== next.metrics
+    || prev.isMenuOpen !== next.isMenuOpen
+    || prev.isEditingRow !== next.isEditingRow
+    || prev.isTradingRow !== next.isTradingRow
+    || prev.isHistoryLoading !== next.isHistoryLoading
+    || prev.inlineEditForm !== next.inlineEditForm
+    || prev.inlineTradeForm !== next.inlineTradeForm
+    || prev.onToggleHoldingMenu !== next.onToggleHoldingMenu
+    || prev.onOpenEditPosition !== next.onOpenEditPosition
+    || prev.onOpenTradeEditor !== next.onOpenTradeEditor
+    || prev.onOpenDeepAnalysis !== next.onOpenDeepAnalysis
+    || prev.onOpenHistoryAnalysis !== next.onOpenHistoryAnalysis
+  ) {
+    return false;
+  }
+
+  if (prev.isMenuOpen && prev.activeHoldingPanel !== next.activeHoldingPanel) {
+    return false;
+  }
+
+  return true;
+}
+
+const PortfolioHoldingRow = memo(function PortfolioHoldingRow({
+  stock,
+  selectedAccount,
+  metrics,
+  isMenuOpen,
+  activeHoldingPanel,
+  isEditingRow,
+  isTradingRow,
+  isHistoryLoading,
+  inlineEditForm,
+  inlineTradeForm,
+  onToggleHoldingMenu,
+  onOpenEditPosition,
+  onOpenTradeEditor,
+  onOpenDeepAnalysis,
+  onOpenHistoryAnalysis,
+}: PortfolioHoldingRowProps) {
+  const pnlClassName = resolvePnlTone(metrics?.pnl, styles);
+
+  return (
+    <Fragment>
+      <tr
+        className={`${styles.holdingRow} ${isMenuOpen ? styles.holdingRowActive : ""}`}
+        onClick={() => onToggleHoldingMenu(stock.id)}
+      >
+        <td>
+          <div className={styles.holdingSymbolCell}>
+            <strong>{stock.name}</strong>
+            <span className={styles.holdingSymbolCode}>{stock.code}</span>
+            {selectedAccount === UI.allAccounts ? <span className={styles.muted}>{normalizeAccountName(stock.account_name) || UI.defaultAccount}</span> : null}
+          </div>
+        </td>
+        <td className={styles.holdingMetricCell}>
+          <div>{numberText(stock.cost_price)}</div>
+          <div>{stock.quantity ?? "N/A"}</div>
+        </td>
+        <td className={styles.holdingMetricCell}>
+          <div>{numberText(metrics?.marketValue)}</div>
+          <div>{percentText(metrics?.assetWeight)}</div>
+        </td>
+        <td className={`${styles.holdingMetricCell} ${pnlClassName}`}>
+          <div>{numberText(metrics?.pnl)}</div>
+          <div>{percentText(metrics?.pnlPct)}</div>
+        </td>
+      </tr>
+      {isMenuOpen ? (
+        <tr className={styles.holdingActionMenuRow}>
+          <td colSpan={4}>
+            <div className={styles.holdingActionPanel} onClick={(event) => event.stopPropagation()}>
+              <div className={styles.holdingActionMenu}>
+                <button
+                  className={`${styles.holdingActionMenuButton} ${activeHoldingPanel === "edit" ? styles.holdingActionMenuButtonActive : ""}`}
+                  onClick={() => onOpenEditPosition(stock)}
+                  type="button"
+                >
+                  修改
+                </button>
+                <button
+                  className={`${styles.holdingActionMenuButton} ${activeHoldingPanel === "trade" ? styles.holdingActionMenuButtonActive : ""}`}
+                  onClick={() => onOpenTradeEditor(stock)}
+                  type="button"
+                >
+                  买入 / 卖出
+                </button>
+                <button className={styles.holdingActionMenuButton} onClick={() => onOpenDeepAnalysis(stock)} type="button">深度分析</button>
+                <button
+                  className={styles.holdingActionMenuButton}
+                  disabled={isHistoryLoading}
+                  onClick={() => void onOpenHistoryAnalysis(stock)}
+                  type="button"
+                >
+                  {isHistoryLoading ? "读取中..." : "查看历史分析"}
+                </button>
+              </div>
+              <div className={styles.holdingActionContent}>
+                {isEditingRow ? inlineEditForm : null}
+                {isTradingRow ? inlineTradeForm : null}
+              </div>
+            </div>
+          </td>
+        </tr>
+      ) : null}
+    </Fragment>
+  );
+}, areHoldingRowPropsEqual);
+
+interface PortfolioHoldingsTableProps {
+  stocks: PortfolioStock[];
+  selectedAccount: string;
+  holdingMetrics: Map<string, HoldingMetricSummary>;
+  activeHoldingMenuId: number | null;
+  activeHoldingPanel: HoldingActionPanel;
+  editingStockId: number | null;
+  tradeStockId: string;
+  historyLoadingStockId: number | null;
+  inlineEditForm: ReactNode;
+  inlineTradeForm: ReactNode;
+  onToggleHoldingMenu: (stockId: number) => void;
+  onOpenEditPosition: (stock: PortfolioStock) => void;
+  onOpenTradeEditor: (stock: PortfolioStock) => void;
+  onOpenDeepAnalysis: (stock: PortfolioStock) => void;
+  onOpenHistoryAnalysis: (stock: PortfolioStock) => void;
+}
+
+const PortfolioHoldingsTable = memo(function PortfolioHoldingsTable({
+  stocks,
+  selectedAccount,
+  holdingMetrics,
+  activeHoldingMenuId,
+  activeHoldingPanel,
+  editingStockId,
+  tradeStockId,
+  historyLoadingStockId,
+  inlineEditForm,
+  inlineTradeForm,
+  onToggleHoldingMenu,
+  onOpenEditPosition,
+  onOpenTradeEditor,
+  onOpenDeepAnalysis,
+  onOpenHistoryAnalysis,
+}: PortfolioHoldingsTableProps) {
+  return (
+    <div className={styles.tableWrap}>
+      <table className={`${styles.table} ${styles.tableCompact} ${styles.holdingsTableCompact}`}>
+        <thead>
+          <tr>
+            <th>股票</th>
+            <th>成本 / 数量</th>
+            <th>市值 / 占比</th>
+            <th>盈亏 / 收益率</th>
+          </tr>
+        </thead>
+        <tbody>
+          {stocks.map((stock) => {
+            const isMenuOpen = activeHoldingMenuId === stock.id;
+            const isEditingRow = activeHoldingPanel === "edit" && editingStockId === stock.id;
+            const isTradingRow = activeHoldingPanel === "trade" && String(stock.id) === tradeStockId;
+
+            return (
+              <PortfolioHoldingRow
+                key={stock.id}
+                stock={stock}
+                selectedAccount={selectedAccount}
+                metrics={holdingMetrics.get(buildHoldingMetricKey(stock.account_name, stock.code, stock.name))}
+                isMenuOpen={isMenuOpen}
+                activeHoldingPanel={activeHoldingPanel}
+                isEditingRow={isEditingRow}
+                isTradingRow={isTradingRow}
+                isHistoryLoading={historyLoadingStockId === stock.id}
+                inlineEditForm={isEditingRow ? inlineEditForm : null}
+                inlineTradeForm={isTradingRow ? inlineTradeForm : null}
+                onToggleHoldingMenu={onToggleHoldingMenu}
+                onOpenEditPosition={onOpenEditPosition}
+                onOpenTradeEditor={onOpenTradeEditor}
+                onOpenDeepAnalysis={onOpenDeepAnalysis}
+                onOpenHistoryAnalysis={onOpenHistoryAnalysis}
+              />
+            );
+          })}
+          {!stocks.length ? (
+            <tr>
+              <td className={styles.muted} colSpan={4}>{UI.noHoldings}</td>
+            </tr>
+          ) : null}
+        </tbody>
+      </table>
+    </div>
+  );
+});
 
 export function PortfolioPage() {
   const navigate = useNavigate();
@@ -534,6 +805,12 @@ export function PortfolioPage() {
   }, []);
 
   const schedulerAccountOptions = useMemo(() => [...SUPPORTED_ACCOUNT_NAMES], []);
+  const schedulerTaskPending = isPendingTaskStatus(schedulerTask?.status || "");
+  const schedulerPollingIntervalMs = schedulerTaskId || schedulerTaskPending
+    ? 2500
+    : section === "scheduler"
+      ? 15000
+      : null;
 
   usePollingLoader({
     load: loadHoldingsAnalysisTask,
@@ -545,11 +822,11 @@ export function PortfolioPage() {
 
   usePollingLoader({
     load: loadSchedulerTask,
-    intervalMs: 2500,
+    intervalMs: schedulerPollingIntervalMs,
     enabled:
       Boolean(schedulerTaskId)
       || section === "scheduler"
-      || isPendingTaskStatus(schedulerTask?.status || ""),
+      || schedulerTaskPending,
     immediate: true,
     dependencies: [schedulerTaskId, schedulerTask?.status, section],
   });
@@ -598,9 +875,9 @@ export function PortfolioPage() {
   const riskWarnings = risk?.risk_warnings ?? [];
   const holdingMetrics = useMemo(() => {
     const distribution = risk?.stock_distribution ?? [];
-    return new Map(
+    return new Map<string, HoldingMetricSummary>(
       distribution.map((item) => [
-        `${normalizeAccountName(item.account_name) || UI.defaultAccount}::${item.code || ""}::${item.name || ""}`,
+        buildHoldingMetricKey(item.account_name, item.code, item.name),
         {
           pnl: item.pnl,
           pnlPct: item.pnl_pct,
@@ -835,19 +1112,14 @@ export function PortfolioPage() {
     setActiveEditor(null);
   };
 
-  const closeHoldingPanel = () => {
+  const closeHoldingPanel = useCallback(() => {
     setActiveHoldingMenuId(null);
     setActiveHoldingPanel(null);
     setEditingStockId(null);
-    if (activeEditor !== "position") {
-      setActiveEditor(null);
-    }
-  };
+    setActiveEditor((current) => current === "position" ? current : null);
+  }, []);
 
-  const openEditPosition = (stock: PortfolioStock) => {
-    if (activeEditor === "position") {
-      setActiveEditor(null);
-    }
+  const openEditPosition = useCallback((stock: PortfolioStock) => {
     setPositionForm({
       code: stock.code || "",
       name: stock.name || "",
@@ -863,12 +1135,9 @@ export function PortfolioPage() {
     setActiveEditor("editPosition");
     setActiveHoldingMenuId(stock.id);
     setActiveHoldingPanel("edit");
-  };
+  }, []);
 
-  const openTradeEditor = (stock: PortfolioStock) => {
-    if (activeEditor === "position") {
-      setActiveEditor(null);
-    }
+  const openTradeEditor = useCallback((stock: PortfolioStock) => {
     setTradeForm({
       ...defaultTradeForm,
       stock_id: String(stock.id),
@@ -877,17 +1146,15 @@ export function PortfolioPage() {
     setActiveEditor("trade");
     setActiveHoldingMenuId(stock.id);
     setActiveHoldingPanel("trade");
-  };
+  }, []);
 
-  const openDeepAnalysis = (stock: PortfolioStock) => {
+  const openDeepAnalysis = useCallback((stock: PortfolioStock) => {
     closeHoldingPanel();
     navigate(`/research/deep-analysis?symbol=${encodeURIComponent(stock.code)}`);
-  };
+  }, [closeHoldingPanel, navigate]);
 
-  const openHistoryAnalysis = async (stock: PortfolioStock) => {
-    if (activeEditor === "position") {
-      setActiveEditor(null);
-    }
+  const openHistoryAnalysis = useCallback(async (stock: PortfolioStock) => {
+    setActiveEditor((current) => current === "position" ? null : current);
     setHistoryLoadingStockId(stock.id);
     try {
       const items = await apiFetch<PortfolioAnalysisHistoryItem[]>(`/api/portfolio/stocks/${stock.id}/history?limit=1`);
@@ -902,25 +1169,21 @@ export function PortfolioPage() {
     } finally {
       setHistoryLoadingStockId(null);
     }
-  };
+  }, [navigate, showError, showMessage]);
 
-  const toggleHoldingMenu = (stockId: number) => {
+  const toggleHoldingMenu = useCallback((stockId: number) => {
     setActiveHoldingMenuId((current) => {
       if (current === stockId) {
         setActiveHoldingPanel(null);
         setEditingStockId(null);
-        if (activeEditor !== "position") {
-          setActiveEditor(null);
-        }
+        setActiveEditor((currentEditor) => currentEditor === "position" ? currentEditor : null);
         return null;
       }
-      if (activeEditor === "position") {
-        setActiveEditor(null);
-      }
+      setActiveEditor((currentEditor) => currentEditor === "position" ? null : currentEditor);
       setActiveHoldingPanel(null);
       return stockId;
     });
-  };
+  }, []);
 
   const runSelectedAccountAnalysis = async () => {
     if (!visibleHoldingSymbols.length) {
@@ -1408,6 +1671,9 @@ export function PortfolioPage() {
     </form>
   );
 
+  const inlineEditForm = activeHoldingPanel === "edit" && editingStockId ? renderInlineEditForm() : null;
+  const inlineTradeForm = activeHoldingPanel === "trade" && tradeForm.stock_id ? renderInlineTradeForm() : null;
+
   return (
     <PageFrame
       title={UI.title}
@@ -1500,40 +1766,12 @@ export function PortfolioPage() {
 
             <div className={styles.moduleSection}>
               <h3>行业分布</h3>
-              {industryPieData.labels.length ? (
-                <div className={styles.chartRingWrap}>
-                  <Doughnut
-                    data={industryPieData}
-                    options={{
-                      responsive: true,
-                      maintainAspectRatio: false,
-                      cutout: "58%",
-                      plugins: { legend: { position: "bottom" } },
-                    }}
-                  />
-                </div>
-              ) : (
-                <div className={styles.muted}>暂无行业分布数据</div>
-              )}
+              <PortfolioDoughnutChart data={industryPieData} emptyText="暂无行业分布数据" />
             </div>
 
             <div className={styles.moduleSection}>
               <h3>个股分布</h3>
-              {stockPieData.labels.length ? (
-                <div className={styles.chartRingWrap}>
-                  <Doughnut
-                    data={stockPieData}
-                    options={{
-                      responsive: true,
-                      maintainAspectRatio: false,
-                      cutout: "58%",
-                      plugins: { legend: { position: "bottom" } },
-                    }}
-                  />
-                </div>
-              ) : (
-                <div className={styles.muted}>暂无个股分布数据</div>
-              )}
+              <PortfolioDoughnutChart data={stockPieData} emptyText="暂无个股分布数据" />
             </div>
           </ModuleCard>
         ) : null}
@@ -1583,96 +1821,23 @@ export function PortfolioPage() {
 
             <ModuleCard title="持仓数据" summary="点击任一股票行展开横向操作菜单，处理修改、交易和分析。">
               <div className={styles.moduleSection}>
-                <div className={styles.tableWrap}>
-                  <table className={`${styles.table} ${styles.tableCompact} ${styles.holdingsTableCompact}`}>
-                    <thead>
-                      <tr>
-                        <th>股票</th>
-                        <th>成本 / 数量</th>
-                        <th>市值 / 占比</th>
-                        <th>盈亏 / 收益率</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {stocks.map((stock) => {
-                        const metrics = holdingMetrics.get(`${normalizeAccountName(stock.account_name) || UI.defaultAccount}::${stock.code || ""}::${stock.name || ""}`);
-                        const pnlClassName = resolvePnlTone(metrics?.pnl, styles);
-                        const isMenuOpen = activeHoldingMenuId === stock.id;
-
-                        return (
-                          <Fragment key={stock.id}>
-                            <tr
-                              className={`${styles.holdingRow} ${isMenuOpen ? styles.holdingRowActive : ""}`}
-                              onClick={() => toggleHoldingMenu(stock.id)}
-                            >
-                              <td>
-                                <div className={styles.holdingSymbolCell}>
-                                  <strong>{stock.name}</strong>
-                                  <span className={styles.holdingSymbolCode}>{stock.code}</span>
-                                  {selectedAccount === UI.allAccounts ? <span className={styles.muted}>{normalizeAccountName(stock.account_name) || UI.defaultAccount}</span> : null}
-                                </div>
-                              </td>
-                              <td className={styles.holdingMetricCell}>
-                                <div>{numberText(stock.cost_price)}</div>
-                                <div>{stock.quantity ?? "N/A"}</div>
-                              </td>
-                              <td className={styles.holdingMetricCell}>
-                                <div>{numberText(metrics?.marketValue)}</div>
-                                <div>{percentText(metrics?.assetWeight)}</div>
-                              </td>
-                              <td className={`${styles.holdingMetricCell} ${pnlClassName}`}>
-                                <div>{numberText(metrics?.pnl)}</div>
-                                <div>{percentText(metrics?.pnlPct)}</div>
-                              </td>
-                            </tr>
-                            {isMenuOpen ? (
-                              <tr className={styles.holdingActionMenuRow}>
-                                <td colSpan={4}>
-                                  <div className={styles.holdingActionPanel} onClick={(event) => event.stopPropagation()}>
-                                    <div className={styles.holdingActionMenu}>
-                                      <button
-                                        className={`${styles.holdingActionMenuButton} ${activeHoldingPanel === "edit" ? styles.holdingActionMenuButtonActive : ""}`}
-                                        onClick={() => openEditPosition(stock)}
-                                        type="button"
-                                      >
-                                        修改
-                                      </button>
-                                      <button
-                                        className={`${styles.holdingActionMenuButton} ${activeHoldingPanel === "trade" ? styles.holdingActionMenuButtonActive : ""}`}
-                                        onClick={() => openTradeEditor(stock)}
-                                        type="button"
-                                      >
-                                        买入 / 卖出
-                                      </button>
-                                      <button className={styles.holdingActionMenuButton} onClick={() => openDeepAnalysis(stock)} type="button">深度分析</button>
-                                      <button
-                                        className={styles.holdingActionMenuButton}
-                                        disabled={historyLoadingStockId === stock.id}
-                                        onClick={() => void openHistoryAnalysis(stock)}
-                                        type="button"
-                                      >
-                                        {historyLoadingStockId === stock.id ? "读取中..." : "查看历史分析"}
-                                      </button>
-                                    </div>
-                                    <div className={styles.holdingActionContent}>
-                                      {activeHoldingPanel === "edit" && editingStockId === stock.id ? renderInlineEditForm() : null}
-                                      {activeHoldingPanel === "trade" && String(stock.id) === tradeForm.stock_id ? renderInlineTradeForm() : null}
-                                    </div>
-                                  </div>
-                                </td>
-                              </tr>
-                            ) : null}
-                          </Fragment>
-                        );
-                      })}
-                      {!stocks.length ? (
-                        <tr>
-                          <td className={styles.muted} colSpan={4}>{UI.noHoldings}</td>
-                        </tr>
-                      ) : null}
-                    </tbody>
-                  </table>
-                </div>
+                <PortfolioHoldingsTable
+                  stocks={stocks}
+                  selectedAccount={selectedAccount}
+                  holdingMetrics={holdingMetrics}
+                  activeHoldingMenuId={activeHoldingMenuId}
+                  activeHoldingPanel={activeHoldingPanel}
+                  editingStockId={editingStockId}
+                  tradeStockId={tradeForm.stock_id}
+                  historyLoadingStockId={historyLoadingStockId}
+                  inlineEditForm={inlineEditForm}
+                  inlineTradeForm={inlineTradeForm}
+                  onToggleHoldingMenu={toggleHoldingMenu}
+                  onOpenEditPosition={openEditPosition}
+                  onOpenTradeEditor={openTradeEditor}
+                  onOpenDeepAnalysis={openDeepAnalysis}
+                  onOpenHistoryAnalysis={openHistoryAnalysis}
+                />
               </div>
             </ModuleCard>
           </>

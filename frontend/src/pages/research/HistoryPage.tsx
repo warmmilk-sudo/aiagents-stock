@@ -5,9 +5,9 @@ import { PageFeedback } from "../../components/common/PageFeedback";
 import { PageFrame } from "../../components/common/PageFrame";
 import { StatusBadge } from "../../components/common/StatusBadge";
 import { AnalysisActionButtons } from "../../components/research/AnalysisActionButtons";
-import { FormattedReport, extractReportKeyMetrics, splitReportSections } from "../../components/research/FormattedReport";
+import { FormattedReport, splitReportSections } from "../../components/research/FormattedReport";
 import { usePageFeedback } from "../../hooks/usePageFeedback";
-import { apiFetch, apiFetchCached, buildQuery } from "../../lib/api";
+import { apiFetch, buildQuery } from "../../lib/api";
 import { formatDateTime } from "../../lib/datetime";
 import styles from "../ConsolePage.module.scss";
 
@@ -152,7 +152,7 @@ function buildRawReportEntry(name: string, payload: unknown): RawReportEntry {
   const reportSections = splitReportSections(
     normalizedPayload.analysis || normalizedPayload.report || payload,
   );
-  const body = reportSections.body || normalizedPayload.analysis || normalizedPayload.report || payload;
+  const body = reportSections.body || (reportSections.reasoning ? "" : normalizedPayload.analysis || normalizedPayload.report || payload);
   const focusAreas = Array.isArray(normalizedPayload.focus_areas)
     ? normalizedPayload.focus_areas.filter(Boolean).map(String)
     : [];
@@ -172,15 +172,15 @@ function buildRawReportEntry(name: string, payload: unknown): RawReportEntry {
 function buildRawReportEntries(
   agentsResults: Record<string, unknown>,
   discussionResult?: unknown,
-): Record<ReportCategory, RawReportEntry | null> {
-  const entries: Record<ReportCategory, RawReportEntry | null> = {
-    technical: null,
-    fundamental: null,
-    fund_flow: null,
-    market: null,
-    news: null,
-    risk: null,
-    team: null,
+): Record<ReportCategory, RawReportEntry[]> {
+  const entries: Record<ReportCategory, RawReportEntry[]> = {
+    technical: [],
+    fundamental: [],
+    fund_flow: [],
+    market: [],
+    news: [],
+    risk: [],
+    team: [],
   };
 
   Object.entries(agentsResults).forEach(([name, payload]) => {
@@ -191,26 +191,22 @@ function buildRawReportEntries(
     }
 
     const entry = buildRawReportEntry(name, payload);
-    if (category === "team" && discussionResult) {
-      return;
-    }
-    if (!entries[category]) {
-      entries[category] = entry;
-    }
+    entries[category].push(entry);
   });
 
   if (discussionResult) {
     const sections = splitReportSections(discussionResult);
-    entries.team = {
+    const body = sections.body || (sections.reasoning ? "" : discussionResult);
+    entries.team.push({
       key: "__discussion__",
       title: "团队讨论",
       role: "",
       focusAreas: [],
       timestamp: "",
-      body: sections.body || discussionResult,
+      body,
       reasoning: sections.reasoning,
-      summary: buildSummary(sections.body || discussionResult),
-    };
+      summary: buildSummary(body),
+    });
   }
 
   return entries;
@@ -225,6 +221,14 @@ function formatMetric(value: unknown, fallback = "暂无"): string {
     return numeric.toLocaleString("zh-CN", { maximumFractionDigits: 2 });
   }
   return String(value);
+}
+
+function formatRangeMetric(min: unknown, max: unknown, fallback: unknown, emptyText = "暂无"): string {
+  if (fallback !== null && fallback !== undefined && fallback !== "") {
+    return formatMetric(fallback, emptyText);
+  }
+  const parts = [min, max].filter((item) => item !== null && item !== undefined && item !== "").map((item) => formatMetric(item, ""));
+  return parts.length ? parts.join(" - ") : emptyText;
 }
 
 function cleanOrderedItem(text: string): string {
@@ -280,17 +284,15 @@ function renderOrderedContent(value: unknown, emptyText: string) {
 function HistoryDetailSection({
   title,
   children,
-  defaultOpen = true,
 }: {
   title: string;
   children: ReactNode;
-  defaultOpen?: boolean;
 }) {
   return (
-    <details className={styles.historyDetailPanel} open={defaultOpen}>
-      <summary className={styles.historyDetailSummary}>{title}</summary>
+    <section className={styles.historyDetailPanel}>
+      <div className={styles.historyDetailSummary}>{title}</div>
       <div className={styles.historyDetailPanelBody}>{children}</div>
-    </details>
+    </section>
   );
 }
 
@@ -307,20 +309,19 @@ function RawReportWorkspace({
   );
   const [activeKey, setActiveKey] = useState<ReportCategory>("technical");
   const availableTabs = useMemo(
-    () => reportTabs.filter((item) => entries[item.key]),
+    () => reportTabs.filter((item) => entries[item.key].length),
     [entries],
   );
 
   useEffect(() => {
-    if (entries[activeKey]) {
+    if (entries[activeKey].length) {
       return;
     }
     const fallbackKey = availableTabs[0]?.key || "technical";
     setActiveKey(fallbackKey);
   }, [activeKey, availableTabs, entries]);
 
-  const activeEntry = entries[activeKey];
-  const activeMetrics = useMemo(() => extractReportKeyMetrics(activeEntry?.body, 6), [activeEntry?.body]);
+  const activeEntries = entries[activeKey];
   const activeTab = availableTabs.find((item) => item.key === activeKey) || availableTabs[0] || null;
   const tabsStyle = { "--nested-tab-count": availableTabs.length } as CSSProperties;
 
@@ -336,50 +337,44 @@ function RawReportWorkspace({
             aria-selected={item.key === activeKey}
             className={item.key === activeKey ? styles.nestedTabButtonActive : styles.nestedTabButton}
             key={item.key}
-            onClick={() => setActiveKey(item.key)}
-            role="tab"
-            type="button"
-          >
-            {item.label}
+          onClick={() => setActiveKey(item.key)}
+          role="tab"
+          type="button"
+        >
+            {entries[item.key].length > 1 ? `${item.label} (${entries[item.key].length})` : item.label}
           </button>
         ))}
       </div>
 
-      {activeEntry ? (
-        <div className={styles.reportWorkbenchPanel}>
-          <div className={styles.reportWorkbenchHeader}>
-            <div>
-              <h3>{activeEntry.title}</h3>
-              {activeEntry.role || activeEntry.focusAreas.length ? (
-                <p className={styles.helperText}>
-                  {[activeEntry.role, activeEntry.focusAreas.join(" / ")].filter(Boolean).join(" | ")}
-                </p>
-              ) : null}
-              {activeEntry.summary ? <p className={styles.helperText}>{activeEntry.summary}</p> : null}
-            </div>
-            {activeEntry.timestamp ? <span className={styles.historyMeta}>{activeEntry.timestamp}</span> : null}
-          </div>
-          <div className={styles.reportWorkbenchContent}>
-            {activeMetrics.length ? (
-              <div className={styles.reportWorkbenchMetricGrid}>
-                {activeMetrics.map((metric, index) => (
-                  <div className={styles.reportWorkbenchMetricCard} key={`${metric.label}-${metric.value}-${index}`}>
-                    <span>{metric.label}</span>
-                    <strong>{metric.value}</strong>
+      {activeEntries.length ? (
+        <div className={styles.historyDetailContentStack}>
+          {activeEntries.map((activeEntry) => (
+            <div className={styles.reportWorkbenchPanel} key={`${activeKey}-${activeEntry.key}`}>
+              <div className={styles.reportWorkbenchHeader}>
+                <div className={styles.reportWorkbenchHeading}>
+                  <h3>{activeEntry.title}</h3>
+                  {activeEntry.role || activeEntry.focusAreas.length ? (
+                    <p className={styles.helperText}>
+                      {[activeEntry.role, activeEntry.focusAreas.join(" / ")].filter(Boolean).join(" | ")}
+                    </p>
+                  ) : null}
+                  {activeEntry.summary ? <p className={styles.helperText}>{activeEntry.summary}</p> : null}
+                </div>
+                {activeEntry.timestamp ? <span className={styles.historyMeta}>{activeEntry.timestamp}</span> : null}
+              </div>
+              <div className={styles.reportWorkbenchContent}>
+                <FormattedReport content={activeEntry.body} emptyText={activeTab?.emptyText || "暂无正文"} />
+              </div>
+              {activeEntry.reasoning ? (
+                <details className={styles.historyDetailPanel}>
+                  <summary className={styles.historyDetailSummary}>推理过程</summary>
+                  <div className={styles.historyDetailPanelBody}>
+                    <FormattedReport content={activeEntry.reasoning} emptyText="暂无推理过程" />
                   </div>
-                ))}
-              </div>
-            ) : null}
-            <FormattedReport content={activeEntry.body} emptyText={activeTab?.emptyText || "暂无正文"} />
-          </div>
-          {activeEntry.reasoning ? (
-            <details className={styles.historyDetailPanel}>
-              <summary className={styles.historyDetailSummary}>推理过程</summary>
-              <div className={styles.historyDetailPanelBody}>
-                <FormattedReport content={activeEntry.reasoning} emptyText="暂无推理过程" />
-              </div>
-            </details>
-          ) : null}
+                </details>
+              ) : null}
+            </div>
+          ))}
         </div>
       ) : (
         <div className={styles.muted}>{activeTab?.emptyText || "暂无正文"}</div>
@@ -402,7 +397,7 @@ export function HistoryPage() {
   const selectedRecord = selectedRecordId ? (recordDetails[selectedRecordId] ?? null) : null;
 
   const loadList = async () => {
-    const data = await apiFetchCached<AnalysisHistoryItem[]>(
+    const data = await apiFetch<AnalysisHistoryItem[]>(
       `/api/analysis-history${buildQuery({
         portfolio_state: portfolioState,
         account_name: accountName === "全部账户" ? "" : accountName,
@@ -416,7 +411,7 @@ export function HistoryPage() {
     if (!recordId) {
       return;
     }
-    const data = await apiFetchCached<AnalysisRecordDetail>(`/api/analysis-history/${recordId}`);
+    const data = await apiFetch<AnalysisRecordDetail>(`/api/analysis-history/${recordId}`);
     setRecordDetails((current) => ({ ...current, [recordId]: data }));
   };
 
@@ -558,35 +553,17 @@ export function HistoryPage() {
                     </HistoryDetailSection>
 
                     <HistoryDetailSection title="关键位置">
-                      <div className={styles.historyLevelGrid}>
-                        <div className={styles.historySummaryCell}>
-                          <span>入场区间</span>
-                          <strong>{`${formatMetric(detailFinalDecision.entry_min)} - ${formatMetric(detailFinalDecision.entry_max)}`}</strong>
-                        </div>
-                        <div className={styles.historySummaryCell}>
-                          <span>止盈位</span>
-                          <strong>{formatMetric(detailFinalDecision.take_profit)}</strong>
-                        </div>
-                        <div className={styles.historySummaryCell}>
-                          <span>止损位</span>
-                          <strong>{formatMetric(detailFinalDecision.stop_loss)}</strong>
-                        </div>
-                        <div className={styles.historySummaryCell}>
-                          <span>持有周期</span>
-                          <strong>{formatMetric(detailFinalDecision.holding_period)}</strong>
-                        </div>
-                        <div className={styles.historySummaryCell}>
-                          <span>当前状态</span>
-                          <strong>{selectedRecord.linked_asset_status_label || selectedRecord.portfolio_state_label || "暂无"}</strong>
-                        </div>
-                        <div className={styles.historySummaryCell}>
-                          <span>账户</span>
-                          <strong>{resolveDisplayAccount(selectedRecord)}</strong>
-                        </div>
-                      </div>
+                      {renderOrderedContent([
+                        `入场区间：${formatRangeMetric(detailFinalDecision.entry_min, detailFinalDecision.entry_max, detailFinalDecision.entry_range)}`,
+                        `止盈位：${formatMetric(detailFinalDecision.take_profit)}`,
+                        `止损位：${formatMetric(detailFinalDecision.stop_loss)}`,
+                        `持有周期：${formatMetric(detailFinalDecision.holding_period)}`,
+                        `当前状态：${selectedRecord.linked_asset_status_label || selectedRecord.portfolio_state_label || "暂无"}`,
+                        `账户：${resolveDisplayAccount(selectedRecord)}`,
+                      ], "暂无关键位置")}
                     </HistoryDetailSection>
 
-                    <HistoryDetailSection title="风险提示" defaultOpen={false}>
+                    <HistoryDetailSection title="风险提示">
                       {renderOrderedContent(detailFinalDecision.risk_warning, "暂无风险提示")}
                     </HistoryDetailSection>
 

@@ -117,11 +117,13 @@ class NotificationService:
     def _is_notification_target_active(self, notification: Dict) -> bool:
         """仅向仍然有效的监控项发送通知，避免删除/停用后的遗留消息继续外发。"""
         raw_item_id = notification.get("stock_id") or notification.get("monitoring_item_id")
+        item_id = None
         try:
-            item_id = int(raw_item_id or 0)
+            if raw_item_id is not None:
+                item_id = int(raw_item_id)
         except (TypeError, ValueError):
-            item_id = 0
-        if item_id <= 0:
+            item_id = None
+        if item_id is None or item_id <= 0:
             return True
 
         item = monitor_db.repository.get_item(item_id)
@@ -129,7 +131,9 @@ class NotificationService:
             return True
 
         try:
-            monitor_db.ignore_notification(int(notification.get("id") or 0))
+            notification_id = notification.get("id")
+            if notification_id is not None:
+                monitor_db.ignore_notification(int(notification_id))
         except Exception:
             pass
         return False
@@ -360,42 +364,77 @@ class NotificationService:
         """发送钉钉Webhook通知"""
         try:
             import requests
+
+            def _fmt_num(value):
+                if value is None:
+                    return None
+                try:
+                    return f"{float(value):.2f}"
+                except Exception:
+                    return None
             
             # 构建钉钉消息格式（包含自定义关键词）
             keyword = self.config.get('webhook_keyword', '')
             title_prefix = f"{keyword} - " if keyword else ""
             content_prefix = f"### {keyword} - " if keyword else "### "
+
+            turnover_rate = notification.get('turnover_rate')
+            turnover_rate_text = _fmt_num(turnover_rate)
             
-            # 构建增强的消息内容
-            message_text = f"""{content_prefix}股票监测提醒
-
-**股票代码**: {notification['symbol']}
-
-**股票名称**: {notification['name']}
-
-**📊 实时行情**:
-- 当前价格: {notification.get('current_price', 'N/A')}元
-- 涨跌幅: {notification.get('change_pct', 'N/A')}%
-- 涨跌额: {notification.get('change_amount', 'N/A')}元
-- 成交量: {notification.get('volume', 'N/A')}手
-- 换手率: {notification.get('turnover_rate', 'N/A')}%
-
-**🎯 AI决策**: {notification['type']}
-
-**📝 分析内容**: {notification['message']}
-
-**💰 持仓信息**:
-- 持仓状态: {notification.get('position_status', '未知')}
-- 持仓成本: {notification.get('position_cost', 'N/A')}元
-- 浮动盈亏: {notification.get('profit_loss_pct', 'N/A')}%
-
-**⏰ 触发时间**: {notification['triggered_at']}
-
-**🕐 交易时段**: {notification.get('trading_session', '未知')}
-
----
-
-_此消息由AI股票分析系统自动发送_"""
+            message_lines = [
+                f"{content_prefix}股票监测提醒",
+                "",
+                f"**股票代码**: {notification['symbol']}",
+                "",
+                f"**股票名称**: {notification['name']}",
+                "",
+                "**📊 实时行情**:",
+            ]
+            current_price = notification.get("current_price")
+            if current_price is not None:
+                message_lines.append(f"- 当前价格: {current_price}元")
+            change_pct = notification.get("change_pct")
+            if change_pct is not None:
+                message_lines.append(f"- 涨跌幅: {change_pct}%")
+            change_amount = notification.get("change_amount")
+            if change_amount is not None:
+                message_lines.append(f"- 涨跌额: {change_amount}元")
+            volume = notification.get("volume")
+            if volume is not None:
+                message_lines.append(f"- 成交量: {volume}手")
+            if turnover_rate_text is not None:
+                message_lines.append(f"- 换手率: {turnover_rate_text}%")
+            message_lines.extend([
+                f"**🎯 AI决策**: {notification['type']}",
+                "",
+                f"**📝 分析内容**: {notification['message']}",
+                "",
+                "**💰 持仓信息**:",
+            ])
+            position_status = notification.get("position_status")
+            if position_status is not None:
+                message_lines.append(f"- 持仓状态: {position_status}")
+            position_cost = notification.get("position_cost")
+            if position_cost is not None:
+                message_lines.append(f"- 持仓成本: {position_cost}元")
+            profit_loss_pct = notification.get("profit_loss_pct")
+            if profit_loss_pct is not None:
+                message_lines.append(f"- 浮动盈亏: {profit_loss_pct}%")
+            message_lines.extend([
+                "",
+                f"**⏰ 触发时间**: {notification['triggered_at']}",
+                "",
+            ])
+            trading_session = notification.get("trading_session")
+            if trading_session is not None:
+                message_lines.append(f"**🕐 交易时段**: {trading_session}")
+            message_lines.extend([
+                "",
+                "---",
+                "",
+                "_此消息由AI股票分析系统自动发送_",
+            ])
+            message_text = "\n".join(message_lines)
             
             data = {
                 "msgtype": "markdown",
@@ -422,7 +461,8 @@ _此消息由AI股票分析系统自动发送_"""
                     print(f"[成功] 钉钉Webhook发送成功")
                     return True
                 else:
-                    error_message = f"钉钉Webhook返回错误: {result.get('errmsg') or '未知错误'}"
+                    errmsg = result.get('errmsg')
+                    error_message = f"钉钉Webhook返回错误: {errmsg}" if errmsg else "钉钉Webhook返回错误"
                     self._set_webhook_error(error_message)
                     print(f"[失败] {error_message}")
                     return False
@@ -556,7 +596,8 @@ _此消息由AI股票分析系统自动发送_"""
                     print(f"[成功] 飞书Webhook发送成功")
                     return True
                 else:
-                    error_message = f"飞书Webhook返回错误: {result.get('msg') or '未知错误'}"
+                    msg = result.get('msg')
+                    error_message = f"飞书Webhook返回错误: {msg}" if msg else "飞书Webhook返回错误"
                     self._set_webhook_error(error_message)
                     print(f"[失败] {error_message}")
                     return False
@@ -646,15 +687,25 @@ _此消息由AI股票分析系统自动发送_"""
             是否发送成功
         """
         try:
+            def _fmt_num(value):
+                if value is None:
+                    return None
+                try:
+                    return f"{float(value):.2f}"
+                except Exception:
+                    return None
+
             # 构建通知内容
-            total = analysis_results.get("total", 0)
+            total = analysis_results.get("total")
             succeeded = len([r for r in analysis_results.get("results", []) if r.get("result", {}).get("success")])
-            failed = total - succeeded
-            elapsed_time = analysis_results.get("elapsed_time", 0)
+            failed = analysis_results.get("failed")
+            if failed is None and total is not None:
+                failed = total - succeeded
+            elapsed_time = analysis_results.get("elapsed_time")
             results = analysis_results.get("results", [])
             
             # 邮件主题
-            subject = f"持仓定时分析完成 - 共{total}只股票"
+            subject = f"持仓定时分析完成 - 共{total}只股票" if total is not None else "持仓定时分析完成"
             
             # 构建邮件正文（HTML格式）
             html_body = f"""
@@ -675,19 +726,22 @@ _此消息由AI股票分析系统自动发送_"""
                 <h2>持仓定时分析完成</h2>
                 <div class="summary">
                     <h3>分析概况</h3>
-                    <p>总数: {total} 只</p>
+                    <p>总数: {total if total is not None else ''} 只</p>
                     <p class="success">成功: {succeeded} 只</p>
-                    <p class="failed">失败: {failed} 只</p>
-                    <p>耗时: {elapsed_time:.2f} 秒</p>
+                    <p class="failed">失败: {failed if failed is not None else ''} 只</p>
+                    <p>耗时: {(_fmt_num(elapsed_time) or '')} 秒</p>
             """
             
             # 添加监测同步结果
             if sync_result:
+                added = sync_result.get("added")
+                updated = sync_result.get("updated")
+                failed_sync = sync_result.get("failed")
                 html_body += f"""
                     <h3>监测同步结果</h3>
-                    <p>新增监测: {sync_result.get('added', 0)} 只</p>
-                    <p>更新监测: {sync_result.get('updated', 0)} 只</p>
-                    <p>同步失败: {sync_result.get('failed', 0)} 只</p>
+                    <p>新增监测: {added if added is not None else ''} 只</p>
+                    <p>更新监测: {updated if updated is not None else ''} 只</p>
+                    <p>同步失败: {failed_sync if failed_sync is not None else ''} 只</p>
                 """
             
             html_body += """
@@ -705,11 +759,11 @@ _此消息由AI股票分析系统自动发送_"""
                     stock_info = result.get("stock_info", {})
                     
                     # 使用正确的字段名
-                    rating = final_decision.get("rating", "未知")
-                    confidence = final_decision.get("confidence_level", "N/A")
-                    entry_range = final_decision.get("entry_range", "N/A")
-                    take_profit = final_decision.get("take_profit", "N/A")
-                    stop_loss = final_decision.get("stop_loss", "N/A")
+                    rating = final_decision.get("rating")
+                    confidence = final_decision.get("confidence_level")
+                    entry_range = final_decision.get("entry_range")
+                    take_profit = final_decision.get("take_profit")
+                    stop_loss = final_decision.get("stop_loss")
                     
                     # 评级颜色
                     rating_class = "rating-hold"
@@ -720,17 +774,17 @@ _此消息由AI股票分析系统自动发送_"""
                     
                     html_body += f"""
                     <div class="stock">
-                        <h4>{code} {stock_info.get('name', '')} - <span class="{rating_class}">{rating}</span> (信心度: {confidence})</h4>
-                        <p>进场区间: {entry_range}</p>
-                        <p>止盈位: {take_profit} | 止损位: {stop_loss}</p>
+                        <h4>{code} {stock_info.get('name', '')} - <span class="{rating_class}">{rating or ''}</span>{f' (信心度: {confidence})' if confidence is not None else ''}</h4>
+                        {f'<p>进场区间: {entry_range}</p>' if entry_range is not None else ''}
+                        {f'<p>止盈位: {take_profit} | 止损位: {stop_loss}</p>' if take_profit is not None or stop_loss is not None else ''}
                     </div>
                     """
                 else:
-                    error = result.get("error", "未知错误")
+                    error = result.get("error")
                     html_body += f"""
                     <div class="stock">
                         <h4 class="failed">{code} - 分析失败</h4>
-                        <p>错误: {error}</p>
+                        {f'<p>错误: {error}</p>' if error is not None else ''}
                     </div>
                     """
             
@@ -747,18 +801,21 @@ _此消息由AI股票分析系统自动发送_"""
 持仓定时分析完成
 
 分析概况:
-- 总数: {total} 只
+- 总数: {total if total is not None else ''} 只
 - 成功: {succeeded} 只
-- 失败: {failed} 只
-- 耗时: {elapsed_time:.2f} 秒
+- 失败: {failed if failed is not None else ''} 只
+- 耗时: {(_fmt_num(elapsed_time) or '')} 秒
 """
             
             if sync_result:
+                added = sync_result.get("added")
+                updated = sync_result.get("updated")
+                failed_sync = sync_result.get("failed")
                 text_body += f"""
 监测同步结果:
-- 新增监测: {sync_result.get('added', 0)} 只
-- 更新监测: {sync_result.get('updated', 0)} 只
-- 同步失败: {sync_result.get('failed', 0)} 只
+- 新增监测: {added if added is not None else ''} 只
+- 更新监测: {updated if updated is not None else ''} 只
+- 同步失败: {failed_sync if failed_sync is not None else ''} 只
 """
             
             text_body += "\n分析结果详情:\n"
@@ -770,11 +827,11 @@ _此消息由AI股票分析系统自动发送_"""
                     final_decision = result.get("final_decision", {})
                     stock_info = result.get("stock_info", {})
                     # 使用正确的字段名
-                    rating = final_decision.get("rating", "未知")
-                    text_body += f"- {code} {stock_info.get('name', '')}: {rating}\n"
+                    rating = final_decision.get("rating")
+                    text_body += f"- {code} {stock_info.get('name', '')}: {rating if rating is not None else ''}\n"
                 else:
-                    error = result.get("error", "未知错误")
-                    text_body += f"- {code}: 分析失败 ({error})\n"
+                    error = result.get("error")
+                    text_body += f"- {code}: 分析失败 ({error if error is not None else ''})\n"
             
             success = False
             
@@ -830,31 +887,35 @@ _此消息由AI股票分析系统自动发送_"""
         try:
             import requests
             
-            total = analysis_results.get("total", 0)
+            total = analysis_results.get("total")
             succeeded = len([r for r in analysis_results.get("results", []) if r.get("result", {}).get("success")])
-            failed = total - succeeded
-            elapsed_time = analysis_results.get("elapsed_time", 0)
+            failed = analysis_results.get("failed")
+            if failed is None and total is not None:
+                failed = total - succeeded
+            elapsed_time = analysis_results.get("elapsed_time")
             
             # 构建Markdown消息
             content = f"### 持仓定时分析完成\\n\\n"
             content += f"**分析概况**\\n"
-            content += f"- 总数: {total} 只\\n"
+            content += f"- 总数: {total if total is not None else ''} 只\\n"
             content += f"- 成功: {succeeded} 只\\n"
-            content += f"- 失败: {failed} 只\\n"
-            content += f"- 耗时: {elapsed_time:.2f} 秒\\n\\n"
+            content += f"- 失败: {failed if failed is not None else ''} 只\\n"
+            content += f"- 耗时: {elapsed_time if elapsed_time is not None else ''} 秒\\n\\n"
             
             if sync_result:
                 content += f"**监测同步**\\n"
-                content += f"- 新增: {sync_result.get('added', 0)} 只\\n"
-                content += f"- 更新: {sync_result.get('updated', 0)} 只\\n\\n"
+                added = sync_result.get("added")
+                updated = sync_result.get("updated")
+                content += f"- 新增: {added if added is not None else ''} 只\\n"
+                content += f"- 更新: {updated if updated is not None else ''} 只\\n\\n"
             
             # 根据webhook类型构建请求
             if self.config['webhook_type'] == 'dingtalk':
                 data = {
                     "msgtype": "markdown",
                     "markdown": {
-                        "title": f"{self.config['webhook_keyword']}",
-                        "text": f"{self.config['webhook_keyword']}\\n\\n{content}"
+                        "title": f"{self.config['webhook_keyword']}" if self.config['webhook_keyword'] else "持仓定时分析完成",
+                        "text": f"{self.config['webhook_keyword']}\\n\\n{content}" if self.config['webhook_keyword'] else content
                     }
                 }
             else:  # feishu
@@ -874,6 +935,3 @@ _此消息由AI股票分析系统自动发送_"""
 
 # 全局通知服务实例
 notification_service = NotificationService()
-
-
-

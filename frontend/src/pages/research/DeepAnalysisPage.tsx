@@ -14,7 +14,7 @@ import {
 import { ANALYST_OPTIONS, analystConfigToKeys, analystKeysToConfig, type AnalystKey } from "../../constants/analysts";
 import { usePageFeedback } from "../../hooks/usePageFeedback";
 import { usePollingLoader } from "../../hooks/usePollingLoader";
-import { ApiRequestError, apiFetch, apiFetchCached, buildQuery } from "../../lib/api";
+import { ApiRequestError, apiFetch, buildQuery } from "../../lib/api";
 import { formatDateTime } from "../../lib/datetime";
 import { encodeIntent } from "../../lib/intents";
 import { useDeepAnalysisStore } from "../../stores/deepAnalysisStore";
@@ -225,7 +225,7 @@ export function DeepAnalysisPage() {
   };
 
   const loadFollowupAssets = async () => {
-    const data = await apiFetchCached<FollowupAsset[]>(
+    const data = await apiFetch<FollowupAsset[]>(
       `/api/followup-assets${buildQuery({
         search_term: followupSearch,
       })}`,
@@ -245,6 +245,7 @@ export function DeepAnalysisPage() {
     }
     lastTerminalTaskRef.current = terminalKey;
     clearSmartMonitorPageCache();
+    void loadFollowupAssets().catch(() => undefined);
   }, [clearSmartMonitorPageCache, task?.id, task?.status, task?.result?.record_id]);
 
   useEffect(() => {

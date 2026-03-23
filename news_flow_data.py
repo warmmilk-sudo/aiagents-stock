@@ -208,6 +208,7 @@ class NewsFlowDataFetcher:
         results = []
         success_count = 0
         failed_count = 0
+        errors = []
         
         for platform in target_platforms:
             result = self.get_platform_news(platform)
@@ -217,15 +218,20 @@ class NewsFlowDataFetcher:
                 success_count += 1
             else:
                 failed_count += 1
+                errors.append({
+                    'platform': platform,
+                    'error': result.get('error', '未知错误'),
+                })
             
             # 避免请求过快，休息0.3秒
             time.sleep(0.3)
-        
+
         return {
             'success': success_count > 0,
             'total_platforms': len(target_platforms),
             'success_count': success_count,
             'failed_count': failed_count,
+            'errors': errors,
             'platforms_data': results,
             'fetch_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
         }

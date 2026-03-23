@@ -496,6 +496,13 @@ MACD金叉且柱状图持续放大，RSI 62处于健康区间。今日成交量�
                              risk_profile: Optional[Dict[str, Any]] = None) -> str:
         """构建A股分析提示词"""
         resolved_risk_profile = self._resolve_risk_profile(risk_profile)
+        turnover_rate = market_data.get("turnover_rate")
+        turnover_rate_line = ""
+        if turnover_rate is not None and str(turnover_rate).strip() != "":
+            try:
+                turnover_rate_line = f"换手率: {float(turnover_rate):.2f}%\n"
+            except (TypeError, ValueError):
+                turnover_rate_line = ""
         prompt = f"""
 [TIMER] 当前交易时段
 ═══════════════════════════════════════════════════════════
@@ -552,7 +559,7 @@ KDJ:
 今日成交量: {market_data.get('volume', 0):,.0f}手
 5日均量: {market_data.get('vol_ma5', 0):,.0f}手
 量比: {market_data.get('volume_ratio', 0):.2f} ({'放量' if market_data.get('volume_ratio', 0) > 1.2 else '缩量' if market_data.get('volume_ratio', 0) < 0.8 else '正常'})
-换手率: {market_data.get('turnover_rate', 0):.2f}%
+{turnover_rate_line}
 
 [EXECUTION_CONTEXT] 执行与持仓上下文
 ═══════════════════════════════════════════════════════════

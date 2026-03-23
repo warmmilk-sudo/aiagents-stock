@@ -1,3 +1,4 @@
+import types
 import unittest
 from unittest.mock import patch
 
@@ -14,6 +15,24 @@ class _FakeResponse:
 
     def json(self):
         return self._payload
+
+
+class _FakeTurnoverDataFrame:
+    empty = False
+    columns = ["ts_code", "trade_date", "turnover_rate"]
+
+    def __init__(self, rows):
+        self._rows = rows
+
+    def sort_values(self, *args, **kwargs):
+        return self
+
+    def reset_index(self, *args, **kwargs):
+        return self
+
+    def iterrows(self):
+        for index, row in enumerate(self._rows):
+            yield index, row
 
 
 class SmartMonitorTDXDataFetcherTests(unittest.TestCase):
@@ -77,7 +96,10 @@ class SmartMonitorTDXDataFetcherTests(unittest.TestCase):
                             }
                         ],
                     },
-                    headers={"Content-Type": "application/json"},
+                    headers={
+                        "Content-Type": "application/json",
+                        "Date": "Mon, 23 Mar 2026 03:26:53 GMT",
+                    },
                 )
             if url.endswith("/api/search"):
                 return _FakeResponse(
@@ -89,6 +111,17 @@ class SmartMonitorTDXDataFetcherTests(unittest.TestCase):
 
         with patch.object(requests, "get", side_effect=_fake_get):
             fetcher = SmartMonitorTDXDataFetcher(base_url="http://tdx.example.com:8181")
+            fetcher.ts_pro = types.SimpleNamespace(
+                daily_basic=lambda *args, **kwargs: _FakeTurnoverDataFrame(
+                    [
+                        {
+                            "ts_code": "600519.SH",
+                            "trade_date": "20260323",
+                            "turnover_rate": 0.2087,
+                        }
+                    ]
+                )
+            )
             with self.assertLogs("smart_monitor_tdx_data", level="DEBUG") as captured:
                 quote = fetcher.get_realtime_quote("600519")
 

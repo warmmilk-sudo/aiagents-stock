@@ -1991,10 +1991,17 @@ def submit_news_flow_task(
         )
         if not result.get("success"):
             raise RuntimeError(result.get("error") or "新闻流量分析失败")
-        report_progress(current=100, total=100, message="新闻流量分析完成，正在同步结果...")
+        warning = result.get("data_warning")
+        progress_message = "新闻流量分析完成，正在同步结果..."
+        if warning:
+            progress_message = f"{progress_message}（{warning}）"
+        report_progress(current=100, total=100, message=progress_message)
         return {
             "result": _json_safe(result),
-            "message": f"AI分析完成，耗时 {result.get('duration', 0):.1f} 秒。",
+            "message": (
+                f"AI分析完成，耗时 {result.get('duration', 0):.1f} 秒。"
+                + (f" {warning}" if warning else "")
+            ),
         }
 
     return start_ui_analysis_task(

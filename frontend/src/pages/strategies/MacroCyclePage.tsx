@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { PageFeedback } from "../../components/common/PageFeedback";
 import { PageFrame } from "../../components/common/PageFrame";
 import { MacroCycleReportDetailView } from "../../components/research/MacroCycleReportDetailView";
 import { splitReportSections } from "../../components/research/FormattedReport";
-import { ApiRequestError, apiFetch, apiFetchCached, downloadApiFile } from "../../lib/api";
+import { ApiRequestError, apiFetch, downloadApiFile } from "../../lib/api";
 import { formatDateTime } from "../../lib/datetime";
 import { asText } from "../../lib/market";
 import styles from "../ConsolePage.module.scss";
@@ -116,6 +116,7 @@ export function MacroCyclePage() {
   const [error, setError] = useState("");
   const [isSubmittingAnalysis, setIsSubmittingAnalysis] = useState(false);
   const [deletingHistoryId, setDeletingHistoryId] = useState<number | null>(null);
+  const lastTerminalTaskRef = useRef<string>("");
 
   const loadTask = async () => {
     const data = await apiFetch<TaskDetail<MacroTaskPayload> | null>("/api/strategies/macro-cycle/tasks/latest");
@@ -123,7 +124,7 @@ export function MacroCyclePage() {
   };
 
   const loadHistory = async () => {
-    const data = await apiFetchCached<MacroHistoryRecord[]>("/api/strategies/macro-cycle/history");
+    const data = await apiFetch<MacroHistoryRecord[]>("/api/strategies/macro-cycle/history");
     setHistory(data);
   };
 
@@ -194,6 +195,18 @@ export function MacroCyclePage() {
     return "";
   }, [historyChiefSections.body, selectedReport?.chief_summary, selectedReport?.summary]);
 
+  useEffect(() => {
+    if (!task || task.status === "queued" || task.status === "running") {
+      return;
+    }
+    const terminalKey = `${task.id}:${task.status}:${analysisResult?.timestamp ?? "na"}`;
+    if (lastTerminalTaskRef.current === terminalKey) {
+      return;
+    }
+    lastTerminalTaskRef.current = terminalKey;
+    void loadHistory().catch(() => undefined);
+  }, [analysisResult?.timestamp, task?.id, task?.status]);
+
   const submitAnalysis = async () => {
     setMessage("");
     setError("");
@@ -218,7 +231,7 @@ export function MacroCyclePage() {
     setMessage("");
     setError("");
     try {
-      const data = await apiFetchCached<MacroHistoryRecord>(`/api/strategies/macro-cycle/history/${reportId}`);
+      const data = await apiFetch<MacroHistoryRecord>(`/api/strategies/macro-cycle/history/${reportId}`);
       setSelectedReport(data);
       setPanel("history");
     } catch (requestError) {

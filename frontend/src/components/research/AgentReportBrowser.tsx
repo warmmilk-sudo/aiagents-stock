@@ -35,7 +35,7 @@ function toEntries(agentsResults: Record<string, unknown>, discussionResult?: un
     const reportSections = splitReportSections(
       normalizedPayload.analysis || normalizedPayload.report || payload,
     );
-    const body = reportSections.body || normalizedPayload.analysis || normalizedPayload.report || payload;
+    const body = reportSections.body || (reportSections.reasoning ? "" : normalizedPayload.analysis || normalizedPayload.report || payload);
     const focusAreas = Array.isArray(normalizedPayload.focus_areas)
       ? normalizedPayload.focus_areas.filter(Boolean).map(String)
       : [];
@@ -53,15 +53,16 @@ function toEntries(agentsResults: Record<string, unknown>, discussionResult?: un
 
   if (discussionResult) {
     const sections = splitReportSections(discussionResult);
+    const body = sections.body || (sections.reasoning ? "" : discussionResult);
     entries.push({
       key: "__discussion__",
       title: "团队讨论",
       role: "",
       focusAreas: [],
       timestamp: "",
-      body: sections.body || discussionResult,
+      body,
       reasoning: sections.reasoning,
-      summary: buildSummary(sections.body || discussionResult),
+      summary: buildSummary(body),
     });
   }
 

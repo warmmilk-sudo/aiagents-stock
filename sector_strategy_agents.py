@@ -270,11 +270,11 @@ class SectorStrategyAgents:
             
             # 净流入前15
             sorted_inflow = sorted(flow_list, key=lambda x: x["main_net_inflow"], reverse=True)
-            fund_flow_summary = f"""
-【板块资金流向】(更新时间: {fund_flow_data.get('update_time', 'N/A')})
-
-主力资金净流入 TOP15:
-"""
+            fund_flow_summary = "【板块资金流向】"
+            update_time = fund_flow_data.get("update_time")
+            if update_time:
+                fund_flow_summary += f"(更新时间: {update_time})"
+            fund_flow_summary += "\n\n主力资金净流入 TOP15:\n"
             for idx, item in enumerate(sorted_inflow[:15], 1):
                 fund_flow_summary += f"{idx}. {item['sector']}: {item['main_net_inflow']:.2f}万 ({item['main_net_inflow_pct']:+.2f}%) | 涨跌: {item['change_pct']:+.2f}% | 超大单: {item['super_large_net_inflow']:.2f}万\n"
             
@@ -289,13 +289,19 @@ class SectorStrategyAgents:
         # 构建北向资金数据
         north_summary = ""
         if north_flow_data:
-            north_summary = f"""
-【北向资金】
-日期: {north_flow_data.get('date', 'N/A')}
-今日北向资金净流入: {north_flow_data.get('north_net_inflow', 0):.2f} 万元
-  沪股通净流入: {north_flow_data.get('hgt_net_inflow', 0):.2f} 万元
-  深股通净流入: {north_flow_data.get('sgt_net_inflow', 0):.2f} 万元
-"""
+            north_summary = "【北向资金】\n"
+            date = north_flow_data.get("date")
+            if date:
+                north_summary += f"日期: {date}\n"
+            north_net_inflow = north_flow_data.get("north_net_inflow")
+            if north_net_inflow is not None:
+                north_summary += f"今日北向资金净流入: {north_net_inflow:.2f} 万元\n"
+            hgt_net_inflow = north_flow_data.get("hgt_net_inflow")
+            if hgt_net_inflow is not None:
+                north_summary += f"  沪股通净流入: {hgt_net_inflow:.2f} 万元\n"
+            sgt_net_inflow = north_flow_data.get("sgt_net_inflow")
+            if sgt_net_inflow is not None:
+                north_summary += f"  深股通净流入: {sgt_net_inflow:.2f} 万元\n"
             if north_flow_data.get('history'):
                 north_summary += "\n近10日北向资金流向:\n"
                 for item in north_flow_data['history'][:10]:
@@ -399,18 +405,24 @@ class SectorStrategyAgents:
         # 构建市场情绪指标
         sentiment_summary = ""
         if market_data:
-            sentiment_summary = f"""
-【市场情绪指标】
-
-涨跌统计:
-  总股票数: {market_data.get('total_stocks', 0)}
-  上涨股票: {market_data.get('up_count', 0)} ({market_data.get('up_ratio', 0):.1f}%)
-  下跌股票: {market_data.get('down_count', 0)}
-  涨停数: {market_data.get('limit_up', 0)}
-  跌停数: {market_data.get('limit_down', 0)}
-
-大盘表现:
-"""
+            sentiment_summary = "【市场情绪指标】\n\n涨跌统计:\n"
+            total_stocks = market_data.get("total_stocks")
+            if total_stocks is not None:
+                sentiment_summary += f"  总股票数: {total_stocks}\n"
+            up_count = market_data.get("up_count")
+            up_ratio = market_data.get("up_ratio")
+            if up_count is not None and up_ratio is not None:
+                sentiment_summary += f"  上涨股票: {up_count} ({up_ratio:.1f}%)\n"
+            down_count = market_data.get("down_count")
+            if down_count is not None:
+                sentiment_summary += f"  下跌股票: {down_count}\n"
+            limit_up = market_data.get("limit_up")
+            if limit_up is not None:
+                sentiment_summary += f"  涨停数: {limit_up}\n"
+            limit_down = market_data.get("limit_down")
+            if limit_down is not None:
+                sentiment_summary += f"  跌停数: {limit_down}\n"
+            sentiment_summary += "\n大盘表现:\n"
             if market_data.get("sh_index"):
                 sh = market_data["sh_index"]
                 sentiment_summary += f"  上证指数: {sh['close']} ({sh['change_pct']:+.2f}%)\n"

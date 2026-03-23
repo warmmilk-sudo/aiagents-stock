@@ -296,7 +296,7 @@ class MarketSentimentDataFetcher:
                 "signals": signals,
                 "statistics": stats,
                 "signal_statistics": signal_stats,
-                "calculation_date": latest.get('date', datetime.now()).strftime('%Y-%m-%d') if pd.notna(latest.get('date')) else datetime.now().strftime('%Y-%m-%d'),
+                "calculation_date": latest['date'].strftime('%Y-%m-%d') if pd.notna(latest['date']) else datetime.now().strftime('%Y-%m-%d'),
                 "period": self.arbr_period
             }
             
@@ -386,7 +386,6 @@ class MarketSentimentDataFetcher:
     
     def _get_turnover_rate(self, symbol):
         """获取换手率数据（支持akshare和tushare自动切换）"""
-        turnover_rate = None
         try:
             # 优先使用akshare获取最近的换手率数据
             print(f"   [Akshare] 正在获取换手率数据...")
@@ -396,7 +395,7 @@ class MarketSentimentDataFetcher:
                 stock_data = df[df['代码'] == symbol]
                 if not stock_data.empty:
                     row = stock_data.iloc[0]
-                    turnover_rate = row.get('换手率', 'N/A')
+                    turnover_rate = row['换手率']
 
                     interpretation = self._interpret_turnover_rate(turnover_rate)
 
@@ -414,7 +413,7 @@ class MarketSentimentDataFetcher:
                 print(f"   [Tushare] 正在获取换手率数据（备用数据源）...")
                 row = self._get_latest_tushare_daily_basic(symbol)
                 if row is not None:
-                    turnover_rate = row.get('turnover_rate', 'N/A')
+                    turnover_rate = row['turnover_rate']
                     interpretation = self._interpret_turnover_rate(turnover_rate)
 
                     print(f"   [Tushare] ✅ 成功获取换手率: {turnover_rate}%")
@@ -439,7 +438,7 @@ class MarketSentimentDataFetcher:
                 sh_index = df[df['代码'] == '000001']
                 if not sh_index.empty:
                     row = sh_index.iloc[0]
-                    change_pct = row.get('涨跌幅', 0)
+                    change_pct = row['涨跌幅']
                     
                     # 获取涨跌家数
                     try:
@@ -493,7 +492,7 @@ class MarketSentimentDataFetcher:
                 print(f"   [Tushare] 正在获取大盘指数数据（备用数据源）...")
                 row = self._get_latest_tushare_index_daily('000001.SH')
                 if row is not None:
-                    change_pct = row.get('pct_chg', 0)
+                    change_pct = row['pct_chg']
 
                     print(f"   [Tushare] ✅ 成功获取大盘指数涨跌幅: {change_pct}%")
                     return {
@@ -510,29 +509,40 @@ class MarketSentimentDataFetcher:
         try:
             # 获取今日涨停和跌停统计
             today = datetime.now().strftime('%Y%m%d')
+            limit_up_count = None
+            limit_down_count = None
             
             # 获取涨停股票
             try:
                 limit_up_df = ak.stock_zt_pool_em(date=today)
-                limit_up_count = len(limit_up_df) if limit_up_df is not None and not limit_up_df.empty else 0
+                if limit_up_df is not None and not limit_up_df.empty:
+                    limit_up_count = len(limit_up_df)
             except:
-                limit_up_count = 0
+                pass
             
             # 获取跌停股票
             try:
                 limit_down_df = ak.stock_zt_pool_dtgc_em(date=today)
-                limit_down_count = len(limit_down_df) if limit_down_df is not None and not limit_down_df.empty else 0
+                if limit_down_df is not None and not limit_down_df.empty:
+                    limit_down_count = len(limit_down_df)
             except:
-                limit_down_count = 0
+                pass
+
+            if limit_up_count is None and limit_down_count is None:
+                return None
+            if limit_up_count is None or limit_down_count is None:
+                return None
             
             # 计算涨跌停比例
             if limit_up_count + limit_down_count > 0:
                 limit_ratio = limit_up_count / (limit_up_count + limit_down_count) * 100
             else:
-                limit_ratio = 50
+                limit_ratio = None
             
             # 解读涨跌停情况
-            if limit_ratio > 70:
+            if limit_ratio is None:
+                interpretation = "涨跌停样本为空，无法计算比例"
+            elif limit_ratio > 70:
                 interpretation = "涨停股远多于跌停股，市场情绪火热"
             elif limit_ratio > 60:
                 interpretation = "涨停股多于跌停股，市场情绪较好"
@@ -546,7 +556,7 @@ class MarketSentimentDataFetcher:
             return {
                 "limit_up_count": limit_up_count,
                 "limit_down_count": limit_down_count,
-                "limit_ratio": f"{limit_ratio:.1f}%",
+                "limit_ratio": f"{limit_ratio:.1f}%" if limit_ratio is not None else None,
                 "interpretation": interpretation,
                 "date": today
             }
@@ -566,8 +576,8 @@ class MarketSentimentDataFetcher:
                     if not stock_data.empty:
                         latest = stock_data.iloc[0]
                         
-                        margin_balance = latest.get('融资余额', 0)
-                        short_balance = latest.get('融券余额', 0)
+                        margin_balance = latest['融资余额']
+                        short_balance = latest['融券余额']
                         
                         # 解读融资融券
                         interpretation = []
@@ -594,10 +604,10 @@ class MarketSentimentDataFetcher:
                     # 获取最新数据
                     latest = df.iloc[-1]
                     return {
-                        "margin_balance": latest.get('融资余额', 'N/A'),
-                        "short_balance": latest.get('融券余额', 'N/A'),
+                        "margin_balance": latest['融资余额'],
+                        "short_balance": latest['融券余额'],
                         "interpretation": ["市场整体融资融券数据"],
-                        "date": latest.get('交易日期', 'N/A')
+                        "date": latest['交易日期']
                     }
             except:
                 pass
@@ -670,82 +680,142 @@ class MarketSentimentDataFetcher:
             return "未能获取市场情绪数据"
         
         text_parts = []
+
+        def _fmt_num(value, digits=2):
+            if value is None:
+                return None
+            try:
+                return f"{float(value):.{digits}f}"
+            except Exception:
+                return None
         
         # ARBR指标
         if sentiment_data.get("arbr_data"):
             arbr = sentiment_data["arbr_data"]
-            text_parts.append(f"""
-【ARBR市场情绪指标】
-- 计算周期：{arbr.get('period', 26)}日
-- AR值：{arbr.get('latest_ar', 'N/A'):.2f}（人气指标）
-- BR值：{arbr.get('latest_br', 'N/A'):.2f}（意愿指标）
-- 信号：{arbr.get('signals', {}).get('overall_signal', 'N/A')}
-- 解读：
-{chr(10).join(['  * ' + item for item in arbr.get('interpretation', [])])}
+            block = [f"【ARBR市场情绪指标】"]
+            period = arbr.get("period")
+            if period is not None:
+                block.append(f"- 计算周期：{period}日")
+            latest_ar = _fmt_num(arbr.get("latest_ar"))
+            if latest_ar is not None:
+                block.append(f"- AR值：{latest_ar}（人气指标）")
+            latest_br = _fmt_num(arbr.get("latest_br"))
+            if latest_br is not None:
+                block.append(f"- BR值：{latest_br}（意愿指标）")
+            overall_signal = arbr.get("signals", {}).get("overall_signal")
+            if overall_signal is not None:
+                block.append(f"- 信号：{overall_signal}")
 
-ARBR统计数据：
-- AR历史均值：{arbr.get('statistics', {}).get('ar_mean', 0):.2f}
-- BR历史均值：{arbr.get('statistics', {}).get('br_mean', 0):.2f}
-- 历史买入信号比例：{arbr.get('signal_statistics', {}).get('buy_ratio', 'N/A')}
-- 历史卖出信号比例：{arbr.get('signal_statistics', {}).get('sell_ratio', 'N/A')}
-""")
+            interpretations = arbr.get("interpretation", [])
+            if interpretations:
+                block.append("- 解读：")
+                block.extend([f"  * {item}" for item in interpretations])
+
+            block.append("")
+            block.append("ARBR统计数据：")
+            ar_mean = _fmt_num(arbr.get("statistics", {}).get("ar_mean"))
+            if ar_mean is not None:
+                block.append(f"- AR历史均值：{ar_mean}")
+            br_mean = _fmt_num(arbr.get("statistics", {}).get("br_mean"))
+            if br_mean is not None:
+                block.append(f"- BR历史均值：{br_mean}")
+            buy_ratio = arbr.get("signal_statistics", {}).get("buy_ratio")
+            if buy_ratio is not None:
+                block.append(f"- 历史买入信号比例：{buy_ratio}")
+            sell_ratio = arbr.get("signal_statistics", {}).get("sell_ratio")
+            if sell_ratio is not None:
+                block.append(f"- 历史卖出信号比例：{sell_ratio}")
+            text_parts.append("\n".join(block))
         
         # 换手率
         if sentiment_data.get("turnover_rate"):
             turnover = sentiment_data["turnover_rate"]
-            text_parts.append(f"""
-【换手率数据】
-- 当前换手率：{turnover.get('current_turnover_rate', 'N/A')}%
-- 解读：{turnover.get('interpretation', 'N/A')}
-""")
+            block = ["【换手率数据】"]
+            current_turnover_rate = turnover.get("current_turnover_rate")
+            if current_turnover_rate is not None:
+                block.append(f"- 当前换手率：{current_turnover_rate}%")
+            interpretation = turnover.get("interpretation")
+            if interpretation:
+                block.append(f"- 解读：{interpretation}")
+            text_parts.append("\n".join(block))
         
         # 大盘情绪
         if sentiment_data.get("market_index"):
             market = sentiment_data["market_index"]
-            text_parts.append(f"""
-【大盘市场情绪】
-- 指数：{market.get('index_name', 'N/A')}
-- 涨跌幅：{market.get('change_percent', 'N/A')}%
-""")
-            if market.get('sentiment_score'):
-                text_parts.append(f"""- 市场情绪得分：{market.get('sentiment_score', 'N/A')}
-- 涨家数：{market.get('up_count', 'N/A')}只
-- 跌家数：{market.get('down_count', 'N/A')}只
-- 平家数：{market.get('flat_count', 'N/A')}只
-- 市场情绪：{market.get('sentiment_interpretation', 'N/A')}
-""")
+            block = ["【大盘市场情绪】"]
+            index_name = market.get("index_name")
+            if index_name:
+                block.append(f"- 指数：{index_name}")
+            change_percent = market.get("change_percent")
+            if change_percent is not None:
+                block.append(f"- 涨跌幅：{change_percent}%")
+            sentiment_score = market.get("sentiment_score")
+            if sentiment_score is not None:
+                block.append(f"- 市场情绪得分：{sentiment_score}")
+            up_count = market.get("up_count")
+            if up_count is not None:
+                block.append(f"- 涨家数：{up_count}只")
+            down_count = market.get("down_count")
+            if down_count is not None:
+                block.append(f"- 跌家数：{down_count}只")
+            flat_count = market.get("flat_count")
+            if flat_count is not None:
+                block.append(f"- 平家数：{flat_count}只")
+            sentiment_interpretation = market.get("sentiment_interpretation")
+            if sentiment_interpretation:
+                block.append(f"- 市场情绪：{sentiment_interpretation}")
+            text_parts.append("\n".join(block))
         
         # 涨跌停统计
         if sentiment_data.get("limit_up_down"):
             limit = sentiment_data["limit_up_down"]
-            text_parts.append(f"""
-【涨跌停统计】
-- 涨停股数量：{limit.get('limit_up_count', 0)}只
-- 跌停股数量：{limit.get('limit_down_count', 0)}只
-- 涨停占比：{limit.get('limit_ratio', 'N/A')}
-- 解读：{limit.get('interpretation', 'N/A')}
-""")
+            block = ["【涨跌停统计】"]
+            limit_up_count = limit.get("limit_up_count")
+            if limit_up_count is not None:
+                block.append(f"- 涨停股数量：{limit_up_count}只")
+            limit_down_count = limit.get("limit_down_count")
+            if limit_down_count is not None:
+                block.append(f"- 跌停股数量：{limit_down_count}只")
+            limit_ratio = limit.get("limit_ratio")
+            if limit_ratio is not None:
+                block.append(f"- 涨停占比：{limit_ratio}")
+            interpretation = limit.get("interpretation")
+            if interpretation:
+                block.append(f"- 解读：{interpretation}")
+            text_parts.append("\n".join(block))
         
         # 融资融券
         if sentiment_data.get("margin_trading"):
             margin = sentiment_data["margin_trading"]
-            text_parts.append(f"""
-【融资融券数据】
-- 融资余额：{margin.get('margin_balance', 'N/A')}元
-- 融券余额：{margin.get('short_balance', 'N/A')}元
-- 融资买入额：{margin.get('margin_buy', 'N/A')}元
-- 解读：{'; '.join(margin.get('interpretation', []))}
-""")
+            block = ["【融资融券数据】"]
+            margin_balance = margin.get("margin_balance")
+            if margin_balance is not None:
+                block.append(f"- 融资余额：{margin_balance}元")
+            short_balance = margin.get("short_balance")
+            if short_balance is not None:
+                block.append(f"- 融券余额：{short_balance}元")
+            margin_buy = margin.get("margin_buy")
+            if margin_buy is not None:
+                block.append(f"- 融资买入额：{margin_buy}元")
+            interpretations = margin.get("interpretation", [])
+            if interpretations:
+                block.append(f"- 解读：{'; '.join(interpretations)}")
+            text_parts.append("\n".join(block))
         
         # 恐慌贪婪指数
         if sentiment_data.get("fear_greed_index"):
             fear_greed = sentiment_data["fear_greed_index"]
-            text_parts.append(f"""
-【市场恐慌贪婪指数】
-- 指数得分：{fear_greed.get('score', 'N/A')}/100
-- 情绪等级：{fear_greed.get('level', 'N/A')}
-- 解读：{fear_greed.get('interpretation', 'N/A')}
-""")
+            block = ["【市场恐慌贪婪指数】"]
+            score = fear_greed.get("score")
+            if score is not None:
+                block.append(f"- 指数得分：{score}/100")
+            level = fear_greed.get("level")
+            if level is not None:
+                block.append(f"- 情绪等级：{level}")
+            interpretation = fear_greed.get("interpretation")
+            if interpretation:
+                block.append(f"- 解读：{interpretation}")
+            text_parts.append("\n".join(block))
         
         return "\n".join(text_parts)
 
@@ -770,4 +840,3 @@ if __name__ == "__main__":
         print(formatted_text)
     else:
         print(f"\n获取失败: {sentiment_data.get('error', '未知错误')}")
-

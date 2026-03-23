@@ -61,7 +61,7 @@ class DataSourceManager:
         else:
             print("[INFO] 未配置Tushare Token，将仅使用Akshare数据源")
 
-    def _coerce_quote_number(self, value, default='N/A'):
+    def _coerce_quote_number(self, value, default=None):
         if value is None:
             return default
         try:
@@ -115,7 +115,7 @@ class DataSourceManager:
 
         return {
             'symbol': symbol,
-            'name': self._clean_text_value(quote.get('name')) or f'股票{symbol}',
+            'name': self._clean_text_value(quote.get('name')),
             'price': float(price),
             'current_price': float(price),
             'change_percent': self._coerce_quote_number(quote.get('change_percent', quote.get('change_pct'))),
@@ -126,21 +126,21 @@ class DataSourceManager:
             'low': self._coerce_quote_number(quote.get('low')),
             'open': self._coerce_quote_number(quote.get('open')),
             'pre_close': self._coerce_quote_number(quote.get('pre_close')),
-            'update_time': self._clean_text_value(quote.get('update_time')) or None,
+            'update_time': self._clean_text_value(quote.get('update_time')),
             'data_source': 'tdx',
         }
 
     def _clean_text_value(self, value):
         if value is None:
-            return ""
+            return None
         try:
             if pd.isna(value):
-                return ""
+                return None
         except Exception:
             pass
 
         text = str(value).strip()
-        return "" if text in self._MISSING_TEXT_VALUES else text
+        return None if text in self._MISSING_TEXT_VALUES else text
 
     def _get_row_value(self, row, *candidates):
         for field in candidates:
@@ -286,9 +286,9 @@ class DataSourceManager:
         """
         info = {
             "symbol": symbol,
-            "name": "未知",
-            "industry": "未知",
-            "market": "未知"
+            "name": None,
+            "industry": None,
+            "market": None
         }
         
         # 优先使用akshare
@@ -325,7 +325,7 @@ class DataSourceManager:
                     elif key == '流通市值':
                         info['circulating_market_cap'] = value
                 
-                if info['name'] != '未知' and info['industry'] != '未知':
+                if info['name'] is not None and info['industry'] is not None:
                     print(f"[Akshare] 成功获取基本信息")
                     return info
         except Exception as e:
@@ -333,7 +333,7 @@ class DataSourceManager:
         
         # akshare失败，尝试tushare
         should_use_tushare = self.tushare_available and (
-            not akshare_loaded or info['industry'] == '未知' or info['market'] == '未知'
+            not akshare_loaded or info['industry'] is None or info['market'] is None
         )
         if should_use_tushare:
             try:
@@ -358,7 +358,7 @@ class DataSourceManager:
                 print(f"[Tushare] 获取失败: {e}")
         
         if akshare_loaded:
-            print(f"[Akshare] 基本信息获取完成，行业识别结果: {info.get('industry', '未知')}")
+            print(f"[Akshare] 基本信息获取完成，行业识别结果: {info.get('industry')}")
         return info
     
     def get_realtime_quotes(self, symbol):
