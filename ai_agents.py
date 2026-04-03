@@ -1,11 +1,16 @@
+import concurrent.futures
 from deepseek_client import DeepSeekClient
 from model_routing import ModelTier
-from typing import Dict, Any
+from typing import Any, Dict
 import time
+
 
 class StockAnalysisAgents:
     """股票分析AI智能体集合"""
-    
+
+    _PER_REPORT_LIMIT = 2000
+    _DISCUSSION_INPUT_LIMIT = 9000
+
     def __init__(self, model=None, lightweight_model=None, reasoning_model=None):
         self.model = model
         self.lightweight_model = lightweight_model
@@ -15,14 +20,34 @@ class StockAnalysisAgents:
             lightweight_model=lightweight_model,
             reasoning_model=reasoning_model,
         )
-        
+
+    @staticmethod
+    def _strip_reasoning_content(text: Any) -> str:
+        normalized = str(text or "").strip()
+        if not normalized:
+            return ""
+        marker = "【推理过程】"
+        marker_index = normalized.find(marker)
+        if marker_index < 0:
+            return normalized
+        content_index = normalized.find("\n\n", marker_index)
+        if content_index < 0:
+            return normalized[:marker_index].strip()
+        without_reasoning = f"{normalized[:marker_index].rstrip()}\n\n{normalized[content_index + 2:].lstrip()}".strip()
+        return without_reasoning
+
+    @classmethod
+    def _trim_report_for_discussion(cls, title: str, text: Any) -> str:
+        body = cls._strip_reasoning_content(text)
+        if len(body) > cls._PER_REPORT_LIMIT:
+            body = f"{body[:cls._PER_REPORT_LIMIT].rstrip()}\n\n[内容已截断]"
+        return f"【{title}】\n{body}".strip()
+
     def technical_analyst_agent(self, stock_info: Dict, stock_data: Any, indicators: Dict) -> Dict[str, Any]:
         """技术面分析智能体"""
         print("🔍 技术分析师正在分析中...")
-        time.sleep(1)  # 模拟分析时间
-        
         analysis = self.deepseek_client.technical_analysis(stock_info, stock_data, indicators)
-        
+
         return {
             "agent_name": "技术分析师",
             "agent_role": "负责技术指标分析、图表形态识别、趋势判断",
@@ -43,11 +68,9 @@ class StockAnalysisAgents:
             print(f"   ✓ 已获取季报数据：利润表{income_count}期，资产负债表{balance_count}期，现金流量表{cash_flow_count}期")
         else:
             print("   ⚠ 未获取到季报数据，将基于基本财务数据分析")
-        
-        time.sleep(1)
-        
+
         analysis = self.deepseek_client.fundamental_analysis(stock_info, financial_data, quarterly_data)
-        
+
         return {
             "agent_name": "基本面分析师", 
             "agent_role": "负责公司财务分析、行业研究、估值分析",
@@ -66,11 +89,9 @@ class StockAnalysisAgents:
             print("   ✓ 已获取资金流向数据（akshare数据源）")
         else:
             print("   ⚠ 未获取到资金流向数据，将基于技术指标分析")
-        
-        time.sleep(1)
-        
+
         analysis = self.deepseek_client.fund_flow_analysis(stock_info, indicators, fund_flow_data)
-        
+
         return {
             "agent_name": "资金面分析师",
             "agent_role": "负责资金流向分析、主力行为研究、市场情绪判断", 
@@ -89,9 +110,7 @@ class StockAnalysisAgents:
             print("   ✓ 已获取问财风险数据（限售解禁、大股东减持、重要事件）")
         else:
             print("   ⚠ 未获取到风险数据，将基于基本信息分析")
-        
-        time.sleep(1)
-        
+
         # 构建风险数据文本
         risk_data_text = ""
         if risk_data and risk_data.get('data_success'):
@@ -105,7 +124,6 @@ class StockAnalysisAgents:
 
 以上是通过问财（pywencai）获取的实际风险数据，请重点关注这些数据进行深度风险分析。
 """
-        
         risk_prompt = f"""
 作为资深风险管理专家，请基于以下信息进行全面深度的风险评估：
 
@@ -211,13 +229,13 @@ class StockAnalysisAgents:
             {"role": "system", "content": "你是一名资深的风险管理专家，具有20年以上的风险识别和控制经验，擅长全面评估各类投资风险，特别关注限售解禁、股东减持、重要事件等可能影响股价的风险因素。你擅长从海量原始数据中提取关键信息，进行深度解析和量化评估。"},
             {"role": "user", "content": risk_prompt}
         ]
-        
+
         analysis = self.deepseek_client.call_api(
             messages,
             max_tokens=6000,
             tier=ModelTier.REASONING,
         )
-        
+
         return {
             "agent_name": "风险管理师",
             "agent_role": "负责风险识别、风险评估、风险控制策略制定",
@@ -236,9 +254,7 @@ class StockAnalysisAgents:
             print("   ✓ 已获取市场情绪数据（ARBR、换手率、涨跌停等）")
         else:
             print("   ⚠ 未获取到详细情绪数据，将基于基本信息分析")
-        
-        time.sleep(1)
-        
+
         # 构建带有市场情绪数据的prompt
         sentiment_data_text = ""
         if sentiment_data and sentiment_data.get('data_success'):
@@ -303,13 +319,13 @@ class StockAnalysisAgents:
             {"role": "system", "content": "你是一名专业的市场情绪分析师，擅长解读市场心理和投资者行为，善于利用ARBR等情绪指标进行分析。"},
             {"role": "user", "content": sentiment_prompt}
         ]
-        
+
         analysis = self.deepseek_client.call_api(
             messages,
             max_tokens=4000,
             tier=ModelTier.LIGHTWEIGHT,
         )
-        
+
         return {
             "agent_name": "市场情绪分析师",
             "agent_role": "负责市场情绪研究、投资者心理分析、热点追踪",
@@ -330,9 +346,7 @@ class StockAnalysisAgents:
             print(f"   ✓ 已从 {source} 获取 {news_count} 条新闻")
         else:
             print("   ⚠ 未获取到新闻数据，将基于基本信息分析")
-        
-        time.sleep(1)
-        
+
         # 构建带有新闻数据的prompt
         news_text = ""
         if news_data and news_data.get('data_success'):
@@ -407,13 +421,13 @@ class StockAnalysisAgents:
             {"role": "system", "content": "你是一名专业的新闻分析师，擅长解读新闻事件、舆情分析，评估新闻对股价的影响。你具有敏锐的洞察力和丰富的市场经验。"},
             {"role": "user", "content": news_prompt}
         ]
-        
+
         analysis = self.deepseek_client.call_api(
             messages,
             max_tokens=4000,
             tier=ModelTier.LIGHTWEIGHT,
         )
-        
+
         return {
             "agent_name": "新闻分析师",
             "agent_role": "负责新闻事件分析、舆情研究、重大事件影响评估",
@@ -454,32 +468,26 @@ class StockAnalysisAgents:
         print(f"📋 参与分析的分析师: {', '.join(active_analysts)}")
         print("=" * 50)
         
-        # 并行运行各个分析师
-        agents_results = {}
-        
-        # 技术面分析
+        tasks = []
         if enabled_analysts.get('technical', True):
-            agents_results["technical"] = self.technical_analyst_agent(stock_info, stock_data, indicators)
-        
-        # 基本面分析
+            tasks.append(("technical", lambda: self.technical_analyst_agent(stock_info, stock_data, indicators)))
         if enabled_analysts.get('fundamental', True):
-            agents_results["fundamental"] = self.fundamental_analyst_agent(stock_info, financial_data, quarterly_data)
-        
-        # 资金面分析（传入资金流向数据）
+            tasks.append(("fundamental", lambda: self.fundamental_analyst_agent(stock_info, financial_data, quarterly_data)))
         if enabled_analysts.get('fund_flow', True):
-            agents_results["fund_flow"] = self.fund_flow_analyst_agent(stock_info, indicators, fund_flow_data)
-        
-        # 风险管理分析（传入风险数据）
+            tasks.append(("fund_flow", lambda: self.fund_flow_analyst_agent(stock_info, indicators, fund_flow_data)))
         if enabled_analysts.get('risk', True):
-            agents_results["risk_management"] = self.risk_management_agent(stock_info, indicators, risk_data)
-        
-        # 市场情绪分析（传入市场情绪数据）
+            tasks.append(("risk", lambda: self.risk_management_agent(stock_info, indicators, risk_data)))
         if enabled_analysts.get('sentiment', False):
-            agents_results["market_sentiment"] = self.market_sentiment_agent(stock_info, sentiment_data)
-        
-        # 新闻分析（传入新闻数据）
+            tasks.append(("market_sentiment", lambda: self.market_sentiment_agent(stock_info, sentiment_data)))
         if enabled_analysts.get('news', False):
-            agents_results["news"] = self.news_analyst_agent(stock_info, news_data)
+            tasks.append(("news", lambda: self.news_analyst_agent(stock_info, news_data)))
+
+        agents_results = {}
+        if tasks:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=len(tasks)) as executor:
+                future_pairs = [(key, executor.submit(task)) for key, task in tasks]
+                for key, future in future_pairs:
+                    agents_results[key] = future.result()
         
         print("✅ 所有已选择的分析师完成分析")
         print("=" * 50)
@@ -489,38 +497,41 @@ class StockAnalysisAgents:
     def conduct_team_discussion(self, agents_results: Dict[str, Any], stock_info: Dict) -> str:
         """进行团队讨论"""
         print("🤝 分析团队正在进行综合讨论...")
-        time.sleep(2)
-        
+        if not agents_results:
+            raise RuntimeError("没有可用于团队讨论的分析师报告")
+
         # 收集参与分析的分析师名单和报告
         participants = []
         reports = []
-        
+
         if "technical" in agents_results:
             participants.append("技术分析师")
-            reports.append(f"【技术分析师报告】\n{agents_results['technical'].get('analysis', '')}")
-        
+            reports.append(self._trim_report_for_discussion("技术分析师报告", agents_results['technical'].get('analysis', '')))
+
         if "fundamental" in agents_results:
             participants.append("基本面分析师")
-            reports.append(f"【基本面分析师报告】\n{agents_results['fundamental'].get('analysis', '')}")
-        
+            reports.append(self._trim_report_for_discussion("基本面分析师报告", agents_results['fundamental'].get('analysis', '')))
+
         if "fund_flow" in agents_results:
             participants.append("资金面分析师")
-            reports.append(f"【资金面分析师报告】\n{agents_results['fund_flow'].get('analysis', '')}")
-        
-        if "risk_management" in agents_results:
+            reports.append(self._trim_report_for_discussion("资金面分析师报告", agents_results['fund_flow'].get('analysis', '')))
+
+        if "risk" in agents_results:
             participants.append("风险管理师")
-            reports.append(f"【风险管理师报告】\n{agents_results['risk_management'].get('analysis', '')}")
-        
+            reports.append(self._trim_report_for_discussion("风险管理师报告", agents_results['risk'].get('analysis', '')))
+
         if "market_sentiment" in agents_results:
             participants.append("市场情绪分析师")
-            reports.append(f"【市场情绪分析师报告】\n{agents_results['market_sentiment'].get('analysis', '')}")
-        
+            reports.append(self._trim_report_for_discussion("市场情绪分析师报告", agents_results['market_sentiment'].get('analysis', '')))
+
         if "news" in agents_results:
             participants.append("新闻分析师")
-            reports.append(f"【新闻分析师报告】\n{agents_results['news'].get('analysis', '')}")
-        
+            reports.append(self._trim_report_for_discussion("新闻分析师报告", agents_results['news'].get('analysis', '')))
+
         # 组合所有报告
         all_reports = "\n\n".join(reports)
+        if len(all_reports) > self._DISCUSSION_INPUT_LIMIT:
+            all_reports = f"{all_reports[:self._DISCUSSION_INPUT_LIMIT].rstrip()}\n\n[讨论材料已截断]"
         
         discussion_prompt = f"""
 现在进行投资决策团队会议，参会人员包括：{', '.join(participants)}。
@@ -553,16 +564,14 @@ class StockAnalysisAgents:
             max_tokens=6000,
             tier=ModelTier.REASONING,
         )
-        
+
         print("✅ 团队讨论完成")
         return discussion_result
-    
+
     def make_final_decision(self, discussion_result: str, stock_info: Dict, indicators: Dict) -> Dict[str, Any]:
         """制定最终投资决策"""
         print("📋 正在制定最终投资决策...")
-        time.sleep(1)
-        
         decision = self.deepseek_client.final_decision(discussion_result, stock_info, indicators)
-        
+
         print("✅ 最终投资决策完成")
         return decision

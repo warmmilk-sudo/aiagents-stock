@@ -3,6 +3,7 @@
 使用AKShare获取板块相关数据
 """
 
+import concurrent.futures
 import akshare as ak
 import pandas as pd
 from datetime import datetime, timedelta
@@ -59,6 +60,12 @@ class SectorStrategyDataFetcher:
                 else:
                     print(f"    请求失败，已达最大重试次数: {e}")
                     raise e
+
+    def _fetch_data_source(self, step_label, fetch_func):
+        try:
+            return step_label, fetch_func(), None
+        except Exception as exc:
+            return step_label, None, exc
     
     def get_all_sector_data(self):
         """
@@ -81,47 +88,47 @@ class SectorStrategyDataFetcher:
         }
         
         try:
-            # 1. 获取行业板块数据
-            print("  [1/6] 获取行业板块行情...")
-            sectors_data = self._get_sector_performance()
-            if sectors_data:
-                data["sectors"] = sectors_data
-                print(f"    ✓ 成功获取 {len(sectors_data)} 个行业板块数据")
-            
-            # 2. 获取概念板块数据
-            print("  [2/6] 获取概念板块行情...")
-            concept_data = self._get_concept_performance()
-            if concept_data:
-                data["concepts"] = concept_data
-                print(f"    ✓ 成功获取 {len(concept_data)} 个概念板块数据")
-            
-            # 3. 获取板块资金流向
-            print("  [3/6] 获取行业资金流向...")
-            fund_flow_data = self._get_sector_fund_flow()
-            if fund_flow_data:
-                data["sector_fund_flow"] = fund_flow_data
-                print(f"    ✓ 成功获取资金流向数据")
-            
-            # 4. 获取市场总体情况
-            print("  [4/6] 获取市场总体情况...")
-            market_data = self._get_market_overview()
-            if market_data:
-                data["market_overview"] = market_data
-                print(f"    ✓ 成功获取市场概况")
-            
-            # 5. 获取北向资金流向
-            print("  [5/6] 获取北向资金流向...")
-            north_flow = self._get_north_money_flow()
-            if north_flow:
-                data["north_flow"] = north_flow
-                print(f"    ✓ 成功获取北向资金数据")
-            
-            # 6. 获取财经新闻
-            print("  [6/6] 获取财经新闻...")
-            news_data = self._get_financial_news()
-            if news_data:
-                data["news"] = news_data
-                print(f"    ✓ 成功获取 {len(news_data)} 条新闻")
+            fetch_specs = {
+                "sectors": ("[1/6] 获取行业板块行情...", self._get_sector_performance),
+                "concepts": ("[2/6] 获取概念板块行情...", self._get_concept_performance),
+                "sector_fund_flow": ("[3/6] 获取行业资金流向...", self._get_sector_fund_flow),
+                "market_overview": ("[4/6] 获取市场总体情况...", self._get_market_overview),
+                "north_flow": ("[5/6] 获取北向资金流向...", self._get_north_money_flow),
+                "news": ("[6/6] 获取财经新闻...", self._get_financial_news),
+            }
+
+            for _, (step_label, _) in fetch_specs.items():
+                print(f"  {step_label}")
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=len(fetch_specs)) as executor:
+                future_map = {
+                    executor.submit(self._fetch_data_source, step_label, fetch_func): result_key
+                    for result_key, (step_label, fetch_func) in fetch_specs.items()
+                }
+
+                for future in concurrent.futures.as_completed(future_map):
+                    result_key = future_map[future]
+                    step_label, payload, error = future.result()
+                    if error is not None:
+                        print(f"    ✗ {step_label} 失败: {error}")
+                        raise error
+
+                    if not payload:
+                        continue
+
+                    data[result_key] = payload
+                    if result_key == "sectors":
+                        print(f"    ✓ 成功获取 {len(payload)} 个行业板块数据")
+                    elif result_key == "concepts":
+                        print(f"    ✓ 成功获取 {len(payload)} 个概念板块数据")
+                    elif result_key == "sector_fund_flow":
+                        print("    ✓ 成功获取资金流向数据")
+                    elif result_key == "market_overview":
+                        print("    ✓ 成功获取市场概况")
+                    elif result_key == "north_flow":
+                        print("    ✓ 成功获取北向资金数据")
+                    elif result_key == "news":
+                        print(f"    ✓ 成功获取 {len(payload)} 条新闻")
 
             missing_core = [
                 key for key in ("sectors", "concepts", "sector_fund_flow")

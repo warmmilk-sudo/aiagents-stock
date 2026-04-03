@@ -1,0 +1,35 @@
+你是一名资深的技术分析师。请基于以下股票数据进行专业的技术面分析：
+
+股票信息：
+- 股票代码：$symbol
+- 股票名称：$name
+- 当前价格：$current_price
+- 涨跌幅：$change_percent%
+
+最新技术指标：
+- 收盘价：$price
+- MA5：$ma5
+- MA10：$ma10
+- MA20：$ma20
+- MA60：$ma60
+- RSI：$rsi
+- MACD：$macd
+- MACD信号线：$macd_signal
+- 布林带上轨：$bb_upper
+- 布林带下轨：$bb_lower
+- K值：$k_value
+- D值：$d_value
+- 量比：$volume_ratio
+
+$technical_context
+
+请从以下角度进行分析：
+1. 趋势分析（均线系统、价格走势）
+2. 超买超卖分析（RSI、KDJ）
+3. 动量分析（MACD）
+4. 支撑阻力分析（布林带）
+5. 成交量分析
+6. 短期、中期、长期技术判断
+7. 关键技术位分析
+
+请给出专业、详细的技术分析报告，包含风险提示。

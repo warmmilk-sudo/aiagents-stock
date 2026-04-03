@@ -4,6 +4,7 @@ import { useSearchParams } from "react-router-dom";
 import { PageFeedback } from "../../components/common/PageFeedback";
 import { PageFrame } from "../../components/common/PageFrame";
 import { StatusBadge } from "../../components/common/StatusBadge";
+import { TaskProgressBar } from "../../components/common/TaskProgressBar";
 import {
   SectorReportDetailView,
   type SectorStrategyReportView,
@@ -75,6 +76,19 @@ function asText(value: unknown, fallback = "暂无"): string {
 function formatConfidence(value: unknown): string {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? `${Math.round(numeric)}分` : "0分";
+}
+
+function taskProgressTone(task: TaskDetail<SectorTaskPayload> | null): "running" | "success" | "danger" {
+  if (!task) {
+    return "running";
+  }
+  if (task.status === "success") {
+    return "success";
+  }
+  if (task.status === "failed" || task.status === "cancelled") {
+    return "danger";
+  }
+  return "running";
 }
 
 export function SectorStrategyPage() {
@@ -354,10 +368,13 @@ export function SectorStrategyPage() {
                     <h2>任务状态</h2>
                     <p className={styles.helperText}>{task?.message || "等待智策任务状态..."}</p>
                   </div>
-                  <div className={styles.historyMeta}>
-                    进度: {task?.current ?? 0} / {task?.total ?? 0}
-                  </div>
                 </div>
+                <TaskProgressBar
+                  current={task?.current ?? (task?.status === "success" ? task?.total ?? 100 : 0)}
+                  total={task?.total ?? 100}
+                  message={task?.message || "等待智策任务状态..."}
+                  tone={taskProgressTone(task)}
+                />
                 {task?.error ? <div className={styles.dangerText}>{task.error}</div> : null}
               </section>
 

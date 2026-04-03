@@ -284,8 +284,6 @@ def submit_research_analysis_task(
         symbol = normalized_symbols[0]
 
         def runner(_task_id: str, report_progress) -> dict[str, Any]:
-            report_progress(current=0, total=3, message=f"正在准备 {symbol} 的分析任务...")
-            report_progress(current=1, total=3, message=f"AI 分析师团队正在分析 {symbol}...")
             result = analyze_single_stock_for_batch(
                 symbol=symbol,
                 period=period,
@@ -293,10 +291,14 @@ def submit_research_analysis_task(
                 selected_lightweight_model=lightweight_model,
                 selected_reasoning_model=reasoning_model,
                 save_to_global_history=True,
+                progress_callback=lambda current, total, message: report_progress(
+                    current=current,
+                    total=total,
+                    message=message,
+                ),
             )
             if not result.get("success"):
                 raise RuntimeError(result.get("error") or f"{symbol} 分析失败")
-            report_progress(current=3, total=3, message=f"{symbol} 分析完成，正在同步结果...")
             return {
                 "mode": "single",
                 "symbol": symbol,
@@ -337,33 +339,57 @@ def submit_research_analysis_task(
             )
 
         if batch_mode == "多线程并行":
-            with concurrent.futures.ThreadPoolExecutor(max_workers=worker_count) as executor:
-                future_to_symbol = {
-                    executor.submit(analyze_one, symbol): symbol
-                    for symbol in normalized_symbols
-                }
-                for completed_count, future in enumerate(concurrent.futures.as_completed(future_to_symbol), start=1):
-                    symbol = future_to_symbol[future]
-                    try:
-                        results_by_symbol[symbol] = future.result(timeout=300)
-                    except concurrent.futures.TimeoutError:
-                        results_by_symbol[symbol] = {
-                            "symbol": symbol,
-                            "error": "分析超时（5分钟）",
-                            "success": False,
-                        }
-                    except Exception as exc:
-                        results_by_symbol[symbol] = {
-                            "symbol": symbol,
-                            "error": str(exc),
-                            "success": False,
-                        }
-                    current_result = results_by_symbol[symbol]
-                    report_progress(
-                        current=completed_count,
-                        total=total,
-                        message=f"[{completed_count}/{total}] {symbol} {'分析完成' if current_result.get('success') else '分析失败'}",
+            executor = concurrent.futures.ThreadPoolExecutor(max_workers=worker_count)
+            try:
+                submitted_at = {}
+                pending_futures = {}
+                for symbol in normalized_symbols:
+                    future = executor.submit(analyze_one, symbol)
+                    pending_futures[future] = symbol
+                    submitted_at[future] = time.time()
+
+                completed_count = 0
+                timeout_seconds = 300
+                while pending_futures:
+                    done_futures, _ = concurrent.futures.wait(
+                        pending_futures.keys(),
+                        timeout=1,
+                        return_when=concurrent.futures.FIRST_COMPLETED,
                     )
+
+                    now_ts = time.time()
+                    timed_out_futures = {
+                        future for future in list(pending_futures.keys())
+                        if now_ts - submitted_at[future] > timeout_seconds
+                    }
+
+                    for future in list(done_futures | timed_out_futures):
+                        symbol = pending_futures.pop(future)
+                        submitted_at.pop(future, None)
+                        if future in timed_out_futures:
+                            results_by_symbol[symbol] = {
+                                "symbol": symbol,
+                                "error": "分析超时（5分钟）",
+                                "success": False,
+                            }
+                        else:
+                            try:
+                                results_by_symbol[symbol] = future.result()
+                            except Exception as exc:
+                                results_by_symbol[symbol] = {
+                                    "symbol": symbol,
+                                    "error": str(exc),
+                                    "success": False,
+                                }
+                        completed_count += 1
+                        current_result = results_by_symbol[symbol]
+                        report_progress(
+                            current=completed_count,
+                            total=total,
+                            message=f"[{completed_count}/{total}] {symbol} {'分析完成' if current_result.get('success') else '分析失败'}",
+                        )
+            finally:
+                executor.shutdown(wait=False, cancel_futures=True)
         else:
             for index, symbol in enumerate(normalized_symbols, start=1):
                 results_by_symbol[symbol] = analyze_one(symbol)
@@ -842,18 +868,24 @@ def submit_sector_strategy_task(
         raise ValueError("请先配置 DeepSeek API Key")
 
     def runner(_task_id: str, report_progress) -> dict[str, Any]:
-        report_progress(current=0, total=3, message="正在获取市场数据...")
+        report_progress(current=5, total=100, message="正在获取市场数据...")
         fetcher = SectorStrategyDataFetcher()
         data = fetcher.get_cached_data_with_fallback()
         if not data.get("success"):
             raise RuntimeError(data.get("error") or "数据获取失败")
 
-        report_progress(current=1, total=3, message="市场数据获取完成，正在执行 AI 分析...")
         engine = SectorStrategyEngine(
             lightweight_model=lightweight_model,
             reasoning_model=reasoning_model,
         )
-        result = engine.run_comprehensive_analysis(data)
+        result = engine.run_comprehensive_analysis(
+            data,
+            progress_callback=lambda current, total, message: report_progress(
+                current=current,
+                total=total,
+                message=message,
+            ),
+        )
         if data.get("from_cache") or data.get("cache_warning"):
             result["cache_meta"] = {
                 "from_cache": bool(data.get("from_cache")),
@@ -863,7 +895,7 @@ def submit_sector_strategy_task(
         if not result.get("success"):
             raise RuntimeError(result.get("error") or "智策分析失败")
 
-        report_progress(current=3, total=3, message="智策分析完成，正在同步结果...")
+        report_progress(current=100, total=100, message="智策分析完成，正在同步结果...")
         data_summary = {
             "from_cache": bool(data.get("from_cache")),
             "cache_warning": data.get("cache_warning", ""),

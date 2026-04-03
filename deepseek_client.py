@@ -1,12 +1,15 @@
-import openai
 import json
-from typing import Dict, List, Any, Optional
+from typing import Any, Dict, List, Optional
+
+import openai
+
 import config
 from model_routing import ModelTier, describe_model_selection, resolve_model_name
 
+
 class DeepSeekClient:
     """DeepSeek API客户端"""
-    
+
     def __init__(self, model=None, lightweight_model=None, reasoning_model=None):
         # 兼容旧接口：model 表示强制所有任务统一使用一个模型
         self.model = model
@@ -21,7 +24,75 @@ class DeepSeekClient:
             lightweight_model=self.lightweight_model,
             reasoning_model=self.reasoning_model,
         )
-        
+
+    @staticmethod
+    def _extract_json_object(text: str) -> Dict[str, Any]:
+        decoder = json.JSONDecoder()
+        for index, char in enumerate(text or ""):
+            if char != "{":
+                continue
+            try:
+                payload, _ = decoder.raw_decode(text[index:])
+            except json.JSONDecodeError:
+                continue
+            if isinstance(payload, dict):
+                return payload
+        raise RuntimeError("final_decision_invalid_json")
+
+    @staticmethod
+    def _build_technical_context(stock_data: Any) -> str:
+        if stock_data is None or not hasattr(stock_data, "empty") or stock_data.empty:
+            return "历史行情摘要：暂无可用历史行情。"
+
+        close_series = stock_data.get("Close")
+        volume_series = stock_data.get("Volume")
+        ma20_series = stock_data.get("MA20")
+        ma60_series = stock_data.get("MA60")
+        if close_series is None or len(close_series) == 0:
+            return "历史行情摘要：暂无可用历史行情。"
+
+        latest_close = close_series.iloc[-1]
+        latest_ma20 = ma20_series.iloc[-1] if ma20_series is not None and len(ma20_series) else None
+        latest_ma60 = ma60_series.iloc[-1] if ma60_series is not None and len(ma60_series) else None
+
+        def _pct_change(window: int) -> str:
+            if len(close_series) <= window:
+                return "N/A"
+            base_value = close_series.iloc[-window - 1]
+            if base_value in (None, 0):
+                return "N/A"
+            return f"{((latest_close / base_value) - 1) * 100:.2f}%"
+
+        recent_20 = close_series.tail(20)
+        high_20 = f"{recent_20.max():.2f}" if len(recent_20) else "N/A"
+        low_20 = f"{recent_20.min():.2f}" if len(recent_20) else "N/A"
+
+        volume_ratio_5_to_20 = "N/A"
+        if volume_series is not None and len(volume_series) >= 20:
+            recent_5_avg = volume_series.tail(5).mean()
+            recent_20_avg = volume_series.tail(20).mean()
+            if recent_20_avg:
+                volume_ratio_5_to_20 = f"{recent_5_avg / recent_20_avg:.2f}x"
+
+        relative_ma20 = "N/A"
+        if latest_ma20 not in (None, 0):
+            relative_ma20 = f"{((latest_close / latest_ma20) - 1) * 100:.2f}%"
+
+        relative_ma60 = "N/A"
+        if latest_ma60 not in (None, 0):
+            relative_ma60 = f"{((latest_close / latest_ma60) - 1) * 100:.2f}%"
+
+        return f"""
+历史行情摘要：
+- 最近收盘价相对MA20：{relative_ma20}
+- 最近收盘价相对MA60：{relative_ma60}
+- 近20日涨跌幅：{_pct_change(20)}
+- 近60日涨跌幅：{_pct_change(60)}
+- 近20日最高价：{high_20}
+- 近20日最低价：{low_20}
+- 最近5日均量/近20日均量：{volume_ratio_5_to_20}
+"""
+
     def call_api(
         self,
         messages: List[Dict[str, str]],
@@ -29,6 +100,7 @@ class DeepSeekClient:
         temperature: float = 0.7,
         max_tokens: int = 2000,
         tier: Optional[ModelTier] = None,
+        include_reasoning: bool = True,
     ) -> str:
         """调用DeepSeek API"""
         model_to_use = resolve_model_name(
@@ -38,11 +110,11 @@ class DeepSeekClient:
             lightweight_model=self.lightweight_model,
             reasoning_model=self.reasoning_model,
         )
-        
+
         # 对于 reasoner 模型，自动增加 max_tokens
         if "reasoner" in model_to_use.lower() and max_tokens <= 2000:
             max_tokens = 8000  # reasoner 模型需要更多 tokens 来输出推理过程
-        
+
         try:
             response = self.client.chat.completions.create(
                 model=model_to_use,
@@ -50,29 +122,30 @@ class DeepSeekClient:
                 temperature=temperature,
                 max_tokens=max_tokens
             )
-            
+
             # 处理 reasoner 模型的响应
             message = response.choices[0].message
-            
+
             # reasoner 模型可能包含 reasoning_content（推理过程）和 content（最终答案）
             # 我们返回完整内容，包括推理过程（如果有的话）
             result = ""
-            
+
             # 检查是否有推理内容
-            if hasattr(message, 'reasoning_content') and message.reasoning_content:
+            if include_reasoning and hasattr(message, 'reasoning_content') and message.reasoning_content:
                 result += f"【推理过程】\n{message.reasoning_content}\n\n"
-            
+
             # 添加最终内容
             if message.content:
                 result += message.content
-            
+
             return result if result else "API返回空响应"
-            
+
         except Exception as e:
-            return f"API调用失败: {str(e)}"
-    
+            raise RuntimeError(f"DeepSeek API调用失败: {str(e)}") from e
+
     def technical_analysis(self, stock_info: Dict, stock_data: Any, indicators: Dict) -> str:
         """技术面分析"""
+        technical_context = self._build_technical_context(stock_data)
         prompt = f"""
 你是一名资深的技术分析师。请基于以下股票数据进行专业的技术面分析：
 
@@ -97,6 +170,8 @@ class DeepSeekClient:
 - D值：{indicators.get('d_value', 'N/A')}
 - 量比：{indicators.get('volume_ratio', 'N/A')}
 
+{technical_context}
+
 请从以下角度进行分析：
 1. 趋势分析（均线系统、价格走势）
 2. 超买超卖分析（RSI、KDJ）
@@ -108,14 +183,14 @@ class DeepSeekClient:
 
 请给出专业、详细的技术分析报告，包含风险提示。
 """
-        
+
         messages = [
             {"role": "system", "content": "你是一名经验丰富的股票技术分析师，具有深厚的技术分析功底。"},
             {"role": "user", "content": prompt}
         ]
-        
+
         return self.call_api(messages, tier=ModelTier.LIGHTWEIGHT)
-    
+
     def fundamental_analysis(self, stock_info: Dict, financial_data: Dict = None, quarterly_data: Dict = None) -> str:
         """基本面分析"""
         
@@ -361,16 +436,16 @@ class DeepSeekClient:
 - 主力资金流出 + 股价下跌 → 弱势信号，主力看空
 - 注意区分短期波动与趋势性变化
 
-请给出专业、详细、有深度的资金面分析报告。记住：要基于问财数据的实际内容进行分析，而不是假设！
+请给出专业、详细、有深度的资金面分析报告。记住：要基于上述实际资金流向数据进行分析，而不是假设！
 """
-        
+
         messages = [
             {"role": "system", "content": "你是一名经验丰富的资金面分析师，擅长市场资金流向和主力行为分析，能够深入解读资金数据背后的投资逻辑。"},
             {"role": "user", "content": prompt}
         ]
-        
+
         return self.call_api(messages, max_tokens=3000, tier=ModelTier.LIGHTWEIGHT)
-    
+
     def comprehensive_discussion(self, technical_report: str, fundamental_report: str, 
                                fund_flow_report: str, stock_info: Dict) -> str:
         """综合讨论"""
@@ -441,7 +516,7 @@ class DeepSeekClient:
 8. 风险提示
 9. 仓位建议（轻仓/中等仓位/重仓）
 
-请以JSON格式输出决策结果，格式如下：
+请只输出JSON格式的决策结果，不要输出额外说明、前言或Markdown代码块，格式如下：
 {{
     "rating": "买入/持有/卖出",
     "target_price": "目标价位数字",
@@ -455,28 +530,19 @@ class DeepSeekClient:
     "confidence_level": "信心度(1-10分)"
 }}
 """
-        
+
         messages = [
             {"role": "system", "content": "你是一名专业的投资决策专家，需要给出明确、可执行的投资建议。"},
             {"role": "user", "content": prompt}
         ]
-        
+
         response = self.call_api(
             messages,
             temperature=0.3,
             max_tokens=4000,
             tier=ModelTier.REASONING,
+            include_reasoning=False,
         )
-        
-        try:
-            # 尝试解析JSON响应
-            import re
-            json_match = re.search(r'\{.*\}', response, re.DOTALL)
-            if json_match:
-                decision_json = json.loads(json_match.group())
-                return decision_json
-            else:
-                # 如果无法解析JSON，返回文本响应
-                return {"decision_text": response}
-        except:
-            return {"decision_text": response}
+
+        decision_json = self._extract_json_object(response)
+        return decision_json

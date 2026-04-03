@@ -33,7 +33,6 @@ class SectorStrategyAgents:
         - 识别政策导向和宏观趋势
         """
         print("🌐 宏观策略师正在分析...")
-        time.sleep(1)
         
         # 构建新闻摘要
         news_summary = ""
@@ -143,7 +142,6 @@ class SectorStrategyAgents:
         - 分析板块的成长性和基本面因素
         """
         print("📊 板块诊断师正在分析...")
-        time.sleep(1)
         
         # 构建行业板块数据
         sector_summary = ""
@@ -261,7 +259,6 @@ class SectorStrategyAgents:
         - 判断资金进攻或撤离的方向
         """
         print("💰 资金流向分析师正在分析...")
-        time.sleep(1)
         
         # 构建资金流向数据
         fund_flow_summary = ""
@@ -400,7 +397,6 @@ class SectorStrategyAgents:
         - 评估板块热度和市场关注度
         """
         print("📈 市场情绪解码员正在分析...")
-        time.sleep(1)
         
         # 构建市场情绪指标
         sentiment_summary = ""

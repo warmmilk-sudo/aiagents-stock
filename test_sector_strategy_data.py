@@ -1,7 +1,53 @@
 import contextlib
 import io
 import logging
+import sys
+import time
+import types
 import unittest
+
+class _FakeILoc:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def __getitem__(self, index):
+        return self._rows[index]
+
+
+class _FakeDataFrame:
+    def __init__(self, rows=None):
+        self._rows = list(rows or [])
+        self.iloc = _FakeILoc(self._rows)
+
+    @property
+    def empty(self):
+        return len(self._rows) == 0
+
+    def iterrows(self):
+        for index, row in enumerate(self._rows):
+            yield index, row
+
+    def head(self, count):
+        return _FakeDataFrame(self._rows[:count])
+
+    def sort_values(self, key, ascending=True):
+        return _FakeDataFrame(sorted(self._rows, key=lambda row: row.get(key), reverse=not ascending))
+
+    def __len__(self):
+        return len(self._rows)
+
+
+sys.modules.setdefault(
+    "pandas",
+    types.SimpleNamespace(
+        DataFrame=_FakeDataFrame,
+        Series=dict,
+        Timestamp=str,
+        isna=lambda value: value is None,
+    ),
+)
+sys.modules.setdefault("akshare", types.SimpleNamespace())
+sys.modules.setdefault("dotenv", types.SimpleNamespace(load_dotenv=lambda *args, **kwargs: None))
 
 import pandas as pd
 
@@ -92,6 +138,35 @@ class SectorStrategyDataFetcherTests(unittest.TestCase):
 
         self.assertFalse(result["success"])
         self.assertIn("核心板块数据缺失", result["error"])
+
+    def test_get_all_sector_data_fetches_sources_in_parallel(self):
+        fetcher = self._make_fetcher()
+
+        def sleep_and_return(value):
+            def _inner():
+                time.sleep(0.2)
+                return value
+            return _inner
+
+        fetcher._get_sector_performance = sleep_and_return({"半导体": {"change_pct": 1.2}})
+        fetcher._get_concept_performance = sleep_and_return({"AI算力": {"change_pct": 2.3}})
+        fetcher._get_sector_fund_flow = sleep_and_return({"today": [{"sector": "半导体"}]})
+        fetcher._get_market_overview = sleep_and_return({"sh_index": {"close": 1}})
+        fetcher._get_north_money_flow = sleep_and_return({"north_net_inflow": 10})
+        fetcher._get_financial_news = sleep_and_return([{"title": "新闻"}])
+
+        started_at = time.perf_counter()
+        with contextlib.redirect_stdout(io.StringIO()):
+            result = fetcher.get_all_sector_data()
+        elapsed = time.perf_counter() - started_at
+
+        self.assertTrue(result["success"])
+        self.assertLess(elapsed, 0.45)
+        self.assertIn("半导体", result["sectors"])
+        self.assertIn("AI算力", result["concepts"])
+        self.assertEqual(result["sector_fund_flow"]["today"][0]["sector"], "半导体")
+        self.assertEqual(result["north_flow"]["north_net_inflow"], 10)
+        self.assertEqual(result["news"][0]["title"], "新闻")
 
 
 if __name__ == "__main__":

@@ -3,6 +3,14 @@
 整合各智能体分析，生成板块多空/轮动/热度预测
 """
 
+import concurrent.futures
+import json
+import logging
+import re
+from typing import Any, Callable, Dict, Optional
+
+import pandas as pd
+
 from sector_strategy_agents import SectorStrategyAgents
 from sector_strategy_db import SectorStrategyDatabase
 from deepseek_client import DeepSeekClient
@@ -16,12 +24,6 @@ from sector_strategy_normalization import (
     normalize_sector_strategy_result,
 )
 from time_utils import local_now_str, local_today_str
-from typing import Dict, Any
-import time
-import json
-import pandas as pd
-import logging
-import re
 
 
 class SectorStrategyEngine:
@@ -46,6 +48,17 @@ class SectorStrategyEngine:
         if not self.logger.handlers:
             logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(levelname)s %(name)s: %(message)s')
         print(f"[智策引擎] 初始化完成 (模型配置: {self.deepseek_client.model_selection})")
+
+    def _report_stage_progress(
+        self,
+        progress_callback: Optional[Callable[[int, int, str], None]],
+        current: int,
+        total: int,
+        message: str,
+    ) -> None:
+        if progress_callback is None:
+            return
+        progress_callback(current, total, message)
     
     def save_raw_data_with_fallback(self, data_type, data_df, data_date=None):
         """
@@ -116,7 +129,11 @@ class SectorStrategyEngine:
             self.logger.error(f"[智策引擎] 获取{data_type}数据失败: {e}")
             return pd.DataFrame(), True, str(e)
     
-    def run_comprehensive_analysis(self, data: Dict) -> Dict[str, Any]:
+    def run_comprehensive_analysis(
+        self,
+        data: Dict,
+        progress_callback: Optional[Callable[[int, int, str], None]] = None,
+    ) -> Dict[str, Any]:
         """
         运行综合分析流程
         
@@ -142,50 +159,60 @@ class SectorStrategyEngine:
             # 1. 运行四个AI智能体分析
             print("\n[阶段1] AI智能体分析集群工作中...")
             print("-" * 60)
-            
+            self._report_stage_progress(progress_callback, 25, 100, "AI 分析师团队正在分析板块与市场...")
+
+            agent_tasks = {
+                "macro": (
+                    "宏观策略师",
+                    lambda: self.agents.macro_strategist_agent(
+                        market_data=data.get("market_overview", {}),
+                        news_data=data.get("news", []),
+                    ),
+                ),
+                "sector": (
+                    "板块诊断师",
+                    lambda: self.agents.sector_diagnostician_agent(
+                        sectors_data=data.get("sectors", {}),
+                        concepts_data=data.get("concepts", {}),
+                        market_data=data.get("market_overview", {}),
+                    ),
+                ),
+                "fund": (
+                    "资金流向分析师",
+                    lambda: self.agents.fund_flow_analyst_agent(
+                        fund_flow_data=data.get("sector_fund_flow", {}),
+                        north_flow_data=data.get("north_flow", {}),
+                        sectors_data=data.get("sectors", {}),
+                    ),
+                ),
+                "sentiment": (
+                    "市场情绪解码员",
+                    lambda: self.agents.market_sentiment_decoder_agent(
+                        market_data=data.get("market_overview", {}),
+                        sectors_data=data.get("sectors", {}),
+                        concepts_data=data.get("concepts", {}),
+                    ),
+                ),
+            }
+
             agents_results = {}
-            
-            # 宏观策略师
-            print("1/4 宏观策略师...")
-            macro_result = self.agents.macro_strategist_agent(
-                market_data=data.get("market_overview", {}),
-                news_data=data.get("news", [])
-            )
-            agents_results["macro"] = macro_result
-            
-            # 板块诊断师
-            print("2/4 板块诊断师...")
-            sector_result = self.agents.sector_diagnostician_agent(
-                sectors_data=data.get("sectors", {}),
-                concepts_data=data.get("concepts", {}),
-                market_data=data.get("market_overview", {})
-            )
-            agents_results["sector"] = sector_result
-            
-            # 资金流向分析师
-            print("3/4 资金流向分析师...")
-            fund_result = self.agents.fund_flow_analyst_agent(
-                fund_flow_data=data.get("sector_fund_flow", {}),
-                north_flow_data=data.get("north_flow", {}),
-                sectors_data=data.get("sectors", {})
-            )
-            agents_results["fund"] = fund_result
-            
-            # 市场情绪解码员
-            print("4/4 市场情绪解码员...")
-            sentiment_result = self.agents.market_sentiment_decoder_agent(
-                market_data=data.get("market_overview", {}),
-                sectors_data=data.get("sectors", {}),
-                concepts_data=data.get("concepts", {})
-            )
-            agents_results["sentiment"] = sentiment_result
-            
+            with concurrent.futures.ThreadPoolExecutor(max_workers=len(agent_tasks)) as executor:
+                future_map = {}
+                for key, (label, task_fn) in agent_tasks.items():
+                    print(f"- {label}...")
+                    future_map[executor.submit(task_fn)] = key
+
+                for future in concurrent.futures.as_completed(future_map):
+                    key = future_map[future]
+                    agents_results[key] = future.result()
+
             results["agents_analysis"] = agents_results
             print("\n✓ 所有智能体分析完成")
             
             # 2. 综合研判
             print("\n[阶段2] 综合研判引擎工作中...")
             print("-" * 60)
+            self._report_stage_progress(progress_callback, 75, 100, "AI 团队正在进行综合讨论...")
             comprehensive_report = self._conduct_comprehensive_discussion(agents_results)
             results["comprehensive_report"] = comprehensive_report
             print("✓ 综合研判完成")
@@ -193,6 +220,7 @@ class SectorStrategyEngine:
             # 3. 生成最终预测
             print("\n[阶段3] 生成最终预测...")
             print("-" * 60)
+            self._report_stage_progress(progress_callback, 90, 100, "正在生成智策最终决策...")
             predictions = self._generate_final_predictions(comprehensive_report, agents_results, data)
             results["final_predictions"] = predictions
             print("✓ 预测生成完成")
@@ -234,7 +262,6 @@ class SectorStrategyEngine:
         综合研判 - 整合各智能体的分析
         """
         print("  🤝 智能体团队正在综合讨论...")
-        time.sleep(2)
         
         # 收集各分析师的报告
         macro_analysis = agents_results.get("macro", {}).get("analysis", "")
@@ -312,7 +339,6 @@ class SectorStrategyEngine:
         生成最终预测 - 板块多空/轮动/热度
         """
         print("  📊 生成板块多空/轮动/热度预测...")
-        time.sleep(2)
         
         # 提取板块列表用于预测
         sectors_list = []
