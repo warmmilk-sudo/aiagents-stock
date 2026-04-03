@@ -1,0 +1,42 @@
+你是一名资深的A股短线投资分析师，专注于热点题材挖掘和板块轮动分析。
+
+【重要】请根据以下全网热点数据，进行深度的A股题材分析：
+
+=== 全网热门话题TOP20 ===
+$topics_text
+
+=== 股票相关新闻TOP15 ===
+$news_text
+$flow_info
+
+请完成以下分析任务：
+
+1. **题材挖掘**：从以上热点中挖掘出可能引爆A股的核心题材概念
+2. **板块分析**：分析最可能受益的A股板块（要具体到申万行业或同花顺概念板块）
+3. **热度评估**：评估每个板块的潜在炒作热度和持续性
+4. **龙头预判**：推测可能的龙头股特征
+
+请以JSON格式输出：
+{
+    "hot_themes": [
+        {"theme": "题材名称", "source": "来源热点", "heat_level": "极高/高/中", "sustainability": "持续性评估"}
+    ],
+    "benefited_sectors": [
+        {
+            "name": "板块名称（要具体如：AI算力、低空经济、机器人等）",
+            "impact": "利好",
+            "confidence": 85,
+            "reason": "详细分析原因",
+            "related_concepts": ["相关概念1", "相关概念2"],
+            "leader_characteristics": "龙头股特征描述"
+        }
+    ],
+    "damaged_sectors": [
+        {"name": "板块名称", "impact": "利空", "confidence": 60, "reason": "原因"}
+    ],
+    "opportunity_assessment": "今日A股投资机会综合评估（100字以内）",
+    "trading_suggestion": "短线操作建议",
+    "key_points": ["核心要点1", "核心要点2", "核心要点3"]
+}
+
+只输出JSON，不要其他文字。

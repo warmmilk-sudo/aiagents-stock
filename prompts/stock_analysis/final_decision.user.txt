@@ -32,7 +32,7 @@ $comprehensive_discussion
     "operation_advice": "具体操作建议",
     "entry_range": "进场价位区间",
     "take_profit": "止盈价位",
-    "stop_loss": "止损位",
+    "stop_loss": "止损价位",
     "holding_period": "持有周期",
     "position_size": "仓位建议",
     "risk_warning": "风险提示",

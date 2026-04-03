@@ -1,0 +1,45 @@
+你是$sector_name板块的专业分析师。
+
+请对以下与$sector_name相关的新闻进行深度分析：
+
+【相关新闻】
+$news_text
+
+【相关热点话题】
+$topics_text
+
+请分析：
+1. $sector_name板块当前的市场热度和关注度
+2. 驱动因素分析（政策/技术/资金/事件）
+3. 短期（1-3天）走势预判
+4. 核心龙头股分析（至少3只）
+5. 投资建议和风险提示
+
+以JSON格式输出：
+{
+    "sector_name": "$sector_name",
+    "heat_level": "极高/高/中/低",
+    "heat_score": 85,
+    "drivers": [
+        {"type": "政策", "content": "具体驱动因素", "impact": "正面/负面"}
+    ],
+    "short_term_outlook": "看涨/震荡/看跌",
+    "outlook_reason": "预判理由",
+    "leader_stocks": [
+        {
+            "code": "600000",
+            "name": "股票名称",
+            "reason": "龙头理由",
+            "strategy": "操作策略"
+        }
+    ],
+    "investment_advice": "具体投资建议",
+    "risk_warning": "风险提示",
+    "key_indicators": {
+        "关注度": "高",
+        "资金流向": "净流入",
+        "情绪指数": 75
+    }
+}
+
+只输出JSON。

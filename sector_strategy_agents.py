@@ -5,6 +5,7 @@
 
 from deepseek_client import DeepSeekClient
 from model_routing import ModelTier
+from prompt_registry import build_messages
 from typing import Dict, Any
 import time
 
@@ -68,53 +69,12 @@ class SectorStrategyAgents:
   涨停: {market_data['limit_up']} | 跌停: {market_data['limit_down']}
 """
         
-        prompt = f"""
-你是一名资深的宏观策略分析师，拥有10年以上的市场研究经验，擅长从宏观经济和政策新闻中洞察市场趋势。
-
-{market_summary}
-{news_summary}
-
-请基于以上信息，从宏观角度进行深度分析：
-
-1. **宏观环境评估**
-   - 当前宏观经济形势判断（经济周期位置）
-   - 政策环境分析（货币政策、财政政策倾向）
-   - 国际环境影响（地缘政治、全球经济）
-   - 市场整体风险偏好评估
-
-2. **新闻事件影响分析**
-   - 识别对市场影响最大的3-5条重要新闻
-   - 分析新闻的性质（利好/利空/中性）和影响范围
-   - 判断新闻对不同板块的差异化影响
-   - 识别政策导向和行业扶持重点
-
-3. **行业板块影响预判**
-   - 分析哪些板块受宏观环境影响最积极（看多）
-   - 分析哪些板块面临宏观压力（看空）
-   - 识别政策支持的重点行业
-   - 预判资金可能流向的板块
-
-4. **市场情绪和节奏**
-   - 当前市场情绪状态（恐慌/谨慎/乐观/亢奋）
-   - 大盘趋势判断（上涨/震荡/下跌）
-   - 市场参与热情（活跃度、成交量）
-   - 风险偏好变化趋势
-
-5. **投资策略建议**
-   - 当前宏观环境下的配置思路
-   - 建议重点关注的板块（3-5个）
-   - 建议规避的板块（2-3个）
-   - 仓位管理建议
-
-输出要求：最终答案必须使用简体中文，不要输出英文标题、英文标签或英文解释。
-
-请给出专业、深入的宏观策略分析报告。
-"""
-        
-        messages = [
-            {"role": "system", "content": "你是一名资深的宏观策略分析师，擅长从宏观经济、政策和新闻事件中把握市场脉搏。最终输出必须使用简体中文。"},
-            {"role": "user", "content": prompt}
-        ]
+        messages = build_messages(
+            "sector_strategy/macro.system.txt",
+            "sector_strategy/macro.user.txt",
+            market_summary=market_summary,
+            news_summary=news_summary,
+        )
         
         analysis = self.deepseek_client.call_api(
             messages,
@@ -175,63 +135,13 @@ class SectorStrategyAgents:
             for idx, (name, info) in enumerate(sorted_concepts[:15], 1):
                 concept_summary += f"{idx}. {name}: {info['change_pct']:+.2f}% | 换手率: {info['turnover']:.2f}% | 领涨股: {info['top_stock']} ({info['top_stock_change']:+.2f}%)\n"
         
-        prompt = f"""
-你是一名资深的板块分析师，具有CFA资格和深厚的行业研究背景，擅长板块诊断和趋势判断。
-
-【市场环境】
-{self._format_market_overview(market_data)}
-
-{sector_summary}
-
-{concept_summary}
-
-请基于以上数据，进行专业的板块诊断分析：
-
-1. **板块强弱分析**
-   - 识别当前最强势的5个板块（涨幅、换手率、领涨股表现综合考虑）
-   - 识别当前最弱势的3个板块
-   - 分析板块强弱的内在逻辑（基本面、资金面、情绪面）
-   - 判断强势板块的持续性
-
-2. **板块估值与位置**
-   - 评估热门板块的估值合理性
-   - 判断板块所处的位置（启动期/加速期/高位/调整期）
-   - 识别估值洼地（低估且有潜力的板块）
-   - 提示估值泡沫风险
-
-3. **板块轮动特征**
-   - 分析当前的板块轮动特征
-   - 识别资金轮动的方向和节奏
-   - 判断是否存在明显的板块切换信号
-   - 预判下一个可能轮动的板块
-
-4. **成长性与基本面**
-   - 分析强势板块的成长驱动因素
-   - 评估板块的中长期发展前景
-   - 识别具有持续成长潜力的板块
-   - 提示基本面恶化的风险板块
-
-5. **技术形态分析**
-   - 分析板块的技术走势特征
-   - 识别突破、整理、调整等形态
-   - 判断技术面的支撑和阻力
-   - 提供技术性买卖点参考
-
-6. **投资建议**
-   - 推荐3-5个值得关注的板块（多头方向）
-   - 提示2-3个需要规避的板块（空头方向）
-   - 给出每个板块的投资逻辑和风险提示
-   - 建议配置比例和持有周期
-
-输出要求：最终答案必须使用简体中文，不要输出英文标题、英文标签或英文解释。
-
-请给出专业、详细的板块诊断报告。
-"""
-        
-        messages = [
-            {"role": "system", "content": "你是一名资深的板块分析师，擅长板块趋势判断和投资价值评估。最终输出必须使用简体中文。"},
-            {"role": "user", "content": prompt}
-        ]
+        messages = build_messages(
+            "sector_strategy/sector_diagnostician.system.txt",
+            "sector_strategy/sector_diagnostician.user.txt",
+            market_overview=self._format_market_overview(market_data),
+            sector_summary=sector_summary,
+            concept_summary=concept_summary,
+        )
         
         analysis = self.deepseek_client.call_api(
             messages,
@@ -304,72 +214,12 @@ class SectorStrategyAgents:
                 for item in north_flow_data['history'][:10]:
                     north_summary += f"  {item['date']}: {item['net_inflow']:.2f}万\n"
         
-        prompt = f"""
-你是一名资深的资金流向分析师，拥有15年的市场资金研究经验，擅长从资金流向中洞察主力意图和市场趋势。
-
-{fund_flow_summary}
-
-{north_summary}
-
-请基于以上资金流向数据，进行深入的板块资金分析：
-
-1. **主力资金流向分析** ⭐ 核心
-   - 识别主力资金重点流入的板块（TOP5）
-   - 分析主力资金大幅流出的板块（TOP3）
-   - 判断资金流向的集中度（集中/分散）
-   - 评估资金流向的持续性和强度
-
-2. **资金类型分析**
-   - 超大单资金的流向特征（机构大资金）
-   - 大单资金的流向特征（主力资金）
-   - 中小单资金的流向（散户资金）
-   - 主力与散户的博弈特征
-
-3. **量价配合分析**
-   - 分析资金流入与板块涨幅的匹配度
-   - 识别"资金流入+板块上涨"的强势板块
-   - 识别"资金流入+板块下跌"的低吸信号
-   - 识别"资金流出+板块上涨"的出货警示
-   - 识别"资金流出+板块下跌"的弱势板块
-
-4. **北向资金偏好**
-   - 分析北向资金的流向趋势
-   - 判断外资对A股的态度（积极/观望/撤离）
-   - 识别北向资金偏好的板块
-   - 评估北向资金的指示意义
-
-5. **板块资金轮动**
-   - 识别资金从哪些板块流出
-   - 识别资金流向哪些板块
-   - 分析板块资金轮动的节奏和方向
-   - 预判下一个资金可能流入的板块
-
-6. **主力操作意图研判**
-   - 判断主力是否在积极建仓某些板块
-   - 识别主力可能在出货的板块
-   - 分析主力的操作风格（激进/稳健）
-   - 评估主力对后市的态度
-
-7. **投资策略建议**
-   - 基于资金流向，推荐3-5个强势板块
-   - 提示2-3个资金流出的风险板块
-   - 给出板块配置的优先级
-   - 提供跟随主力的操作建议
-
-8. **风险提示**
-   - 识别资金面的潜在风险
-   - 提示可能的资金陷阱
-   - 评估市场流动性状况
-
-输出要求：最终答案必须使用简体中文，不要输出英文标题、英文标签或英文解释。
-
-请给出专业、深度的资金流向分析报告。
-"""
-        
-        messages = [
-            {"role": "system", "content": "你是一名资深的资金流向分析师，擅长从资金数据中洞察主力意图和市场趋势。最终输出必须使用简体中文。"},
-            {"role": "user", "content": prompt}
-        ]
+        messages = build_messages(
+            "sector_strategy/fund_flow.system.txt",
+            "sector_strategy/fund_flow.user.txt",
+            fund_flow_summary=fund_flow_summary,
+            north_summary=north_summary,
+        )
         
         analysis = self.deepseek_client.call_api(
             messages,
@@ -453,74 +303,13 @@ class SectorStrategyAgents:
             for idx, (name, info) in enumerate(sorted_concepts[:10], 1):
                 hot_concepts += f"{idx}. {name}: {info['change_pct']:+.2f}% | 换手率: {info['turnover']:.2f}%\n"
         
-        prompt = f"""
-你是一名资深的市场情绪分析师，拥有心理学和金融学双重背景，擅长从市场数据中解读投资者情绪和市场心理。
-
-{sentiment_summary}
-
-{hot_sectors}
-
-{hot_concepts}
-
-请基于以上数据，进行深入的市场情绪分析：
-
-1. **整体市场情绪评估**
-   - 量化当前市场情绪（0-100分，0=极度恐慌，50=中性，100=极度亢奋）
-   - 判断市场情绪状态（恐慌/谨慎/中性/乐观/亢奋）
-   - 分析情绪的强度和持续性
-   - 对比历史情绪水平
-
-2. **赚钱效应分析**
-   - 评估市场的赚钱效应（强/中/弱）
-   - 分析上涨股票占比和涨停数量
-   - 判断是否存在明显的板块效应
-   - 评估散户参与热情
-
-3. **市场热点分析**
-   - 识别当前最热门的3-5个板块/概念
-   - 分析热点的形成原因和逻辑
-   - 评估热点的持续性和扩散性
-   - 判断是否存在炒作泡沫
-
-4. **恐慌贪婪指数**
-   - 综合判断市场的贪婪或恐慌程度
-   - 分析涨跌停数量反映的情绪极端
-   - 识别情绪拐点信号
-   - 提示过度贪婪或过度恐慌的风险
-
-5. **板块情绪分化**
-   - 分析不同板块的情绪差异
-   - 识别高情绪板块和低情绪板块
-   - 判断情绪分化是否合理
-   - 预判情绪可能扩散的方向
-
-6. **换手率与活跃度**
-   - 分析整体市场和板块的换手率
-   - 评估市场活跃度（活跃/一般/低迷）
-   - 判断资金参与意愿
-   - 识别异常活跃的板块
-
-7. **情绪对市场的影响**
-   - 分析当前情绪对大盘的支撑或压制
-   - 判断情绪反转的可能性和时机
-   - 评估情绪驱动的交易机会
-   - 提示情绪面的风险
-
-8. **投资策略建议**
-   - 基于市场情绪给出操作建议
-   - 推荐情绪支持的板块（2-3个）
-   - 提示情绪透支的风险板块（1-2个）
-   - 给出仓位管理建议
-
-输出要求：最终答案必须使用简体中文，不要输出英文标题、英文标签或英文解释。
-
-请给出专业、客观的市场情绪分析报告，避免主观臆测。
-"""
-        
-        messages = [
-            {"role": "system", "content": "你是一名资深的市场情绪分析师，擅长从市场数据中解读投资者情绪和市场心理。最终输出必须使用简体中文。"},
-            {"role": "user", "content": prompt}
-        ]
+        messages = build_messages(
+            "sector_strategy/market_sentiment.system.txt",
+            "sector_strategy/market_sentiment.user.txt",
+            sentiment_summary=sentiment_summary,
+            hot_sectors=hot_sectors,
+            hot_concepts=hot_concepts,
+        )
         
         analysis = self.deepseek_client.call_api(
             messages,

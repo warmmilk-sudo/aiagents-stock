@@ -15,6 +15,7 @@ from sector_strategy_agents import SectorStrategyAgents
 from sector_strategy_db import SectorStrategyDatabase
 from deepseek_client import DeepSeekClient
 from model_routing import ModelTier
+from prompt_registry import build_messages
 from sector_strategy_normalization import (
     DEFAULT_INVESTMENT_HORIZON,
     build_sector_strategy_summary,
@@ -269,61 +270,14 @@ class SectorStrategyEngine:
         fund_analysis = agents_results.get("fund", {}).get("analysis", "")
         sentiment_analysis = agents_results.get("sentiment", {}).get("analysis", "")
         
-        prompt = f"""
-你是智策系统的首席策略官，现在需要综合四位专业分析师的报告，形成全面的市场和板块研判。
-
-【宏观策略师报告】
-{macro_analysis}
-
-【板块诊断师报告】
-{sector_analysis}
-
-【资金流向分析师报告】
-{fund_analysis}
-
-【市场情绪解码员报告】
-{sentiment_analysis}
-
-请基于以上四位分析师的专业报告，进行深度综合研判：
-
-1. **观点一致性分析**
-   - 四位分析师的核心观点有哪些一致之处？
-   - 在哪些方面存在分歧或不同看法？
-   - 如何理解这些分歧的合理性？
-
-2. **多维度交叉验证**
-   - 宏观环境、板块基本面、资金流向、市场情绪是否形成共振？
-   - 哪些板块得到了多维度的支持？
-   - 哪些板块存在多维度的风险信号？
-
-3. **关键矛盾识别**
-   - 当前市场和板块的主要矛盾是什么？
-   - 哪些因素可能成为决定性因素？
-   - 如何平衡不同维度的分析结论？
-
-4. **综合判断**
-   - 基于四个维度的综合分析，对市场整体趋势的判断
-   - 对板块轮动方向的判断
-   - 对市场风险收益比的评估
-   - 当前最值得把握的机会在哪里？
-
-5. **策略权重建议**
-   - 在当前环境下，四个分析维度的重要性权重（宏观/板块/资金/情绪）
-   - 应该重点参考哪个维度的建议？
-   - 需要警惕哪个维度的风险？
-
-输出要求：
-1. 最终答案必须使用简体中文。
-2. 不要输出英文标题、英文标签、英文解释。
-3. 结论要清晰分段，便于后续解析展示。
-
-请给出专业、全面的综合研判报告，体现多维度分析的价值。
-"""
-        
-        messages = [
-            {"role": "system", "content": "你是智策系统的首席策略官，需要整合多维度分析，形成全面的投资策略。最终输出必须使用简体中文。"},
-            {"role": "user", "content": prompt}
-        ]
+        messages = build_messages(
+            "sector_strategy/comprehensive_discussion.system.txt",
+            "sector_strategy/comprehensive_discussion.user.txt",
+            macro_analysis=macro_analysis,
+            sector_analysis=sector_analysis,
+            fund_analysis=fund_analysis,
+            sentiment_analysis=sentiment_analysis,
+        )
         
         report = self.deepseek_client.call_api(
             messages,
@@ -348,118 +302,12 @@ class SectorStrategyEngine:
         
         sectors_str = ", ".join(sectors_list) if sectors_list else "未知板块"
         
-        prompt = f"""
-基于前期的深度分析和综合研判，现在需要生成最终的板块预测报告。
-
-【综合研判结论】
-{comprehensive_report}
-
-【参考板块列表】
-{sectors_str}
-
-请生成以下三类预测，并以JSON格式输出：
-
-1. **板块多空情况**
-   - 看多板块（5-8个）：综合判断未来1-2周看涨的板块
-   - 看空板块（3-5个）：综合判断未来1-2周看跌的板块
-   - 中性板块（2-3个）：走势不明朗的板块
-   
-   对每个板块给出：
-   - 板块名称
-   - 多空判断（看多/看空/中性）
-   - 推荐理由（100字以内）
-   - 信心度（1-10分）
-   - 风险提示
-
-2. **板块轮动预测**
-   - 当前强势板块（正在走强的2-3个板块）
-   - 潜力接力板块（可能轮动到的3-5个板块）
-   - 衰退板块（正在走弱的2-3个板块）
-   
-   对每个板块给出：
-   - 板块名称
-   - 轮动阶段（强势/潜力/衰退）
-   - 轮动逻辑（150字以内）
-   - 预计时间窗口
-   - 操作建议
-
-3. **板块热度排行**
-   - 最热板块TOP5（综合资金、情绪、涨幅）
-   - 升温板块TOP5（热度快速上升的板块）
-   - 降温板块TOP3（热度快速下降的板块）
-   
-   对每个板块给出：
-   - 板块名称
-   - 热度评分（0-100分）
-   - 热度变化趋势（升温/降温/稳定）
-   - 持续性评估（强/中/弱）
-
-请严格按照以下JSON格式输出：
-{{
-    "long_short": {{
-        "bullish": [
-            {{
-                "sector": "板块名称",
-                "direction": "看多",
-                "reason": "推荐理由",
-                "confidence": 8,
-                "risk": "风险提示"
-            }}
-        ],
-        "bearish": [...],
-        "neutral": [...]
-    }},
-    "rotation": {{
-        "current_strong": [
-            {{
-                "sector": "板块名称",
-                "stage": "强势",
-                "logic": "轮动逻辑",
-                "time_window": "1-2周",
-                "advice": "操作建议"
-            }}
-        ],
-        "potential": [...],
-        "declining": [...]
-    }},
-    "heat": {{
-        "hottest": [
-            {{
-                "sector": "板块名称",
-                "score": 95,
-                "trend": "升温",
-                "sustainability": "强"
-            }}
-        ],
-        "heating": [...],
-        "cooling": [...]
-    }},
-    "summary": {{
-        "market_view": "市场整体看法",
-        "key_opportunity": "核心机会",
-        "major_risk": "主要风险",
-        "strategy": "整体策略建议"
-    }},
-    "confidence_score": 78,
-    "risk_level": "中等",
-    "market_outlook": "中性"
-}}
-
-注意：
-1. 所有板块名称必须从参考板块列表中选择
-2. 分析要基于前期的多维度研判
-3. 给出的建议要具体、可操作
-4. 预测要客观、理性，避免过度乐观或悲观
-5. 只输出一个 JSON 对象，不要输出 Markdown、代码块、额外说明文字
-6. JSON key 必须严格使用上述英文 schema
-7. 所有 value 必须使用简体中文，不能出现英文标题、英文解释
-8. confidence_score 使用 0-100 的整数
-"""
-        
-        messages = [
-            {"role": "system", "content": "你是智策系统的预测引擎，需要输出严格可解析的 JSON。JSON key 使用英文，所有 value 必须使用简体中文。禁止输出代码块和额外说明。"},
-            {"role": "user", "content": prompt}
-        ]
+        messages = build_messages(
+            "sector_strategy/final_predictions.system.txt",
+            "sector_strategy/final_predictions.user.txt",
+            comprehensive_report=comprehensive_report,
+            sectors_str=sectors_str,
+        )
         
         response = self.deepseek_client.call_api(
             messages,
@@ -507,33 +355,13 @@ class SectorStrategyEngine:
         return not normalized.get("warnings", {}).get("missing_fields")
 
     def _repair_prediction_response(self, raw_response: str, comprehensive_report: str, sectors_str: str) -> str:
-        repair_prompt = f"""
-你需要把下面这段输出修复成一个严格合法的 JSON 对象。
-
-【综合研判结论】
-{comprehensive_report}
-
-【参考板块列表】
-{sectors_str}
-
-【原始输出】
-{raw_response}
-
-要求：
-1. 只输出一个 JSON 对象，不要输出 Markdown、代码块或任何解释。
-2. JSON 顶层必须包含：long_short, rotation, heat, summary, confidence_score, risk_level, market_outlook。
-3. long_short 必须包含：bullish, neutral, bearish。
-4. rotation 必须包含：current_strong, potential, declining。
-5. heat 必须包含：hottest, heating, cooling。
-6. summary 必须包含：market_view, key_opportunity, major_risk, strategy。
-7. JSON key 保持英文，所有 value 必须是简体中文。
-8. confidence_score 使用 0-100 的整数。
-9. 如果某个字段无法确定，请使用空数组或“暂无”补齐，不要省略字段。
-"""
-        messages = [
-            {"role": "system", "content": "你是 JSON 修复助手，只输出严格合法的 JSON 对象。所有 value 必须使用简体中文。"},
-            {"role": "user", "content": repair_prompt},
-        ]
+        messages = build_messages(
+            "sector_strategy/repair_prediction.system.txt",
+            "sector_strategy/repair_prediction.user.txt",
+            comprehensive_report=comprehensive_report,
+            sectors_str=sectors_str,
+            raw_response=raw_response,
+        )
         return self.deepseek_client.call_api(
             messages,
             temperature=0.1,

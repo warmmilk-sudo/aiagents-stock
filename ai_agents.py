@@ -1,6 +1,7 @@
 import concurrent.futures
 from deepseek_client import DeepSeekClient
 from model_routing import ModelTier
+from prompt_registry import build_messages
 from typing import Any, Dict
 import time
 
@@ -124,111 +125,18 @@ class StockAnalysisAgents:
 
 以上是通过问财（pywencai）获取的实际风险数据，请重点关注这些数据进行深度风险分析。
 """
-        risk_prompt = f"""
-作为资深风险管理专家，请基于以下信息进行全面深度的风险评估：
-
-股票信息：
-- 股票代码：{stock_info.get('symbol', 'N/A')}
-- 股票名称：{stock_info.get('name', 'N/A')}
-- 当前价格：{stock_info.get('current_price', 'N/A')}
-- Beta系数：{stock_info.get('beta', 'N/A')}
-- 52周最高：{stock_info.get('52_week_high', 'N/A')}
-- 52周最低：{stock_info.get('52_week_low', 'N/A')}
-
-技术指标：
-- RSI：{indicators.get('rsi', 'N/A')}
-- 布林带位置：当前价格相对于上下轨的位置
-- 波动率指标等
-{risk_data_text}
-
-⚠️ 重要提示：以上风险数据是从问财（pywencai）实时查询的完整原始数据，请你：
-1. 仔细解析每一条记录的所有字段信息
-2. 识别数据中的关键风险点（时间、规模、频率、股东身份等）
-3. 对数据进行深度分析，不要遗漏任何重要信息
-4. 如果数据中有日期字段，要特别关注最近的记录和即将发生的事件
-5. 如果数据中有金额/比例字段，要评估其规模和影响力
-6. 基于实际数据给出量化的风险评估，而不是空泛的描述
-
-请从以下角度进行全面的风险评估：
-
-1. **限售解禁风险分析** ⭐ 重点
-   - 解禁时间和规模评估
-   - 解禁对股价的潜在冲击
-   - 解禁股东类型分析（创始人/投资机构/其他）
-   - 历史解禁后股价走势参考
-   - 风险等级评定和应对建议
-
-2. **股东减持风险分析** ⭐ 重点
-   - 减持频率和力度评估
-   - 减持股东身份和意图分析
-   - 减持对市场信心的影响
-   - 是否存在连续减持或集中减持
-   - 风险警示和投资建议
-
-3. **重要事件风险分析** ⭐ 重点
-   - 识别可能影响股价的重大事件
-   - 事件性质判断（利好/利空/中性）
-   - 事件影响的时间维度（短期/中期/长期）
-   - 事件的确定性和不确定性
-   - 风险提示和关注要点
-
-4. **市场风险（系统性风险）**
-   - 宏观经济环境风险
-   - 市场整体走势风险
-   - Beta系数反映的市场敏感度
-   - 系统性风险应对策略
-
-5. **个股风险（非系统性风险）**
-   - 公司基本面风险
-   - 经营管理风险
-   - 竞争力风险
-   - 行业地位风险
-
-6. **流动性风险**
-   - 成交量和换手率分析
-   - 买卖盘深度评估
-   - 流动性枯竭风险
-   - 大额交易影响评估
-
-7. **波动性风险**
-   - 价格波动幅度分析
-   - 52周最高最低位分析
-   - RSI等技术指标的风险提示
-   - 波动率对投资的影响
-
-8. **估值风险**
-   - 当前估值水平评估
-   - 市场预期和估值偏差
-   - 估值过高风险警示
-
-9. **行业风险**
-   - 行业周期阶段
-   - 行业竞争格局
-   - 行业政策风险
-   - 行业技术变革风险
-
-10. **综合风险评定**
-    - 风险等级评定（低/中/高）
-    - 主要风险因素排序
-    - 风险暴露时间窗口
-    - 风险演变趋势判断
-
-11. **风险控制建议** ⭐ 核心
-    - 仓位控制建议（具体比例）
-    - 止损位设置建议（具体价位）
-    - 风险规避策略（什么情况下不建议投资）
-    - 风险对冲方案（如果适用）
-    - 持仓时间建议
-    - 重点关注指标和信号
-
-请基于实际数据进行客观、专业、严谨的风险评估，给出可操作的风险控制建议。
-如果某些风险数据缺失，也要指出数据缺失本身可能带来的风险。
-"""
-        
-        messages = [
-            {"role": "system", "content": "你是一名资深的风险管理专家，具有20年以上的风险识别和控制经验，擅长全面评估各类投资风险，特别关注限售解禁、股东减持、重要事件等可能影响股价的风险因素。你擅长从海量原始数据中提取关键信息，进行深度解析和量化评估。"},
-            {"role": "user", "content": risk_prompt}
-        ]
+        messages = build_messages(
+            "stock_analysis/risk.system.txt",
+            "stock_analysis/risk.user.txt",
+            symbol=stock_info.get("symbol", "N/A"),
+            name=stock_info.get("name", "N/A"),
+            current_price=stock_info.get("current_price", "N/A"),
+            beta=stock_info.get("beta", "N/A"),
+            high_52_week=stock_info.get("52_week_high", "N/A"),
+            low_52_week=stock_info.get("52_week_low", "N/A"),
+            rsi=indicators.get("rsi", "N/A"),
+            risk_data_text=risk_data_text,
+        )
 
         analysis = self.deepseek_client.call_api(
             messages,
@@ -269,56 +177,15 @@ class StockAnalysisAgents:
 以上是通过akshare获取的实际市场情绪数据，请重点基于这些数据进行分析。
 """
         
-        sentiment_prompt = f"""
-作为市场情绪分析专家，请基于当前市场环境和实际数据对以下股票进行情绪分析：
-
-股票信息：
-- 股票代码：{stock_info.get('symbol', 'N/A')}
-- 股票名称：{stock_info.get('name', 'N/A')}
-- 行业：{stock_info.get('sector', 'N/A')}
-- 细分行业：{stock_info.get('industry', 'N/A')}
-{sentiment_data_text}
-
-请从以下角度进行深度分析：
-
-1. **ARBR情绪指标分析**
-   - 详细解读AR和BR数值的含义
-   - 分析当前市场人气和投机意愿
-   - 判断是否存在超买超卖情况
-   - 基于ARBR历史统计数据评估当前位置
-
-2. **个股活跃度分析**
-   - 换手率反映的资金活跃程度
-   - 个股关注度和讨论热度
-   - 与历史水平对比
-
-3. **整体市场情绪**
-   - 大盘涨跌情况对个股的影响
-   - 市场涨跌家数反映的整体情绪
-   - 涨跌停数量反映的市场热度
-   - 恐慌贪婪指数的启示
-
-4. **资金情绪**
-   - 融资融券数据反映的看多看空情绪
-   - 主力资金动向
-   - 市场流动性状况
-
-5. **情绪对股价影响**
-   - 当前情绪对股价的支撑或压制作用
-   - 情绪反转的可能性和信号
-   - 短期情绪波动风险
-
-6. **投资建议**
-   - 基于市场情绪的操作建议
-   - 情绪面的机会和风险提示
-
-请确保分析基于实际数据，给出客观专业的市场情绪评估。
-"""
-        
-        messages = [
-            {"role": "system", "content": "你是一名专业的市场情绪分析师，擅长解读市场心理和投资者行为，善于利用ARBR等情绪指标进行分析。"},
-            {"role": "user", "content": sentiment_prompt}
-        ]
+        messages = build_messages(
+            "stock_analysis/market_sentiment.system.txt",
+            "stock_analysis/market_sentiment.user.txt",
+            symbol=stock_info.get("symbol", "N/A"),
+            name=stock_info.get("name", "N/A"),
+            sector=stock_info.get("sector", "N/A"),
+            industry=stock_info.get("industry", "N/A"),
+            sentiment_data_text=sentiment_data_text,
+        )
 
         analysis = self.deepseek_client.call_api(
             messages,
@@ -361,66 +228,15 @@ class StockAnalysisAgents:
 以上是通过qstock获取的实际新闻数据，请重点基于这些数据进行分析。
 """
         
-        news_prompt = f"""
-作为专业的新闻分析师，请基于最新的新闻对以下股票进行深度分析：
-
-股票信息：
-- 股票代码：{stock_info.get('symbol', 'N/A')}
-- 股票名称：{stock_info.get('name', 'N/A')}
-- 行业：{stock_info.get('sector', 'N/A')}
-- 细分行业：{stock_info.get('industry', 'N/A')}
-{news_text}
-
-请从以下角度进行深度分析：
-
-1. **新闻概要**
-   - 梳理最新的重要新闻
-   - 总结核心要点和关键信息
-   - 按重要性排序新闻
-
-2. **新闻性质分析**
-   - 分析新闻的性质（利好/利空/中性）
-   - 评估新闻的可信度和权威性
-   - 识别新闻来源和传播范围
-
-3. **影响评估**
-   - 评估新闻对股价的短期影响
-   - 分析新闻对公司长期发展的影响
-   - 判断新闻对行业的影响范围
-
-4. **热点识别**
-   - 识别市场关注的热点和焦点
-   - 分析该股票在市场中的关注度
-   - 评估舆论导向和市场情绪
-
-5. **重大事件识别**
-   - 识别可能影响股价的重大事件
-   - 评估事件的紧迫性和重要性
-   - 预判后续可能的发展和连锁反应
-
-6. **市场反应预判**
-   - 预测市场对新闻的可能反应
-   - 判断是否存在预期差
-   - 识别可能的交易机会窗口
-
-7. **风险提示**
-   - 识别新闻中的风险信号
-   - 评估潜在的负面影响
-   - 提示需要警惕的风险点
-
-8. **投资建议**
-   - 基于新闻的操作建议
-   - 关键时间节点和观察点
-   - 需要持续关注的事项
-
-请确保分析客观、专业，重点关注对投资决策有实质性影响的内容。
-如果某些新闻的重要性较低，可以简要提及或略过。
-"""
-        
-        messages = [
-            {"role": "system", "content": "你是一名专业的新闻分析师，擅长解读新闻事件、舆情分析，评估新闻对股价的影响。你具有敏锐的洞察力和丰富的市场经验。"},
-            {"role": "user", "content": news_prompt}
-        ]
+        messages = build_messages(
+            "stock_analysis/news.system.txt",
+            "stock_analysis/news.user.txt",
+            symbol=stock_info.get("symbol", "N/A"),
+            name=stock_info.get("name", "N/A"),
+            sector=stock_info.get("sector", "N/A"),
+            industry=stock_info.get("industry", "N/A"),
+            news_text=news_text,
+        )
 
         analysis = self.deepseek_client.call_api(
             messages,
@@ -533,31 +349,14 @@ class StockAnalysisAgents:
         if len(all_reports) > self._DISCUSSION_INPUT_LIMIT:
             all_reports = f"{all_reports[:self._DISCUSSION_INPUT_LIMIT].rstrip()}\n\n[讨论材料已截断]"
         
-        discussion_prompt = f"""
-现在进行投资决策团队会议，参会人员包括：{', '.join(participants)}。
-
-股票：{stock_info.get('name', 'N/A')} ({stock_info.get('symbol', 'N/A')})
-
-各分析师报告：
-
-{all_reports}
-
-请模拟一场真实的投资决策会议讨论：
-1. 各分析师观点的一致性和分歧
-2. 不同维度分析的权重考量
-3. 风险收益评估
-4. 投资时机判断
-5. 策略制定思路
-6. 达成初步共识
-
-请以对话形式展现讨论过程，体现专业团队的思辨过程。
-注意：只讨论参与分析的分析师的观点。
-"""
-        
-        messages = [
-            {"role": "system", "content": "你需要模拟一场专业的投资团队讨论会议，体现不同角色的观点碰撞和最终共识形成。"},
-            {"role": "user", "content": discussion_prompt}
-        ]
+        messages = build_messages(
+            "stock_analysis/team_discussion.system.txt",
+            "stock_analysis/team_discussion.user.txt",
+            participants=", ".join(participants),
+            stock_name=stock_info.get("name", "N/A"),
+            stock_symbol=stock_info.get("symbol", "N/A"),
+            all_reports=all_reports,
+        )
         
         discussion_result = self.deepseek_client.call_api(
             messages,

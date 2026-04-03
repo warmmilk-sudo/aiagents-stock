@@ -12,6 +12,7 @@ sys.modules.setdefault(
 
 from deepseek_client import DeepSeekClient
 from model_routing import ModelTier
+from prompt_registry import build_messages
 
 
 class DeepSeekClientTests(unittest.TestCase):
@@ -52,6 +53,56 @@ class DeepSeekClientTests(unittest.TestCase):
         )
 
         self.assertEqual(result, '{"ok":true}')
+
+    def test_build_messages_renders_external_prompt_templates(self):
+        messages = build_messages(
+            "stock_analysis/final_decision.system.txt",
+            "stock_analysis/final_decision.user.txt",
+            symbol="000001",
+            name="平安银行",
+            current_price="12.34",
+            comprehensive_discussion="偏多但需控制回撤。",
+            ma20="12.00",
+            bb_upper="12.80",
+            bb_lower="11.20",
+        )
+
+        self.assertEqual(messages[0]["role"], "system")
+        self.assertEqual(messages[1]["role"], "user")
+        self.assertIn("投资决策专家", messages[0]["content"])
+        self.assertIn("股票代码：000001", messages[1]["content"])
+        self.assertIn('"rating": "买入/持有/卖出"', messages[1]["content"])
+
+    def test_technical_analysis_uses_external_prompt_template(self):
+        captured = {}
+        client = DeepSeekClient.__new__(DeepSeekClient)
+
+        def fake_call_api(
+            self,
+            messages,
+            model=None,
+            temperature=0.7,
+            max_tokens=2000,
+            tier=None,
+            include_reasoning=True,
+        ):
+            captured["messages"] = messages
+            captured["tier"] = tier
+            return "技术分析结果"
+
+        client.call_api = types.MethodType(fake_call_api, client)
+
+        result = client.technical_analysis(
+            stock_info={"symbol": "000001", "name": "平安银行", "current_price": 12.34, "change_percent": 1.2},
+            stock_data=None,
+            indicators={"price": 12.34, "rsi": 55, "volume_ratio": 1.1},
+        )
+
+        self.assertEqual(result, "技术分析结果")
+        self.assertEqual(captured["tier"], ModelTier.LIGHTWEIGHT)
+        self.assertIn("股票技术分析师", captured["messages"][0]["content"])
+        self.assertIn("股票代码：000001", captured["messages"][1]["content"])
+        self.assertIn("历史行情摘要：暂无可用历史行情。", captured["messages"][1]["content"])
 
     def test_final_decision_uses_reasoning_tier(self):
         captured = {}

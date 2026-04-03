@@ -1,0 +1,21 @@
+你需要把下面这段输出修复成一个严格合法的 JSON 对象。
+
+【综合研判结论】
+$comprehensive_report
+
+【参考板块列表】
+$sectors_str
+
+【原始输出】
+$raw_response
+
+要求：
+1. 只输出一个 JSON 对象，不要输出 Markdown、代码块或任何解释。
+2. JSON 顶层必须包含：long_short, rotation, heat, summary, confidence_score, risk_level, market_outlook。
+3. long_short 必须包含：bullish, neutral, bearish。
+4. rotation 必须包含：current_strong, potential, declining。
+5. heat 必须包含：hottest, heating, cooling。
+6. summary 必须包含：market_view, key_opportunity, major_risk, strategy。
+7. JSON key 保持英文，所有 value 必须是简体中文。
+8. confidence_score 使用 0-100 的整数。
+9. 如果某个字段无法确定，请使用空数组或“暂无”补齐，不要省略字段。

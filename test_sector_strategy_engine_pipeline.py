@@ -81,6 +81,61 @@ class SectorStrategyEnginePipelineTests(unittest.TestCase):
             ],
         )
 
+    def test_conduct_comprehensive_discussion_uses_external_prompt_templates(self):
+        captured = {}
+        engine = SectorStrategyEngine.__new__(SectorStrategyEngine)
+
+        def fake_call_api(messages, max_tokens=None, tier=None):
+            captured["messages"] = messages
+            captured["max_tokens"] = max_tokens
+            captured["tier"] = tier
+            return "综合研判报告"
+
+        engine.deepseek_client = types.SimpleNamespace(call_api=fake_call_api)
+
+        result = engine._conduct_comprehensive_discussion(
+            {
+                "macro": {"analysis": "宏观观点"},
+                "sector": {"analysis": "板块观点"},
+                "fund": {"analysis": "资金观点"},
+                "sentiment": {"analysis": "情绪观点"},
+            }
+        )
+
+        self.assertEqual(result, "综合研判报告")
+        self.assertEqual(captured["max_tokens"], 5000)
+        self.assertEqual(captured["tier"].value, "reasoning")
+        self.assertIn("首席策略官", captured["messages"][0]["content"])
+        self.assertIn("【宏观策略师报告】", captured["messages"][1]["content"])
+        self.assertIn("【市场情绪解码员报告】", captured["messages"][1]["content"])
+
+    def test_repair_prediction_response_uses_external_prompt_templates(self):
+        captured = {}
+        engine = SectorStrategyEngine.__new__(SectorStrategyEngine)
+
+        def fake_call_api(messages, temperature=None, max_tokens=None, tier=None):
+            captured["messages"] = messages
+            captured["temperature"] = temperature
+            captured["max_tokens"] = max_tokens
+            captured["tier"] = tier
+            return '{"summary":{"market_view":"中性"}}'
+
+        engine.deepseek_client = types.SimpleNamespace(call_api=fake_call_api)
+
+        result = engine._repair_prediction_response(
+            raw_response="错误输出",
+            comprehensive_report="综合结论",
+            sectors_str="半导体, AI算力",
+        )
+
+        self.assertEqual(result, '{"summary":{"market_view":"中性"}}')
+        self.assertEqual(captured["temperature"], 0.1)
+        self.assertEqual(captured["max_tokens"], 5000)
+        self.assertEqual(captured["tier"].value, "reasoning")
+        self.assertIn("JSON 修复助手", captured["messages"][0]["content"])
+        self.assertIn("【原始输出】", captured["messages"][1]["content"])
+        self.assertIn("错误输出", captured["messages"][1]["content"])
+
 
 if __name__ == "__main__":
     unittest.main()
