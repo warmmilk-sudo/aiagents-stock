@@ -280,16 +280,16 @@ class PortfolioScheduler:
         ]
 
     def set_account_task_configs(self, configs: Optional[List[dict]]) -> None:
-        normalized: dict[str, PortfolioAccountTaskConfig] = {}
+        enabled = True
         for item in configs or []:
-            account_name = normalize_account_name((item or {}).get("account_name"), keep_none=True)
-            if not account_name or account_name == getattr(portfolio_manager, "AGGREGATE_ACCOUNT_NAME", "全部账户"):
-                continue
-            normalized[account_name] = PortfolioAccountTaskConfig(
-                account_name=account_name,
-                enabled=bool((item or {}).get("enabled", True)),
+            enabled = bool((item or {}).get("enabled", True))
+            break
+        self.account_task_configs = {
+            DEFAULT_ACCOUNT_NAME: PortfolioAccountTaskConfig(
+                account_name=DEFAULT_ACCOUNT_NAME,
+                enabled=enabled,
             )
-        self.account_task_configs = normalized
+        }
 
     def _resolve_enabled_accounts(self, available_accounts: List[str]) -> List[str]:
         if not self.account_task_configs:
@@ -323,8 +323,10 @@ class PortfolioScheduler:
         return f"{base} {code}"
 
     def _collect_available_accounts(self) -> List[str]:
-        stocks = portfolio_manager.get_all_stocks()
-        return sorted({str(normalize_account_name(stock.get("account_name"))) for stock in stocks if stock.get("code")})
+        stocks = portfolio_manager.get_all_stocks(account_name=DEFAULT_ACCOUNT_NAME)
+        if not any(stock.get("code") for stock in stocks):
+            return []
+        return [DEFAULT_ACCOUNT_NAME]
 
     def _run_scheduled_analysis_task(self, report_progress, *, trigger: str) -> dict:
         config = self.get_task_config()
@@ -370,7 +372,7 @@ class PortfolioScheduler:
                 account_stock_count = account_counts.get(account_name, 0)
                 if account_stock_count <= 0:
                     continue
-                account_label = account_name or DEFAULT_ACCOUNT_NAME
+                account_label = DEFAULT_ACCOUNT_NAME
 
                 def progress_callback(current, callback_total, code, status, *, offset=completed_offset, label=account_label):
                     absolute_current = min(stock_count, offset + int(current or 0))

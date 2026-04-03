@@ -2046,10 +2046,46 @@ class MonitoringRepository:
         conn.close()
         return [dict(row) for row in rows]
 
-    def get_all_recent_notifications(self, limit: int = 10) -> List[Dict]:
+    @staticmethod
+    def _normalize_notification_scope(task_scope: Optional[Iterable[Dict]]) -> List[tuple[str, str]]:
+        if not task_scope:
+            return []
+
+        normalized: List[tuple[str, str]] = []
+        seen: set[tuple[str, str]] = set()
+        for item in task_scope:
+            if not isinstance(item, dict):
+                continue
+            symbol = str(item.get("symbol") or item.get("stock_code") or "").strip().upper()
+            if not symbol:
+                continue
+            account_name = normalize_account_name(item.get("account_name"), keep_none=True) or DEFAULT_ACCOUNT_NAME
+            key = (symbol, account_name)
+            if key in seen:
+                continue
+            seen.add(key)
+            normalized.append(key)
+        return normalized
+
+    def get_all_recent_notifications(
+        self,
+        limit: int = 10,
+        *,
+        task_scope: Optional[Iterable[Dict]] = None,
+    ) -> List[Dict]:
         self._normalize_pending_notifications()
+        scope_pairs = self._normalize_notification_scope(task_scope) if task_scope is not None else []
+        if task_scope is not None and not scope_pairs:
+            return []
+
         conn = self._connect()
         cursor = conn.cursor()
+        scope_clause = ""
+        params: List[object] = []
+        if scope_pairs:
+            scope_clause = " AND (" + " OR ".join("(e.symbol = ? AND COALESCE(mi.account_name, '') = ?)" for _ in scope_pairs) + ")"
+            for symbol, account_name in scope_pairs:
+                params.extend([symbol, account_name])
         cursor.execute(
             """
             SELECT
@@ -2070,10 +2106,11 @@ class MonitoringRepository:
             LEFT JOIN monitoring_items mi
                 ON mi.id = e.monitoring_item_id
             WHERE e.notification_pending = 1
+            {scope_clause}
             ORDER BY datetime(e.created_at) DESC, e.id DESC
             LIMIT ?
-            """,
-            (limit,),
+            """.format(scope_clause=scope_clause),
+            (*params, limit),
         )
         rows = cursor.fetchall()
         conn.close()

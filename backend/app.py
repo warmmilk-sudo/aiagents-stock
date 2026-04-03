@@ -39,6 +39,11 @@ from backend.services import ensure_runtime_started
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 FRONTEND_DIST_DIR = ROOT_DIR / "frontend" / "dist"
+NO_CACHE_HTML_HEADERS = {
+    "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+    "Pragma": "no-cache",
+    "Expires": "0",
+}
 
 
 @asynccontextmanager
@@ -101,7 +106,7 @@ def create_app() -> FastAPI:
     def root():
         index_file = FRONTEND_DIST_DIR / "index.html"
         if index_file.is_file():
-            return FileResponse(index_file)
+            return FileResponse(index_file, headers=NO_CACHE_HTML_HEADERS)
         return success_payload(
             {
                 "service": "aiagents-stock-backend",
@@ -117,10 +122,12 @@ def create_app() -> FastAPI:
         if FRONTEND_DIST_DIR.is_dir():
             candidate = FRONTEND_DIST_DIR / full_path
             if candidate.is_file():
+                if candidate.suffix == ".html":
+                    return FileResponse(candidate, headers=NO_CACHE_HTML_HEADERS)
                 return FileResponse(candidate)
             index_file = FRONTEND_DIST_DIR / "index.html"
             if index_file.is_file():
-                return FileResponse(index_file)
+                return FileResponse(index_file, headers=NO_CACHE_HTML_HEADERS)
         return success_payload(
             {
                 "service": "aiagents-stock-backend",

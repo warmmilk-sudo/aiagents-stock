@@ -31,6 +31,20 @@ class BackendSplitApiTests(unittest.TestCase):
         self.assertTrue(payload["success"])
         self.assertFalse(payload["data"]["authenticated"])
 
+    def test_spa_html_responses_disable_cache(self):
+        response = self.client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("no-store", response.headers.get("cache-control", ""))
+        self.assertEqual(response.headers.get("pragma"), "no-cache")
+        self.assertEqual(response.headers.get("expires"), "0")
+
+        fallback_response = self.client.get("/research/history")
+        self.assertEqual(fallback_response.status_code, 200)
+        self.assertIn("no-store", fallback_response.headers.get("cache-control", ""))
+        self.assertEqual(fallback_response.headers.get("pragma"), "no-cache")
+        self.assertEqual(fallback_response.headers.get("expires"), "0")
+
     def test_login_sets_cookie(self):
         response = self.client.post("/api/auth/login", json={"password": "split-secret"})
 

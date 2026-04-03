@@ -13,9 +13,8 @@ import os
 from analysis_repository import AnalysisRepository
 from asset_repository import STATUS_PORTFOLIO, STATUS_RESEARCH, STATUS_WATCHLIST, AssetRepository
 from investment_db_utils import (
-    AGGREGATE_ACCOUNT_NAME,
     DEFAULT_ACCOUNT_NAME,
-    SUPPORTED_ACCOUNT_NAMES,
+    cleanup_single_account_data,
     connect_sqlite,
     get_metadata,
     normalize_account_name,
@@ -30,6 +29,7 @@ DB_PATH = "investment.db"
 class PortfolioDB:
     """持仓股票数据库管理类"""
 
+    SINGLE_ACCOUNT_CLEANUP_KEY = "portfolio_single_account_cleanup_v1"
     SNAPSHOT_ACCOUNT_NORMALIZATION_KEY = "portfolio_snapshot_account_normalization_v1"
     ACCOUNT_TOTAL_ASSETS_KEY = "portfolio_account_total_assets_v1"
     
@@ -48,6 +48,7 @@ class PortfolioDB:
         self._migrate_legacy_db(db_path)
         if os.path.abspath(self.db_path) == os.path.abspath(resolve_investment_db_path(db_path)):
             self._migrate_legacy_db("portfolio_stocks.db")
+        self._cleanup_single_account_data()
         self._normalize_snapshot_account_names()
     
     def _get_connection(self) -> sqlite3.Connection:
@@ -74,6 +75,22 @@ class PortfolioDB:
         if isinstance(value, str):
             return value
         return json.dumps(value, ensure_ascii=False, default=str)
+
+    def _cleanup_single_account_data(self) -> Dict[str, int]:
+        conn = self._get_connection()
+        try:
+            cleaned = cleanup_single_account_data(
+                conn,
+                default_account_name=DEFAULT_ACCOUNT_NAME,
+                metadata_key=self.SINGLE_ACCOUNT_CLEANUP_KEY,
+            )
+            conn.commit()
+            return cleaned
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
 
     def _deserialize_json_object(self, raw_value) -> Dict:
         if not raw_value:
@@ -732,7 +749,11 @@ class PortfolioDB:
         """
         return self.asset_repository.list_assets(status=STATUS_PORTFOLIO, symbol=code)
 
-    def get_all_stocks(self, auto_monitor_only: bool = False) -> List[Dict]:
+    def get_all_stocks(
+        self,
+        auto_monitor_only: bool = False,
+        account_name: Optional[str] = None,
+    ) -> List[Dict]:
         """
         获取所有持仓股票列表
         
@@ -744,6 +765,7 @@ class PortfolioDB:
         """
         return self.asset_repository.list_assets(
             status=STATUS_PORTFOLIO,
+            account_name=account_name,
             monitor_enabled=True if auto_monitor_only else None,
         )
     
@@ -764,14 +786,14 @@ class PortfolioDB:
             if keyword_lower in str(stock.get("symbol", "")).lower() or keyword_lower in str(stock.get("name", "")).lower()
         ]
     
-    def get_stock_count(self) -> int:
+    def get_stock_count(self, account_name: Optional[str] = None) -> int:
         """
         获取持仓股票总数
         
         Returns:
             股票数量
         """
-        return len(self.asset_repository.list_assets(status=STATUS_PORTFOLIO))
+        return len(self.asset_repository.list_assets(status=STATUS_PORTFOLIO, account_name=account_name))
     
     # ==================== 分析历史记录操作 ====================
     
@@ -1114,26 +1136,7 @@ class PortfolioDB:
             symbol=(stock or {}).get("code"),
             account_name=(stock or {}).get("account_name", DEFAULT_ACCOUNT_NAME),
         )
-        if latest:
-            return latest
-        if stock:
-            return self._resolve_latest_analysis_fallback(stock)
-        return None
-
-    def _resolve_latest_analysis_fallback(self, stock: Dict) -> Optional[Dict]:
-        origin_analysis_id = stock.get("origin_analysis_id")
-        if origin_analysis_id not in (None, ""):
-            try:
-                record = self.analysis_repository.get_record(int(origin_analysis_id))
-            except (TypeError, ValueError):
-                record = None
-            if record:
-                return record
-        return self.analysis_repository.get_latest_strategy_context(
-            portfolio_stock_id=stock.get("id"),
-            symbol=stock.get("code"),
-            account_name=stock.get("account_name", DEFAULT_ACCOUNT_NAME),
-        )
+        return latest
     
     def get_rating_changes(self, stock_id: int, days: int = 30) -> List[Tuple[str, str, str]]:
         """
@@ -1189,25 +1192,39 @@ class PortfolioDB:
         finally:
             conn.close()
     
-    def get_all_latest_analysis(self) -> List[Dict]:
+    def get_latest_analysis_map(
+        self,
+        stock_ids: List[int],
+        stocks: Optional[List[Dict]] = None,
+    ) -> Dict[int, Dict]:
+        normalized_ids = [int(stock_id) for stock_id in stock_ids if stock_id]
+        if not normalized_ids:
+            return {}
+
+        latest_map = self.analysis_repository.get_latest_linked_records(normalized_ids)
+        result: Dict[int, Dict] = {}
+        for stock_id in normalized_ids:
+            latest = latest_map.get(stock_id)
+            if latest:
+                result[stock_id] = latest
+        return result
+
+    def get_all_latest_analysis(self, account_name: Optional[str] = None) -> List[Dict]:
         """
         获取所有持仓股票的最新分析记录
         
         Returns:
             包含股票信息和最新分析的字典列表
         """
-        stocks = self.get_all_stocks(auto_monitor_only=False)
+        stocks = self.get_all_stocks(auto_monitor_only=False, account_name=account_name)
+        latest_map = self.get_latest_analysis_map(
+            [int(stock["id"]) for stock in stocks if stock.get("id")],
+            stocks=stocks,
+        )
         result: List[Dict] = []
         for stock in stocks:
             merged = dict(stock)
-            latest = self.analysis_repository.get_latest_linked_record(
-                asset_id=stock.get("id"),
-                portfolio_stock_id=stock.get("id"),
-                symbol=stock.get("code"),
-                account_name=stock.get("account_name", DEFAULT_ACCOUNT_NAME),
-            )
-            if not latest:
-                latest = self._resolve_latest_analysis_fallback(stock)
+            latest = latest_map.get(int(stock["id"])) if stock.get("id") else None
             if latest:
                 latest_record = dict(latest)
                 if latest_record.get("analysis_date") and not latest_record.get("analysis_time"):
@@ -1390,38 +1407,29 @@ class PortfolioDB:
     def get_account_total_assets_settings(self) -> Dict[str, float]:
         raw_value = self.get_setting(self.ACCOUNT_TOTAL_ASSETS_KEY, {})
         parsed = raw_value if isinstance(raw_value, dict) else {}
-        normalized: Dict[str, float] = {}
-        for account_name, total_assets in parsed.items():
-            normalized_account = self._normalize_account_name_value(account_name)
-            normalized[normalized_account] = self._normalize_total_assets_value(total_assets)
-        for account_name in SUPPORTED_ACCOUNT_NAMES:
-            normalized.setdefault(account_name, 0.0)
-        return normalized
+        return {
+            DEFAULT_ACCOUNT_NAME: self._normalize_total_assets_value(parsed.get(DEFAULT_ACCOUNT_NAME)),
+        }
 
     def set_account_total_assets_settings(self, account_assets: Optional[Dict[str, Any]]) -> Dict[str, float]:
         current = self.get_account_total_assets_settings()
         if not isinstance(account_assets, dict):
             return current
 
-        for account_name, total_assets in account_assets.items():
-            normalized_account = self._normalize_account_name_value(account_name)
-            current[normalized_account] = self._normalize_total_assets_value(total_assets)
-        for account_name in SUPPORTED_ACCOUNT_NAMES:
-            current.setdefault(account_name, 0.0)
-        self.set_setting(self.ACCOUNT_TOTAL_ASSETS_KEY, current)
-        return current
+        next_value = {
+            DEFAULT_ACCOUNT_NAME: self._normalize_total_assets_value(
+                account_assets.get(DEFAULT_ACCOUNT_NAME, current.get(DEFAULT_ACCOUNT_NAME, 0.0))
+            ),
+        }
+        self.set_setting(self.ACCOUNT_TOTAL_ASSETS_KEY, next_value)
+        return next_value
 
     def get_account_total_assets(self, account_name: Optional[str], default: float = 0.0) -> float:
         settings = self.get_account_total_assets_settings()
-        normalized_account_name = self._normalize_account_name_value(
-            account_name,
-            allow_aggregate=True,
-        )
-        if normalized_account_name == AGGREGATE_ACCOUNT_NAME:
-            return round(sum(settings.get(name, 0.0) for name in SUPPORTED_ACCOUNT_NAMES), 2)
+        normalized_account_name = self._normalize_account_name_value(account_name)
         if not normalized_account_name:
             return self._normalize_total_assets_value(default)
-        return settings.get(normalized_account_name, self._normalize_total_assets_value(default))
+        return settings.get(DEFAULT_ACCOUNT_NAME, self._normalize_total_assets_value(default))
 
 
 # 创建全局数据库实例

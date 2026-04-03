@@ -805,6 +805,34 @@ class SmartMonitorEngine:
                 self.logger.info(f"[{stock_code}] 决策为 {action}，不发送通知")
                 return
 
+            def _to_float(value: object) -> Optional[float]:
+                try:
+                    if value in (None, ""):
+                        return None
+                    numeric = float(value)
+                except (TypeError, ValueError):
+                    return None
+                return numeric if numeric == numeric else None
+
+            def _fmt_money(value: object, *, signed: bool = False) -> str:
+                numeric = _to_float(value)
+                if numeric is None:
+                    return "N/A"
+                sign = "+" if signed else ""
+                return f"¥{numeric:{sign},.2f}"
+
+            def _fmt_pct(value: object) -> str:
+                numeric = _to_float(value)
+                if numeric is None:
+                    return "N/A"
+                return f"{numeric:+.2f}%"
+
+            def _fmt_volume(value: object) -> str:
+                numeric = _to_float(value)
+                if numeric is None:
+                    return "N/A"
+                return f"{numeric:,.0f}手"
+
             task = self.db.get_monitor_task_by_code(
                 stock_code,
                 account_name=account_name,
@@ -821,10 +849,11 @@ class SmartMonitorEngine:
             if session_info is None:
                 session_info = self.deepseek.get_trading_session()
 
-            current_price = float(market_data.get('current_price', 0) or 0)
-            profit_loss_pct = 'N/A'
-            if has_position and position_cost:
-                profit_loss_pct = f"{((current_price - position_cost) / position_cost * 100):+.2f}"
+            current_price = _to_float(market_data.get('current_price'))
+            profit_loss_pct = None
+            if has_position and position_cost and current_price is not None:
+                profit_loss_pct = (current_price - position_cost) / position_cost * 100
+            current_price_text = _fmt_money(current_price)
 
             action_text = {'BUY': '买入', 'SELL': '卖出'}.get(action, action)
             reasoning = decision.get('reasoning', '')
@@ -835,8 +864,8 @@ class SmartMonitorEngine:
             content = (
                 f"{action_text}信号\n"
                 f"股票: {stock_name}({stock_code})\n"
-                f"当前价格: {current_price:.2f}\n"
-                f"涨跌幅: {market_data.get('change_pct', 0):+.2f}%\n"
+                f"当前价格: {current_price_text}\n"
+                f"涨跌幅: {_fmt_pct(market_data.get('change_pct'))}\n"
                 f"信心度: {decision.get('confidence', 'N/A')}%\n"
                 f"风险等级: {decision.get('risk_level', 'N/A')}\n"
                 f"支撑位: {key_levels.get('support', 'N/A')}\n"
@@ -858,15 +887,15 @@ class SmartMonitorEngine:
                 'message': message,
                 'details': content,
                 'triggered_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                'current_price': f"{current_price:.2f}" if current_price else 'N/A',
-                'change_pct': f"{market_data.get('change_pct', 0):+.2f}",
-                'change_amount': f"{market_data.get('change_amount', 0):+.2f}",
-                'volume': market_data.get('volume', 'N/A'),
+                'current_price': f"{current_price:.2f}" if current_price is not None else 'N/A',
+                'change_pct': _fmt_pct(market_data.get('change_pct')),
+                'change_amount': _fmt_money(market_data.get('change_amount'), signed=True),
+                'volume': _fmt_volume(market_data.get('volume')),
                 'turnover_rate': market_data.get('turnover_rate'),
                 'position_status': '已持仓' if has_position else '未持仓',
                 'position_cost': f"{position_cost:.2f}" if has_position and position_cost else 'N/A',
                 'position_quantity': position_quantity if has_position else 0,
-                'profit_loss_pct': profit_loss_pct,
+                'profit_loss_pct': f"{profit_loss_pct:+.2f}" if profit_loss_pct is not None else 'N/A',
                 'trading_session': session_info.get('session', '未知'),
             }
 

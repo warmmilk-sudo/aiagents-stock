@@ -5,7 +5,7 @@ import { PageFeedback } from "../../components/common/PageFeedback";
 import { PageFrame } from "../../components/common/PageFrame";
 import { StatusBadge } from "../../components/common/StatusBadge";
 import { ApiRequestError, apiFetch } from "../../lib/api";
-import { SUPPORTED_ACCOUNT_NAMES, normalizeAccountName } from "../../lib/accounts";
+import { DEFAULT_ACCOUNT_NAME } from "../../lib/accounts";
 import { type ConfigField, useConfigStore } from "../../stores/configStore";
 import styles from "../ConsolePage.module.scss";
 
@@ -49,7 +49,6 @@ const NOTIFICATION_PANELS = [
 ];
 
 interface AccountAssetSetting {
-  account_name: string;
   total_assets: string;
 }
 
@@ -121,9 +120,7 @@ export function ConfigPage() {
   const [section, setSection] = useState<SectionKey>("basic");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
-  const [accountAssets, setAccountAssets] = useState<AccountAssetSetting[]>(
-    () => SUPPORTED_ACCOUNT_NAMES.map((account_name) => ({ account_name, total_assets: "" })),
-  );
+  const [accountAssets, setAccountAssets] = useState<AccountAssetSetting>({ total_assets: "" });
 
   useEffect(() => {
     void fetchConfig();
@@ -138,17 +135,15 @@ export function ConfigPage() {
         if (cancelled) {
           return;
         }
-        const nextSettings = SUPPORTED_ACCOUNT_NAMES.map((account_name) => {
-          const current = settings.find((item) => normalizeAccountName(item.account_name) === account_name);
-          return {
-            account_name,
-            total_assets: current ? String(current.total_assets ?? "") : "",
-          };
-        });
+        const nextSettings = {
+          total_assets: String(
+            settings.find((item) => item.account_name === DEFAULT_ACCOUNT_NAME)?.total_assets ?? "",
+          ),
+        };
         setAccountAssets(nextSettings);
       } catch (requestError) {
         if (!cancelled) {
-          setError(requestError instanceof ApiRequestError ? requestError.message : "加载账户总资产失败");
+          setError(requestError instanceof ApiRequestError ? requestError.message : "加载总资产失败");
         }
       }
     };
@@ -167,9 +162,9 @@ export function ConfigPage() {
       await apiFetch("/api/portfolio/account-assets", {
         method: "PUT",
         body: JSON.stringify({
-          account_assets: Object.fromEntries(
-            accountAssets.map((item) => [item.account_name, Number(item.total_assets) || 0]),
-          ),
+          account_assets: {
+            [DEFAULT_ACCOUNT_NAME]: Number(accountAssets.total_assets) || 0,
+          },
         }),
       });
       setMessage("配置已保存并重新加载");
@@ -269,31 +264,21 @@ export function ConfigPage() {
 
   const renderAccountAssetsPanel = () => (
     <section className={styles.card}>
-      <h2>账户总资产</h2>
+      <h2>总资产参考</h2>
       <div className={styles.formGrid}>
-        {accountAssets.map((item) => (
-          <div className={styles.field} key={item.account_name}>
-            <label htmlFor={`account-assets-${item.account_name}`}>{`${item.account_name} 总资产`}</label>
-            <input
-              id={`account-assets-${item.account_name}`}
-              inputMode="decimal"
-              onChange={(event) =>
-                setAccountAssets((current) =>
-                  current.map((currentItem) => (
-                    currentItem.account_name === item.account_name
-                      ? { ...currentItem, total_assets: event.target.value }
-                      : currentItem
-                  )),
-                )
-              }
-              placeholder="例如 500000"
-              type="text"
-              value={item.total_assets}
-            />
-          </div>
-        ))}
+        <div className={styles.field}>
+          <label htmlFor="account-assets-total">总资产</label>
+          <input
+            id="account-assets-total"
+            inputMode="decimal"
+            onChange={(event) => setAccountAssets({ total_assets: event.target.value })}
+            placeholder="例如 500000"
+            type="text"
+            value={accountAssets.total_assets}
+          />
+        </div>
       </div>
-      <p className={styles.helperText}>用于持仓仓位利用率、单票占总资产比例，以及盯盘上下文中的账户资金参考。</p>
+      <p className={styles.helperText}>用于持仓仓位利用率、单票占总资产比例，以及盯盘上下文中的资金参考。</p>
     </section>
   );
 

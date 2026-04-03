@@ -946,6 +946,44 @@ class AnalysisRepository:
                 result[stock_id] = record
         return result
 
+    def get_latest_linked_records(self, asset_ids: List[int]) -> Dict[int, Dict]:
+        normalized_ids = sorted({int(asset_id) for asset_id in asset_ids if asset_id})
+        if not normalized_ids:
+            return {}
+
+        placeholders = ",".join("?" for _ in normalized_ids)
+        conn = self._connect()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                f"""
+                SELECT *
+                FROM analysis_records
+                WHERE COALESCE(has_full_report, 0) = 1
+                  AND (
+                    asset_id IN ({placeholders})
+                    OR portfolio_stock_id IN ({placeholders})
+                  )
+                ORDER BY datetime(analysis_date) DESC,
+                         CASE WHEN analysis_scope = 'portfolio' THEN 0 ELSE 1 END,
+                         id DESC
+                """,
+                tuple(normalized_ids + normalized_ids),
+            )
+            rows = cursor.fetchall()
+        finally:
+            conn.close()
+
+        result: Dict[int, Dict] = {}
+        target_ids = set(normalized_ids)
+        for row in rows:
+            record = self._deserialize_row(row)
+            for candidate_id in (record.get("asset_id"), record.get("portfolio_stock_id")):
+                if candidate_id not in target_ids or candidate_id in result:
+                    continue
+                result[int(candidate_id)] = record
+        return result
+
     def get_latest_linked_record(
         self,
         *,

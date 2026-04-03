@@ -4,14 +4,11 @@
 """
 
 import logging
-import os
 import requests
 import pandas as pd
 from typing import Dict, Optional
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
-
-from tushare_utils import create_tushare_pro
 
 
 class SmartMonitorTDXDataFetcher:
@@ -29,14 +26,6 @@ class SmartMonitorTDXDataFetcher:
         if not self.base_url:
             raise ValueError("TDX_BASE_URL 未配置")
         self.timeout = max(5, int(timeout_seconds or 10))  # 请求超时时间（秒）
-        self.ts_pro = None
-        tushare_token = os.getenv("TUSHARE_TOKEN", "")
-        if tushare_token:
-            try:
-                self.ts_pro, tushare_url = create_tushare_pro(token=tushare_token)
-                self.logger.info("Tushare换手率数据源初始化成功，地址: %s", tushare_url)
-            except Exception as exc:
-                self.logger.warning("Tushare换手率数据源初始化失败: %s", exc)
 
         self.logger.info(f"TDX数据源初始化成功，接口地址: {self.base_url}")
         self.available = self.check_connection(log_on_success=True)
@@ -75,42 +64,6 @@ class SmartMonitorTDXDataFetcher:
             return parsed.astimezone(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M:%S")
         except Exception:
             return None
-
-    def _stock_code_to_ts_code(self, stock_code: str) -> Optional[str]:
-        if stock_code.startswith("6"):
-            return f"{stock_code}.SH"
-        if stock_code.startswith(("0", "3")):
-            return f"{stock_code}.SZ"
-        return None
-
-    def _get_latest_turnover_rate(self, stock_code: str) -> Optional[float]:
-        if not self.ts_pro:
-            return None
-
-        ts_code = self._stock_code_to_ts_code(stock_code)
-        if not ts_code:
-            return None
-
-        end_date = datetime.now().strftime("%Y%m%d")
-        start_date = (datetime.now() - timedelta(days=10)).strftime("%Y%m%d")
-        try:
-            df = self.ts_pro.daily_basic(
-                ts_code=ts_code,
-                start_date=start_date,
-                end_date=end_date,
-                fields="ts_code,trade_date,turnover_rate",
-            )
-            if df is None or df.empty or "turnover_rate" not in df.columns:
-                return None
-            df = df.sort_values("trade_date", ascending=False).reset_index(drop=True)
-            for _, row in df.iterrows():
-                value = row.get("turnover_rate")
-                if value is None or pd.isna(value):
-                    continue
-                return float(value)
-        except Exception as exc:
-            self.logger.warning("Tushare换手率获取失败 %s: %s", stock_code, exc)
-        return None
 
     def _probe_quote_endpoint(self) -> bool:
         """部分旧版 TDX 服务没有 /api/health，退化到行情接口探测。"""
@@ -227,14 +180,23 @@ class SmartMonitorTDXDataFetcher:
             change_amount = current_price - pre_close
             change_pct = (change_amount / pre_close * 100) if pre_close > 0 else 0
             
-            turnover_rate = self._get_latest_turnover_rate(stock_code)
-            if turnover_rate is None:
-                self.logger.error("TDX实时行情未能获取真实换手率 %s", stock_code)
-                return None
+            turnover_rate = quote_data.get("TurnoverRate", quote_data.get("turnover_rate"))
+            if turnover_rate is not None:
+                try:
+                    turnover_rate = float(turnover_rate)
+                    if turnover_rate <= 0:
+                        turnover_rate = None
+                except (TypeError, ValueError):
+                    turnover_rate = None
 
-            # 计算量比（现量/均量，这里用总手数/平均手数估算）
-            vol_ma5 = volume / 1.2  # 简化估算
-            volume_ratio = volume / vol_ma5 if vol_ma5 > 0 else 1.0
+            volume_ratio = quote_data.get("VolumeRatio", quote_data.get("volume_ratio"))
+            if volume_ratio is not None:
+                try:
+                    volume_ratio = float(volume_ratio)
+                    if volume_ratio <= 0:
+                        volume_ratio = None
+                except (TypeError, ValueError):
+                    volume_ratio = None
             
             # 获取股票名称（需要调用搜索接口）
             stock_name = self._get_stock_name(stock_code)
@@ -265,7 +227,9 @@ class SmartMonitorTDXDataFetcher:
                 'turnover_rate': turnover_rate,
                 'volume_ratio': volume_ratio,
                 'update_time': self._normalize_response_time(response.headers.get("Date")),
-                'data_source': 'tdx'
+                'data_source': 'tdx',
+                'precision_status': 'validated',
+                'precision_mode': 'tdx_realtime_quote',
             }
             
         except requests.exceptions.Timeout:

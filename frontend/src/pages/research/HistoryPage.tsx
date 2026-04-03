@@ -86,10 +86,6 @@ function buildSummary(value: unknown): string {
   return text || "暂无摘要";
 }
 
-function resolveDisplayAccount(record: AnalysisRecordDetail | null | undefined): string {
-  return record?.linked_asset_account_name || record?.account_name || "默认账户";
-}
-
 function detectReportCategory(name: string, payload: Record<string, unknown>): ReportCategory | null {
   const normalizedName = String(name || "").trim().toLowerCase();
   const exactKeyMap: Record<string, ReportCategory> = {
@@ -388,7 +384,6 @@ export function HistoryPage() {
   const [records, setRecords] = useState<AnalysisHistoryItem[]>([]);
   const [recordDetails, setRecordDetails] = useState<Record<number, AnalysisRecordDetail>>({});
   const [portfolioState, setPortfolioState] = useState("全部");
-  const [accountName, setAccountName] = useState("全部账户");
   const [searchTerm, setSearchTerm] = useState("");
   const [deletingRecordId, setDeletingRecordId] = useState<number | null>(null);
   const { message, error, clear, showError, showMessage } = usePageFeedback();
@@ -400,7 +395,6 @@ export function HistoryPage() {
     const data = await apiFetch<AnalysisHistoryItem[]>(
       `/api/analysis-history${buildQuery({
         portfolio_state: portfolioState,
-        account_name: accountName === "全部账户" ? "" : accountName,
         search_term: searchTerm,
       })}`,
     );
@@ -417,19 +411,13 @@ export function HistoryPage() {
 
   useEffect(() => {
     void loadList();
-  }, [portfolioState, accountName, searchTerm]);
+  }, [portfolioState, searchTerm]);
 
   useEffect(() => {
     if (selectedRecordId && !recordDetails[selectedRecordId]) {
       void loadDetail(selectedRecordId);
     }
   }, [selectedRecordId, recordDetails]);
-
-  const accounts = useMemo(() => {
-    const set = new Set<string>(["全部账户"]);
-    records.forEach((item) => set.add(item.account_name || "默认账户"));
-    return Array.from(set);
-  }, [records]);
 
   const openRecord = (recordId: number) => {
     setSearchParams({ recordId: String(recordId) });
@@ -508,7 +496,7 @@ export function HistoryPage() {
                               {selectedRecord.symbol ? `（${selectedRecord.symbol}）` : ""}
                             </strong>
                             <p className={styles.historyMeta}>
-                              {formatDateTime(selectedRecord.analysis_time_text, "暂无时间")} | {selectedRecord.portfolio_state_label || "未持仓"} | {resolveDisplayAccount(selectedRecord)}
+                              {formatDateTime(selectedRecord.analysis_time_text, "暂无时间")} | {selectedRecord.portfolio_state_label || "未持仓"}
                             </p>
                           </div>
                           <div className={styles.historyActionRow}>
@@ -559,7 +547,6 @@ export function HistoryPage() {
                         `止损位：${formatMetric(detailFinalDecision.stop_loss)}`,
                         `持有周期：${formatMetric(detailFinalDecision.holding_period)}`,
                         `当前状态：${selectedRecord.linked_asset_status_label || selectedRecord.portfolio_state_label || "暂无"}`,
-                        `账户：${resolveDisplayAccount(selectedRecord)}`,
                       ], "暂无关键位置")}
                     </HistoryDetailSection>
 
@@ -588,16 +575,6 @@ export function HistoryPage() {
                     <option value="全部">全部</option>
                     <option value="在持仓">在持仓</option>
                     <option value="未持仓">未持仓</option>
-                  </select>
-                </div>
-                <div className={styles.field}>
-                  <label htmlFor="accountName">账户</label>
-                  <select id="accountName" onChange={(event) => setAccountName(event.target.value)} value={accountName}>
-                    {accounts.map((item) => (
-                      <option key={item} value={item}>
-                        {item}
-                      </option>
-                    ))}
                   </select>
                 </div>
                 <div className={styles.field}>

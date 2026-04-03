@@ -393,6 +393,49 @@ class MonitoringRepositoryTests(unittest.TestCase):
         self.assertTrue(bool(latest["read_at"]))
         self.assertFalse(latest["sent"])
 
+    def test_recent_notifications_can_be_filtered_by_task_scope(self):
+        default_item_id = self.repo.create_item(
+            {
+                "symbol": "600519",
+                "name": "贵州茅台",
+                "monitor_type": "price_alert",
+                "account_name": "默认账户",
+            }
+        )
+        ly_item_id = self.repo.create_item(
+            {
+                "symbol": "600519",
+                "name": "贵州茅台",
+                "monitor_type": "price_alert",
+                "account_name": "ly",
+            }
+        )
+        default_event_id = self.repo.record_event(
+            item_id=default_item_id,
+            event_type="take_profit",
+            message="默认账户止盈提醒",
+            notification_pending=True,
+            sent=False,
+            created_at="2026-03-12 10:32:00",
+        )
+        self.repo.record_event(
+            item_id=ly_item_id,
+            event_type="take_profit",
+            message="ly账户止盈提醒",
+            notification_pending=True,
+            sent=False,
+            created_at="2026-03-12 10:33:00",
+        )
+
+        filtered = self.repo.get_all_recent_notifications(
+            limit=10,
+            task_scope=[{"symbol": "600519", "account_name": "默认账户"}],
+        )
+
+        self.assertEqual([item["id"] for item in filtered], [default_event_id])
+        self.assertEqual(filtered[0]["account_name"], DEFAULT_ACCOUNT_NAME)
+        self.assertEqual(self.repo.get_all_recent_notifications(limit=10, task_scope=[]), [])
+
     def test_ignore_notification_hides_it_from_current_notification_list(self):
         item_id = self.repo.create_item(
             {

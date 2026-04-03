@@ -49,9 +49,9 @@ def toggle_notification(request: Request, alert_id: int, enabled: bool) -> dict:
 
 
 @router.get("/notifications")
-def list_notifications(request: Request, limit: int = 30) -> dict:
+def list_notifications(request: Request, limit: int = 30, task_scope: str | None = None) -> dict:
     require_session(request)
-    return success_payload(services.list_price_alert_notifications(limit=limit))
+    return success_payload(services.list_price_alert_notifications(limit=limit, task_scope=task_scope))
 
 
 @router.post("/notifications/{event_id}/read")

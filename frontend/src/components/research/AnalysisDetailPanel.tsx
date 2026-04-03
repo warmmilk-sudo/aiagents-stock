@@ -73,7 +73,6 @@ export function AnalysisDetailPanel({
     { label: "止损位", value: metricValue(finalDecision.stop_loss) },
     { label: "持有周期", value: metricValue(finalDecision.holding_period) },
     { label: "当前状态", value: metricValue(record.linked_asset_status_label || record.portfolio_state_label) },
-    { label: "账户", value: metricValue(record.account_name) },
     { label: "分析时间", value: metricValue(formatDateTime(record.analysis_time_text, "N/A")) },
     { label: "周期", value: metricValue(record.period) },
   ];

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import concurrent.futures
 import logging
 import time
@@ -16,7 +17,7 @@ from batch_analysis_service import analyze_single_stock_for_batch
 from config_manager import config_manager
 from database_admin import database_admin
 from investment_action_utils import build_analysis_action_payload
-from investment_db_utils import AGGREGATE_ACCOUNT_NAME, DEFAULT_ACCOUNT_NAME, SUPPORTED_ACCOUNT_NAMES, normalize_account_name
+from investment_db_utils import DEFAULT_ACCOUNT_NAME, SUPPORTED_ACCOUNT_NAMES, normalize_account_name
 from investment_lifecycle_service import investment_lifecycle_service
 from low_price_bull_monitor import low_price_bull_monitor
 from low_price_bull_selector import LowPriceBullSelector
@@ -49,7 +50,7 @@ from strategy_markdown_reports import (
     generate_longhubang_markdown_report,
     generate_sector_markdown_report,
 )
-from time_utils import local_now_str
+from time_utils import local_now, local_now_str, parse_display_timestamp
 from ui_analysis_task_utils import (
     get_active_ui_analysis_task,
     get_latest_ui_analysis_task,
@@ -79,6 +80,7 @@ VALUE_STOCK_TASK_TYPE = "value_stock_selection"
 MACRO_CYCLE_TASK_TYPE = "macro_cycle_analysis"
 NEWS_FLOW_TASK_TYPE = "news_flow_analysis"
 PORTFOLIO_SCHEDULER_TASK_TYPE = "batch"
+SMART_MONITOR_BASELINE_REFRESH_TASK_TYPE = "smart_monitor_baseline_refresh"
 SMART_MONITOR_INTRADAY_INTERVAL_KEY = "smart_monitor_intraday_decision_interval_minutes"
 SMART_MONITOR_REALTIME_INTERVAL_KEY = "smart_monitor_realtime_monitor_interval_minutes"
 
@@ -413,11 +415,7 @@ def submit_portfolio_analysis_task(
     max_workers: int,
     analysts: dict[str, bool],
 ) -> str:
-    normalized_account = str(
-        normalize_account_name(account_name, allow_aggregate=True, keep_none=True) or ""
-    ).strip()
-    if normalized_account in {"", AGGREGATE_ACCOUNT_NAME}:
-        normalized_account = ""
+    normalized_account = normalize_account_name(account_name) or DEFAULT_ACCOUNT_NAME
     if not any(analysts.values()):
         raise ValueError("请至少选择一位分析师参与分析")
     if not getattr(config, "DEEPSEEK_API_KEY", ""):
@@ -427,8 +425,8 @@ def submit_portfolio_analysis_task(
     worker_count = _clamp_int(max_workers, 1, 5, 3)
     normalized_batch_mode = "多线程并行" if batch_mode == "多线程并行" else "顺序分析"
     portfolio_mode = "parallel" if normalized_batch_mode == "多线程并行" else "sequential"
-    account_label = normalized_account or "全部账户"
-    stock_count = portfolio_manager.get_stock_count(normalized_account or None)
+    account_label = normalized_account
+    stock_count = portfolio_manager.get_stock_count(normalized_account)
     if stock_count <= 0:
         raise ValueError(f"{account_label} 当前没有可分析的持仓股")
 
@@ -463,7 +461,7 @@ def submit_portfolio_analysis_task(
                 sync_realtime_monitor=True,
                 analysis_source="portfolio_batch_analysis",
                 analysis_period=period,
-                account_name=normalized_account or None,
+                account_name=normalized_account,
             )
             saved_ids.extend(persistence_result.get("saved_ids", []))
             sync_result = persistence_result.get("sync_result") or {}
@@ -477,7 +475,7 @@ def submit_portfolio_analysis_task(
             max_workers=worker_count,
             progress_callback=progress_callback,
             result_callback=result_callback,
-            account_name=normalized_account or None,
+            account_name=normalized_account,
         )
         if not analysis_results.get("success"):
             raise RuntimeError(str(analysis_results.get("error") or "持仓分析失败"))
@@ -486,7 +484,7 @@ def submit_portfolio_analysis_task(
             {
                 "code": item.get("code"),
                 "success": True,
-                "account_name": normalized_account or None,
+                "account_name": normalized_account,
             }
             for item in analysis_results.get("results", [])
         ]
@@ -495,7 +493,7 @@ def submit_portfolio_analysis_task(
                 "code": item.get("code"),
                 "success": False,
                 "error": item.get("error"),
-                "account_name": normalized_account or None,
+                "account_name": normalized_account,
             }
             for item in analysis_results.get("failed_stocks", [])
         ]
@@ -510,7 +508,7 @@ def submit_portfolio_analysis_task(
         )
         return {
             "mode": "batch",
-            "account_name": normalized_account or None,
+            "account_name": normalized_account,
             "results": success_rows + failed_rows,
             "batch_mode": normalized_batch_mode,
             "max_workers": worker_count if normalized_batch_mode == "多线程并行" else 1,
@@ -524,7 +522,7 @@ def submit_portfolio_analysis_task(
             },
         }
 
-    label = f"{account_label}持仓批量分析" if normalized_account else "全部账户持仓批量分析"
+    label = f"{account_label}持仓批量分析"
     return portfolio_analysis_task_manager.start_task(
         session_key,
         task_type="portfolio_holdings_analysis",
@@ -532,7 +530,7 @@ def submit_portfolio_analysis_task(
         runner=batch_runner,
         metadata={
             "mode": "batch",
-            "account_name": normalized_account or None,
+            "account_name": normalized_account,
             "stock_count": stock_count,
             "batch_mode": normalized_batch_mode,
             "max_workers": worker_count if normalized_batch_mode == "多线程并行" else 1,
@@ -2295,13 +2293,9 @@ def get_stock_info(symbol: str) -> dict[str, Any]:
 
 
 def list_portfolio_stocks(account_name: Optional[str] = None) -> list[dict[str, Any]]:
-    all_stocks = portfolio_manager.get_all_latest_analysis()
-    normalized_account_name = normalize_account_name(account_name, allow_aggregate=True, keep_none=True)
-    if normalized_account_name and normalized_account_name != AGGREGATE_ACCOUNT_NAME:
-        all_stocks = [
-            item for item in all_stocks
-            if normalize_account_name(item.get("account_name")) == normalized_account_name
-        ]
+    all_stocks = portfolio_manager.get_all_latest_analysis(
+        account_name=normalize_account_name(account_name) or DEFAULT_ACCOUNT_NAME,
+    )
     trade_summary_map = portfolio_manager.get_trade_summary_map(
         [stock.get("id") for stock in all_stocks if stock.get("id")]
     )
@@ -2473,8 +2467,50 @@ def update_price_alert(stock_id: int, payload: dict[str, Any]) -> bool:
     )
 
 
-def list_price_alert_notifications(limit: int = 30) -> list[dict[str, Any]]:
-    return monitor_db.get_all_recent_notifications(limit=limit)
+def _parse_price_alert_notification_scope(task_scope: Optional[str]) -> Optional[list[dict[str, Any]]]:
+    if task_scope is None:
+        return None
+    scope_text = str(task_scope or "").strip()
+    if not scope_text:
+        return []
+    try:
+        raw_scope = json.loads(scope_text)
+    except json.JSONDecodeError:
+        return []
+
+    if isinstance(raw_scope, dict):
+        candidates = raw_scope.get("tasks") or raw_scope.get("items") or raw_scope.get("scope") or []
+    else:
+        candidates = raw_scope
+
+    if not isinstance(candidates, list):
+        return []
+
+    normalized_scope: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for item in candidates:
+        if not isinstance(item, dict):
+            continue
+        symbol = str(item.get("stock_code") or item.get("symbol") or "").strip().upper()
+        if not symbol:
+            continue
+        account_name = normalize_account_name(item.get("account_name"))
+        scope_key = (symbol, account_name)
+        if scope_key in seen:
+            continue
+        seen.add(scope_key)
+        normalized_scope.append(
+            {
+                "symbol": symbol,
+                "account_name": account_name,
+            }
+        )
+    return normalized_scope
+
+
+def list_price_alert_notifications(limit: int = 30, task_scope: Optional[str] = None) -> list[dict[str, Any]]:
+    normalized_scope = _parse_price_alert_notification_scope(task_scope)
+    return monitor_db.get_all_recent_notifications(limit=limit, task_scope=normalized_scope)
 
 
 def mark_monitor_notification_read(event_id: int) -> None:
@@ -2691,13 +2727,59 @@ def run_smart_monitor_task_once(task_id: int) -> dict[str, Any]:
     }
 
 
-def sync_smart_monitor_analysis_baselines(
+def _previous_trading_day(reference_day: date) -> date:
+    current = reference_day
+    if current.weekday() < 5:
+        current -= timedelta(days=1)
+    while current.weekday() >= 5:
+        current -= timedelta(days=1)
+    return current
+
+
+def _is_smart_monitor_analysis_stale(task: dict[str, Any]) -> bool:
+    strategy_context = task.get("strategy_context") if isinstance(task.get("strategy_context"), dict) else {}
+    analysis_time = parse_display_timestamp(strategy_context.get("analysis_date"))
+    if analysis_time is None:
+        return True
+    latest_allowed_day = _previous_trading_day(local_now().date())
+    return analysis_time.date() < latest_allowed_day
+
+
+def _list_scoped_smart_monitor_tasks(
+    *,
+    enabled_only: bool = False,
+    account_name: Optional[str] = None,
+    has_position: Optional[bool] = None,
+) -> list[dict[str, Any]]:
+    return smart_monitor_db.get_monitor_tasks(
+        enabled_only=enabled_only,
+        account_name=account_name,
+        has_position=has_position,
+    )
+
+
+def _unique_smart_monitor_tasks(tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    unique_tasks: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for task in tasks:
+        symbol = str(task.get("stock_code") or "").strip().upper()
+        asset_id = task.get("asset_id")
+        portfolio_stock_id = task.get("portfolio_stock_id")
+        key = f"{asset_id or portfolio_stock_id or symbol}"
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        unique_tasks.append(task)
+    return unique_tasks
+
+
+def _sync_smart_monitor_analysis_baselines_summary(
     *,
     enabled_only: bool = False,
     account_name: Optional[str] = None,
     has_position: Optional[bool] = None,
 ) -> dict[str, Any]:
-    tasks = smart_monitor_db.get_monitor_tasks(
+    tasks = _list_scoped_smart_monitor_tasks(
         enabled_only=enabled_only,
         account_name=account_name,
         has_position=has_position,
@@ -2769,6 +2851,148 @@ def sync_smart_monitor_analysis_baselines(
             summary["removed"] += int(result.get("removed", 0) or 0)
 
     return summary
+
+
+def sync_smart_monitor_analysis_baselines(
+    *,
+    enabled_only: bool = False,
+    account_name: Optional[str] = None,
+    has_position: Optional[bool] = None,
+) -> dict[str, Any]:
+    return _sync_smart_monitor_analysis_baselines_summary(
+        enabled_only=enabled_only,
+        account_name=account_name,
+        has_position=has_position,
+    )
+
+
+def submit_smart_monitor_baseline_refresh_task(
+    *,
+    session_key: str,
+    enabled_only: bool = False,
+    account_name: Optional[str] = None,
+    has_position: Optional[bool] = None,
+) -> str:
+    scoped_tasks = _list_scoped_smart_monitor_tasks(
+        enabled_only=enabled_only,
+        account_name=account_name,
+        has_position=has_position,
+    )
+    unique_tasks = _unique_smart_monitor_tasks(scoped_tasks)
+    stale_tasks = [task for task in unique_tasks if _is_smart_monitor_analysis_stale(task)]
+    if not unique_tasks:
+        raise ValueError("当前筛选范围内没有可更新基线的盯盘任务")
+    if stale_tasks and not getattr(config, "DEEPSEEK_API_KEY", ""):
+        raise ValueError("存在过期基线，但未配置 DeepSeek API Key，无法补跑深度分析")
+
+    stale_symbols = [str(task.get("stock_code") or "").strip().upper() for task in stale_tasks if task.get("stock_code")]
+    fresh_count = max(0, len(unique_tasks) - len(stale_symbols))
+
+    def runner(_task_id: str, report_progress) -> dict[str, Any]:
+        failed_symbols: list[dict[str, Any]] = []
+        analyzed_symbols: list[str] = []
+        total = len(stale_symbols)
+
+        if total:
+            report_progress(
+                current=0,
+                total=total,
+                step_status="analyzing",
+                message=f"发现 {total} 个盯盘基线已过期，开始补跑深度分析...",
+            )
+            worker_count = min(3, total)
+
+            def analyze_one(symbol: str) -> dict[str, Any]:
+                return analyze_single_stock_for_batch(
+                    symbol=symbol,
+                    period=getattr(config, "DATA_PERIOD", "1y"),
+                    enabled_analysts_config=build_analyst_config({}),
+                    selected_lightweight_model=None,
+                    selected_reasoning_model=None,
+                    save_to_global_history=True,
+                )
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=worker_count) as executor:
+                future_to_symbol = {
+                    executor.submit(analyze_one, symbol): symbol
+                    for symbol in stale_symbols
+                }
+                for completed_count, future in enumerate(concurrent.futures.as_completed(future_to_symbol), start=1):
+                    symbol = future_to_symbol[future]
+                    try:
+                        result = future.result(timeout=300)
+                    except concurrent.futures.TimeoutError:
+                        result = {"success": False, "error": "分析超时（5分钟）"}
+                    except Exception as exc:
+                        result = {"success": False, "error": str(exc)}
+
+                    if result.get("success"):
+                        analyzed_symbols.append(symbol)
+                    else:
+                        failed_symbols.append(
+                            {
+                                "symbol": symbol,
+                                "error": result.get("error") or "分析失败",
+                            }
+                        )
+                    report_progress(
+                        current=completed_count,
+                        total=total,
+                        step_code=symbol,
+                        step_status="success" if result.get("success") else "failed",
+                        message=f"[{completed_count}/{total}] {symbol} {'深度分析完成' if result.get('success') else '深度分析失败'}",
+                    )
+        else:
+            report_progress(
+                current=0,
+                total=1,
+                step_status="success",
+                message="当前筛选范围内的分析基线都已是最新，无需补跑深度分析。",
+            )
+
+        baseline_sync = _sync_smart_monitor_analysis_baselines_summary(
+            enabled_only=enabled_only,
+            account_name=account_name,
+            has_position=has_position,
+        )
+        report_progress(
+            current=max(total, 1),
+            total=max(total, 1),
+            step_status="success",
+            message=(
+                f"基线更新完成：补跑深度分析 {len(stale_symbols)} 个，"
+                f"成功 {len(analyzed_symbols)} 个，失败 {len(failed_symbols)} 个。"
+            ),
+        )
+        return {
+            "scope_total": len(scoped_tasks),
+            "unique_total": len(unique_tasks),
+            "stale_total": len(stale_symbols),
+            "fresh_total": fresh_count,
+            "analysis_success": len(analyzed_symbols),
+            "analysis_failed": len(failed_symbols),
+            "failed_symbols": failed_symbols,
+            "baseline_sync": baseline_sync,
+            "enabled_only": enabled_only,
+            "account_name": account_name or "",
+            "has_position": has_position,
+        }
+
+    return portfolio_analysis_task_manager.start_task(
+        session_key,
+        task_type=SMART_MONITOR_BASELINE_REFRESH_TASK_TYPE,
+        label=f"更新盯盘基线 {len(unique_tasks)} 个",
+        runner=runner,
+        metadata={
+            "scope_total": len(scoped_tasks),
+            "unique_total": len(unique_tasks),
+            "stale_total": len(stale_symbols),
+            "fresh_total": fresh_count,
+            "enabled_only": enabled_only,
+            "account_name": account_name or "",
+            "has_position": has_position,
+        },
+    )
 
 
 def get_activity_snapshot() -> dict[str, Any]:

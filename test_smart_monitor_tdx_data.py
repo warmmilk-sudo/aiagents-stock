@@ -1,4 +1,3 @@
-import types
 import unittest
 from unittest.mock import patch
 
@@ -15,24 +14,6 @@ class _FakeResponse:
 
     def json(self):
         return self._payload
-
-
-class _FakeTurnoverDataFrame:
-    empty = False
-    columns = ["ts_code", "trade_date", "turnover_rate"]
-
-    def __init__(self, rows):
-        self._rows = rows
-
-    def sort_values(self, *args, **kwargs):
-        return self
-
-    def reset_index(self, *args, **kwargs):
-        return self
-
-    def iterrows(self):
-        for index, row in enumerate(self._rows):
-            yield index, row
 
 
 class SmartMonitorTDXDataFetcherTests(unittest.TestCase):
@@ -111,21 +92,14 @@ class SmartMonitorTDXDataFetcherTests(unittest.TestCase):
 
         with patch.object(requests, "get", side_effect=_fake_get):
             fetcher = SmartMonitorTDXDataFetcher(base_url="http://tdx.example.com:8181")
-            fetcher.ts_pro = types.SimpleNamespace(
-                daily_basic=lambda *args, **kwargs: _FakeTurnoverDataFrame(
-                    [
-                        {
-                            "ts_code": "600519.SH",
-                            "trade_date": "20260323",
-                            "turnover_rate": 0.2087,
-                        }
-                    ]
-                )
-            )
             with self.assertLogs("smart_monitor_tdx_data", level="DEBUG") as captured:
                 quote = fetcher.get_realtime_quote("600519")
 
         self.assertEqual(quote["name"], "贵州茅台")
+        self.assertEqual(quote["precision_status"], "validated")
+        self.assertEqual(quote["precision_mode"], "tdx_realtime_quote")
+        self.assertIsNone(quote["turnover_rate"])
+        self.assertIsNone(quote["volume_ratio"])
         joined_logs = "\n".join(captured.output)
         self.assertIn("TDX请求 -> endpoint=/api/quote", joined_logs)
         self.assertIn("TDX响应 <- endpoint=/api/quote status=200", joined_logs)

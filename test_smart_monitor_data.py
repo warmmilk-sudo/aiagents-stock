@@ -53,12 +53,41 @@ class _FakeTDXFetcher:
             "pre_close": 1501.2,
             "volume": 123456,
             "amount": 456789000.0,
+            "turnover_rate": None,
+            "volume_ratio": None,
             "update_time": "2026-03-13 10:15:00",
             "data_source": "tdx",
+            "precision_status": "validated",
+            "precision_mode": "tdx_realtime_quote",
             }
 
     def get_technical_indicators(self, stock_code, period="daily"):
         raise AssertionError("TDX technical indicators should not be used when Tushare daily data is available")
+
+
+class _FakeRow(dict):
+    @property
+    def index(self):
+        return list(self.keys())
+
+
+class _FakeILoc:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def __getitem__(self, index):
+        return self._rows[index]
+
+
+class _FakeFrame:
+    def __init__(self, rows):
+        self._rows = rows
+        self.empty = not bool(rows)
+        self.columns = list(rows[0].keys()) if rows else []
+        self.iloc = _FakeILoc(rows)
+
+    def __len__(self):
+        return len(self._rows)
 
 
 class SmartMonitorDataFetcherTests(unittest.TestCase):
@@ -88,11 +117,7 @@ class SmartMonitorDataFetcherTests(unittest.TestCase):
                 "technical_data_source": "tushare",
                 "technical_period": "daily",
             },
-        ) as tushare_mock, patch.object(
-            fetcher,
-            "_get_latest_turnover_rate",
-            return_value=0.75,
-        ) as turnover_mock, patch("smart_monitor_data.time.sleep", return_value=None):
+        ) as tushare_mock, patch("smart_monitor_data.time.sleep", return_value=None):
             result = fetcher.get_comprehensive_data("600519", intraday_strict=True)
 
         self.assertEqual(result["precision_status"], "validated")
@@ -103,10 +128,10 @@ class SmartMonitorDataFetcherTests(unittest.TestCase):
         self.assertEqual(result["tdx_retry_count"], 3)
         self.assertEqual(result["tdx_quote_retry_attempts"], 3)
         self.assertNotIn("tdx_indicators_retry_attempts", result)
-        self.assertEqual(result["turnover_rate"], 0.75)
+        self.assertIsNone(result["turnover_rate"])
+        self.assertIsNone(result["volume_ratio"])
         self.assertEqual(fetcher.tdx_fetcher.quote_calls, 3)
         tushare_mock.assert_called_once_with("600519", "daily")
-        turnover_mock.assert_called_once_with("600519")
 
     def test_intraday_strict_fails_when_tdx_unavailable(self):
         fetcher = self._build_fetcher(None, retry_count=3)
@@ -186,6 +211,41 @@ class SmartMonitorDataFetcherTests(unittest.TestCase):
 
         self.assertIsNone(quote)
         self.assertEqual(fetcher.ts_pro.calls, 0)
+
+    def test_get_realtime_quote_leaves_missing_intraday_fields_empty_without_daily_fallback(self):
+        fetcher = self._build_fetcher(None, retry_count=1)
+
+        min_frame = _FakeFrame([
+            _FakeRow(
+                {
+                    "时间": "2026-03-25 10:15:00",
+                    "收盘": 18.88,
+                }
+            ),
+        ])
+
+        with patch.object(fetcher, "_resolve_stock_name", return_value="贵州茅台"), patch(
+            "smart_monitor_data.ak.stock_zh_a_hist_min_em",
+            return_value=min_frame,
+        ), patch(
+            "smart_monitor_data.ak.stock_zh_a_hist",
+            side_effect=AssertionError("daily history should not be used for intraday quote fallback"),
+        ):
+            quote = fetcher.get_realtime_quote("600519")
+
+        self.assertIsNotNone(quote)
+        self.assertEqual(quote["current_price"], 18.88)
+        self.assertIsNone(quote["change_pct"])
+        self.assertIsNone(quote["change_amount"])
+        self.assertIsNone(quote["high"])
+        self.assertIsNone(quote["low"])
+        self.assertIsNone(quote["open"])
+        self.assertIsNone(quote["pre_close"])
+        self.assertIsNone(quote["volume"])
+        self.assertIsNone(quote["amount"])
+        self.assertIsNone(quote["turnover_rate"])
+        self.assertEqual(quote["precision_status"], "partial")
+        self.assertEqual(quote["data_source"], "akshare")
 
 
 if __name__ == "__main__":

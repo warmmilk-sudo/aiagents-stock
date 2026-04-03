@@ -128,7 +128,7 @@ function FollowupAssetList({
             <input
               id="followupSearch"
               onChange={(event) => onSearchChange(event.target.value)}
-              placeholder="搜索代码 / 名称 / 账户"
+              placeholder="搜索代码 / 名称"
               value={followupSearch}
             />
           </div>

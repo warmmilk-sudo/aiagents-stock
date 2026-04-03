@@ -19,7 +19,7 @@ import config
 from portfolio_db import portfolio_db
 from monitor_db import monitor_db as realtime_monitor_db
 from investment_lifecycle_service import InvestmentLifecycleService, investment_lifecycle_service
-from investment_db_utils import DEFAULT_ACCOUNT_NAME, SUPPORTED_ACCOUNT_NAMES, normalize_account_name
+from investment_db_utils import DEFAULT_ACCOUNT_NAME, normalize_account_name
 from smart_monitor_db import SmartMonitorDB
 
 
@@ -27,7 +27,6 @@ class PortfolioManager:
     """持仓管理器类"""
 
     DEFAULT_RISK_FREE_RATE = 0.015
-    AGGREGATE_ACCOUNT_NAME = "全部账户"
     DEFAULT_ANALYSIS_AGENTS = ["technical", "fundamental", "fund_flow", "risk"]
     REALTIME_QUOTE_CACHE_SECONDS = 60
     
@@ -98,13 +97,10 @@ class PortfolioManager:
             if hasattr(self.db, "get_account_total_assets_settings")
             else {}
         )
-        return [
-            {
-                "account_name": account_name,
-                "total_assets": self._normalize_total_assets_value(settings.get(account_name)),
-            }
-            for account_name in SUPPORTED_ACCOUNT_NAMES
-        ]
+        return [{
+            "account_name": DEFAULT_ACCOUNT_NAME,
+            "total_assets": self._normalize_total_assets_value(settings.get(DEFAULT_ACCOUNT_NAME)),
+        }]
 
     def set_account_total_assets_settings(self, account_assets: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
         if hasattr(self.db, "set_account_total_assets_settings"):
@@ -112,17 +108,10 @@ class PortfolioManager:
         return self.get_account_total_assets_settings()
 
     def _get_account_total_assets(self, account_name: Optional[str]) -> float:
-        if account_name in (None, "", self.AGGREGATE_ACCOUNT_NAME):
-            settings = (
-                self.db.get_account_total_assets_settings()
-                if hasattr(self.db, "get_account_total_assets_settings")
-                else {}
-            )
-            return self._normalize_total_assets_value(
-                sum(self._normalize_total_assets_value(settings.get(item)) for item in SUPPORTED_ACCOUNT_NAMES)
-            )
         if hasattr(self.db, "get_account_total_assets"):
-            return self._normalize_total_assets_value(self.db.get_account_total_assets(account_name, 0.0))
+            return self._normalize_total_assets_value(
+                self.db.get_account_total_assets(account_name or DEFAULT_ACCOUNT_NAME, 0.0)
+            )
         return 0.0
 
     def _resolve_shared_monitor_risk_profile(self) -> Dict[str, int]:
@@ -741,9 +730,13 @@ class PortfolioManager:
         """获取单只持仓股票信息"""
         return self.db.get_stock(stock_id)
     
-    def get_all_stocks(self, auto_monitor_only: bool = False) -> List[Dict]:
+    def get_all_stocks(
+        self,
+        auto_monitor_only: bool = False,
+        account_name: Optional[str] = None,
+    ) -> List[Dict]:
         """获取所有持仓股票列表"""
-        return self.db.get_all_stocks(auto_monitor_only)
+        return self.db.get_all_stocks(auto_monitor_only, account_name=account_name)
     
     def search_stocks(self, keyword: str) -> List[Dict]:
         """搜索持仓股票"""
@@ -751,9 +744,7 @@ class PortfolioManager:
     
     def get_stock_count(self, account_name: Optional[str] = None) -> int:
         """获取持仓股票总数，可按账户过滤。"""
-        if not account_name or account_name == self.AGGREGATE_ACCOUNT_NAME:
-            return self.db.get_stock_count()
-        return len(self._filter_stocks_for_account(self.get_all_stocks(), account_name))
+        return self.db.get_stock_count(account_name=account_name)
 
     def _get_stock_data_fetcher(self):
         if self._stock_data_fetcher is None:
@@ -775,12 +766,12 @@ class PortfolioManager:
         return parsed.strftime("%Y-%m-%d") if parsed is not None else None
 
     def _get_account_display_name(self, account_name: Optional[str]) -> str:
-        normalized_account_name = normalize_account_name(account_name, allow_aggregate=True, keep_none=True)
-        return normalized_account_name or self.AGGREGATE_ACCOUNT_NAME
+        normalized_account_name = normalize_account_name(account_name, keep_none=True)
+        return normalized_account_name or DEFAULT_ACCOUNT_NAME
 
     def _filter_stocks_for_account(self, stocks: List[Dict], account_name: Optional[str] = None) -> List[Dict]:
-        normalized_account_name = normalize_account_name(account_name, allow_aggregate=True, keep_none=True)
-        if not normalized_account_name or normalized_account_name == self.AGGREGATE_ACCOUNT_NAME:
+        normalized_account_name = normalize_account_name(account_name, keep_none=True)
+        if not normalized_account_name:
             return list(stocks)
         return [
             stock
@@ -931,7 +922,11 @@ class PortfolioManager:
             print(f"[WARN] 实时行情回补失败 ({normalized_code}): {e}")
             return {}
 
-    def _get_latest_price_and_industry(self, stock: Dict) -> Tuple[float, str]:
+    def _get_latest_price_and_industry(
+        self,
+        stock: Dict,
+        latest_analysis: Optional[Dict] = None,
+    ) -> Tuple[float, str]:
         current_price = 0.0
         industry = self._extract_industry_from_payload(stock) or "未知行业"
         normalized_code = self._normalize_stock_code(str(stock.get("code") or stock.get("symbol") or ""))
@@ -953,7 +948,7 @@ class PortfolioManager:
 
         # 价格只能从实时源补齐，基本信息只用于补行业等非实时字段。
         if current_price <= 0 or industry == "未知行业":
-            latest_analysis = self.get_latest_analysis(stock["id"])
+            latest_analysis = latest_analysis or self.get_latest_analysis(stock["id"])
             if latest_analysis:
                 latest_stock_info = latest_analysis.get("stock_info")
                 if isinstance(latest_stock_info, dict):
@@ -1004,14 +999,26 @@ class PortfolioManager:
         total_market_value = 0.0
         total_cost_value = 0.0
         holdings = []
+        filtered_stocks = self._filter_stocks_for_account(stocks, account_name)
+        latest_analysis_map = (
+            self.db.get_latest_analysis_map(
+                [int(stock["id"]) for stock in filtered_stocks if stock.get("id")],
+                stocks=filtered_stocks,
+            )
+            if hasattr(self.db, "get_latest_analysis_map")
+            else {}
+        )
 
-        for stock in self._filter_stocks_for_account(stocks, account_name):
+        for stock in filtered_stocks:
             quantity = self._safe_int(stock.get("quantity"))
             cost_price = self._safe_float(stock.get("cost_price"))
             if quantity <= 0:
                 continue
 
-            current_price, industry = self._get_latest_price_and_industry(stock)
+            current_price, industry = self._get_latest_price_and_industry(
+                stock,
+                latest_analysis=latest_analysis_map.get(int(stock["id"])) if stock.get("id") else None,
+            )
             market_value = current_price * quantity
             cost_value = cost_price * quantity
             pnl = market_value - cost_value
@@ -1064,7 +1071,7 @@ class PortfolioManager:
     ) -> int:
         payload = self._build_portfolio_snapshot_payload(
             stocks,
-            None if account_name == self.AGGREGATE_ACCOUNT_NAME else account_name,
+            account_name=account_name,
         )
         return self.db.upsert_daily_snapshot(
             account_name=account_name,
@@ -1079,49 +1086,23 @@ class PortfolioManager:
     def capture_daily_snapshot(self, account_name: Optional[str] = None, source: str = "manual") -> Dict:
         """采集当日持仓快照，并按日 upsert。"""
         snapshot_date = datetime.now().strftime("%Y-%m-%d")
-        all_stocks = self.get_all_stocks()
-        accounts = sorted({stock.get("account_name", DEFAULT_ACCOUNT_NAME) for stock in all_stocks})
-        captured_accounts: List[str] = []
-
-        if account_name and account_name != self.AGGREGATE_ACCOUNT_NAME:
-            self._upsert_snapshot_for_account(account_name, all_stocks, snapshot_date, source)
-            captured_accounts.append(account_name)
-            self._upsert_snapshot_for_account(self.AGGREGATE_ACCOUNT_NAME, all_stocks, snapshot_date, source)
-            captured_accounts.append(self.AGGREGATE_ACCOUNT_NAME)
-        else:
-            for name in accounts:
-                self._upsert_snapshot_for_account(name, all_stocks, snapshot_date, source)
-                captured_accounts.append(name)
-            self._upsert_snapshot_for_account(self.AGGREGATE_ACCOUNT_NAME, all_stocks, snapshot_date, source)
-            captured_accounts.append(self.AGGREGATE_ACCOUNT_NAME)
+        target_account = normalize_account_name(account_name) or DEFAULT_ACCOUNT_NAME
+        stocks = self.get_all_stocks(account_name=target_account)
+        self._upsert_snapshot_for_account(target_account, stocks, snapshot_date, source)
 
         return {
             "snapshot_date": snapshot_date,
-            "accounts": captured_accounts,
-            "captured": len(captured_accounts),
+            "accounts": [target_account],
+            "captured": 1,
         }
 
     def ensure_daily_snapshot(self, account_name: Optional[str] = None, source: str = "page_load") -> Dict:
         """确保今日快照存在，缺失时自动补采。"""
         snapshot_date = datetime.now().strftime("%Y-%m-%d")
-        all_stocks = self.get_all_stocks()
-        accounts = sorted({stock.get("account_name", DEFAULT_ACCOUNT_NAME) for stock in all_stocks})
-        required_accounts: List[str] = []
-
-        if account_name and account_name != self.AGGREGATE_ACCOUNT_NAME:
-            required_accounts.append(account_name)
-        else:
-            required_accounts.extend(accounts)
-        required_accounts.append(self.AGGREGATE_ACCOUNT_NAME)
-
-        missing = [
-            account
-            for account in required_accounts
-            if not self.db.has_snapshot_for_date(account, snapshot_date)
-        ]
-        if missing:
-            return self.capture_daily_snapshot(account_name=account_name, source=source)
-        return {"snapshot_date": snapshot_date, "accounts": required_accounts, "captured": 0}
+        target_account = normalize_account_name(account_name) or DEFAULT_ACCOUNT_NAME
+        if not self.db.has_snapshot_for_date(target_account, snapshot_date):
+            return self.capture_daily_snapshot(account_name=target_account, source=source)
+        return {"snapshot_date": snapshot_date, "accounts": [target_account], "captured": 0}
 
     def get_risk_free_rate_annual(self) -> float:
         raw_value = self.db.get_setting("risk_free_rate_annual", self.DEFAULT_RISK_FREE_RATE)
@@ -1261,7 +1242,7 @@ class PortfolioManager:
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
     ) -> pd.DataFrame:
-        snapshot_account = self._get_account_display_name(account_name)
+        snapshot_account = normalize_account_name(account_name) or DEFAULT_ACCOUNT_NAME
         rows = self.db.get_daily_snapshots(
             account_name=snapshot_account,
             start_date=self._format_date_value(start_date),
@@ -1327,9 +1308,7 @@ class PortfolioManager:
         """按交易流水重建组合序列（含已实现/未实现盈亏）。"""
         start_str = self._format_date_value(start_date)
         end_str = self._format_date_value(end_date)
-        query_account_name = None
-        if account_name and account_name != self.AGGREGATE_ACCOUNT_NAME:
-            query_account_name = self._get_account_display_name(account_name)
+        query_account_name = normalize_account_name(account_name, keep_none=True)
 
         raw_trades = self.db.get_account_trade_history(
             account_name=query_account_name,
@@ -2714,9 +2693,9 @@ class PortfolioManager:
         """获取最新一次分析"""
         return self.db.get_latest_analysis(stock_id)
     
-    def get_all_latest_analysis(self) -> List[Dict]:
+    def get_all_latest_analysis(self, account_name: Optional[str] = None) -> List[Dict]:
         """获取所有持仓股票的最新分析"""
-        return self.db.get_all_latest_analysis()
+        return self.db.get_all_latest_analysis(account_name=account_name)
     
     def get_rating_changes(self, stock_id: int, days: int = 30) -> List[Tuple]:
         """获取评级变化"""
@@ -2736,7 +2715,7 @@ class PortfolioManager:
         Returns:
             Dict: 包含风险指标评估结果的字典
         """
-        stocks = self._filter_stocks_for_account(self.get_all_stocks(), account_name)
+        stocks = self.get_all_stocks(account_name=account_name)
         if not stocks:
             return {"status": "error", "message": "没有持仓记录，无法评估风险"}
 

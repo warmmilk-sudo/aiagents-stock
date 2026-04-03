@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { ModuleCard } from "../../components/common/ModuleCard";
@@ -7,9 +7,10 @@ import { PageFrame } from "../../components/common/PageFrame";
 import { SchedulerControl } from "../../components/common/SchedulerControl";
 import { StatusBadge } from "../../components/common/StatusBadge";
 import { usePageFeedback } from "../../hooks/usePageFeedback";
+import { usePollingLoader } from "../../hooks/usePollingLoader";
 import { FormattedReport } from "../../components/research/FormattedReport";
 import { ApiRequestError, apiFetch, buildQuery } from "../../lib/api";
-import { DEFAULT_ACCOUNT_NAME, normalizeAccountName, SUPPORTED_ACCOUNT_NAMES } from "../../lib/accounts";
+import { DEFAULT_ACCOUNT_NAME } from "../../lib/accounts";
 import { formatDateTime } from "../../lib/datetime";
 import { decodeIntent } from "../../lib/intents";
 import { useSmartMonitorStore, type SmartMonitorPageCache } from "../../stores/smartMonitorStore";
@@ -102,6 +103,28 @@ interface PriceAlertNotification {
   message: string;
   triggered_at: string;
   account_name?: string;
+}
+
+interface BackgroundTaskSummary {
+  id: string;
+  status: string;
+  message: string;
+  current?: number;
+  total?: number;
+  error?: string;
+  result?: {
+    stale_total?: number;
+    fresh_total?: number;
+    analysis_success?: number;
+    analysis_failed?: number;
+    failed_symbols?: Array<{ symbol?: string; error?: string }>;
+    baseline_sync?: {
+      asset_synced?: number;
+      ai_tasks_upserted?: number;
+      price_alerts_upserted?: number;
+      removed?: number;
+    };
+  } | null;
 }
 
 interface MonitorIntentPayload {
@@ -243,7 +266,7 @@ const formatThresholdSummary = (
 };
 
 const taskPortfolioLabel = (task: SmartMonitorTask) =>
-  Boolean(task.has_position) || task.asset_status === "portfolio" ? task.account_name || "在持仓" : "未持仓";
+  Boolean(task.has_position) || task.asset_status === "portfolio" ? "在持仓" : "未持仓";
 
 const matchesTaskDecision = (task: SmartMonitorTask, decision: DecisionItem) => {
   if (task.stock_code !== decision.stock_code) {
@@ -255,7 +278,7 @@ const matchesTaskDecision = (task: SmartMonitorTask, decision: DecisionItem) => 
   if (task.portfolio_stock_id != null && decision.portfolio_stock_id != null) {
     return Number(task.portfolio_stock_id) === Number(decision.portfolio_stock_id);
   }
-  return normalizeAccountName(task.account_name) === normalizeAccountName(decision.account_name);
+  return true;
 };
 
 const isDecisionHolding = (decision: DecisionItem, tasks: SmartMonitorTask[]) => {
@@ -309,10 +332,9 @@ export function SmartMonitorPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const enabledOnly = useSmartMonitorStore((state) => state.enabledOnly);
   const setEnabledOnly = useSmartMonitorStore((state) => state.setEnabledOnly);
-  const [filterAccount, setFilterAccount] = useState<string>("all");
   const [filterHasPosition, setFilterHasPosition] = useState<string>("all");
 
-  const cacheModeKey = `${enabledOnly ? "enabled" : "all"}-${filterAccount}-${filterHasPosition}`;
+  const cacheModeKey = `${enabledOnly ? "enabled" : "all"}-${filterHasPosition}`;
   const cachedPage = useSmartMonitorStore((state) => state.pageCacheByMode[cacheModeKey] ?? null);
   const setPageCache = useSmartMonitorStore((state) => state.setPageCache);
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(() => (cachedPage?.systemStatus as SystemStatus | null) ?? null);
@@ -326,6 +348,9 @@ export function SmartMonitorPage() {
   const [activeResultPanel, setActiveResultPanel] = useState<ResultPanel>("decisions");
   const [section, setSection] = useState<SectionKey>("results");
   const [isRunningAllTasks, setIsRunningAllTasks] = useState(false);
+  const [isRefreshingBaselines, setIsRefreshingBaselines] = useState(false);
+  const [baselineRefreshTaskId, setBaselineRefreshTaskId] = useState<string | null>(null);
+  const [baselineRefreshTask, setBaselineRefreshTask] = useState<BackgroundTaskSummary | null>(null);
   const [isSavingTask, setIsSavingTask] = useState(false);
   const [isSavingMonitorConfig, setIsSavingMonitorConfig] = useState(false);
   const [isTogglingService, setIsTogglingService] = useState(false);
@@ -334,6 +359,7 @@ export function SmartMonitorPage() {
   const [pendingDeleteTaskId, setPendingDeleteTaskId] = useState<number | null>(null);
   const [pendingNotificationId, setPendingNotificationId] = useState<number | null>(null);
   const { message, error, clear, showError, showMessage } = usePageFeedback();
+  const baselineTerminalTaskRef = useRef("");
 
   const applyPageCache = (cache: SmartMonitorPageCache | null) => {
     if (!cache) {
@@ -368,21 +394,26 @@ export function SmartMonitorPage() {
       return;
     }
     const queryParams: Record<string, string | boolean> = { enabled_only: enabledOnly };
-    if (filterAccount !== "all") {
-      queryParams.account_name = filterAccount;
-    }
     if (filterHasPosition !== "all") {
       queryParams.has_position = filterHasPosition === "true";
     }
 
-    const [statusData, taskData, decisionData, notificationData, monitorConfigData, runtimeData] = await Promise.all([
+    const [statusData, taskData, decisionData, monitorConfigData, runtimeData] = await Promise.all([
       apiFetch<SystemStatus>("/api/system/status"),
       apiFetch<SmartMonitorTask[]>(`/api/smart-monitor/tasks${buildQuery(queryParams)}`),
       apiFetch<DecisionItem[]>("/api/smart-monitor/decisions?limit=30"),
-      apiFetch<PriceAlertNotification[]>("/api/price-alerts/notifications?limit=12"),
       apiFetch<MonitorConfig>("/api/smart-monitor/config"),
       apiFetch<RuntimeConfig>("/api/smart-monitor/runtime-config"),
     ]);
+    const notificationScope = JSON.stringify(
+      taskData.map((task) => ({
+        symbol: task.stock_code,
+        account_name: DEFAULT_ACCOUNT_NAME,
+      })),
+    );
+    const notificationData = await apiFetch<PriceAlertNotification[]>(
+      `/api/price-alerts/notifications${buildQuery({ limit: 12, task_scope: notificationScope })}`,
+    );
     setSystemStatus(statusData);
     setTasks(taskData);
     setDecisions(decisionData);
@@ -442,7 +473,7 @@ export function SmartMonitorPage() {
         ...applySharedRiskDefaults(current, monitorConfig),
         stock_code: payload.symbol || "",
         stock_name: payload.stock_name || "",
-        account_name: normalizeAccountName(payload.account_name) || DEFAULT_ACCOUNT_NAME,
+        account_name: DEFAULT_ACCOUNT_NAME,
         task_name: `${payload.stock_name || payload.symbol || ""}盯盘`,
         origin_analysis_id: payload.origin_analysis_id,
         strategy_context: payload.strategy_context || {},
@@ -465,7 +496,7 @@ export function SmartMonitorPage() {
         body: JSON.stringify({
           stock_code: taskForm.stock_code,
           stock_name: taskForm.stock_name || taskForm.stock_code,
-          account_name: normalizeAccountName(taskForm.account_name) || DEFAULT_ACCOUNT_NAME,
+          account_name: DEFAULT_ACCOUNT_NAME,
           task_name: taskForm.task_name || `${taskForm.stock_name || taskForm.stock_code}盯盘`,
           position_size_pct: Number(taskForm.position_size_pct),
           total_position_pct: Number(taskForm.total_position_pct),
@@ -480,7 +511,7 @@ export function SmartMonitorPage() {
       await apiFetch(`/api/smart-monitor/tasks/${savedTask.task_id}/run-once`, { method: "POST" });
       setTaskForm({
         ...applySharedRiskDefaults(defaultTaskForm, monitorConfig),
-        account_name: normalizeAccountName(taskForm.account_name) || DEFAULT_ACCOUNT_NAME,
+        account_name: DEFAULT_ACCOUNT_NAME,
       });
       setActivePanel(null);
       showMessage(`盯盘任务已保存并完成一次盘中决策：${taskForm.stock_code}`);
@@ -680,9 +711,6 @@ export function SmartMonitorPage() {
     setIsRunningAllTasks(true);
     try {
       const queryParams: Record<string, string | boolean> = { enabled_only: true };
-      if (filterAccount !== "all") {
-        queryParams.account_name = filterAccount;
-      }
       if (filterHasPosition !== "all") {
         queryParams.has_position = filterHasPosition === "true";
       }
@@ -700,6 +728,76 @@ export function SmartMonitorPage() {
       showError(requestError instanceof ApiRequestError ? requestError.message : "批量盘中决策失败");
     } finally {
       setIsRunningAllTasks(false);
+    }
+  };
+
+  const loadBaselineRefreshTask = async () => {
+    if (!baselineRefreshTaskId) {
+      setBaselineRefreshTask(null);
+      return;
+    }
+    try {
+      const task = await apiFetch<BackgroundTaskSummary>(`/api/tasks/${baselineRefreshTaskId}`);
+      setBaselineRefreshTask(task);
+    } catch (requestError) {
+      if (requestError instanceof ApiRequestError && requestError.status === 404) {
+        setBaselineRefreshTaskId(null);
+        setBaselineRefreshTask(null);
+      }
+    }
+  };
+
+  usePollingLoader({
+    load: loadBaselineRefreshTask,
+    intervalMs: 2000,
+    enabled: Boolean(
+      baselineRefreshTaskId
+      && (!baselineRefreshTask || baselineRefreshTask.status === "queued" || baselineRefreshTask.status === "running")
+    ),
+    immediate: true,
+    dependencies: [baselineRefreshTaskId, baselineRefreshTask?.status],
+  });
+
+  useEffect(() => {
+    if (!baselineRefreshTask || (baselineRefreshTask.status !== "success" && baselineRefreshTask.status !== "failed")) {
+      return;
+    }
+    const terminalKey = `${baselineRefreshTask.id}:${baselineRefreshTask.status}`;
+    if (baselineTerminalTaskRef.current === terminalKey) {
+      return;
+    }
+    baselineTerminalTaskRef.current = terminalKey;
+    if (baselineRefreshTask.status === "success") {
+      const result = baselineRefreshTask.result;
+      showMessage(
+        `基线更新完成：补跑 ${Number(result?.stale_total ?? 0)} 个，成功 ${Number(result?.analysis_success ?? 0)} 个，跳过最新 ${Number(result?.fresh_total ?? 0)} 个。`,
+      );
+    } else if (baselineRefreshTask.error) {
+      showError(baselineRefreshTask.error);
+    }
+    void loadAll(true).catch(() => undefined);
+  }, [baselineRefreshTask, showError, showMessage]);
+
+  const refreshBaselines = async () => {
+    clear();
+    setIsRefreshingBaselines(true);
+    try {
+      const queryParams: Record<string, string | boolean> = { enabled_only: enabledOnly };
+      if (filterHasPosition !== "all") {
+        queryParams.has_position = filterHasPosition === "true";
+      }
+      const result = await apiFetch<{ task_id: string }>(
+        `/api/smart-monitor/tasks/refresh-baselines${buildQuery(queryParams)}`,
+        { method: "POST" },
+      );
+      baselineTerminalTaskRef.current = "";
+      setBaselineRefreshTaskId(result.task_id);
+      showMessage("盯盘基线更新任务已提交。");
+      void loadBaselineRefreshTask().catch(() => undefined);
+    } catch (requestError) {
+      showError(requestError instanceof ApiRequestError ? requestError.message : "提交基线更新任务失败");
+    } finally {
+      setIsRefreshingBaselines(false);
     }
   };
 
@@ -733,13 +831,6 @@ export function SmartMonitorPage() {
     }
   };
 
-  const allAccountsList = Array.from(
-    new Set([
-      ...SUPPORTED_ACCOUNT_NAMES,
-      ...(filterAccount !== "all" ? [normalizeAccountName(filterAccount) || DEFAULT_ACCOUNT_NAME] : []),
-      ...tasks.map((task) => normalizeAccountName(task.account_name) || DEFAULT_ACCOUNT_NAME),
-    ]),
-  );
   const schedulerEnabled = Boolean(systemStatus?.monitor_scheduler?.scheduler_enabled ?? systemStatus?.monitor_service?.running);
   const serviceRunning = Boolean(systemStatus?.monitor_service?.running);
   const waitingTradingWindow = schedulerEnabled && !serviceRunning && !Boolean(systemStatus?.monitor_scheduler?.is_trading_time);
@@ -747,17 +838,20 @@ export function SmartMonitorPage() {
     ? `当前非交易时段，已启用后会在 ${systemStatus?.monitor_scheduler?.next_trading_time || "下个交易窗口"} 自动执行。`
     : null;
   const runnableTaskCount = tasks.filter((item) => Boolean(item.enabled)).length;
+  const baselineRefreshBusy =
+    isRefreshingBaselines
+    || Boolean(baselineRefreshTaskId && (!baselineRefreshTask || baselineRefreshTask.status === "queued" || baselineRefreshTask.status === "running"));
   const latestDecisions = decisions.reduce<DecisionItem[]>((accumulator, item) => {
-    const key = `${item.stock_code || ""}::${item.asset_id ?? ""}::${item.portfolio_stock_id ?? ""}::${normalizeAccountName(item.account_name) || DEFAULT_ACCOUNT_NAME}`;
-    if (!accumulator.some((existing) => `${existing.stock_code || ""}::${existing.asset_id ?? ""}::${existing.portfolio_stock_id ?? ""}::${normalizeAccountName(existing.account_name) || DEFAULT_ACCOUNT_NAME}` === key)) {
+    const key = `${item.stock_code || ""}::${item.asset_id ?? ""}::${item.portfolio_stock_id ?? ""}`;
+    if (!accumulator.some((existing) => `${existing.stock_code || ""}::${existing.asset_id ?? ""}::${existing.portfolio_stock_id ?? ""}` === key)) {
       accumulator.push(item);
     }
     return accumulator;
   }, []);
   const visibleDecisions = latestDecisions.filter((item) => isVisibleDecision(item, tasks));
   const latestNotifications = notifications.reduce<PriceAlertNotification[]>((accumulator, item) => {
-    const key = `${item.symbol || ""}::${normalizeAccountName(item.account_name) || DEFAULT_ACCOUNT_NAME}`;
-    if (!accumulator.some((existing) => `${existing.symbol || ""}::${normalizeAccountName(existing.account_name) || DEFAULT_ACCOUNT_NAME}` === key)) {
+    const key = `${item.symbol || ""}`;
+    if (!accumulator.some((existing) => `${existing.symbol || ""}` === key)) {
       accumulator.push(item);
     }
     return accumulator;
@@ -768,20 +862,6 @@ export function SmartMonitorPage() {
       <div className={styles.formGrid}>
         <div className={styles.field}><label htmlFor="task-code">股票代码</label><input id="task-code" onChange={(event) => setTaskForm((current) => ({ ...current, stock_code: event.target.value }))} value={taskForm.stock_code} /></div>
         <div className={styles.field}><label htmlFor="task-name">股票名称</label><input id="task-name" onChange={(event) => setTaskForm((current) => ({ ...current, stock_name: event.target.value }))} value={taskForm.stock_name} /></div>
-        <div className={styles.field}>
-          <label htmlFor="task-account">账户</label>
-          <select
-            id="task-account"
-            onChange={(event) => setTaskForm((current) => ({ ...current, account_name: event.target.value || DEFAULT_ACCOUNT_NAME }))}
-            value={taskForm.account_name}
-          >
-            {SUPPORTED_ACCOUNT_NAMES.map((account) => (
-              <option key={account} value={account}>
-                {account}
-              </option>
-            ))}
-          </select>
-        </div>
         <div className={styles.field}><label htmlFor="task-title">任务名称</label><input id="task-title" onChange={(event) => setTaskForm((current) => ({ ...current, task_name: event.target.value }))} value={taskForm.task_name} /></div>
         {renderRiskSlider("task-position", "单票仓位", taskForm.position_size_pct, (nextValue) => setTaskForm((current) => ({ ...current, position_size_pct: nextValue })))}
         {renderRiskSlider("task-total-position", "总仓位上限", taskForm.total_position_pct, (nextValue) => setTaskForm((current) => ({ ...current, total_position_pct: nextValue })))}
@@ -802,7 +882,7 @@ export function SmartMonitorPage() {
       <h3 className={styles.mobileDuplicateHeading}>共享风控设置</h3>
       <div className={styles.noticeCard}>
         <div className={styles.noticeMeta}>
-          <strong>全部账户共用</strong>
+          <strong>统一生效</strong>
           <StatusBadge
             label={monitorConfig?.source === "shared_custom" ? "自定义" : "默认值"}
             tone={monitorConfig?.source === "shared_custom" ? "success" : "default"}
@@ -906,7 +986,7 @@ export function SmartMonitorPage() {
                           </div>
                           <div>{item.message}</div>
                           <small className={styles.muted}>
-                            {formatDateTime(item.triggered_at, "暂无时间")} | {normalizeAccountName(item.account_name) || DEFAULT_ACCOUNT_NAME}
+                            {formatDateTime(item.triggered_at, "暂无时间")}
                           </small>
                           <div className={styles.actions}>
                             <button
@@ -947,23 +1027,6 @@ export function SmartMonitorPage() {
             {activePanel === "task" ? renderTaskForm() : null}
 
             <div className={styles.moduleSection}>
-              <div className={styles.formGrid}>
-                <div className={styles.field}>
-                  <label htmlFor="smart-monitor-account-filter">账户</label>
-                  <select
-                    id="smart-monitor-account-filter"
-                    value={filterAccount}
-                    onChange={(event) => setFilterAccount(event.target.value)}
-                  >
-                    <option value="all">不限账户</option>
-                    {allAccountsList.map((account) => (
-                      <option key={account} value={account}>
-                        {account}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
               <div className={styles.dualToggleGrid}>
                 <label className={`${styles.switchField} ${styles.filterSwitchField}`}>
                   <span className={styles.switchBody}>
@@ -1004,6 +1067,14 @@ export function SmartMonitorPage() {
                   type="button"
                 >
                   {isRunningAllTasks ? "执行中..." : "全部盘中决策"}
+                </button>
+                <button
+                  className={styles.secondaryButton}
+                  disabled={baselineRefreshBusy || tasks.length <= 0}
+                  onClick={() => void refreshBaselines()}
+                  type="button"
+                >
+                  {isRefreshingBaselines ? "提交中..." : baselineRefreshBusy ? "更新中..." : "更新基线"}
                 </button>
                 <span className={styles.muted}>执行当前筛选范围内已启用任务，盘中决策和价格检查。</span>
               </div>

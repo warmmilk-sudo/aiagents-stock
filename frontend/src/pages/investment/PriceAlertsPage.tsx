@@ -396,7 +396,6 @@ export function PriceAlertsPage() {
                     <th>入场区间</th>
                     <th>止盈 / 止损</th>
                     <th>通知状态</th>
-                    <th>账户</th>
                     <th>操作</th>
                   </tr>
                 </thead>
@@ -422,7 +421,6 @@ export function PriceAlertsPage() {
                           tone={alert.notification_enabled ? "default" : "warning"}
                         />
                       </td>
-                      <td>{alert.account_name ?? "默认账户"}</td>
                       <td>
                         <div className={styles.actions}>
                           <button
@@ -445,7 +443,7 @@ export function PriceAlertsPage() {
                   ))}
                   {alerts.length === 0 ? (
                     <tr>
-                      <td className={styles.muted} colSpan={6}>
+                      <td className={styles.muted} colSpan={5}>
                         暂无价格预警
                       </td>
                     </tr>

@@ -125,7 +125,7 @@ export function ActivityPage() {
                 <div className={styles.listItem} key={`${String(item.id ?? index)}-${index}`}>
                   <strong>{asText(item.action_type ?? item.type, "待办动作")}</strong>
                   <p className={styles.muted}>
-                    股票: {asText(item.stock_code ?? item.symbol, "未指定")} | 账户: {asText(item.account_name, "默认账户")}
+                    股票: {asText(item.stock_code ?? item.symbol, "未指定")}
                   </p>
                   <small className={styles.muted}>
                     {formatDateTime(item.created_at ?? item.triggered_at, "暂无时间")} | 状态: {asText(item.status, "待处理")}

@@ -94,41 +94,6 @@ class SmartMonitorDataFetcher:
             "tdx_retry_count": self.intraday_tdx_retry_count,
         }
 
-    def _get_latest_turnover_rate(self, stock_code: str) -> Optional[float]:
-        """Return the latest real turnover rate from Tushare or AKShare."""
-        ts_code = self._stock_code_to_ts_code(stock_code)
-        if self.ts_pro and ts_code:
-            try:
-                end_date = datetime.now().strftime("%Y%m%d")
-                start_date = (datetime.now() - timedelta(days=10)).strftime("%Y%m%d")
-                df = self.ts_pro.daily_basic(
-                    ts_code=ts_code,
-                    start_date=start_date,
-                    end_date=end_date,
-                    fields="ts_code,trade_date,turnover_rate",
-                )
-                if df is not None and not df.empty and "turnover_rate" in df.columns:
-                    df = df.sort_values("trade_date", ascending=False).reset_index(drop=True)
-                    for _, row in df.iterrows():
-                        value = row.get("turnover_rate")
-                        if value is None or pd.isna(value):
-                            continue
-                        return float(value)
-            except Exception as exc:
-                self.logger.warning("Tushare换手率获取失败 %s: %s", stock_code, exc)
-
-        try:
-            hist_df = ak.stock_zh_a_hist(symbol=stock_code, period="daily", adjust="")
-            if hist_df is not None and not hist_df.empty and "换手率" in hist_df.columns:
-                latest = hist_df.iloc[-1]
-                value = latest.get("换手率")
-                if value is not None and not pd.isna(value):
-                    return float(value)
-        except Exception as exc:
-            self.logger.warning("AKShare换手率获取失败 %s: %s", stock_code, exc)
-
-        return None
-
     def _call_tdx_with_retry(self, stock_code: str, operation_label: str, callback):
         last_error = ""
         for attempt in range(1, self.intraday_tdx_retry_count + 1):
@@ -195,15 +160,6 @@ class SmartMonitorDataFetcher:
         result = {}
         result.update(quote)
         result.update(indicators)
-        turnover_rate = result.get("turnover_rate")
-        if turnover_rate in (None, ""):
-            turnover_rate = self._get_latest_turnover_rate(stock_code)
-        if turnover_rate is None:
-            return self._build_precision_error(
-                "盘中分析必须获取真实换手率，但Tushare/AKShare均未返回有效数据。",
-                stock_code,
-            )
-        result["turnover_rate"] = turnover_rate
         result.setdefault("technical_data_source", "tushare")
         result["precision_status"] = "validated"
         result["precision_mode"] = "tdx_quote_tushare_daily"
@@ -365,62 +321,50 @@ class SmartMonitorDataFetcher:
         for attempt in range(retry):
             try:
                 stock_name = self._resolve_stock_name(stock_code)
-                
+
                 # 1.2 获取分钟级实时行情
                 min_df = ak.stock_zh_a_hist_min_em(symbol=stock_code, period='1', adjust='')
-                
                 if min_df.empty:
                     self.logger.warning(f"AKShare未找到股票 {stock_code} 的分钟行情数据")
                     if attempt < retry - 1:
                         time.sleep(2)
                         continue
                     break
-                
-                # 1.3 获取历史数据（计算昨收）
-                hist_df = ak.stock_zh_a_hist(symbol=stock_code, period='daily', adjust='')
-                if hist_df is None or hist_df.empty or len(hist_df.columns) == 0:
-                    self.logger.warning(f"AKShare未找到股票 {stock_code} 的日线历史数据")
-                    if attempt < retry - 1:
-                        time.sleep(2)
-                        continue
-                    return None
-                
-                # 提取最新分钟数据
+
+                # 提取最新分钟数据，仅保留分钟级实时字段，不回填日线历史值
                 latest = min_df.iloc[-1]
                 current_price = float(latest['收盘'])
                 if not math.isfinite(current_price) or current_price <= 0:
                     raise ValueError("实时行情价格无效")
 
-                # 计算昨收和涨跌幅
-                if len(hist_df) >= 2:
-                    pre_close = float(hist_df.iloc[-2]['收盘'])
-                else:
-                    self.logger.warning(f"AKShare历史数据不足 {stock_code}，无法计算昨收")
-                    return None
-                
-                change_amount = current_price - pre_close
-                change_pct = (change_amount / pre_close * 100) if pre_close > 0 else 0
-                
-                # 从历史数据获取今天的统计数据
-                today_data = hist_df.iloc[-1]
-                required_fields = ('成交量', '成交额', '最高', '最低', '开盘')
-                if any(field not in today_data.index or pd.isna(today_data[field]) for field in required_fields):
-                    self.logger.warning(f"AKShare历史数据缺少关键字段 {stock_code}: {required_fields}")
+                def _optional_float(*field_names: str) -> Optional[float]:
+                    for field_name in field_names:
+                        value = latest.get(field_name)
+                        if value is None or pd.isna(value):
+                            continue
+                        try:
+                            numeric = float(value)
+                        except (TypeError, ValueError):
+                            continue
+                        if math.isfinite(numeric):
+                            return numeric
                     return None
 
-                daily_volume = float(today_data['成交量'])
-                daily_amount = float(today_data['成交额'])
-                daily_high = float(today_data['最高'])
-                daily_low = float(today_data['最低'])
-                daily_open = float(today_data['开盘'])
-                turnover_value = today_data.get('换手率')
-                turnover_rate = float(turnover_value) if turnover_value is not None and not pd.isna(turnover_value) else None
+                change_amount = _optional_float("涨跌额", "涨跌额(元)")
+                change_pct = _optional_float("涨跌幅", "涨跌幅(%)")
+                pre_close = _optional_float("昨收", "昨收价")
+                if change_amount is None and pre_close is not None:
+                    change_amount = current_price - pre_close
+                if change_pct is None and change_amount is not None and pre_close not in (None, 0):
+                    change_pct = (change_amount / pre_close * 100) if pre_close > 0 else None
 
-                if turnover_rate is None:
-                    turnover_rate = self._get_latest_turnover_rate(stock_code)
-                if turnover_rate is None:
-                    self.logger.warning(f"AKShare未能获取真实换手率 {stock_code}")
-                    return None
+                volume = _optional_float("成交量", "总量")
+                amount = _optional_float("成交额", "总额")
+                daily_high = _optional_float("最高")
+                daily_low = _optional_float("最低")
+                daily_open = _optional_float("开盘")
+                turnover_rate = _optional_float("换手率")
+                volume_ratio = _optional_float("量比")
 
                 self.logger.info(f"✅ AKShare成功获取 {stock_code} ({stock_name}) 实时行情")
                 
@@ -430,16 +374,18 @@ class SmartMonitorDataFetcher:
                     'current_price': current_price,
                     'change_pct': change_pct,
                     'change_amount': change_amount,
-                    'volume': daily_volume,  # 手
-                    'amount': daily_amount,  # 元
+                    'volume': volume,  # 手
+                    'amount': amount,  # 元
                     'high': daily_high,
                     'low': daily_low,
                     'open': daily_open,
                     'pre_close': pre_close,
                     'turnover_rate': turnover_rate,
-                    'volume_ratio': 1.0,
+                    'volume_ratio': volume_ratio,
                     'update_time': str(latest['时间']),
-                    'data_source': 'akshare'
+                    'data_source': 'akshare',
+                    'precision_status': 'partial',
+                    'precision_mode': 'akshare_minute_only',
                 }
                 
             except Exception as e:

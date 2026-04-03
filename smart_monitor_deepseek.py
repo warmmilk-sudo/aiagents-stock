@@ -6,6 +6,7 @@
 import ast
 import json
 import logging
+import math
 import re
 from typing import Any, Dict, List, Optional
 from datetime import datetime, time
@@ -496,13 +497,42 @@ MACD金叉且柱状图持续放大，RSI 62处于健康区间。今日成交量�
                              risk_profile: Optional[Dict[str, Any]] = None) -> str:
         """构建A股分析提示词"""
         resolved_risk_profile = self._resolve_risk_profile(risk_profile)
-        turnover_rate = market_data.get("turnover_rate")
-        turnover_rate_line = ""
-        if turnover_rate is not None and str(turnover_rate).strip() != "":
+
+        def _to_float(value: object) -> Optional[float]:
+            if value in (None, ""):
+                return None
             try:
-                turnover_rate_line = f"换手率: {float(turnover_rate):.2f}%\n"
+                numeric = float(value)
             except (TypeError, ValueError):
-                turnover_rate_line = ""
+                return None
+            if not math.isfinite(numeric):
+                return None
+            return numeric
+
+        def _fmt_number(value: object, digits: int = 2, *, signed: bool = False, comma: bool = False) -> str:
+            numeric = _to_float(value)
+            if numeric is None:
+                return "N/A"
+            sign = "+" if signed else ""
+            separator = "," if comma else ""
+            return f"{numeric:{sign}{separator}.{digits}f}"
+
+        def _fmt_money(value: object, *, signed: bool = False) -> str:
+            text = _fmt_number(value, digits=2, signed=signed, comma=True)
+            return f"¥{text}" if text != "N/A" else "N/A"
+
+        def _fmt_pct(value: object) -> str:
+            text = _fmt_number(value, digits=2, signed=True)
+            return f"{text}%" if text != "N/A" else "N/A"
+
+        def _fmt_volume(value: object) -> str:
+            text = _fmt_number(value, digits=0, comma=True)
+            return f"{text}手" if text != "N/A" else "N/A"
+
+        turnover_rate_text = _fmt_pct(market_data.get("turnover_rate"))
+        turnover_rate_line = f"换手率: {turnover_rate_text}\n" if turnover_rate_text != "N/A" else ""
+        current_price = _to_float(market_data.get("current_price"))
+        current_price_text = _fmt_money(current_price)
         prompt = f"""
 [TIMER] 当前交易时段
 ═══════════════════════════════════════════════════════════
@@ -517,48 +547,48 @@ MACD金叉且柱状图持续放大，RSI 62处于健康区间。今日成交量�
 股票名称: {market_data.get('name', 'N/A')}
 行情源: {str(market_data.get('data_source', 'N/A')).upper()}
 行情更新时间: {market_data.get('update_time', 'N/A')}
-当前价格: ¥{market_data.get('current_price', 0):.2f}
-今日涨跌: {market_data.get('change_pct', 0):+.2f}%
-今日涨跌额: ¥{market_data.get('change_amount', 0):+.2f}
-最高价: ¥{market_data.get('high', 0):.2f}
-最低价: ¥{market_data.get('low', 0):.2f}
-开盘价: ¥{market_data.get('open', 0):.2f}
-昨收价: ¥{market_data.get('pre_close', 0):.2f}
-成交量: {market_data.get('volume', 0):,.0f}手
-成交额: ¥{market_data.get('amount', 0):,.2f}
+当前价格: {current_price_text}
+今日涨跌: {_fmt_pct(market_data.get('change_pct'))}
+今日涨跌额: {_fmt_money(market_data.get('change_amount'), signed=True)}
+最高价: {_fmt_money(market_data.get('high'))}
+最低价: {_fmt_money(market_data.get('low'))}
+开盘价: {_fmt_money(market_data.get('open'))}
+昨收价: {_fmt_money(market_data.get('pre_close'))}
+成交量: {_fmt_volume(market_data.get('volume'))}
+成交额: {_fmt_money(market_data.get('amount'))}
 
 [TECHNICAL] 技术指标
 ═══════════════════════════════════════════════════════════
-MA5: ¥{market_data.get('ma5', 0):.2f}
-MA20: ¥{market_data.get('ma20', 0):.2f}
-MA60: ¥{market_data.get('ma60', 0):.2f}
-趋势判断: {'多头排列' if market_data.get('trend') == 'up' else '空头排列' if market_data.get('trend') == 'down' else '震荡'}
+MA5: {_fmt_money(market_data.get('ma5'))}
+MA20: {_fmt_money(market_data.get('ma20'))}
+MA60: {_fmt_money(market_data.get('ma60'))}
+趋势判断: {'多头排列' if market_data.get('trend') == 'up' else '空头排列' if market_data.get('trend') == 'down' else 'N/A'}
 
 MACD:
-  DIF: {market_data.get('macd_dif', 0):.4f}
-  DEA: {market_data.get('macd_dea', 0):.4f}
-  MACD: {market_data.get('macd', 0):.4f} ({'金叉' if market_data.get('macd', 0) > 0 else '死叉'})
+  DIF: {_fmt_number(market_data.get('macd_dif'), digits=4)}
+  DEA: {_fmt_number(market_data.get('macd_dea'), digits=4)}
+  MACD: {_fmt_number(market_data.get('macd'), digits=4)}
 
-RSI(6): {market_data.get('rsi6', 50):.2f} {'[超买]' if market_data.get('rsi6', 50) > 80 else '[超卖]' if market_data.get('rsi6', 50) < 20 else '[正常]'}
-RSI(12): {market_data.get('rsi12', 50):.2f}
-RSI(24): {market_data.get('rsi24', 50):.2f}
+RSI(6): {_fmt_number(market_data.get('rsi6'))} {'[超买]' if _to_float(market_data.get('rsi6')) is not None and _to_float(market_data.get('rsi6')) > 80 else '[超卖]' if _to_float(market_data.get('rsi6')) is not None and _to_float(market_data.get('rsi6')) < 20 else '[正常]' if _to_float(market_data.get('rsi6')) is not None else '[N/A]'}
+RSI(12): {_fmt_number(market_data.get('rsi12'))}
+RSI(24): {_fmt_number(market_data.get('rsi24'))}
 
 KDJ:
-  K: {market_data.get('kdj_k', 50):.2f}
-  D: {market_data.get('kdj_d', 50):.2f}
-  J: {market_data.get('kdj_j', 50):.2f}
+  K: {_fmt_number(market_data.get('kdj_k'))}
+  D: {_fmt_number(market_data.get('kdj_d'))}
+  J: {_fmt_number(market_data.get('kdj_j'))}
 
 布林带:
-  上轨: ¥{market_data.get('boll_upper', 0):.2f}
-  中轨: ¥{market_data.get('boll_mid', 0):.2f}
-  下轨: ¥{market_data.get('boll_lower', 0):.2f}
-  位置: {market_data.get('boll_position', 'N/A')}
+  上轨: {_fmt_money(market_data.get('boll_upper'))}
+  中轨: {_fmt_money(market_data.get('boll_mid'))}
+  下轨: {_fmt_money(market_data.get('boll_lower'))}
+  位置: {market_data.get('boll_position', 'N/A') or 'N/A'}
 
 [VOLUME] 量能分析
 ═══════════════════════════════════════════════════════════
-今日成交量: {market_data.get('volume', 0):,.0f}手
-5日均量: {market_data.get('vol_ma5', 0):,.0f}手
-量比: {market_data.get('volume_ratio', 0):.2f} ({'放量' if market_data.get('volume_ratio', 0) > 1.2 else '缩量' if market_data.get('volume_ratio', 0) < 0.8 else '正常'})
+今日成交量: {_fmt_volume(market_data.get('volume'))}
+5日均量: {_fmt_volume(market_data.get('vol_ma5'))}
+量比: {_fmt_number(market_data.get('volume_ratio'))} ({'放量' if _to_float(market_data.get('volume_ratio')) is not None and _to_float(market_data.get('volume_ratio')) > 1.2 else '缩量' if _to_float(market_data.get('volume_ratio')) is not None and _to_float(market_data.get('volume_ratio')) < 0.8 else '正常' if _to_float(market_data.get('volume_ratio')) is not None else 'N/A'})
 {turnover_rate_line}
 
 [EXECUTION_CONTEXT] 执行与持仓上下文
@@ -611,20 +641,26 @@ KDJ:
 
         # 如果已持有该股票
         if has_position and position_cost > 0 and position_quantity > 0:
-            current_price = market_data.get('current_price', 0)
             cost_total = position_cost * position_quantity
-            current_total = current_price * position_quantity
-            profit_loss = current_total - cost_total
-            profit_loss_pct = (profit_loss / cost_total * 100) if cost_total > 0 else 0
+            current_total = current_price * position_quantity if current_price is not None else None
+            profit_loss = (current_total - cost_total) if current_total is not None else None
+            profit_loss_pct = (profit_loss / cost_total * 100) if profit_loss is not None and cost_total > 0 else None
+            current_total_text = f"¥{current_total:,.2f}" if current_total is not None else "N/A"
+            profit_loss_text = (
+                f"¥{profit_loss:,.2f} ({profit_loss_pct:+.2f}%)"
+                if profit_loss is not None and profit_loss_pct is not None
+                else "N/A"
+            )
+            current_price_text = _fmt_money(current_price)
             
             prompt += f"""
 [POSITION] 当前持仓（{stock_code}） ⭐ 重要
 ═══════════════════════════════════════════════════════════
 持仓数量: {position_quantity}股
 成本价: ¥{position_cost:.2f}
-当前价: ¥{current_price:.2f}
-持仓市值: ¥{current_total:,.2f}
-浮动盈亏: ¥{profit_loss:,.2f} ({profit_loss_pct:+.2f}%)
+当前价: {current_price_text}
+持仓市值: {current_total_text}
+浮动盈亏: {profit_loss_text}
 
 ⚠️ T+1限制: 该股票可以卖出（不受T+1限制）
 

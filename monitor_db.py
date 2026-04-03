@@ -238,8 +238,8 @@ class StockMonitorDatabase:
     def get_pending_notifications(self) -> List[Dict]:
         return self.repository.get_pending_notifications()
 
-    def get_all_recent_notifications(self, limit: int = 10) -> List[Dict]:
-        return self.repository.get_all_recent_notifications(limit=limit)
+    def get_all_recent_notifications(self, limit: int = 10, *, task_scope: Optional[List[Dict]] = None) -> List[Dict]:
+        return self.repository.get_all_recent_notifications(limit=limit, task_scope=task_scope)
 
     def mark_notification_sent(self, notification_id: int):
         self.repository.mark_notification_sent(notification_id)

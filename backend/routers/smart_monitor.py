@@ -5,7 +5,7 @@ from typing import Optional
 from fastapi import APIRouter, Request
 
 from backend.api import ApiError, success_payload
-from backend.auth import require_session
+from backend.auth import build_session_key, require_session
 from backend.dto import (
     PendingActionResolveRequest,
     SmartMonitorAccountRiskConfigRequest,
@@ -136,6 +136,26 @@ def sync_task_baselines(
         ),
         message="已强制同步智能盯盘分析基线",
     )
+
+
+@router.post("/tasks/refresh-baselines")
+def refresh_task_baselines(
+    request: Request,
+    enabled_only: bool = False,
+    account_name: Optional[str] = None,
+    has_position: Optional[bool] = None,
+) -> dict:
+    session = require_session(request)
+    try:
+        task_id = services.submit_smart_monitor_baseline_refresh_task(
+            session_key=build_session_key(session),
+            enabled_only=enabled_only,
+            account_name=account_name,
+            has_position=has_position,
+        )
+    except ValueError as exc:
+        raise ApiError(400, str(exc), error_code="smart_monitor_refresh_baselines_failed") from exc
+    return success_payload({"task_id": task_id}, message="已提交盯盘基线更新任务")
 
 
 @router.post("/tasks/run-once")

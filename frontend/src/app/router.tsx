@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, type ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import { Navigate, createBrowserRouter, useLocation } from "react-router-dom";
 
 import { AppLayout } from "../components/layout/AppLayout";
@@ -6,63 +6,26 @@ import { useAuthStore } from "../stores/authStore";
 import { LoginPage } from "../pages/LoginPage";
 import { NotFoundPage } from "../pages/NotFoundPage";
 
-const ActivityPage = lazy(() =>
-  import("../pages/investment/ActivityPage").then((module) => ({ default: module.ActivityPage })),
-);
-const PortfolioPage = lazy(() =>
-  import("../pages/investment/PortfolioPage").then((module) => ({ default: module.PortfolioPage })),
-);
-const SmartMonitorPage = lazy(() =>
-  import("../pages/investment/SmartMonitorPage").then((module) => ({
-    default: module.SmartMonitorPage,
-  })),
-);
-const DeepAnalysisPage = lazy(() =>
-  import("../pages/research/DeepAnalysisPage").then((module) => ({ default: module.DeepAnalysisPage })),
-);
-const HistoryPage = lazy(() =>
-  import("../pages/research/HistoryPage").then((module) => ({ default: module.HistoryPage })),
-);
-const LowPriceBullPage = lazy(() =>
-  import("../pages/selectors/LowPriceBullPage").then((module) => ({ default: module.LowPriceBullPage })),
-);
-const MainForcePage = lazy(() =>
-  import("../pages/selectors/MainForcePage").then((module) => ({ default: module.MainForcePage })),
-);
-const ProfitGrowthPage = lazy(() =>
-  import("../pages/selectors/ProfitGrowthPage").then((module) => ({ default: module.ProfitGrowthPage })),
-);
-const SmallCapPage = lazy(() =>
-  import("../pages/selectors/SmallCapPage").then((module) => ({ default: module.SmallCapPage })),
-);
-const ValueStockPage = lazy(() =>
-  import("../pages/selectors/ValueStockPage").then((module) => ({ default: module.ValueStockPage })),
-);
-const LonghubangPage = lazy(() =>
-  import("../pages/strategies/LonghubangPage").then((module) => ({ default: module.LonghubangPage })),
-);
-const MacroCyclePage = lazy(() =>
-  import("../pages/strategies/MacroCyclePage").then((module) => ({ default: module.MacroCyclePage })),
-);
-const NewsFlowPage = lazy(() =>
-  import("../pages/strategies/NewsFlowPage").then((module) => ({ default: module.NewsFlowPage })),
-);
-const SectorStrategyPage = lazy(() =>
-  import("../pages/strategies/SectorStrategyPage").then((module) => ({
-    default: module.SectorStrategyPage,
-  })),
-);
-const ConfigPage = lazy(() =>
-  import("../pages/system/ConfigPage").then((module) => ({ default: module.ConfigPage })),
-);
-const DatabasePage = lazy(() =>
-  import("../pages/system/DatabasePage").then((module) => ({ default: module.DatabasePage })),
-);
+import { ActivityPage } from "../pages/investment/ActivityPage";
+import { PortfolioPage } from "../pages/investment/PortfolioPage";
+import { SmartMonitorPage } from "../pages/investment/SmartMonitorPage";
+import { DeepAnalysisPage } from "../pages/research/DeepAnalysisPage";
+import { HistoryPage } from "../pages/research/HistoryPage";
+import { LowPriceBullPage } from "../pages/selectors/LowPriceBullPage";
+import { MainForcePage } from "../pages/selectors/MainForcePage";
+import { ProfitGrowthPage } from "../pages/selectors/ProfitGrowthPage";
+import { SmallCapPage } from "../pages/selectors/SmallCapPage";
+import { ValueStockPage } from "../pages/selectors/ValueStockPage";
+import { LonghubangPage } from "../pages/strategies/LonghubangPage";
+import { MacroCyclePage } from "../pages/strategies/MacroCyclePage";
+import { NewsFlowPage } from "../pages/strategies/NewsFlowPage";
+import { SectorStrategyPage } from "../pages/strategies/SectorStrategyPage";
+import { ConfigPage } from "../pages/system/ConfigPage";
+import { DatabasePage } from "../pages/system/DatabasePage";
 
 function withPageSuspense(element: ReactNode) {
-  return <Suspense fallback={<div style={{ padding: 32 }}>正在加载页面...</div>}>{element}</Suspense>;
+  return element;
 }
-
 
 function AuthBootstrap() {
   const checking = useAuthStore((state) => state.checking);
