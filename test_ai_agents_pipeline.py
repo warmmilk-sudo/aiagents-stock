@@ -76,6 +76,33 @@ class StockAnalysisAgentsPipelineTests(unittest.TestCase):
         self.assertIn("【风险管理师报告】", captured["prompt"])
         self.assertIn("正式技术分析正文", captured["prompt"])
         self.assertNotIn("内部推理", captured["prompt"])
+        self.assertIn("关键筹码摘要", captured["prompt"])
+
+    def test_conduct_team_discussion_includes_chip_summary(self):
+        captured = {}
+        agent = StockAnalysisAgents.__new__(StockAnalysisAgents)
+
+        def fake_call_api(messages, max_tokens=None, tier=None):
+            captured["prompt"] = messages[1]["content"]
+            return "讨论结果"
+
+        agent.deepseek_client = types.SimpleNamespace(call_api=fake_call_api)
+
+        agent.conduct_team_discussion(
+            {"technical": {"analysis": "技术分析正文"}},
+            {"symbol": "600519", "name": "贵州茅台"},
+            {
+                "chip_data_source": "tushare.cyq_chips/cyq_perf",
+                "main_chip_peak_price": 1680,
+                "cost_band_70": "1600-1720",
+                "profit_ratio_estimate": "61.2%",
+            },
+        )
+
+        self.assertIn("数据源：tushare.cyq_chips/cyq_perf", captured["prompt"])
+        self.assertIn("主筹码峰：1680", captured["prompt"])
+        self.assertIn("70%成本区：1600-1720", captured["prompt"])
+        self.assertIn("获利盘：61.2%", captured["prompt"])
 
 
 if __name__ == "__main__":

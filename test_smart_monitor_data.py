@@ -173,6 +173,61 @@ class SmartMonitorDataFetcherTests(unittest.TestCase):
 
         self.assertIsNone(indicators)
 
+    def test_get_comprehensive_data_prefers_realtime_volume_ratio(self):
+        fetcher = self._build_fetcher(None, retry_count=1)
+
+        with patch.object(
+            fetcher,
+            "get_realtime_quote",
+            return_value={
+                "code": "600519",
+                "current_price": 1520.0,
+                "volume_ratio": 2.6,
+                "data_source": "tdx",
+            },
+        ), patch.object(
+            fetcher,
+            "get_technical_indicators",
+            return_value={
+                "ma5": 1508.0,
+                "vol_ma5": 98765.0,
+                "volume_ratio_vs_vol_ma5": 0.42,
+            },
+        ):
+            result = fetcher.get_comprehensive_data("600519")
+
+        self.assertEqual(result["volume_ratio"], 2.6)
+        self.assertEqual(result["volume_ratio_vs_vol_ma5"], 0.42)
+        self.assertEqual(result["vol_ma5"], 98765.0)
+
+    def test_intraday_strict_prefers_realtime_volume_ratio(self):
+        fetcher = self._build_fetcher(_FakeTDXFetcher(), retry_count=1)
+        fetcher.ts_pro = object()
+
+        fetcher.tdx_fetcher.get_realtime_quote = lambda stock_code: {
+            "code": stock_code,
+            "current_price": 1520.0,
+            "volume_ratio": 3.1,
+            "data_source": "tdx",
+        }
+
+        with patch.object(
+            fetcher,
+            "_get_technical_indicators_from_tushare",
+            return_value={
+                "ma5": 1508.0,
+                "vol_ma5": 123456.0,
+                "volume_ratio_vs_vol_ma5": 0.51,
+                "technical_data_source": "tushare",
+                "technical_period": "daily",
+            },
+        ):
+            result = fetcher.get_comprehensive_data("600519", intraday_strict=True)
+
+        self.assertEqual(result["volume_ratio"], 3.1)
+        self.assertEqual(result["volume_ratio_vs_vol_ma5"], 0.51)
+        self.assertEqual(result["precision_mode"], "tdx_quote_tushare_daily")
+
     def test_get_realtime_quote_does_not_fall_back_to_tushare(self):
         fetcher = self._build_fetcher(None, retry_count=1)
 

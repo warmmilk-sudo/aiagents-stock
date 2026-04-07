@@ -1,6 +1,6 @@
 """
 智策板块数据采集模块
-使用AKShare获取板块相关数据
+以 AkShare 为主抓取板块快照，并通过请求保护层降低并发风控概率。
 """
 
 import concurrent.futures
@@ -14,6 +14,7 @@ import os
 from dotenv import load_dotenv
 from sector_strategy_db import SectorStrategyDatabase
 from tushare_utils import create_tushare_pro
+from akshare_request_guard import AkShareRequestGuard
 
 # 加载环境变量
 load_dotenv()
@@ -29,6 +30,7 @@ class SectorStrategyDataFetcher:
         self.max_retries = 3  # 最大重试次数
         self.retry_delay = 2  # 重试延迟（秒）
         self.request_delay = 1  # 请求间隔（秒）
+        self.max_fetch_workers = max(1, int(os.getenv("SECTOR_STRATEGY_FETCH_WORKERS", "3")))
         
         # 初始化数据库和日志
         self.database = SectorStrategyDatabase()
@@ -36,6 +38,15 @@ class SectorStrategyDataFetcher:
         self._tushare_api = None
         self._tushare_url = None
         self._dc_index_cache = {}
+        self.akshare_guard = AkShareRequestGuard(
+            max_retries=self.max_retries,
+            retry_base_delay=self.retry_delay,
+            min_delay=0.5,
+            max_delay=max(self.request_delay, 1.2),
+            max_concurrency=2,
+            logger=self.logger,
+            label="智策-AkShare",
+        )
         
         # 配置日志
         if not self.logger.handlers:
@@ -47,19 +58,26 @@ class SectorStrategyDataFetcher:
     
     def _safe_request(self, func, *args, **kwargs):
         """安全的请求函数，包含重试机制"""
-        for attempt in range(self.max_retries):
-            try:
-                result = func(*args, **kwargs)
-                # 添加请求延迟，避免请求过快
-                time.sleep(self.request_delay)
-                return result
-            except Exception as e:
-                if attempt < self.max_retries - 1:
-                    print(f"    请求失败，{self.retry_delay}秒后重试... (尝试 {attempt + 1}/{self.max_retries})")
-                    time.sleep(self.retry_delay)
-                else:
-                    print(f"    请求失败，已达最大重试次数: {e}")
-                    raise e
+        guard = getattr(self, "akshare_guard", None)
+        if guard is None:
+            logger = getattr(self, "logger", logging.getLogger(__name__))
+            guard = AkShareRequestGuard(
+                max_retries=getattr(self, "max_retries", 3),
+                retry_base_delay=getattr(self, "retry_delay", 2),
+                min_delay=0.5,
+                max_delay=max(float(getattr(self, "request_delay", 1) or 1), 1.2),
+                max_concurrency=2,
+                logger=logger,
+                label="智策-AkShare",
+            )
+            self.akshare_guard = guard
+
+        return guard.call(
+            func,
+            *args,
+            request_name=getattr(func, "__name__", "akshare_request"),
+            **kwargs,
+        )
 
     def _fetch_data_source(self, step_label, fetch_func):
         try:
@@ -100,7 +118,9 @@ class SectorStrategyDataFetcher:
             for _, (step_label, _) in fetch_specs.items():
                 print(f"  {step_label}")
 
-            with concurrent.futures.ThreadPoolExecutor(max_workers=len(fetch_specs)) as executor:
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=min(len(fetch_specs), max(1, int(getattr(self, "max_fetch_workers", 3) or 3)))
+            ) as executor:
                 future_map = {
                     executor.submit(self._fetch_data_source, step_label, fetch_func): result_key
                     for result_key, (step_label, fetch_func) in fetch_specs.items()

@@ -171,6 +171,72 @@ class DataSourceManager:
 
         return fuzzy_match
     
+    def _fetch_stock_hist_data_from_tushare(self, symbol, start_date=None, end_date=None, adjust='qfq'):
+        if not self.tushare_available:
+            return None
+
+        print(f"[Tushare] 正在获取 {symbol} 的历史数据...")
+        ts_code = self._convert_to_ts_code(symbol)
+        adj_dict = {'qfq': 'qfq', 'hfq': 'hfq', '': None}
+        adj = adj_dict.get(adjust, 'qfq')
+
+        df = self.tushare_api.daily(
+            ts_code=ts_code,
+            start_date=start_date,
+            end_date=end_date,
+            adj=adj
+        )
+
+        if df is None or df.empty:
+            print(f"[Tushare] 未返回 {symbol} 的历史数据")
+            return None
+
+        df = df.rename(columns={
+            'trade_date': 'date',
+            'vol': 'volume',
+            'amount': 'amount'
+        })
+        df['date'] = pd.to_datetime(df['date'])
+        df = df.sort_values('date')
+        df['volume'] = df['volume'] * 100
+        df['amount'] = df['amount'] * 1000
+
+        print(f"[Tushare] 获取成功，共 {len(df)} 条数据")
+        return df
+
+    def _fetch_stock_hist_data_from_akshare(self, symbol, start_date=None, end_date=None, adjust='qfq'):
+        import akshare as ak
+
+        print(f"[Akshare] 正在获取 {symbol} 的历史数据...")
+        df = ak.stock_zh_a_hist(
+            symbol=symbol,
+            period="daily",
+            start_date=start_date,
+            end_date=end_date,
+            adjust=adjust
+        )
+
+        if df is None or df.empty:
+            print(f"[Akshare] 未返回 {symbol} 的历史数据")
+            return None
+
+        df = df.rename(columns={
+            '日期': 'date',
+            '开盘': 'open',
+            '收盘': 'close',
+            '最高': 'high',
+            '最低': 'low',
+            '成交量': 'volume',
+            '成交额': 'amount',
+            '振幅': 'amplitude',
+            '涨跌幅': 'pct_change',
+            '涨跌额': 'change',
+            '换手率': 'turnover'
+        })
+        df['date'] = pd.to_datetime(df['date'])
+        print(f"[Akshare] 获取成功，共 {len(df)} 条数据")
+        return df
+
     def get_stock_hist_data(self, symbol, start_date=None, end_date=None, adjust='qfq'):
         """
         获取股票历史数据（优先akshare，失败时使用tushare）
@@ -192,83 +258,20 @@ class DataSourceManager:
         else:
             end_date = datetime.now().strftime('%Y%m%d')
         
-        # 优先使用akshare
-        try:
-            import akshare as ak
-            print(f"[Akshare] 正在获取 {symbol} 的历史数据...")
-            
-            df = ak.stock_zh_a_hist(
-                symbol=symbol,
-                period="daily",
-                start_date=start_date,
-                end_date=end_date,
-                adjust=adjust
-            )
-            
-            if df is not None and not df.empty:
-                # 标准化列名
-                df = df.rename(columns={
-                    '日期': 'date',
-                    '开盘': 'open',
-                    '收盘': 'close',
-                    '最高': 'high',
-                    '最低': 'low',
-                    '成交量': 'volume',
-                    '成交额': 'amount',
-                    '振幅': 'amplitude',
-                    '涨跌幅': 'pct_change',
-                    '涨跌额': 'change',
-                    '换手率': 'turnover'
-                })
-                df['date'] = pd.to_datetime(df['date'])
-                print(f"[Akshare] 获取成功，共 {len(df)} 条数据")
-                return df
-        except Exception as e:
-            print(f"[Akshare] 获取失败: {e}")
-        
-        # akshare失败，尝试tushare
         if self.tushare_available:
             try:
-                print(f"[Tushare] 正在获取 {symbol} 的历史数据（备用数据源）...")
-                
-                # 转换股票代码格式（添加市场后缀）
-                ts_code = self._convert_to_ts_code(symbol)
-                
-                # 转换复权类型
-                adj_dict = {'qfq': 'qfq', 'hfq': 'hfq', '': None}
-                adj = adj_dict.get(adjust, 'qfq')
-                
-                # 格式化日期
-                start = f"{start_date[:4]}-{start_date[4:6]}-{start_date[6:]}" if start_date else None
-                end = f"{end_date[:4]}-{end_date[4:6]}-{end_date[6:]}" if end_date else None
-                
-                # 获取数据
-                df = self.tushare_api.daily(
-                    ts_code=ts_code,
-                    start_date=start_date,
-                    end_date=end_date,
-                    adj=adj
-                )
-                
+                df = self._fetch_stock_hist_data_from_tushare(symbol, start_date=start_date, end_date=end_date, adjust=adjust)
                 if df is not None and not df.empty:
-                    # 标准化列名和数据格式
-                    df = df.rename(columns={
-                        'trade_date': 'date',
-                        'vol': 'volume',
-                        'amount': 'amount'
-                    })
-                    df['date'] = pd.to_datetime(df['date'])
-                    df = df.sort_values('date')
-                    
-                    # 转换成交量单位（tushare单位是手，转换为股）
-                    df['volume'] = df['volume'] * 100
-                    # 转换成交额单位（tushare单位是千元，转换为元）
-                    df['amount'] = df['amount'] * 1000
-                    
-                    print(f"[Tushare] 获取成功，共 {len(df)} 条数据")
                     return df
             except Exception as e:
                 print(f"[Tushare] 获取失败: {e}")
+
+        try:
+            df = self._fetch_stock_hist_data_from_akshare(symbol, start_date=start_date, end_date=end_date, adjust=adjust)
+            if df is not None and not df.empty:
+                return df
+        except Exception as e:
+            print(f"[Akshare] 获取失败: {e}")
         
         # 两个数据源都失败
         print("[ERROR] 所有数据源均获取失败")
@@ -291,53 +294,9 @@ class DataSourceManager:
             "market": None
         }
         
-        # 优先使用akshare
-        akshare_loaded = False
-        try:
-            import akshare as ak
-            print(f"[Akshare] 正在获取 {symbol} 的基本信息...")
-            
-            stock_info = ak.stock_individual_info_em(symbol=symbol)
-            if stock_info is not None and not stock_info.empty:
-                akshare_loaded = True
-                extracted_industry = self._extract_industry_from_stock_info(stock_info)
-                if extracted_industry:
-                    info['industry'] = extracted_industry
-
-                for _, row in stock_info.iterrows():
-                    key = self._clean_text_value(
-                        self._get_row_value(row, 'item', '项目', '名称', '字段', 'title', 'key')
-                    ).replace(" ", "")
-                    value = self._clean_text_value(
-                        self._get_row_value(row, 'value', '值', '内容', 'data', 'val')
-                    )
-                    if not key or not value:
-                        continue
-                    
-                    if key == '股票简称':
-                        info['name'] = value
-                    elif key in self._INDUSTRY_LABELS:
-                        info['industry'] = value
-                    elif key == '上市时间':
-                        info['list_date'] = value
-                    elif key == '总市值':
-                        info['market_cap'] = value
-                    elif key == '流通市值':
-                        info['circulating_market_cap'] = value
-                
-                if info['name'] is not None and info['industry'] is not None:
-                    print(f"[Akshare] 成功获取基本信息")
-                    return info
-        except Exception as e:
-            print(f"[Akshare] 获取失败: {e}")
-        
-        # akshare失败，尝试tushare
-        should_use_tushare = self.tushare_available and (
-            not akshare_loaded or info['industry'] is None or info['market'] is None
-        )
-        if should_use_tushare:
+        if self.tushare_available:
             try:
-                print(f"[Tushare] 正在获取 {symbol} 的基本信息（备用数据源）...")
+                print(f"[Tushare] 正在获取 {symbol} 的基本信息...")
                 
                 ts_code = self._convert_to_ts_code(symbol)
                 df = self.tushare_api.stock_basic(
@@ -356,14 +315,48 @@ class DataSourceManager:
                     return info
             except Exception as e:
                 print(f"[Tushare] 获取失败: {e}")
-        
-        if akshare_loaded:
-            print(f"[Akshare] 基本信息获取完成，行业识别结果: {info.get('industry')}")
+
+        try:
+            import akshare as ak
+            print(f"[Akshare] Tushare失败，尝试获取 {symbol} 的基本信息...")
+
+            stock_info = ak.stock_individual_info_em(symbol=symbol)
+            if stock_info is not None and not stock_info.empty:
+                extracted_industry = self._extract_industry_from_stock_info(stock_info)
+                if extracted_industry:
+                    info['industry'] = extracted_industry
+
+                for _, row in stock_info.iterrows():
+                    key = self._clean_text_value(
+                        self._get_row_value(row, 'item', '项目', '名称', '字段', 'title', 'key')
+                    ).replace(" ", "")
+                    value = self._clean_text_value(
+                        self._get_row_value(row, 'value', '值', '内容', 'data', 'val')
+                    )
+                    if not key or not value:
+                        continue
+
+                    if key == '股票简称':
+                        info['name'] = value
+                    elif key in self._INDUSTRY_LABELS:
+                        info['industry'] = value
+                    elif key == '上市时间':
+                        info['list_date'] = value
+                    elif key == '总市值':
+                        info['market_cap'] = value
+                    elif key == '流通市值':
+                        info['circulating_market_cap'] = value
+
+                if info['name'] is not None or info['industry'] is not None:
+                    print(f"[Akshare] 成功获取基本信息")
+        except Exception as e:
+            print(f"[Akshare] 获取失败: {e}")
+
         return info
     
     def get_realtime_quotes(self, symbol):
         """
-        获取实时行情数据（优先AkShare，失败时回退TDX，不回退到Tushare日线）
+        获取实时行情数据（优先TDX，失败时回退AkShare，不回退到Tushare日线）
         
         Args:
             symbol: 股票代码
@@ -372,15 +365,25 @@ class DataSourceManager:
             dict: 实时行情数据
         """
         quotes = {}
-        
-        # 优先使用akshare
+
+        tdx_fetcher = self._get_tdx_fetcher()
+        if tdx_fetcher is not None:
+            try:
+                print(f"[TDX] 正在获取 {symbol} 的实时行情...")
+                tdx_quote = self._normalize_tdx_quote(symbol, tdx_fetcher.get_realtime_quote(symbol))
+                if tdx_quote:
+                    print("[TDX] 成功获取实时行情")
+                    return tdx_quote
+            except Exception as e:
+                print(f"[TDX] 获取失败: {e}")
+
         try:
             import akshare as ak
-            print(f"[Akshare] 正在获取 {symbol} 的实时行情...")
-            
+            print(f"[Akshare] TDX失败，尝试获取 {symbol} 的实时行情...")
+
             df = ak.stock_zh_a_spot_em()
             stock_df = df[df['代码'] == symbol]
-            
+
             if not stock_df.empty:
                 row = stock_df.iloc[0]
                 quotes = {
@@ -401,19 +404,6 @@ class DataSourceManager:
                 return quotes
         except Exception as e:
             print(f"[Akshare] 获取失败: {e}")
-
-        # AkShare 失败时回退 TDX。
-        # TDX 在非交易时段通常仍能返回最近一次可靠撮合快照，可用于补充 Tushare 的非实时字段。
-        tdx_fetcher = self._get_tdx_fetcher()
-        if tdx_fetcher is not None:
-            try:
-                print(f"[TDX] AkShare失败，尝试获取 {symbol} 的实时行情补充数据...")
-                tdx_quote = self._normalize_tdx_quote(symbol, tdx_fetcher.get_realtime_quote(symbol))
-                if tdx_quote:
-                    print("[TDX] 成功获取实时行情补充数据")
-                    return tdx_quote
-            except Exception as e:
-                print(f"[TDX] 获取失败: {e}")
 
         return quotes
     

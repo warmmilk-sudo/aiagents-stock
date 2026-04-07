@@ -1,8 +1,7 @@
 """
 智能盯盘 - A股数据获取模块
-使用TDX/akshare获取实时行情和技术指标
-Tushare用于日线历史数据、基本面和资金流向等非实时补充
-盘中分析可强制使用TDX
+实时行情优先使用 TDX，结构化日线与补充数据优先使用 Tushare，AkShare 仅作兜底补充。
+盘中分析可强制使用 TDX。
 """
 
 import logging
@@ -17,7 +16,7 @@ from tushare_utils import create_tushare_pro
 
 
 class SmartMonitorDataFetcher:
-    """A股数据获取器（实时价优先TDX -> AKShare，日线技术指标优先Tushare）"""
+    """A股数据获取器（实时价优先 TDX，结构化日线优先 Tushare，AkShare 兜底）"""
     
     def __init__(self, use_tdx: bool = None, tdx_base_url: str = None):
         """
@@ -62,28 +61,28 @@ class SmartMonitorDataFetcher:
                     self.tdx_fetcher = candidate_fetcher
                     self.logger.info(f"TDX数据源已启用: {tdx_base_url}")
                 else:
-                    self.logger.warning(f"TDX数据源不可达: {tdx_base_url}，将使用AKShare")
+                    self.logger.warning(f"TDX数据源不可达: {tdx_base_url}，将降级到补充数据源")
                     self.use_tdx = False
             except Exception as e:
-                self.logger.warning(f"TDX数据源初始化失败: {e}，将使用AKShare")
+                self.logger.warning(f"TDX数据源初始化失败: {e}，将降级到补充数据源")
                 self.use_tdx = False
         else:
-            self.logger.info("TDX数据源未启用，实时行情将优先使用AKShare")
+            self.logger.info("TDX数据源未启用，实时行情将使用补充数据源")
         
-        # 初始化Tushare（备用数据源）
+        # 初始化 Tushare（结构化主数据源）
         self.ts_pro = None
         tushare_token = os.getenv('TUSHARE_TOKEN', '')
         
         if tushare_token:
             try:
                 self.ts_pro, tushare_url = create_tushare_pro(token=tushare_token)
-                self.logger.info(f"Tushare备用数据源初始化成功，地址: {tushare_url}")
+                self.logger.info(f"Tushare数据源初始化成功，地址: {tushare_url}")
             except Exception as e:
                 self.logger.warning(f"Tushare初始化失败: {e}")
 
 
         else:
-            self.logger.info("未配置Tushare Token，仅使用AKShare数据源")
+            self.logger.info("未配置Tushare Token，将仅使用补充数据源")
 
     def _build_precision_error(self, message: str, stock_code: str) -> Dict:
         return {
@@ -93,6 +92,16 @@ class SmartMonitorDataFetcher:
             "data_source": "tdx",
             "tdx_retry_count": self.intraday_tdx_retry_count,
         }
+
+    @staticmethod
+    def _merge_quote_and_indicators(quote: Optional[Dict], indicators: Optional[Dict]) -> Dict:
+        """Prefer realtime quote fields when merging indicator payloads."""
+        result: Dict = {}
+        if indicators:
+            result.update(indicators)
+        if quote:
+            result.update(quote)
+        return result
 
     def _call_tdx_with_retry(self, stock_code: str, operation_label: str, callback):
         last_error = ""
@@ -157,9 +166,7 @@ class SmartMonitorDataFetcher:
                 stock_code,
             )
 
-        result = {}
-        result.update(quote)
-        result.update(indicators)
+        result = self._merge_quote_and_indicators(quote, indicators)
         result.setdefault("technical_data_source", "tushare")
         result["precision_status"] = "validated"
         result["precision_mode"] = "tdx_quote_tushare_daily"
@@ -602,7 +609,7 @@ class SmartMonitorDataFetcher:
                 'boll_lower': boll_lower,
                 'boll_position': boll_position,
                 'vol_ma5': float(latest['vol_ma5']),
-                'volume_ratio': float(latest['成交量']) / float(latest['vol_ma5']) if latest['vol_ma5'] > 0 else 1.0,
+                'volume_ratio_vs_vol_ma5': float(latest['成交量']) / float(latest['vol_ma5']) if latest['vol_ma5'] > 0 else None,
                 'semantic_labels': semantic_labels  # 新增语义标签
             }
             
@@ -742,17 +749,12 @@ class SmartMonitorDataFetcher:
         if intraday_strict:
             return self._get_intraday_tdx_comprehensive_data(stock_code)
 
-        result = {}
-        
         # 实时行情
         quote = self.get_realtime_quote(stock_code)
-        if quote:
-            result.update(quote)
         
         # 技术指标
         indicators = self.get_technical_indicators(stock_code)
-        if indicators:
-            result.update(indicators)
+        result = self._merge_quote_and_indicators(quote, indicators)
         
         # 主力资金（已禁用 - 接口不稳定）
         # main_force = self.get_main_force_flow(stock_code)

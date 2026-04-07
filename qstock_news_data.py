@@ -1,15 +1,17 @@
 """
 新闻数据获取模块
-使用akshare获取股票的最新新闻信息（替代qstock）
+当前以 AkShare 为主获取股票相关新闻，Tushare 仅用于名称解析等补充。
 """
 
 import pandas as pd
 import sys
 import io
 import warnings
+import logging
 from datetime import datetime, timedelta
 import akshare as ak
 from data_source_manager import data_source_manager
+from akshare_request_guard import AkShareRequestGuard
 
 warnings.filterwarnings('ignore')
 
@@ -26,12 +28,22 @@ _setup_stdout_encoding()
 
 
 class QStockNewsDataFetcher:
-    """新闻数据获取类（使用akshare作为数据源）"""
+    """新闻数据获取类（AkShare 主源，Tushare 补充）"""
     
     def __init__(self):
         self.max_items = 30  # 最多获取的新闻数量
         self.available = True
-        print("✓ 新闻数据获取器初始化成功（akshare数据源）")
+        self.logger = logging.getLogger(__name__)
+        self.guard = AkShareRequestGuard(
+            min_delay=0.6,
+            max_delay=1.5,
+            max_retries=3,
+            retry_base_delay=1.2,
+            max_concurrency=2,
+            logger=self.logger,
+            label="新闻-AkShare",
+        )
+        print("✓ 新闻数据获取器初始化成功（AkShare 主源，Tushare 补充）")
     
     def get_stock_news(self, symbol):
         """
@@ -47,11 +59,11 @@ class QStockNewsDataFetcher:
             "symbol": symbol,
             "news_data": None,
             "data_success": False,
-            "source": "qstock"
+            "source": "akshare_news"
         }
         
         if not self.available:
-            data["error"] = "qstock库未安装或不可用"
+            data["error"] = "新闻数据源不可用"
             return data
         
         # 只支持中国股票
@@ -61,7 +73,7 @@ class QStockNewsDataFetcher:
         
         try:
             # 获取新闻数据
-            print(f"📰 正在使用qstock获取 {symbol} 的最新新闻...")
+            print(f"📰 正在使用 AkShare 新闻聚合获取 {symbol} 的最新新闻...")
             news_data = self._get_news_data(symbol)
             
             if news_data:
@@ -83,18 +95,7 @@ class QStockNewsDataFetcher:
         return symbol.isdigit() and len(symbol) == 6
 
     def _resolve_stock_name(self, symbol):
-        """解析股票名称，优先AkShare，失败时降级到Tushare。"""
-        try:
-            df_info = ak.stock_zh_a_spot_em()
-            if df_info is not None and not df_info.empty:
-                match = df_info[df_info['代码'] == symbol]
-                if not match.empty:
-                    stock_name = match.iloc[0]['名称']
-                    print(f"   找到股票名称: {stock_name}")
-                    return stock_name
-        except Exception as e:
-            print(f"   [Akshare] 获取股票名称失败: {e}")
-
+        """解析股票名称，优先Tushare，失败时降级到AkShare。"""
         if data_source_manager.tushare_available:
             try:
                 ts_code = data_source_manager._convert_to_ts_code(symbol)
@@ -109,10 +110,24 @@ class QStockNewsDataFetcher:
             except Exception as e:
                 print(f"   [Tushare] 获取股票名称失败: {e}")
 
+        try:
+            df_info = self.guard.call(
+                ak.stock_zh_a_spot_em,
+                request_name="stock_zh_a_spot_em",
+            )
+            if df_info is not None and not df_info.empty:
+                match = df_info[df_info['代码'] == symbol]
+                if not match.empty:
+                    stock_name = match.iloc[0]['名称']
+                    print(f"   [Akshare] 找到股票名称: {stock_name}")
+                    return stock_name
+        except Exception as e:
+            print(f"   [Akshare] 获取股票名称失败: {e}")
+
         return None
     
     def _get_news_data(self, symbol):
-        """获取新闻数据（使用akshare）"""
+        """获取新闻数据（当前以 AkShare 为主）"""
         try:
             print(f"   使用 akshare 获取新闻...")
             
@@ -121,7 +136,11 @@ class QStockNewsDataFetcher:
             # 方法1: 尝试获取个股新闻（东方财富）
             try:
                 # stock_news_em(symbol="600519") - 东方财富个股新闻
-                df = ak.stock_news_em(symbol=symbol)
+                df = self.guard.call(
+                    ak.stock_news_em,
+                    symbol=symbol,
+                    request_name="stock_news_em",
+                )
                 
                 if df is not None and not df.empty:
                     print(f"   ✓ 从东方财富获取到 {len(df)} 条新闻")
@@ -159,7 +178,11 @@ class QStockNewsDataFetcher:
                     if stock_name:
                         # stock_news_sina - 新浪财经新闻
                         try:
-                            df = ak.stock_news_sina(symbol=stock_name)
+                            df = self.guard.call(
+                                ak.stock_news_sina,
+                                symbol=stock_name,
+                                request_name="stock_news_sina",
+                            )
                             if df is not None and not df.empty:
                                 print(f"   ✓ 从新浪财经获取到 {len(df)} 条新闻")
                                 
@@ -187,7 +210,10 @@ class QStockNewsDataFetcher:
             if not news_items or len(news_items) < 5:
                 try:
                     # stock_news_cls() - 财联社电报
-                    df = ak.stock_news_cls()
+                    df = self.guard.call(
+                        ak.stock_news_cls,
+                        request_name="stock_news_cls",
+                    )
                     
                     if df is not None and not df.empty:
                         # 筛选包含股票代码或名称的新闻
@@ -250,7 +276,8 @@ class QStockNewsDataFetcher:
         if data.get("news_data"):
             news_data = data["news_data"]
             text_parts.append(f"""
-【最新新闻 - akshare数据源】
+【最新新闻】
+数据源：{data.get('source', 'akshare')}
 查询时间：{news_data.get('query_time', 'N/A')}
 时间范围：{news_data.get('date_range', 'N/A')}
 新闻数量：{news_data.get('count', 0)}条
@@ -287,7 +314,7 @@ class QStockNewsDataFetcher:
 
 # 测试函数
 if __name__ == "__main__":
-    print("测试新闻数据获取（akshare数据源）...")
+    print("测试新闻数据获取（AkShare 主源）...")
     print("="*60)
     
     fetcher = QStockNewsDataFetcher()
@@ -317,4 +344,3 @@ if __name__ == "__main__":
             print(f"\n获取失败: {data.get('error', '未知错误')}")
         
         print("\n")
-

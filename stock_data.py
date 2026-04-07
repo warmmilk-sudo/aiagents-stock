@@ -172,57 +172,61 @@ class StockDataFetcher:
             if basic_info:
                 info.update(basic_info)
             
-            # 方法1: 尝试获取个股详细信息（akshare）
-            try:
-                stock_info = ak.stock_individual_info_em(symbol=symbol)
-                if stock_info is not None and not stock_info.empty:
-                    for _, row in stock_info.iterrows():
-                        key = row['item']
-                        value = row['value']
-                        
-                        if key == '股票简称':
-                            info['name'] = value
-                        elif key == '总市值':
-                            try:
-                                if value and value != '-':
-                                    info['market_cap'] = float(value)
-                            except:
-                                pass
-                        elif key == '市盈率-动态':
-                            try:
-                                if value and value != '-':
-                                    pe_value = float(value)
-                                    if 0 < pe_value <= 1000:
-                                        info['pe_ratio'] = pe_value
-                            except:
-                                pass
-                        elif key == '市净率':
-                            try:
-                                if value and value != '-':
-                                    pb_value = float(value)
-                                    if 0 < pb_value <= 100:
-                                        info['pb_ratio'] = pb_value
-                            except:
-                                pass
-            except Exception as e:
-                print(f"[Akshare] 获取个股详细信息失败: {e}")
-                # 如果akshare失败，尝试从tushare获取
-                if self.data_source_manager.tushare_available and info['name'] is None:
-                    print(f"[Tushare] 尝试获取基本信息（tushare）...")
-                    try:
-                        ts_code = self.data_source_manager._convert_to_ts_code(symbol)
-                        df = self.data_source_manager.tushare_api.daily_basic(
-                            ts_code=ts_code,
-                            trade_date=datetime.now().strftime('%Y%m%d')
-                        )
-                        if df is not None and not df.empty:
-                            row = df.iloc[0]
-                            info['pe_ratio'] = row.get('pe')
-                            info['pb_ratio'] = row.get('pb')
-                            info['market_cap'] = row.get('total_mv')
-                            print(f"[Tushare] ✅ 成功获取部分信息")
-                    except Exception as te:
-                        print(f"[Tushare] ❌ 获取失败: {te}")
+            if self.data_source_manager.tushare_available:
+                try:
+                    print(f"[Tushare] 正在获取 {symbol} 的估值补充信息...")
+                    ts_code = self.data_source_manager._convert_to_ts_code(symbol)
+                    end_date = datetime.now().strftime('%Y%m%d')
+                    start_date = (datetime.now() - timedelta(days=10)).strftime('%Y%m%d')
+                    df = self.data_source_manager.tushare_api.daily_basic(
+                        ts_code=ts_code,
+                        start_date=start_date,
+                        end_date=end_date,
+                        fields='ts_code,trade_date,pe,pb,total_mv'
+                    )
+                    if df is not None and not df.empty:
+                        row = df.sort_values('trade_date', ascending=False).iloc[0]
+                        info['pe_ratio'] = row.get('pe') if row.get('pe') not in (None, '') else info['pe_ratio']
+                        info['pb_ratio'] = row.get('pb') if row.get('pb') not in (None, '') else info['pb_ratio']
+                        info['market_cap'] = row.get('total_mv') if row.get('total_mv') not in (None, '') else info['market_cap']
+                        print(f"[Tushare] ✅ 成功获取估值补充信息")
+                except Exception as te:
+                    print(f"[Tushare] ❌ 获取估值补充信息失败: {te}")
+            else:
+                try:
+                    print(f"[Akshare] 正在获取 {symbol} 的个股详细信息...")
+                    stock_info = ak.stock_individual_info_em(symbol=symbol)
+                    if stock_info is not None and not stock_info.empty:
+                        for _, row in stock_info.iterrows():
+                            key = row['item']
+                            value = row['value']
+                            
+                            if key == '股票简称':
+                                info['name'] = value
+                            elif key == '总市值':
+                                try:
+                                    if value and value != '-':
+                                        info['market_cap'] = float(value)
+                                except:
+                                    pass
+                            elif key == '市盈率-动态':
+                                try:
+                                    if value and value != '-':
+                                        pe_value = float(value)
+                                        if 0 < pe_value <= 1000:
+                                            info['pe_ratio'] = pe_value
+                                except:
+                                    pass
+                            elif key == '市净率':
+                                try:
+                                    if value and value != '-':
+                                        pb_value = float(value)
+                                        if 0 < pb_value <= 100:
+                                            info['pb_ratio'] = pb_value
+                                except:
+                                    pass
+                except Exception as e:
+                    print(f"[Akshare] 获取个股详细信息失败: {e}")
             
             # 不再使用历史日线收盘价回填 current_price/change_percent。
             # 如果实时源不可用，这里保持 None，避免把收盘价误当成盘中现价。
@@ -556,16 +560,421 @@ class StockDataFetcher:
             
         except Exception as e:
             return {"error": f"计算技术指标失败: {str(e)}"}
+
+    def _coerce_float(self, value):
+        try:
+            if value is None or pd.isna(value):
+                return None
+            numeric = float(value)
+            if not np.isfinite(numeric):
+                return None
+            return numeric
+        except Exception:
+            return None
+
+    def _extract_latest_trade_date(self, df):
+        if df is None or not hasattr(df, "empty") or df.empty:
+            return None
+
+        try:
+            latest_index = pd.to_datetime(df.index[-1], errors="coerce")
+            if not pd.isna(latest_index):
+                return latest_index.strftime("%Y%m%d")
+        except Exception:
+            pass
+
+        if "Date" in getattr(df, "columns", []):
+            latest_date = pd.to_datetime(df["Date"].iloc[-1], errors="coerce")
+            if not pd.isna(latest_date):
+                return latest_date.strftime("%Y%m%d")
+        return None
+
+    def _summarize_real_chip_metrics(self, chips_df, perf_row, latest_price, source_label):
+        default_result = {
+            "chip_data_source": source_label,
+            "chip_trade_date": "N/A",
+            "chip_peak_shape": "N/A",
+            "main_chip_peak_price": "N/A",
+            "secondary_chip_peak_price": "N/A",
+            "chip_concentration": "N/A",
+            "average_chip_cost": "N/A",
+            "cost_band_70": "N/A",
+            "cost_band_90": "N/A",
+            "current_price_position": "N/A",
+            "upper_pressure_peak": "N/A",
+            "lower_support_peak": "N/A",
+            "profit_ratio_estimate": "N/A",
+            "trap_ratio_estimate": "N/A",
+        }
+
+        if chips_df is None or chips_df.empty:
+            return default_result
+
+        chip_view = chips_df.copy()
+        chip_view["price"] = pd.to_numeric(chip_view["price"], errors="coerce")
+        chip_view["percent"] = pd.to_numeric(chip_view["percent"], errors="coerce")
+        chip_view = chip_view.dropna(subset=["price", "percent"]).sort_values("price").reset_index(drop=True)
+        if chip_view.empty:
+            return default_result
+
+        total_percent = float(chip_view["percent"].sum())
+        if total_percent <= 0:
+            return default_result
+
+        chip_view["weight"] = chip_view["percent"] / total_percent
+        prices = chip_view["price"].to_numpy(dtype=float)
+        peak_weights = chip_view["percent"].to_numpy(dtype=float)
+
+        peak_indexes = []
+        for index, value in enumerate(peak_weights):
+            left = peak_weights[index - 1] if index > 0 else value
+            right = peak_weights[index + 1] if index < len(peak_weights) - 1 else value
+            if value > 0 and value >= left and value >= right:
+                peak_indexes.append(index)
+        if not peak_indexes:
+            peak_indexes = [int(np.argmax(peak_weights))]
+
+        peak_indexes = sorted(set(peak_indexes), key=lambda idx: peak_weights[idx], reverse=True)
+        main_peak_index = peak_indexes[0]
+        main_peak_price = float(prices[main_peak_index])
+
+        min_gap = max(0.1, float(np.nanmedian(np.diff(prices))) * 3) if len(prices) > 1 else 0.1
+        secondary_peak_index = None
+        for peak_index in peak_indexes[1:]:
+            if abs(float(prices[peak_index]) - main_peak_price) >= min_gap and peak_weights[peak_index] >= peak_weights[main_peak_index] * 0.35:
+                secondary_peak_index = peak_index
+                break
+
+        significant_peaks = [idx for idx in peak_indexes if peak_weights[idx] >= peak_weights[main_peak_index] * 0.25]
+        if len(significant_peaks) <= 1:
+            chip_peak_shape = "单峰密集"
+        elif len(significant_peaks) == 2:
+            chip_peak_shape = "双峰博弈"
+        else:
+            chip_peak_shape = "多峰发散"
+
+        def _percentile_price(target_ratio):
+            cumulative = chip_view["weight"].cumsum()
+            match_index = cumulative.searchsorted(target_ratio, side="left")
+            match_index = int(np.clip(match_index, 0, len(chip_view) - 1))
+            return float(chip_view.iloc[match_index]["price"])
+
+        avg_cost = self._coerce_float(perf_row.get("weight_avg")) if perf_row is not None else None
+        if avg_cost is None:
+            avg_cost = float((chip_view["price"] * chip_view["weight"]).sum())
+
+        cost_5pct = self._coerce_float(perf_row.get("cost_5pct")) if perf_row is not None else None
+        cost_15pct = self._coerce_float(perf_row.get("cost_15pct")) if perf_row is not None else None
+        cost_50pct = self._coerce_float(perf_row.get("cost_50pct")) if perf_row is not None else None
+        cost_85pct = self._coerce_float(perf_row.get("cost_85pct")) if perf_row is not None else None
+        cost_95pct = self._coerce_float(perf_row.get("cost_95pct")) if perf_row is not None else None
+
+        if cost_5pct is None:
+            cost_5pct = _percentile_price(0.05)
+        if cost_15pct is None:
+            cost_15pct = _percentile_price(0.15)
+        if cost_50pct is None:
+            cost_50pct = _percentile_price(0.50)
+        if cost_85pct is None:
+            cost_85pct = _percentile_price(0.85)
+        if cost_95pct is None:
+            cost_95pct = _percentile_price(0.95)
+
+        band_70_width_pct = ((cost_85pct - cost_15pct) / avg_cost * 100) if avg_cost else None
+        if band_70_width_pct is None:
+            concentration_level = "N/A"
+        elif band_70_width_pct <= 12:
+            concentration_level = "高"
+        elif band_70_width_pct <= 22:
+            concentration_level = "中"
+        else:
+            concentration_level = "低"
+
+        winner_rate = self._coerce_float(perf_row.get("winner_rate")) if perf_row is not None else None
+        if winner_rate is None:
+            winner_rate = float(chip_view.loc[chip_view["price"] <= latest_price, "weight"].sum() * 100)
+        winner_rate = max(0.0, min(100.0, winner_rate))
+        trap_rate = max(0.0, 100.0 - winner_rate)
+
+        current_vs_peak_pct = ((latest_price / main_peak_price) - 1) * 100 if main_peak_price else None
+        current_vs_avg_pct = ((latest_price / avg_cost) - 1) * 100 if avg_cost else None
+        if current_vs_peak_pct is None:
+            current_price_position = "N/A"
+        elif current_vs_peak_pct >= 5:
+            current_price_position = f"显著站上主峰 {current_vs_peak_pct:.1f}%"
+        elif current_vs_peak_pct >= 1:
+            current_price_position = f"略高于主峰 {current_vs_peak_pct:.1f}%"
+        elif current_vs_peak_pct <= -5:
+            current_price_position = f"显著跌破主峰 {abs(current_vs_peak_pct):.1f}%"
+        elif current_vs_peak_pct <= -1:
+            current_price_position = f"略低于主峰 {abs(current_vs_peak_pct):.1f}%"
+        else:
+            current_price_position = "贴近主峰震荡"
+        if current_vs_avg_pct is not None:
+            current_price_position = f"{current_price_position}，相对平均成本 {current_vs_avg_pct:+.1f}%"
+
+        upper_pressure_peak = "N/A"
+        lower_support_peak = "N/A"
+        for peak_index in sorted(significant_peaks, key=lambda idx: prices[idx]):
+            peak_price = float(prices[peak_index])
+            if peak_price > latest_price and upper_pressure_peak == "N/A":
+                upper_pressure_peak = round(peak_price, 2)
+            if peak_price < latest_price:
+                lower_support_peak = round(peak_price, 2)
+
+        trade_date_value = None
+        if "trade_date" in chip_view.columns and not chip_view["trade_date"].empty:
+            trade_date_value = str(chip_view["trade_date"].iloc[0])
+
+        return {
+            "chip_data_source": source_label,
+            "chip_trade_date": trade_date_value or "N/A",
+            "chip_peak_shape": chip_peak_shape,
+            "main_chip_peak_price": round(main_peak_price, 2),
+            "secondary_chip_peak_price": round(float(prices[secondary_peak_index]), 2) if secondary_peak_index is not None else "N/A",
+            "chip_concentration": f"{concentration_level} (70%成本带宽 {band_70_width_pct:.1f}%)" if band_70_width_pct is not None else "N/A",
+            "average_chip_cost": round(avg_cost, 2) if avg_cost is not None else "N/A",
+            "cost_band_70": f"{cost_15pct:.2f}-{cost_85pct:.2f}",
+            "cost_band_90": f"{cost_5pct:.2f}-{cost_95pct:.2f}",
+            "current_price_position": current_price_position,
+            "upper_pressure_peak": upper_pressure_peak,
+            "lower_support_peak": lower_support_peak,
+            "profit_ratio_estimate": f"{winner_rate:.1f}%",
+            "trap_ratio_estimate": f"{trap_rate:.1f}%",
+            "median_chip_cost": round(cost_50pct, 2),
+        }
+
+    def _get_chip_peak_metrics_from_tushare(self, symbol, latest_price, latest_trade_date):
+        if not symbol or not self._is_chinese_stock(symbol):
+            return None
+        manager = getattr(self, "data_source_manager", None)
+        if manager is None or not getattr(manager, "tushare_available", False):
+            print(f"[Chip] {symbol} 未启用Tushare，跳过真实筹码分布")
+            return None
+
+        tushare_api = getattr(manager, "tushare_api", None)
+        if tushare_api is None:
+            print(f"[Chip] {symbol} Tushare客户端不可用，跳过真实筹码分布")
+            return None
+
+        try:
+            ts_code = manager._convert_to_ts_code(symbol)
+        except Exception:
+            print(f"[Chip] {symbol} 股票代码转换失败，跳过真实筹码分布")
+            return None
+
+        end_date = latest_trade_date or datetime.now().strftime("%Y%m%d")
+        try:
+            start_date = (datetime.strptime(end_date, "%Y%m%d") - timedelta(days=14)).strftime("%Y%m%d")
+        except Exception:
+            start_date = (datetime.now() - timedelta(days=14)).strftime("%Y%m%d")
+
+        print(f"[Tushare] 正在获取 {symbol} 的筹码分布，时间范围 {start_date}-{end_date}...")
+
+        try:
+            perf_df = tushare_api.cyq_perf(ts_code=ts_code, start_date=start_date, end_date=end_date)
+        except Exception as e:
+            print(f"[Tushare] 获取筹码胜率失败: {e}")
+            perf_df = None
+
+        try:
+            chips_df = tushare_api.cyq_chips(ts_code=ts_code, start_date=start_date, end_date=end_date)
+        except Exception as e:
+            print(f"[Tushare] 获取筹码分布失败: {e}")
+            chips_df = None
+
+        if chips_df is None or chips_df.empty:
+            print(f"[Tushare] 未获取到 {symbol} 的筹码分布数据")
+            return None
+
+        chips_view = chips_df.copy()
+        chips_view["trade_date"] = chips_view["trade_date"].astype(str)
+        latest_available_trade_date = str(chips_view["trade_date"].max())
+        latest_chips = chips_view.loc[chips_view["trade_date"] == latest_available_trade_date].copy()
+        print(f"[Tushare] 成功获取 {symbol} 的筹码分布，使用交易日 {latest_available_trade_date}，共 {len(latest_chips)} 个价格点")
+
+        perf_row = None
+        if perf_df is not None and not perf_df.empty:
+            perf_view = perf_df.copy()
+            perf_view["trade_date"] = perf_view["trade_date"].astype(str)
+            latest_perf = perf_view.loc[perf_view["trade_date"] == latest_available_trade_date]
+            if latest_perf.empty:
+                latest_perf = perf_view.sort_values("trade_date", ascending=False).head(1)
+            if not latest_perf.empty:
+                perf_row = latest_perf.iloc[0]
+
+        return self._summarize_real_chip_metrics(
+            chips_df=latest_chips,
+            perf_row=perf_row,
+            latest_price=latest_price,
+            source_label="tushare.cyq_chips/cyq_perf",
+        )
+
+    def _calculate_chip_peak_metrics(self, df):
+        """基于历史 OHLCV 近似估算筹码峰结构。"""
+        default_result = {
+            "chip_data_source": "ohlcv_volume_profile_estimate",
+            "chip_trade_date": "N/A",
+            "chip_peak_shape": "N/A",
+            "main_chip_peak_price": "N/A",
+            "secondary_chip_peak_price": "N/A",
+            "chip_concentration": "N/A",
+            "average_chip_cost": "N/A",
+            "cost_band_70": "N/A",
+            "cost_band_90": "N/A",
+            "current_price_position": "N/A",
+            "upper_pressure_peak": "N/A",
+            "lower_support_peak": "N/A",
+            "profit_ratio_estimate": "N/A",
+            "trap_ratio_estimate": "N/A",
+        }
+
+        if df is None or not hasattr(df, "empty") or df.empty:
+            return default_result
+
+        required_columns = {"High", "Low", "Close", "Volume"}
+        if not required_columns.issubset(set(df.columns)):
+            return default_result
+
+        recent = df.loc[:, ["High", "Low", "Close", "Volume"]].replace([np.inf, -np.inf], np.nan).dropna().tail(120)
+        if len(recent) < 20:
+            return default_result
+
+        price_low = float(recent["Low"].min())
+        price_high = float(recent["High"].max())
+        if not np.isfinite(price_low) or not np.isfinite(price_high) or price_high <= price_low:
+            return default_result
+
+        bin_count = 24
+        bin_edges = np.linspace(price_low, price_high, bin_count + 1)
+        bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+        volume_profile = np.zeros(bin_count, dtype=float)
+
+        for _, row in recent.iterrows():
+            low = float(row["Low"])
+            high = float(row["High"])
+            close = float(row["Close"])
+            volume = float(row["Volume"])
+            if not np.isfinite(volume) or volume <= 0:
+                continue
+
+            if not np.isfinite(low) or not np.isfinite(high) or high <= low:
+                target_price = close if np.isfinite(close) else low
+                index = int(np.clip(np.searchsorted(bin_edges, target_price, side="right") - 1, 0, bin_count - 1))
+                volume_profile[index] += volume
+                continue
+
+            overlaps = np.maximum(0, np.minimum(bin_edges[1:], high) - np.maximum(bin_edges[:-1], low))
+            overlap_sum = float(overlaps.sum())
+            if overlap_sum <= 0:
+                index = int(np.clip(np.searchsorted(bin_edges, close, side="right") - 1, 0, bin_count - 1))
+                volume_profile[index] += volume
+            else:
+                volume_profile += volume * (overlaps / overlap_sum)
+
+        total_volume = float(volume_profile.sum())
+        if total_volume <= 0:
+            return default_result
+
+        cumulative_profile = np.cumsum(volume_profile) / total_volume
+
+        def _band_price(target_ratio):
+            band_index = int(np.clip(np.searchsorted(cumulative_profile, target_ratio, side="left"), 0, bin_count - 1))
+            return float(bin_centers[band_index])
+
+        peak_indexes = []
+        for index, value in enumerate(volume_profile):
+            left = volume_profile[index - 1] if index > 0 else value
+            right = volume_profile[index + 1] if index < bin_count - 1 else value
+            if value > 0 and value >= left and value >= right:
+                peak_indexes.append(index)
+
+        if not peak_indexes:
+            peak_indexes = [int(np.argmax(volume_profile))]
+
+        peak_indexes = sorted(set(peak_indexes), key=lambda idx: volume_profile[idx], reverse=True)
+        main_peak_index = peak_indexes[0]
+
+        secondary_peak_index = None
+        for peak_index in peak_indexes[1:]:
+            if abs(peak_index - main_peak_index) >= 2 and volume_profile[peak_index] >= volume_profile[main_peak_index] * 0.35:
+                secondary_peak_index = peak_index
+                break
+
+        significant_peak_indexes = [idx for idx in peak_indexes if volume_profile[idx] >= volume_profile[main_peak_index] * 0.25]
+        if len(significant_peak_indexes) <= 1:
+            chip_peak_shape = "单峰密集"
+        elif len(significant_peak_indexes) == 2:
+            chip_peak_shape = "双峰博弈"
+        else:
+            chip_peak_shape = "多峰发散"
+
+        neighborhood = slice(max(0, main_peak_index - 1), min(bin_count, main_peak_index + 2))
+        concentration_ratio = float(volume_profile[neighborhood].sum() / total_volume)
+        if concentration_ratio >= 0.5:
+            concentration_level = "高"
+        elif concentration_ratio >= 0.3:
+            concentration_level = "中"
+        else:
+            concentration_level = "低"
+
+        current_price = float(recent["Close"].iloc[-1])
+        main_peak_price = float(bin_centers[main_peak_index])
+        current_vs_peak_pct = ((current_price / main_peak_price) - 1) * 100 if main_peak_price else 0.0
+        if current_vs_peak_pct >= 5:
+            current_price_position = f"显著站上主峰 {current_vs_peak_pct:.1f}%"
+        elif current_vs_peak_pct >= 1:
+            current_price_position = f"略高于主峰 {current_vs_peak_pct:.1f}%"
+        elif current_vs_peak_pct <= -5:
+            current_price_position = f"显著跌破主峰 {abs(current_vs_peak_pct):.1f}%"
+        elif current_vs_peak_pct <= -1:
+            current_price_position = f"略低于主峰 {abs(current_vs_peak_pct):.1f}%"
+        else:
+            current_price_position = "贴近主峰震荡"
+
+        upper_pressure_peak = "N/A"
+        lower_support_peak = "N/A"
+        for peak_index in sorted(peak_indexes, key=lambda idx: bin_centers[idx]):
+            center_price = float(bin_centers[peak_index])
+            if center_price > current_price and upper_pressure_peak == "N/A":
+                upper_pressure_peak = round(center_price, 2)
+            if center_price < current_price:
+                lower_support_peak = round(center_price, 2)
+
+        profit_ratio = float(volume_profile[bin_centers <= current_price].sum() / total_volume) * 100
+        trap_ratio = max(0.0, 100 - profit_ratio)
+        avg_cost = float(np.dot(bin_centers, volume_profile) / total_volume)
+        cost_15pct = _band_price(0.15)
+        cost_85pct = _band_price(0.85)
+        cost_5pct = _band_price(0.05)
+        cost_95pct = _band_price(0.95)
+
+        return {
+            "chip_data_source": "ohlcv_volume_profile_estimate",
+            "chip_trade_date": self._extract_latest_trade_date(df) or "N/A",
+            "chip_peak_shape": chip_peak_shape,
+            "main_chip_peak_price": round(main_peak_price, 2),
+            "secondary_chip_peak_price": round(float(bin_centers[secondary_peak_index]), 2) if secondary_peak_index is not None else "N/A",
+            "chip_concentration": f"{concentration_level} ({concentration_ratio * 100:.1f}%)",
+            "average_chip_cost": round(avg_cost, 2),
+            "cost_band_70": f"{cost_15pct:.2f}-{cost_85pct:.2f}",
+            "cost_band_90": f"{cost_5pct:.2f}-{cost_95pct:.2f}",
+            "current_price_position": current_price_position,
+            "upper_pressure_peak": upper_pressure_peak,
+            "lower_support_peak": lower_support_peak,
+            "profit_ratio_estimate": f"{profit_ratio:.1f}%",
+            "trap_ratio_estimate": f"{trap_ratio:.1f}%",
+        }
     
-    def get_latest_indicators(self, df):
+    def get_latest_indicators(self, df, symbol=None):
         """获取最新的技术指标值"""
         try:
             if isinstance(df, dict) and "error" in df:
                 return df
                 
             latest = df.iloc[-1]
-            
-            return {
+
+            indicators = {
                 "price": latest['Close'],
                 "ma5": latest['MA5'],
                 "ma10": latest['MA10'], 
@@ -580,6 +989,18 @@ class StockDataFetcher:
                 "d_value": latest['D'],
                 "volume_ratio": latest['Volume_ratio']
             }
+            real_chip_metrics = self._get_chip_peak_metrics_from_tushare(
+                symbol=symbol,
+                latest_price=self._coerce_float(latest.get("Close")) or 0.0,
+                latest_trade_date=self._extract_latest_trade_date(df),
+            )
+            if real_chip_metrics:
+                print(f"[Chip] {symbol or 'N/A'} 使用真实筹码分布: {real_chip_metrics.get('chip_data_source')} ({real_chip_metrics.get('chip_trade_date')})")
+                indicators.update(real_chip_metrics)
+            else:
+                print(f"[Chip] {symbol or 'N/A'} 未获取到真实筹码分布，回退到OHLCV近似筹码峰")
+                indicators.update(self._calculate_chip_peak_metrics(df))
+            return indicators
         except Exception as e:
             return {"error": f"获取最新指标失败: {str(e)}"}
     

@@ -5,6 +5,7 @@ import sys
 import time
 import types
 import unittest
+from unittest import mock
 
 class _FakeILoc:
     def __init__(self, rows):
@@ -65,8 +66,24 @@ class SectorStrategyDataFetcherTests(unittest.TestCase):
         fetcher._tushare_api = None
         fetcher._tushare_url = None
         fetcher._dc_index_cache = {}
+        fetcher.max_fetch_workers = 3
         fetcher._save_raw_data_to_db = lambda data: None
         return fetcher
+
+    def test_safe_request_delegates_to_akshare_guard(self):
+        fetcher = self._make_fetcher()
+        fetcher.akshare_guard = mock.Mock()
+        target = mock.Mock(__name__="stock_board_industry_name_em")
+        fetcher.akshare_guard.call.return_value = {"ok": True}
+
+        result = fetcher._safe_request(target, symbol="test")
+
+        self.assertEqual(result, {"ok": True})
+        fetcher.akshare_guard.call.assert_called_once_with(
+            target,
+            request_name="stock_board_industry_name_em",
+            symbol="test",
+        )
 
     def test_sector_performance_falls_back_to_tushare(self):
         fetcher = self._make_fetcher()

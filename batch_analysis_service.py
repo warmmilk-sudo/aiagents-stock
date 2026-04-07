@@ -60,7 +60,7 @@ def _get_stock_data(symbol: str, period: str):
             stock_info.pop("realtime_data_source", None)
 
     stock_data_with_indicators = fetcher.calculate_technical_indicators(stock_data)
-    indicators = fetcher.get_latest_indicators(stock_data_with_indicators)
+    indicators = fetcher.get_latest_indicators(stock_data_with_indicators, symbol=symbol)
     return stock_info, stock_data_with_indicators, indicators
 
 
@@ -233,7 +233,7 @@ def analyze_single_stock_for_batch(
 
         _report_stage_progress(progress_callback, 75, 100, f"AI 团队正在讨论 {symbol} 的综合结论...")
         discussion_started_at = time.perf_counter()
-        discussion_result = agents.conduct_team_discussion(agents_results, stock_info)
+        discussion_result = agents.conduct_team_discussion(agents_results, stock_info, indicators)
         logger.info("[%s] team discussion completed in %.2fs", symbol, time.perf_counter() - discussion_started_at)
 
         _report_stage_progress(progress_callback, 90, 100, f"正在生成 {symbol} 的最终决策...")

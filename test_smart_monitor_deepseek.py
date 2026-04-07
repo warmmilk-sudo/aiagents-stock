@@ -168,6 +168,70 @@ class SmartMonitorDeepSeekTests(unittest.TestCase):
 
         self.assertEqual(mock_post.call_args.kwargs["json"]["max_tokens"], 4800)
 
+    def test_build_prompt_uses_intraday_projected_volume_context(self):
+        client = SmartMonitorDeepSeek(api_key="test-key")
+
+        prompt = client._build_a_stock_prompt(
+            stock_code="600519",
+            market_data={
+                "name": "贵州茅台",
+                "data_source": "tdx",
+                "update_time": "2026-04-07 10:30:00",
+                "current_price": 1650.0,
+                "change_pct": 1.8,
+                "change_amount": 29.2,
+                "high": 1658.0,
+                "low": 1628.0,
+                "open": 1632.0,
+                "pre_close": 1620.8,
+                "volume": 120000,
+                "amount": 850000000.0,
+                "ma5": 1645.0,
+                "ma20": 1620.0,
+                "ma60": 1580.0,
+                "trend": "up",
+                "macd_dif": 1.2,
+                "macd_dea": 1.0,
+                "macd": 0.4,
+                "rsi6": 62.0,
+                "rsi12": 58.0,
+                "rsi24": 55.0,
+                "kdj_k": 70.0,
+                "kdj_d": 65.0,
+                "kdj_j": 80.0,
+                "boll_upper": 1680.0,
+                "boll_mid": 1638.0,
+                "boll_lower": 1596.0,
+                "boll_position": "中轨上方",
+                "vol_ma5": 240000.0,
+                "volume_ratio": 1.35,
+            },
+            account_info={
+                "available_cash": 100000.0,
+                "total_value": 300000.0,
+                "total_market_value": 200000.0,
+                "position_usage_pct": 0.66,
+                "positions_count": 3,
+            },
+            has_position=False,
+            session_info={
+                "session": "上午盘",
+                "volatility": "high",
+                "recommendation": "交易活跃，波动较大",
+                "beijing_hour": 10,
+                "beijing_time": "10:30",
+                "can_trade": True,
+            },
+        )
+
+        self.assertIn("当前累计成交量", prompt)
+        self.assertIn("交易时段进度", prompt)
+        self.assertIn("按当前节奏折算全天成交量", prompt)
+        self.assertIn("折算全天成交量/5日均量", prompt)
+        self.assertIn("盘中累计成交量不能直接与历史全天均量比较", prompt)
+        self.assertIn("实时量比: 1.35 (放量)", prompt)
+        self.assertIn("折算全天成交量/5日均量: 2.00 (放量)", prompt)
+
 
 if __name__ == "__main__":
     unittest.main()

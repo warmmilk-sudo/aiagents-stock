@@ -26,6 +26,9 @@ sys.modules.setdefault(
     "ai_agents",
     types.SimpleNamespace(StockAnalysisAgents=type("StockAnalysisAgents", (), {})),
 )
+stock_data_cache_stub = types.ModuleType("stock_data_cache")
+stock_data_cache_stub.strip_cache_meta = lambda value: value
+sys.modules.setdefault("stock_data_cache", stock_data_cache_stub)
 
 import batch_analysis_service
 

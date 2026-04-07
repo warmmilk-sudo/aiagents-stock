@@ -95,13 +95,28 @@ class DeepSeekClientTests(unittest.TestCase):
         result = client.technical_analysis(
             stock_info={"symbol": "000001", "name": "平安银行", "current_price": 12.34, "change_percent": 1.2},
             stock_data=None,
-            indicators={"price": 12.34, "rsi": 55, "volume_ratio": 1.1},
+            indicators={
+                "price": 12.34,
+                "rsi": 55,
+                "volume_ratio": 1.1,
+                "chip_data_source": "tushare.cyq_chips/cyq_perf",
+                "chip_trade_date": "20260402",
+                "chip_peak_shape": "单峰密集",
+                "main_chip_peak_price": 12.1,
+                "chip_concentration": "高 (56.0%)",
+                "average_chip_cost": 12.05,
+                "cost_band_70": "11.80-12.40",
+                "cost_band_90": "11.30-12.80",
+            },
         )
 
         self.assertEqual(result, "技术分析结果")
         self.assertEqual(captured["tier"], ModelTier.LIGHTWEIGHT)
         self.assertIn("股票技术分析师", captured["messages"][0]["content"])
         self.assertIn("股票代码：000001", captured["messages"][1]["content"])
+        self.assertIn("筹码峰结构：", captured["messages"][1]["content"])
+        self.assertIn("筹码数据源：tushare.cyq_chips/cyq_perf", captured["messages"][1]["content"])
+        self.assertIn("筹码峰形态：单峰密集", captured["messages"][1]["content"])
         self.assertIn("历史行情摘要：暂无可用历史行情。", captured["messages"][1]["content"])
 
     def test_final_decision_uses_reasoning_tier(self):
@@ -130,7 +145,15 @@ class DeepSeekClientTests(unittest.TestCase):
         result = client.final_decision(
             comprehensive_discussion="Bullish setup with manageable risk.",
             stock_info={"symbol": "000001", "name": "PingAn", "current_price": 10.0},
-            indicators={"ma20": 9.8, "bb_upper": 10.8, "bb_lower": 9.2},
+            indicators={
+                "ma20": 9.8,
+                "bb_upper": 10.8,
+                "bb_lower": 9.2,
+                "chip_data_source": "tushare.cyq_chips/cyq_perf",
+                "chip_peak_shape": "单峰密集",
+                "main_chip_peak_price": 9.9,
+                "average_chip_cost": 9.85,
+            },
         )
 
         self.assertEqual(captured["tier"], ModelTier.REASONING)
@@ -138,6 +161,8 @@ class DeepSeekClientTests(unittest.TestCase):
         self.assertEqual(captured["max_tokens"], 4000)
         self.assertFalse(captured["include_reasoning"])
         self.assertEqual(len(captured["messages"]), 2)
+        self.assertIn("关键筹码结构", captured["messages"][1]["content"])
+        self.assertIn("筹码数据源：tushare.cyq_chips/cyq_perf", captured["messages"][1]["content"])
         self.assertEqual(result["rating"], "buy")
 
     def test_final_decision_extracts_json_from_wrapped_text(self):

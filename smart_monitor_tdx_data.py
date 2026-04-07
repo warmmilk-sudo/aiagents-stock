@@ -32,6 +32,16 @@ class SmartMonitorTDXDataFetcher:
         if not self.available:
             self.logger.warning(f"TDX初始化完成，但连接探测失败: {self.base_url}")
 
+    @staticmethod
+    def _merge_quote_and_indicators(quote: Optional[Dict], indicators: Optional[Dict]) -> Dict:
+        """Prefer realtime quote fields when merging indicator payloads."""
+        result: Dict = {}
+        if indicators:
+            result.update(indicators)
+        if quote:
+            result.update(quote)
+        return result
+
     def _log_request(self, endpoint: str, *, params: Optional[Dict] = None, timeout: Optional[int] = None) -> None:
         """Log TDX request details at debug level to help diagnose connectivity issues."""
         self.logger.debug(
@@ -470,7 +480,7 @@ class SmartMonitorTDXDataFetcher:
                 'boll_lower': boll_lower,
                 'boll_position': boll_position,
                 'vol_ma5': float(latest['vol_ma5']),
-                'volume_ratio': float(latest['成交量']) / float(latest['vol_ma5']) if latest['vol_ma5'] > 0 else 1.0
+                'volume_ratio_vs_vol_ma5': float(latest['成交量']) / float(latest['vol_ma5']) if latest['vol_ma5'] > 0 else None
             }
             
         except Exception as e:
@@ -489,19 +499,13 @@ class SmartMonitorTDXDataFetcher:
         Returns:
             综合数据
         """
-        result = {}
-        
         # 实时行情
         quote = self.get_realtime_quote(stock_code)
-        if quote:
-            result.update(quote)
         
         # 技术指标
         indicators = self.get_technical_indicators(stock_code)
-        if indicators:
-            result.update(indicators)
         
-        return result
+        return self._merge_quote_and_indicators(quote, indicators)
     
     # ========== 技术指标计算方法 ==========
     

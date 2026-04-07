@@ -44,6 +44,44 @@ class StockAnalysisAgents:
             body = f"{body[:cls._PER_REPORT_LIMIT].rstrip()}\n\n[内容已截断]"
         return f"【{title}】\n{body}".strip()
 
+    @staticmethod
+    def _build_chip_summary(indicators: Dict[str, Any]) -> str:
+        if not isinstance(indicators, dict):
+            return "暂无可用筹码摘要。"
+
+        chip_source = indicators.get("chip_data_source", "N/A")
+        chip_trade_date = indicators.get("chip_trade_date", "N/A")
+        chip_peak_shape = indicators.get("chip_peak_shape", "N/A")
+        main_peak = indicators.get("main_chip_peak_price", "N/A")
+        secondary_peak = indicators.get("secondary_chip_peak_price", "N/A")
+        average_cost = indicators.get("average_chip_cost", "N/A")
+        cost_band_70 = indicators.get("cost_band_70", "N/A")
+        cost_band_90 = indicators.get("cost_band_90", "N/A")
+        concentration = indicators.get("chip_concentration", "N/A")
+        current_position = indicators.get("current_price_position", "N/A")
+        pressure_peak = indicators.get("upper_pressure_peak", "N/A")
+        support_peak = indicators.get("lower_support_peak", "N/A")
+        profit_ratio = indicators.get("profit_ratio_estimate", "N/A")
+        trap_ratio = indicators.get("trap_ratio_estimate", "N/A")
+
+        return (
+            "【关键筹码摘要】\n"
+            f"- 数据源：{chip_source}\n"
+            f"- 交易日：{chip_trade_date}\n"
+            f"- 形态：{chip_peak_shape}\n"
+            f"- 主筹码峰：{main_peak}\n"
+            f"- 次筹码峰：{secondary_peak}\n"
+            f"- 平均成本：{average_cost}\n"
+            f"- 70%成本区：{cost_band_70}\n"
+            f"- 90%成本区：{cost_band_90}\n"
+            f"- 集中度：{concentration}\n"
+            f"- 当前价格位置：{current_position}\n"
+            f"- 上方压力峰：{pressure_peak}\n"
+            f"- 下方支撑峰：{support_peak}\n"
+            f"- 获利盘：{profit_ratio}\n"
+            f"- 套牢盘：{trap_ratio}"
+        )
+
     def technical_analyst_agent(self, stock_info: Dict, stock_data: Any, indicators: Dict) -> Dict[str, Any]:
         """技术面分析智能体"""
         print("🔍 技术分析师正在分析中...")
@@ -310,7 +348,7 @@ class StockAnalysisAgents:
         
         return agents_results
     
-    def conduct_team_discussion(self, agents_results: Dict[str, Any], stock_info: Dict) -> str:
+    def conduct_team_discussion(self, agents_results: Dict[str, Any], stock_info: Dict, indicators: Dict = None) -> str:
         """进行团队讨论"""
         print("🤝 分析团队正在进行综合讨论...")
         if not agents_results:
@@ -355,6 +393,7 @@ class StockAnalysisAgents:
             participants=", ".join(participants),
             stock_name=stock_info.get("name", "N/A"),
             stock_symbol=stock_info.get("symbol", "N/A"),
+            chip_summary=self._build_chip_summary(indicators or {}),
             all_reports=all_reports,
         )
         

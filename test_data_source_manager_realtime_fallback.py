@@ -85,6 +85,25 @@ class DataSourceManagerRealtimeFallbackTests(unittest.TestCase):
         self.assertEqual(quote["pre_close"], 1501.2)
         self.assertEqual(quote["update_time"], "2026-03-20 15:00:00")
 
+    def test_get_realtime_quotes_prefers_tdx_even_when_akshare_is_available(self):
+        akshare_calls = {"count": 0}
+
+        def fake_akshare_spot():
+            akshare_calls["count"] += 1
+            raise AssertionError("akshare should not be called when TDX is available")
+
+        sys.modules["akshare"] = types.SimpleNamespace(stock_zh_a_spot_em=fake_akshare_spot)
+        module = self._reload_module(_FakeTDXFetcher)
+        manager = module.DataSourceManager()
+        manager.tdx_enabled = True
+        manager.tdx_base_url = "http://tdx.example.com:8181"
+        manager.tdx_timeout_seconds = 12
+
+        quote = manager.get_realtime_quotes("600519")
+
+        self.assertEqual(quote["data_source"], "tdx")
+        self.assertEqual(akshare_calls["count"], 0)
+
     def test_get_realtime_quotes_returns_empty_when_tdx_is_unavailable(self):
         sys.modules["akshare"] = types.SimpleNamespace(
             stock_zh_a_spot_em=lambda: (_ for _ in ()).throw(RuntimeError("akshare unavailable")),

@@ -106,6 +106,25 @@ class SmartMonitorTDXDataFetcherTests(unittest.TestCase):
         self.assertIn("TDX请求 -> endpoint=/api/search", joined_logs)
         self.assertIn("TDX行情摘要 600519", joined_logs)
 
+    def test_get_comprehensive_data_prefers_realtime_volume_ratio(self):
+        with patch.object(requests, "get", return_value=_FakeResponse(status_code=200, payload={"status": "ok"})):
+            fetcher = SmartMonitorTDXDataFetcher(base_url="http://tdx.example.com:8181")
+
+        with patch.object(
+            fetcher,
+            "get_realtime_quote",
+            return_value={"code": "600519", "volume_ratio": 1.9, "current_price": 18.88},
+        ), patch.object(
+            fetcher,
+            "get_technical_indicators",
+            return_value={"vol_ma5": 20000.0, "volume_ratio_vs_vol_ma5": 0.64},
+        ):
+            result = fetcher.get_comprehensive_data("600519")
+
+        self.assertEqual(result["volume_ratio"], 1.9)
+        self.assertEqual(result["volume_ratio_vs_vol_ma5"], 0.64)
+        self.assertEqual(result["vol_ma5"], 20000.0)
+
 
 if __name__ == "__main__":
     unittest.main()

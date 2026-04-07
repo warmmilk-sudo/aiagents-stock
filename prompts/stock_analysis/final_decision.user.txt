@@ -13,6 +13,22 @@ $comprehensive_discussion
 - 布林带上轨：$bb_upper
 - 布林带下轨：$bb_lower
 
+关键筹码结构：
+- 筹码数据源：$chip_data_source
+- 筹码数据交易日：$chip_trade_date
+- 筹码峰形态：$chip_peak_shape
+- 主筹码峰价格：$main_chip_peak_price
+- 次筹码峰价格：$secondary_chip_peak_price
+- 筹码集中度：$chip_concentration
+- 平均持仓成本：$average_chip_cost
+- 70%成本区间：$cost_band_70
+- 90%成本区间：$cost_band_90
+- 当前价格相对筹码峰位置：$current_price_position
+- 上方压力峰：$upper_pressure_peak
+- 下方支撑峰：$lower_support_peak
+- 获利盘比例：$profit_ratio_estimate
+- 套牢盘比例：$trap_ratio_estimate
+
 请给出最终投资决策，必须包含以下内容：
 
 1. 投资评级：买入/持有/卖出
@@ -24,6 +40,8 @@ $comprehensive_discussion
 7. 持有周期建议
 8. 风险提示
 9. 仓位建议（轻仓/中等仓位/重仓）
+
+请将筹码结构纳入决策依据，特别关注平均成本、70%/90%成本带、主峰压力支撑以及套牢盘风险。
 
 请只输出JSON格式的决策结果，不要输出额外说明、前言或Markdown代码块，格式如下：
 {
