@@ -4,6 +4,11 @@
 - 股票代码：$symbol
 - 股票名称：$name
 - 当前价格：$current_price
+- 市盈率(PE)：$pe_ratio
+- 市净率(PB)：$pb_ratio
+- 总市值：$market_cap
+- 所属行业：$industry
+- 所属板块：$sector
 - Beta系数：$beta
 - 52周最高：$high_52_week
 - 52周最低：$low_52_week

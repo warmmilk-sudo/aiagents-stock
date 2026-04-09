@@ -1,4 +1,5 @@
 import importlib
+import os
 import sys
 import types
 import unittest
@@ -47,11 +48,16 @@ class DataSourceManagerRealtimeFallbackTests(unittest.TestCase):
             "smart_monitor_tdx_data",
             "tushare_utils",
         ]}
+        self.original_akshare_fallback = os.environ.get("AKSHARE_FALLBACK_ENABLED")
         sys.modules["pandas"] = types.SimpleNamespace(DataFrame=type("DataFrame", (), {}), isna=lambda value: False)
         sys.modules["dotenv"] = types.SimpleNamespace(load_dotenv=lambda *args, **kwargs: None)
         sys.modules["tushare_utils"] = types.SimpleNamespace(create_tushare_pro=lambda *args, **kwargs: (None, ""))
 
     def tearDown(self):
+        if self.original_akshare_fallback is None:
+            os.environ.pop("AKSHARE_FALLBACK_ENABLED", None)
+        else:
+            os.environ["AKSHARE_FALLBACK_ENABLED"] = self.original_akshare_fallback
         for name, module in self.original_modules.items():
             if module is None:
                 sys.modules.pop(name, None)
@@ -105,6 +111,7 @@ class DataSourceManagerRealtimeFallbackTests(unittest.TestCase):
         self.assertEqual(akshare_calls["count"], 0)
 
     def test_get_realtime_quotes_returns_empty_when_tdx_is_unavailable(self):
+        os.environ["AKSHARE_FALLBACK_ENABLED"] = "true"
         sys.modules["akshare"] = types.SimpleNamespace(
             stock_zh_a_spot_em=lambda: (_ for _ in ()).throw(RuntimeError("akshare unavailable")),
         )
@@ -117,6 +124,36 @@ class DataSourceManagerRealtimeFallbackTests(unittest.TestCase):
         quote = manager.get_realtime_quotes("600519")
 
         self.assertEqual(quote, {})
+
+    def test_get_realtime_quotes_skips_akshare_when_fallback_disabled(self):
+        os.environ["AKSHARE_FALLBACK_ENABLED"] = "false"
+        akshare_calls = {"count": 0}
+
+        def fake_akshare_spot():
+            akshare_calls["count"] += 1
+            return []
+
+        sys.modules["akshare"] = types.SimpleNamespace(stock_zh_a_spot_em=fake_akshare_spot)
+        module = self._reload_module(_UnavailableTDXFetcher)
+        manager = module.DataSourceManager()
+        manager.tdx_enabled = True
+        manager.tdx_base_url = "http://tdx.example.com:8181"
+        manager.tdx_timeout_seconds = 12
+
+        quote = manager.get_realtime_quotes("600519")
+
+        self.assertEqual(quote, {})
+        self.assertEqual(akshare_calls["count"], 0)
+
+    def test_convert_to_ts_code_handles_etf_and_convertible_prefixes(self):
+        sys.modules["akshare"] = types.SimpleNamespace()
+        module = self._reload_module(_UnavailableTDXFetcher)
+        manager = module.DataSourceManager()
+
+        self.assertEqual(manager._convert_to_ts_code("510300"), "510300.SH")
+        self.assertEqual(manager._convert_to_ts_code("113001"), "113001.SH")
+        self.assertEqual(manager._convert_to_ts_code("159915"), "159915.SZ")
+        self.assertEqual(manager._convert_to_ts_code("123001"), "123001.SZ")
 
 
 if __name__ == "__main__":

@@ -51,35 +51,41 @@ def _normalize_decision_label(value: object) -> str:
         return ""
     aliases = {
         "买入": "买入",
-        "强烈买入": "买入",
-        "增持": "买入",
+        "强烈买入": "强烈买入",
+        "增持": "增持",
         "buy": "买入",
+        "strong buy": "强烈买入",
+        "add": "增持",
         "持有": "持有",
-        "中性": "持有",
+        "中性": "观望",
         "观望": "观望",
         "hold": "持有",
-        "neutral": "持有",
+        "neutral": "观望",
+        "watch": "观望",
         "卖出": "卖出",
-        "减持": "卖出",
+        "减持": "减持",
         "sell": "卖出",
+        "reduce": "减持",
     }
     lowered = text.lower()
     if lowered in aliases:
         return aliases[lowered]
     if text in aliases:
         return aliases[text]
-    if any(token in text for token in ("买入", "强烈买入", "增持")) or any(
-        token in lowered for token in ("buy", "add")
-    ):
-        return "买入"
-    if any(token in text for token in ("卖出", "减持")) or any(
-        token in lowered for token in ("sell", "reduce")
-    ):
-        return "卖出"
+    if "强烈买入" in text or "strong buy" in lowered:
+        return "强烈买入"
+    if "增持" in text or "add" in lowered:
+        return "增持"
+    if "减持" in text or "reduce" in lowered:
+        return "减持"
     if "观望" in text or "watch" in lowered:
         return "观望"
+    if "买入" in text or "buy" in lowered:
+        return "买入"
+    if "卖出" in text or "sell" in lowered:
+        return "卖出"
     if any(token in text for token in ("持有", "中性")) or any(
-        token in lowered for token in ("hold", "neutral", "watch")
+        token in lowered for token in ("hold", "neutral")
     ):
         return "持有"
     return text
@@ -101,7 +107,7 @@ def _extract_decision_label(record: Dict) -> str:
     match = re.search(r"(?:投资)?评级\s*[:：]\s*([^\s；;，,。]+)", summary)
     if match:
         return _normalize_decision_label(match.group(1))
-    for token in ("买入", "持有", "观望", "卖出", "增持", "减持"):
+    for token in ("强烈买入", "买入", "增持", "持有", "观望", "减持", "卖出"):
         if token in summary:
             return _normalize_decision_label(token)
     return ""

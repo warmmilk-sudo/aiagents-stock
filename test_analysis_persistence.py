@@ -280,6 +280,65 @@ class PortfolioHistoryPersistenceTests(unittest.TestCase):
         self.assertEqual(row["analysis_record_id"], analysis_id)
         self.assertEqual(row["analysis_record_account_name"], "默认账户")
 
+    def test_latest_analysis_rows_repair_code_placeholder_name(self):
+        stock_id = self._add_stock("300750")
+        updated = self.portfolio_db.update_stock(stock_id, name="300750")
+        self.assertTrue(updated)
+
+        self.portfolio_db.analysis_repository.save_record(
+            symbol="300750",
+            stock_name="宁德时代",
+            period="1y",
+            stock_info={"symbol": "300750", "name": "宁德时代", "current_price": 231.5},
+            agents_results={"technical": {"analysis": "趋势继续走强"}},
+            discussion_result="名称应优先展示分析结果里的股票名。",
+            final_decision={
+                "rating": "买入",
+                "confidence_level": 8.6,
+                "operation_advice": "继续持有。",
+            },
+            account_name="默认账户",
+            asset_id=stock_id,
+            portfolio_stock_id=stock_id,
+            analysis_scope="portfolio",
+            analysis_source="portfolio_batch_analysis",
+            analysis_date="2026-03-12 09:30:00",
+            summary="最新分析确认名称。",
+            has_full_report=True,
+            asset_status_snapshot="portfolio",
+        )
+
+        latest_rows = self.portfolio_db.get_all_latest_analysis()
+        row = next(item for item in latest_rows if item["id"] == stock_id)
+        self.assertEqual(row["name"], "宁德时代")
+
+        refreshed_stock = self.portfolio_db.get_stock(stock_id)
+        self.assertIsNotNone(refreshed_stock)
+        self.assertEqual(refreshed_stock["name"], "宁德时代")
+
+    def test_backfill_portfolio_stock_names_repairs_placeholder_without_analysis(self):
+        stock_id = self._add_stock("301217")
+        updated = self.portfolio_db.update_stock(stock_id, name="301217")
+        self.assertTrue(updated)
+
+        self.manager._resolve_stock_name = lambda code: "铜冠铜箔" if code == "301217" else None
+
+        items = self.manager.backfill_portfolio_stock_names(
+            [
+                {
+                    "id": stock_id,
+                    "code": "301217",
+                    "name": "301217",
+                    "account_name": "默认账户",
+                }
+            ]
+        )
+
+        self.assertEqual(items[0]["name"], "铜冠铜箔")
+        refreshed_stock = self.portfolio_db.get_stock(stock_id)
+        self.assertIsNotNone(refreshed_stock)
+        self.assertEqual(refreshed_stock["name"], "铜冠铜箔")
+
     def test_build_analysis_payload_uses_clean_default_rating(self):
         payload = self.manager._build_analysis_payload(
             stock_info={"current_price": 10.5},

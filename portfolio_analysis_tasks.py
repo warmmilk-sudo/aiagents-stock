@@ -186,6 +186,8 @@ class PortfolioAnalysisTaskManager:
             "result": result,
             "finished_at": time.time(),
         }
+        if isinstance(result, dict) and result.get("message"):
+            final_updates["message"] = result.get("message")
         task_snapshot = self.get_task(task_id) or {}
         total = task_snapshot.get("total") or 0
         current = task_snapshot.get("current") or 0

@@ -244,7 +244,7 @@ class BatchAnalysisServiceTests(unittest.TestCase):
             )
         )
         fund_flow_module = types.SimpleNamespace(
-            FundFlowAkshareDataFetcher=lambda: types.SimpleNamespace(
+            FundFlowDataFetcher=lambda: types.SimpleNamespace(
                 get_fund_flow_data=sleep_and_return({"fund_flow": True})
             )
         )
@@ -259,7 +259,7 @@ class BatchAnalysisServiceTests(unittest.TestCase):
             sys.modules,
             {
                 "quarterly_report_data": quarterly_module,
-                "fund_flow_akshare": fund_flow_module,
+                "fund_flow_data": fund_flow_module,
             },
         ):
             result = batch_analysis_service._collect_optional_context_data(

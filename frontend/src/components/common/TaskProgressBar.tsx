@@ -7,6 +7,7 @@ interface TaskProgressBarProps {
   total?: number;
   message?: string;
   tone?: Tone;
+  showCounter?: boolean;
 }
 
 export function TaskProgressBar({
@@ -14,6 +15,7 @@ export function TaskProgressBar({
   total = 0,
   message = "",
   tone = "running",
+  showCounter = true,
 }: TaskProgressBarProps) {
   const resolvedTotal = total > 0 ? total : 0;
   const resolvedCurrent = Math.max(0, current);
@@ -25,7 +27,7 @@ export function TaskProgressBar({
         <div className={`${styles.fill} ${styles[tone]}`} style={{ width: `${ratio}%` }} />
       </div>
       <div className={styles.meta}>
-        <span>{resolvedCurrent} / {resolvedTotal || 0}</span>
+        {showCounter ? <span>{resolvedCurrent} / {resolvedTotal || 0}</span> : null}
         {message ? <span>{message}</span> : null}
       </div>
     </div>

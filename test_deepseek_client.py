@@ -54,6 +54,25 @@ class DeepSeekClientTests(unittest.TestCase):
 
         self.assertEqual(result, '{"ok":true}')
 
+    def test_call_api_omits_reasoning_by_default(self):
+        client = DeepSeekClient.__new__(DeepSeekClient)
+        client.model = None
+        client.lightweight_model = None
+        client.reasoning_model = None
+        message = types.SimpleNamespace(reasoning_content="chain", content="最终正文")
+        response = types.SimpleNamespace(choices=[types.SimpleNamespace(message=message)])
+        client.client = types.SimpleNamespace(
+            chat=types.SimpleNamespace(
+                completions=types.SimpleNamespace(
+                    create=MagicMock(return_value=response)
+                )
+            )
+        )
+
+        result = client.call_api([{"role": "user", "content": "hello"}])
+
+        self.assertEqual(result, "最终正文")
+
     def test_build_messages_renders_external_prompt_templates(self):
         messages = build_messages(
             "stock_analysis/final_decision.system.txt",
@@ -138,7 +157,7 @@ class DeepSeekClientTests(unittest.TestCase):
             captured["max_tokens"] = max_tokens
             captured["tier"] = tier
             captured["include_reasoning"] = include_reasoning
-            return '{"rating":"buy","target_price":"10"}'
+            return '{"rating":"buy","target_price":"12","take_profit":"12","stop_loss":"9.2","confidence_level":"8"}'
 
         client.call_api = types.MethodType(fake_call_api, client)
 
@@ -163,7 +182,8 @@ class DeepSeekClientTests(unittest.TestCase):
         self.assertEqual(len(captured["messages"]), 2)
         self.assertIn("关键筹码结构", captured["messages"][1]["content"])
         self.assertIn("筹码数据源：tushare.cyq_chips/cyq_perf", captured["messages"][1]["content"])
-        self.assertEqual(result["rating"], "buy")
+        self.assertEqual(result["rating"], "买入")
+        self.assertEqual(result["confidence_level"], 8.0)
 
     def test_final_decision_extracts_json_from_wrapped_text(self):
         client = DeepSeekClient.__new__(DeepSeekClient)
@@ -177,7 +197,7 @@ class DeepSeekClientTests(unittest.TestCase):
             tier=None,
             include_reasoning=True,
         ):
-            return '前置说明 {"rating":"买入","target_price":"10","operation_advice":"分批买入"} 后置说明'
+            return '前置说明 {"rating":"买入","target_price":"12","take_profit":"12","stop_loss":"9","operation_advice":"分批买入"} 后置说明'
 
         client.call_api = types.MethodType(fake_call_api, client)
 

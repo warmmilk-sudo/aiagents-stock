@@ -352,9 +352,7 @@ export function SectorReportDetailView({
 
   const summary = reportView?.summary;
   const predictions = reportView?.predictions;
-  const marketSnapshot = reportView?.market_snapshot;
   const warnings = reportView?.warnings;
-  const overview = marketSnapshot?.market_overview;
   const headlineSegments = splitSegments([summary?.headline, summary?.market_view, summary?.key_opportunity]);
   const dataTimestamp = reportView?.meta?.data_timestamp;
 
@@ -533,49 +531,6 @@ export function SectorReportDetailView({
           </div>
         ) : null}
 
-        {marketSnapshot ? (
-          <DetailSection title="市场快照">
-            <div className={styles.strategySummaryGrid}>
-              <div className={styles.historySummaryCell}>
-                <span>上证指数</span>
-                <strong>
-                  {formatNumber(overview?.sh_index?.close)} | {formatPercent(overview?.sh_index?.change_pct)}
-                </strong>
-              </div>
-              <div className={styles.historySummaryCell}>
-                <span>市场上涨家数</span>
-                <strong>
-                  {formatNumber(overview?.up_count, 0)} | 占比 {formatPercent(overview?.up_ratio)}
-                </strong>
-              </div>
-              <div className={styles.historySummaryCell}>
-                <span>行业板块数</span>
-                <strong>{formatNumber(marketSnapshot.sectors_count, 0)}</strong>
-              </div>
-              <div className={styles.historySummaryCell}>
-                <span>概念板块数</span>
-                <strong>{formatNumber(marketSnapshot.concepts_count, 0)}</strong>
-              </div>
-              <div className={styles.historySummaryCell}>
-                <span>涨停 / 跌停</span>
-                <strong>
-                  {formatNumber(overview?.limit_up, 0)} / {formatNumber(overview?.limit_down, 0)}
-                </strong>
-              </div>
-              <div className={styles.historySummaryCell}>
-                <span>数据状态</span>
-                <strong>{marketSnapshot.from_cache ? "缓存数据" : "实时数据"}</strong>
-              </div>
-            </div>
-
-            {marketSnapshot.cache_warning ? (
-              <div className={`${styles.noticeCard} ${styles.noticeWarning}`}>
-                <strong>市场数据说明</strong>
-                <div>{marketSnapshot.cache_warning}</div>
-              </div>
-            ) : null}
-          </DetailSection>
-        ) : null}
       </section>
     </div>
   );

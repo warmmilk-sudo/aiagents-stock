@@ -1,0 +1,5 @@
+Looking in indexes: https://pypi.tuna.tsinghua.edu.cn/simple
+Collecting pypdf
+  Downloading https://pypi.tuna.tsinghua.edu.cn/packages/a5/7e/c85f41243086a8fe5d1baeba527cb26a1918158a565932b41e0f7c0b32e9/pypdf-6.9.2-py3-none-any.whl (333 kB)
+Installing collected packages: pypdf
+Successfully installed pypdf-6.9.2

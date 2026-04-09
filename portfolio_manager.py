@@ -208,19 +208,6 @@ class PortfolioManager:
                 if self._is_valid_stock_name(name, normalized_code):
                     return name
             elif self._is_hk_stock(normalized_code):
-                try:
-                    import akshare as ak
-
-                    realtime_df = ak.stock_hk_spot_em()
-                    if realtime_df is not None and not realtime_df.empty:
-                        matched = realtime_df[realtime_df["代码"] == normalized_code]
-                        if not matched.empty:
-                            name = str(matched.iloc[0].get("名称") or "").strip()
-                            if self._is_valid_stock_name(name, normalized_code):
-                                return name
-                except Exception as e:
-                    print(f"[WARN] 港股名称识别 Akshare 失败 ({normalized_code}): {e}")
-
                 import yfinance as yf
 
                 yahoo_symbol = f"{int(normalized_code):04d}.HK"
@@ -1200,39 +1187,6 @@ class PortfolioManager:
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
     ) -> Tuple[pd.Series, str]:
-        start_token = (self._format_date_value(start_date) or "").replace("-", "")
-        end_token = (self._format_date_value(end_date) or datetime.now().strftime("%Y%m%d")).replace("-", "")
-
-        try:
-            import akshare as ak
-
-            loaders = [
-                lambda: ak.index_zh_a_hist(
-                    symbol="000300",
-                    period="daily",
-                    start_date=start_token,
-                    end_date=end_token,
-                ),
-                lambda: ak.stock_zh_index_daily_em(symbol="sh000300"),
-                lambda: ak.stock_zh_index_daily(symbol="sh000300"),
-            ]
-            for loader in loaders:
-                try:
-                    series = self._normalize_price_series(loader())
-                except Exception:
-                    series = pd.Series(dtype=float)
-                if not series.empty:
-                    start_ts = self._parse_date_value(start_date)
-                    end_ts = self._parse_date_value(end_date)
-                    if start_ts is not None:
-                        series = series[series.index >= start_ts]
-                    if end_ts is not None:
-                        series = series[series.index <= end_ts]
-                    if not series.empty:
-                        return series, "沪深300"
-        except Exception as exc:
-            print(f"[WARN] 获取沪深300指数日线失败，尝试 510300 ETF 回退: {exc}")
-
         fallback_series = self._fetch_price_series("510300", start_date=start_date, end_date=end_date)
         return fallback_series, "沪深300"
 
@@ -2333,6 +2287,7 @@ class PortfolioManager:
                 selected_lightweight_model=effective_lightweight_model,
                 selected_reasoning_model=effective_reasoning_model,
                 save_to_global_history=False,
+                has_position=True,
             )
             
             # 检查结果
@@ -2696,6 +2651,42 @@ class PortfolioManager:
     def get_all_latest_analysis(self, account_name: Optional[str] = None) -> List[Dict]:
         """获取所有持仓股票的最新分析"""
         return self.db.get_all_latest_analysis(account_name=account_name)
+
+    def backfill_portfolio_stock_names(self, stocks: List[Dict]) -> List[Dict]:
+        """为名称缺失或退化成代码的持仓补齐股票名称。"""
+        refreshed: List[Dict] = []
+        for stock in stocks or []:
+            item = dict(stock)
+            code = self._normalize_stock_code(item.get("code") or item.get("symbol") or "")
+            if not code:
+                refreshed.append(item)
+                continue
+
+            if self._is_valid_stock_name(str(item.get("name") or "").strip(), code):
+                refreshed.append(item)
+                continue
+
+            latest_stock_info = item.get("stock_info") if isinstance(item.get("stock_info"), dict) else {}
+            candidates = (
+                item.get("stock_name"),
+                latest_stock_info.get("name"),
+                latest_stock_info.get("股票名称"),
+                self._resolve_stock_name(code),
+            )
+            resolved_name = next(
+                (str(candidate or "").strip() for candidate in candidates if self._is_valid_stock_name(str(candidate or "").strip(), code)),
+                "",
+            )
+            if resolved_name:
+                item["name"] = resolved_name
+                stock_id = item.get("id")
+                if stock_id:
+                    try:
+                        self.db.update_stock(int(stock_id), name=resolved_name)
+                    except Exception as exc:
+                        print(f"[WARN] 回填持仓名称失败 ({code}): {exc}")
+            refreshed.append(item)
+        return refreshed
     
     def get_rating_changes(self, stock_id: int, days: int = 30) -> List[Tuple]:
         """获取评级变化"""

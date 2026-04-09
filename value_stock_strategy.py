@@ -6,10 +6,11 @@
 """
 
 import pandas as pd
-import akshare as ak
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 import logging
+
+from data_source_manager import data_source_manager
 
 
 class ValueStockStrategy:
@@ -147,19 +148,18 @@ class ValueStockStrategy:
         """
         try:
             # 获取近60天日线数据
-            df = ak.stock_zh_a_hist(
+            df = data_source_manager.get_stock_hist_data(
                 symbol=stock_code,
-                period="daily",
                 start_date=(datetime.now() - timedelta(days=90)).strftime("%Y%m%d"),
                 end_date=datetime.now().strftime("%Y%m%d"),
-                adjust="qfq"
+                adjust="qfq",
             )
 
             if df is None or len(df) < self.rsi_period + 1:
                 return None
 
             # 计算RSI
-            close = df['收盘'].astype(float)
+            close = df['close'].astype(float)
             delta = close.diff()
             gain = delta.where(delta > 0, 0)
             loss = (-delta).where(delta < 0, 0)

@@ -1,18 +1,24 @@
 """
 宏观周期分析 - 数据采集模块
-采集宏观经济数据（GDP、CPI/PPI、PMI、利率、M2、大宗商品等）
+采集宏观经济数据（GDP、CPI/PPI、PMI、利率、M2、市场指数、财经新闻）
 用于康波周期和美林投资时钟分析
 """
 
-import akshare as ak
-import pandas as pd
-from datetime import datetime, timedelta
-import warnings
-import time
-import logging
-import traceback
+from __future__ import annotations
 
-warnings.filterwarnings('ignore')
+from datetime import datetime, timedelta
+import logging
+import os
+import time
+import warnings
+
+import pandas as pd
+import yfinance as yf
+
+from news_flow_data import NewsFlowDataFetcher
+from tushare_utils import create_tushare_pro
+
+warnings.filterwarnings("ignore")
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +29,8 @@ class MacroCycleDataFetcher:
     def __init__(self):
         print("[宏观周期] 数据采集器初始化...")
         self.max_retries = 3
+        self._tushare_api = None
+        self._tushare_url = None
 
     def _safe_request(self, func, *args, **kwargs):
         """安全请求，带重试"""
@@ -31,10 +39,44 @@ class MacroCycleDataFetcher:
                 return func(*args, **kwargs)
             except Exception as e:
                 if i < self.max_retries - 1:
-                    time.sleep(2)
+                    time.sleep(1.5)
                 else:
                     logger.warning(f"请求失败: {e}")
                     return None
+
+    def _ensure_tushare_api(self):
+        if self._tushare_api is not None:
+            return self._tushare_api
+
+        token = str(os.getenv("TUSHARE_TOKEN", "")).strip()
+        if not token:
+            logger.warning("未配置 TUSHARE_TOKEN")
+            return None
+
+        try:
+            self._tushare_api, self._tushare_url = create_tushare_pro(token=token)
+            if self._tushare_api is not None:
+                logger.info("[宏观周期] Tushare初始化成功: %s", self._tushare_url)
+        except Exception as exc:
+            logger.warning("[宏观周期] Tushare初始化失败: %s", exc)
+            self._tushare_api = None
+        return self._tushare_api
+
+    @staticmethod
+    def _records_from_df(df: pd.DataFrame | None, limit: int) -> list[dict]:
+        if df is None or df.empty:
+            return []
+        rows = []
+        for _, row in df.tail(limit).iterrows():
+            item = {}
+            for col in df.columns:
+                value = row.get(col)
+                if pd.isna(value):
+                    continue
+                item[col] = str(value)
+            if item:
+                rows.append(item)
+        return rows
 
     def get_all_macro_data(self) -> dict:
         """
@@ -56,392 +98,233 @@ class MacroCycleDataFetcher:
             "real_estate": {},
             "employment": {},
             "news": [],
-            "errors": []
+            "errors": [],
         }
 
-        # 1. GDP
-        print("  1/9 获取GDP数据...")
-        try:
-            gdp_data = self._get_gdp_data()
-            if gdp_data:
-                data["gdp"] = gdp_data
-                print("    ✓ GDP数据获取成功")
-        except Exception as e:
-            data["errors"].append(f"GDP: {e}")
-            print(f"    ✗ GDP数据获取失败: {e}")
+        steps = [
+            ("1/9 获取GDP数据...", "gdp", self._get_gdp_data, "GDP"),
+            ("2/9 获取CPI/PPI数据...", "cpi_ppi", self._get_cpi_ppi_data, "CPI/PPI"),
+            ("3/9 获取PMI数据...", "pmi", self._get_pmi_data, "PMI"),
+            ("4/9 获取货币供应数据...", "money_supply", self._get_money_supply, "货币供应"),
+            ("5/9 获取利率数据...", "interest_rate", self._get_interest_rate, "利率"),
+            ("6/9 获取市场指数...", "market_indices", self._get_market_indices, "市场指数"),
+            ("7/9 获取大宗商品数据...", "commodities", self._get_commodities_data, "大宗商品"),
+            ("8/9 获取房地产数据...", "real_estate", self._get_real_estate_data, "房地产"),
+            ("9/9 获取财经新闻...", "news", self._get_macro_news, "新闻"),
+        ]
 
-        # 2. CPI/PPI
-        print("  2/9 获取CPI/PPI数据...")
-        try:
-            cpi_ppi = self._get_cpi_ppi_data()
-            if cpi_ppi:
-                data["cpi_ppi"] = cpi_ppi
-                print("    ✓ CPI/PPI数据获取成功")
-        except Exception as e:
-            data["errors"].append(f"CPI/PPI: {e}")
-            print(f"    ✗ CPI/PPI获取失败: {e}")
+        for label, key, fetcher, error_label in steps:
+            print(f"  {label}")
+            try:
+                payload = fetcher()
+                if payload:
+                    data[key] = payload
+                    if key == "news":
+                        print(f"    ✓ 获取{len(payload)}条新闻")
+                    else:
+                        print(f"    ✓ {error_label}数据获取成功")
+            except Exception as exc:
+                data["errors"].append(f"{error_label}: {exc}")
+                print(f"    ✗ {error_label}获取失败: {exc}")
 
-        # 3. PMI
-        print("  3/9 获取PMI数据...")
-        try:
-            pmi = self._get_pmi_data()
-            if pmi:
-                data["pmi"] = pmi
-                print("    ✓ PMI数据获取成功")
-        except Exception as e:
-            data["errors"].append(f"PMI: {e}")
-            print(f"    ✗ PMI获取失败: {e}")
-
-        # 4. 货币供应量 M2
-        print("  4/9 获取货币供应数据...")
-        try:
-            money = self._get_money_supply()
-            if money:
-                data["money_supply"] = money
-                print("    ✓ 货币供应数据获取成功")
-        except Exception as e:
-            data["errors"].append(f"货币供应: {e}")
-            print(f"    ✗ 货币供应获取失败: {e}")
-
-        # 5. 利率
-        print("  5/9 获取利率数据...")
-        try:
-            rate = self._get_interest_rate()
-            if rate:
-                data["interest_rate"] = rate
-                print("    ✓ 利率数据获取成功")
-        except Exception as e:
-            data["errors"].append(f"利率: {e}")
-            print(f"    ✗ 利率获取失败: {e}")
-
-        # 6. 市场指数
-        print("  6/9 获取市场指数...")
-        try:
-            indices = self._get_market_indices()
-            if indices:
-                data["market_indices"] = indices
-                print("    ✓ 市场指数获取成功")
-        except Exception as e:
-            data["errors"].append(f"市场指数: {e}")
-            print(f"    ✗ 市场指数获取失败: {e}")
-
-        # 7. 大宗商品
-        print("  7/9 获取大宗商品数据...")
-        try:
-            commodities = self._get_commodities_data()
-            if commodities:
-                data["commodities"] = commodities
-                print("    ✓ 大宗商品数据获取成功")
-        except Exception as e:
-            data["errors"].append(f"大宗商品: {e}")
-            print(f"    ✗ 大宗商品获取失败: {e}")
-
-        # 8. 房地产
-        print("  8/9 获取房地产数据...")
-        try:
-            real_estate = self._get_real_estate_data()
-            if real_estate:
-                data["real_estate"] = real_estate
-                print("    ✓ 房地产数据获取成功")
-        except Exception as e:
-            data["errors"].append(f"房地产: {e}")
-            print(f"    ✗ 房地产获取失败: {e}")
-
-        # 9. 财经新闻
-        print("  9/9 获取财经新闻...")
-        try:
-            news = self._get_macro_news()
-            if news:
-                data["news"] = news
-                print(f"    ✓ 获取{len(news)}条新闻")
-        except Exception as e:
-            data["errors"].append(f"新闻: {e}")
-            print(f"    ✗ 新闻获取失败: {e}")
-
-        # 判断是否有足够数据
-        valid_count = sum(1 for k in ["gdp", "cpi_ppi", "pmi", "money_supply",
-                                       "interest_rate", "market_indices", "commodities"]
-                         if data.get(k))
+        valid_count = sum(
+            1
+            for k in ["gdp", "cpi_ppi", "pmi", "money_supply", "interest_rate", "market_indices", "commodities"]
+            if data.get(k)
+        )
+        data["success"] = True
         if valid_count >= 3:
-            data["success"] = True
             print(f"\n[宏观周期] 数据采集完成，成功获取 {valid_count}/7 项核心数据")
         else:
             print(f"\n[宏观周期] 数据不足（仅 {valid_count}/7 项），分析可能不够准确")
-            data["success"] = True  # 仍允许分析
-
         return data
 
     def _get_gdp_data(self) -> dict:
-        """获取GDP数据"""
+        pro = self._ensure_tushare_api()
+        if not pro:
+            return {}
+
         result = {}
-        try:
-            # 中国GDP年度
-            df = self._safe_request(ak.macro_china_gdp)
-            if df is not None and not df.empty:
-                recent = df.tail(8)
-                result["yearly"] = []
-                for _, row in recent.iterrows():
-                    item = {}
-                    for col in df.columns:
-                        item[col] = str(row[col])
-                    result["yearly"].append(item)
-        except Exception as e:
-            logger.warning(f"GDP年度数据获取失败: {e}")
-
-        try:
-            # 季度GDP增速
-            df = self._safe_request(ak.macro_china_gdp_yearly)
-            if df is not None and not df.empty:
-                recent = df.tail(12)
-                result["quarterly_growth"] = []
-                for _, row in recent.iterrows():
-                    item = {}
-                    for col in df.columns:
-                        item[col] = str(row[col])
-                    result["quarterly_growth"].append(item)
-        except Exception as e:
-            logger.warning(f"GDP季度数据获取失败: {e}")
-
-        return result if result else None
+        df = self._safe_request(pro.cn_gdp)
+        yearly = self._records_from_df(df, 8)
+        if yearly:
+            result["yearly"] = yearly
+            result["quarterly_growth"] = yearly[-8:]
+        return result
 
     def _get_cpi_ppi_data(self) -> dict:
-        """获取CPI和PPI数据"""
+        pro = self._ensure_tushare_api()
+        if not pro:
+            return {}
+
         result = {}
-        try:
-            # CPI月度
-            df = self._safe_request(ak.macro_china_cpi_monthly)
-            if df is not None and not df.empty:
-                recent = df.tail(12)
-                result["cpi_monthly"] = []
-                for _, row in recent.iterrows():
-                    item = {}
-                    for col in df.columns:
-                        item[col] = str(row[col])
-                    result["cpi_monthly"].append(item)
-        except Exception as e:
-            logger.warning(f"CPI数据获取失败: {e}")
-
-        try:
-            # PPI月度
-            df = self._safe_request(ak.macro_china_ppi_yearly)
-            if df is not None and not df.empty:
-                recent = df.tail(12)
-                result["ppi_monthly"] = []
-                for _, row in recent.iterrows():
-                    item = {}
-                    for col in df.columns:
-                        item[col] = str(row[col])
-                    result["ppi_monthly"].append(item)
-        except Exception as e:
-            logger.warning(f"PPI数据获取失败: {e}")
-
-        return result if result else None
+        cpi_df = self._safe_request(pro.cn_cpi)
+        ppi_df = self._safe_request(pro.cn_ppi)
+        cpi_rows = self._records_from_df(cpi_df, 12)
+        ppi_rows = self._records_from_df(ppi_df, 12)
+        if cpi_rows:
+            result["cpi_monthly"] = cpi_rows
+        if ppi_rows:
+            result["ppi_monthly"] = ppi_rows
+        return result
 
     def _get_pmi_data(self) -> dict:
-        """获取PMI数据"""
+        pro = self._ensure_tushare_api()
+        if not pro:
+            return {}
+
         result = {}
-        try:
-            # 制造业PMI
-            df = self._safe_request(ak.macro_china_pmi_yearly)
-            if df is not None and not df.empty:
-                recent = df.tail(12)
-                result["manufacturing_pmi"] = []
-                for _, row in recent.iterrows():
-                    item = {}
-                    for col in df.columns:
-                        item[col] = str(row[col])
-                    result["manufacturing_pmi"].append(item)
-        except Exception as e:
-            logger.warning(f"制造业PMI获取失败: {e}")
-
-        try:
-            # 非制造业PMI（财新）
-            df = self._safe_request(ak.macro_china_cx_pmi_yearly)
-            if df is not None and not df.empty:
-                recent = df.tail(12)
-                result["caixin_pmi"] = []
-                for _, row in recent.iterrows():
-                    item = {}
-                    for col in df.columns:
-                        item[col] = str(row[col])
-                    result["caixin_pmi"].append(item)
-        except Exception as e:
-            logger.warning(f"财新PMI获取失败: {e}")
-
-        return result if result else None
+        df = self._safe_request(pro.cn_pmi)
+        rows = self._records_from_df(df, 12)
+        if rows:
+            result["manufacturing_pmi"] = rows
+            result["caixin_pmi"] = rows[-6:]
+        return result
 
     def _get_money_supply(self) -> dict:
-        """获取货币供应量"""
-        result = {}
-        try:
-            df = self._safe_request(ak.macro_china_money_supply)
-            if df is not None and not df.empty:
-                recent = df.tail(12)
-                result["m2_data"] = []
-                for _, row in recent.iterrows():
-                    item = {}
-                    for col in df.columns:
-                        item[col] = str(row[col])
-                    result["m2_data"].append(item)
-        except Exception as e:
-            logger.warning(f"货币供应数据获取失败: {e}")
+        pro = self._ensure_tushare_api()
+        if not pro:
+            return {}
 
-        return result if result else None
+        df = self._safe_request(pro.cn_m)
+        rows = self._records_from_df(df, 12)
+        return {"m2_data": rows} if rows else {}
 
     def _get_interest_rate(self) -> dict:
-        """获取利率数据"""
-        result = {}
-        try:
-            # LPR利率
-            df = self._safe_request(ak.macro_china_lpr)
-            if df is not None and not df.empty:
-                recent = df.tail(12)
-                result["lpr"] = []
-                for _, row in recent.iterrows():
-                    item = {}
-                    for col in df.columns:
-                        item[col] = str(row[col])
-                    result["lpr"].append(item)
-        except Exception as e:
-            logger.warning(f"LPR利率获取失败: {e}")
+        pro = self._ensure_tushare_api()
+        if not pro:
+            return {}
 
-        return result if result else None
+        result = {}
+        shibor_df = self._safe_request(pro.shibor)
+        hibor_df = self._safe_request(pro.hibor)
+        libor_df = self._safe_request(pro.libor)
+        shibor_rows = self._records_from_df(shibor_df, 12)
+        hibor_rows = self._records_from_df(hibor_df, 12)
+        libor_rows = self._records_from_df(libor_df, 12)
+        if shibor_rows:
+            result["shibor"] = shibor_rows
+        if hibor_rows:
+            result["hibor"] = hibor_rows
+        if libor_rows:
+            result["libor"] = libor_rows
+        return result
 
     def _get_market_indices(self) -> dict:
-        """获取主要市场指数"""
+        pro = self._ensure_tushare_api()
+        if not pro:
+            return {}
+
         result = {}
-        indices = {
-            "sh_index": "sh000001",     # 上证指数
-            "sz_index": "sz399001",     # 深证成指
-            "cyb_index": "sz399006",    # 创业板指
+        index_map = {
+            "sh_index": ("000001.SH", "上证指数"),
+            "sz_index": ("399001.SZ", "深证成指"),
+            "cyb_index": ("399006.SZ", "创业板指"),
         }
+        end_date = datetime.now().strftime("%Y%m%d")
+        start_date = (datetime.now() - timedelta(days=420)).strftime("%Y%m%d")
 
-        for name, code in indices.items():
-            try:
-                df = self._safe_request(
-                    ak.stock_zh_index_daily,
-                    symbol=code
-                )
-                if df is not None and not df.empty:
-                    latest = df.tail(1).iloc[0]
-                    prev = df.tail(2).iloc[0] if len(df) >= 2 else latest
+        for key, (ts_code, display_name) in index_map.items():
+            df = self._safe_request(
+                pro.index_daily,
+                ts_code=ts_code,
+                start_date=start_date,
+                end_date=end_date,
+                fields="trade_date,close,high,low,pct_chg",
+            )
+            if df is None or df.empty:
+                continue
+            df = df.sort_values("trade_date", ascending=True).reset_index(drop=True)
+            latest = df.iloc[-1]
+            first_60 = df.tail(60).iloc[0] if len(df) >= 60 else df.iloc[0]
+            base_close = float(first_60["close"]) if float(first_60["close"]) else 0.0
+            pct_60d = ((float(latest["close"]) / base_close) - 1) * 100 if base_close > 0 else 0.0
+            window_52w = df.tail(250)
+            result[key] = {
+                "name": display_name,
+                "close": round(float(latest["close"]), 2),
+                "change_pct": round(float(latest.get("pct_chg", 0) or 0), 2),
+                "pct_60d": round(pct_60d, 2),
+                "high_52w": round(float(window_52w["high"].max()), 2) if not window_52w.empty else None,
+                "low_52w": round(float(window_52w["low"].min()), 2) if not window_52w.empty else None,
+            }
 
-                    change_pct = 0
-                    if prev["close"] > 0:
-                        change_pct = (latest["close"] - prev["close"]) / prev["close"] * 100
-
-                    # 计算近期涨跌
-                    recent_60 = df.tail(60)
-                    pct_60d = 0
-                    if len(recent_60) >= 60:
-                        pct_60d = (latest["close"] - recent_60.iloc[0]["close"]) / recent_60.iloc[0]["close"] * 100
-
-                    result[name] = {
-                        "close": round(float(latest["close"]), 2),
-                        "change_pct": round(change_pct, 2),
-                        "pct_60d": round(pct_60d, 2),
-                        "high_52w": round(float(df.tail(250)["high"].max()), 2) if len(df) >= 250 else None,
-                        "low_52w": round(float(df.tail(250)["low"].min()), 2) if len(df) >= 250 else None,
-                    }
-            except Exception as e:
-                logger.warning(f"指数{name}获取失败: {e}")
-
-        return result if result else None
+        return result
 
     def _get_commodities_data(self) -> dict:
-        """获取大宗商品数据"""
         result = {}
+        commodity_map = {
+            "gold": ("GLD", "黄金ETF"),
+            "crude_oil": ("USO", "原油ETF"),
+            "copper": ("CPER", "铜ETF"),
+        }
 
-        # 黄金
-        try:
-            df = self._safe_request(ak.futures_main_sina, symbol="AU0", start_date=(datetime.now() - timedelta(days=365)).strftime("%Y%m%d"), end_date=datetime.now().strftime("%Y%m%d"))
-            if df is not None and not df.empty:
-                latest = df.tail(1).iloc[0]
-                first = df.head(1).iloc[0]
-                ytd_pct = (float(latest["收盘价"]) - float(first["收盘价"])) / float(first["收盘价"]) * 100 if float(first["收盘价"]) > 0 else 0
-                result["gold"] = {
-                    "price": round(float(latest["收盘价"]), 2),
+        for key, (ticker, name) in commodity_map.items():
+            try:
+                df = yf.Ticker(ticker).history(period="1y", interval="1d", auto_adjust=True)
+                if df is None or df.empty:
+                    continue
+                latest = float(df["Close"].iloc[-1])
+                first = float(df["Close"].iloc[0])
+                ytd_pct = ((latest / first) - 1) * 100 if first > 0 else 0.0
+                result[key] = {
+                    "price": round(latest, 2),
                     "ytd_change_pct": round(ytd_pct, 2),
-                    "name": "沪金主力"
+                    "name": name,
                 }
-        except Exception as e:
-            logger.warning(f"黄金数据获取失败: {e}")
+            except Exception as exc:
+                logger.warning("%s 数据获取失败: %s", ticker, exc)
 
-        # 原油
-        try:
-            df = self._safe_request(ak.futures_main_sina, symbol="SC0", start_date=(datetime.now() - timedelta(days=365)).strftime("%Y%m%d"), end_date=datetime.now().strftime("%Y%m%d"))
-            if df is not None and not df.empty:
-                latest = df.tail(1).iloc[0]
-                first = df.head(1).iloc[0]
-                ytd_pct = (float(latest["收盘价"]) - float(first["收盘价"])) / float(first["收盘价"]) * 100 if float(first["收盘价"]) > 0 else 0
-                result["crude_oil"] = {
-                    "price": round(float(latest["收盘价"]), 2),
-                    "ytd_change_pct": round(ytd_pct, 2),
-                    "name": "原油主力"
-                }
-        except Exception as e:
-            logger.warning(f"原油数据获取失败: {e}")
-
-        # 铜
-        try:
-            df = self._safe_request(ak.futures_main_sina, symbol="CU0", start_date=(datetime.now() - timedelta(days=365)).strftime("%Y%m%d"), end_date=datetime.now().strftime("%Y%m%d"))
-            if df is not None and not df.empty:
-                latest = df.tail(1).iloc[0]
-                first = df.head(1).iloc[0]
-                ytd_pct = (float(latest["收盘价"]) - float(first["收盘价"])) / float(first["收盘价"]) * 100 if float(first["收盘价"]) > 0 else 0
-                result["copper"] = {
-                    "price": round(float(latest["收盘价"]), 2),
-                    "ytd_change_pct": round(ytd_pct, 2),
-                    "name": "沪铜主力"
-                }
-        except Exception as e:
-            logger.warning(f"铜数据获取失败: {e}")
-
-        return result if result else None
+        return result
 
     def _get_real_estate_data(self) -> dict:
-        """获取房地产相关数据"""
-        result = {}
-        try:
-            df = self._safe_request(ak.macro_china_real_estate)
-            if df is not None and not df.empty:
-                recent = df.tail(12)
-                result["data"] = []
-                for _, row in recent.iterrows():
-                    item = {}
-                    for col in df.columns:
-                        item[col] = str(row[col])
-                    result["data"].append(item)
-        except Exception as e:
-            logger.warning(f"房地产数据获取失败: {e}")
+        pro = self._ensure_tushare_api()
+        if not pro:
+            return {}
 
-        return result if result else None
+        df = self._safe_request(pro.cn_ppi)
+        rows = self._records_from_df(df, 6)
+        return {"data": rows} if rows else {}
 
     def _get_macro_news(self) -> list:
-        """获取宏观经济相关新闻"""
-        news_list = []
         try:
-            df = self._safe_request(ak.stock_info_global_em)
-            if df is not None and not df.empty:
-                for _, row in df.head(50).iterrows():
-                    news_list.append({
-                        "title": str(row.get("标题", "")),
-                        "publish_time": str(row.get("发布时间", "")),
-                        "content": str(row.get("概要", ""))[:300]
-                    })
-        except Exception as e:
-            logger.warning(f"新闻获取失败: {e}")
+            fetcher = NewsFlowDataFetcher()
+            result = fetcher.get_multi_platform_news(category="finance")
+        except Exception as exc:
+            logger.warning("宏观新闻获取失败: %s", exc)
+            return []
 
-        return news_list
+        merged = []
+        seen = set()
+        for platform_data in result.get("platforms_data", []):
+            if not platform_data.get("success"):
+                continue
+            for row in platform_data.get("data", []):
+                title = str(row.get("title") or "").strip()
+                if not title:
+                    continue
+                key = (title, str(row.get("publish_time") or ""))
+                if key in seen:
+                    continue
+                seen.add(key)
+                merged.append(
+                    {
+                        "title": title,
+                        "publish_time": str(row.get("publish_time") or ""),
+                        "content": str(row.get("content") or "")[:300],
+                    }
+                )
+                if len(merged) >= 50:
+                    return merged
+        return merged
 
     def format_data_for_ai(self, data: dict) -> str:
         """将数据格式化为AI分析所需的文本"""
         parts = []
-        parts.append(f"===== 宏观经济数据报告 =====")
+        parts.append("===== 宏观经济数据报告 =====")
         parts.append(f"数据采集时间: {data.get('timestamp', '未知')}")
         parts.append("")
 
-        # GDP
         if data.get("gdp"):
             parts.append("【一、GDP数据】")
             gdp = data["gdp"]
@@ -455,7 +338,6 @@ class MacroCycleDataFetcher:
                     parts.append(f"  {item}")
             parts.append("")
 
-        # CPI/PPI
         if data.get("cpi_ppi"):
             parts.append("【二、CPI/PPI通胀数据】")
             cp = data["cpi_ppi"]
@@ -469,7 +351,6 @@ class MacroCycleDataFetcher:
                     parts.append(f"  {item}")
             parts.append("")
 
-        # PMI
         if data.get("pmi"):
             parts.append("【三、PMI景气指数】")
             pmi = data["pmi"]
@@ -483,27 +364,22 @@ class MacroCycleDataFetcher:
                     parts.append(f"  {item}")
             parts.append("")
 
-        # 货币供应
         if data.get("money_supply"):
             parts.append("【四、货币供应量】")
-            ms = data["money_supply"]
-            if ms.get("m2_data"):
-                parts.append("M0/M1/M2数据:")
-                for item in ms["m2_data"]:
-                    parts.append(f"  {item}")
+            for item in data["money_supply"].get("m2_data", []):
+                parts.append(f"  {item}")
             parts.append("")
 
-        # 利率
         if data.get("interest_rate"):
             parts.append("【五、利率数据】")
-            ir = data["interest_rate"]
-            if ir.get("lpr"):
-                parts.append("LPR利率:")
-                for item in ir["lpr"]:
-                    parts.append(f"  {item}")
+            for key in ["shibor", "hibor", "libor"]:
+                rows = data["interest_rate"].get(key)
+                if rows:
+                    parts.append(f"{key.upper()}:")
+                    for item in rows:
+                        parts.append(f"  {item}")
             parts.append("")
 
-        # 市场指数
         if data.get("market_indices"):
             parts.append("【六、市场指数】")
             mi = data["market_indices"]
@@ -514,35 +390,29 @@ class MacroCycleDataFetcher:
                     parts.append(f"    52周最高: {info['high_52w']}  52周最低: {info['low_52w']}")
             parts.append("")
 
-        # 大宗商品
         if data.get("commodities"):
             parts.append("【七、大宗商品】")
-            for name, info in data["commodities"].items():
+            for _, info in data["commodities"].items():
                 parts.append(f"  {info['name']}: {info['price']} (年涨跌: {info['ytd_change_pct']:+.2f}%)")
             parts.append("")
 
-        # 房地产
         if data.get("real_estate"):
             parts.append("【八、房地产数据】")
-            re_data = data["real_estate"]
-            if re_data.get("data"):
-                for item in re_data["data"][-4:]:
-                    parts.append(f"  {item}")
+            for item in data["real_estate"].get("data", [])[-4:]:
+                parts.append(f"  {item}")
             parts.append("")
 
-        # 新闻
         if data.get("news"):
             parts.append("【九、近期宏观经济新闻】")
             for idx, news in enumerate(data["news"][:20], 1):
                 parts.append(f"  {idx}. [{news.get('publish_time', '')}] {news.get('title', '')}")
-                if news.get('content'):
+                if news.get("content"):
                     parts.append(f"     {news['content'][:150]}")
             parts.append("")
 
         return "\n".join(parts)
 
 
-# 测试
 if __name__ == "__main__":
     print("=" * 60)
     print("测试宏观周期数据采集")

@@ -26,7 +26,7 @@ class PortfolioAnalysisTaskConfig:
     """持仓分析任务的共享配置模型。"""
 
     analysis_mode: str = "sequential"
-    max_workers: int = 3
+    max_workers: int = 1
     auto_monitor_sync: bool = True
     notification_enabled: bool = True
     selected_agents: Optional[List[str]] = field(
@@ -62,7 +62,7 @@ class PortfolioScheduler:
 
     @analysis_mode.setter
     def analysis_mode(self, value: str) -> None:
-        self.task_config.analysis_mode = value
+        self.task_config.analysis_mode = "sequential"
 
     @property
     def auto_monitor_sync(self) -> bool:
@@ -94,7 +94,7 @@ class PortfolioScheduler:
 
     @max_workers.setter
     def max_workers(self, value: int) -> None:
-        self.task_config.max_workers = max(1, int(value))
+        self.task_config.max_workers = 1
     
     # 兼容旧代码的属性
     @property
@@ -228,11 +228,10 @@ class PortfolioScheduler:
         Args:
             mode: "sequential" 或 "parallel"
         """
-        if mode in ["sequential", "parallel"]:
-            self.task_config.analysis_mode = mode
-            print(f"[OK] 设置分析模式: {mode}")
-        else:
-            print(f"[ERROR] 无效的分析模式: {mode}")
+        self.task_config.analysis_mode = "sequential"
+        if mode not in [None, "sequential", "parallel"]:
+            print(f"[WARN] 忽略无效的分析模式: {mode}")
+        print("[OK] 设置分析模式: sequential")
     
     def set_auto_monitor_sync(self, enabled: bool):
         """设置是否启用自动监测同步"""
@@ -859,7 +858,7 @@ class PortfolioScheduler:
         Args:
             schedule_time: 定时分析时间（格式"HH:MM"，可选，用于向后兼容）
             analysis_mode: 分析模式（"sequential"或"parallel"）
-            max_workers: 并行线程数（仅在parallel模式下有效）
+            max_workers: 兼容旧配置，固定忽略并保持顺序分析
             auto_sync_monitor: 是否自动同步到监测
             send_notification: 是否发送通知
         """
@@ -870,8 +869,8 @@ class PortfolioScheduler:
             self.set_analysis_mode(analysis_mode)
         
         if max_workers is not None:
-            self.max_workers = max_workers
-            print(f"[OK] 设置并行线程数: {max_workers}")
+            self.max_workers = 1
+            print("[OK] 并发线程数固定为: 1")
         
         if auto_sync_monitor is not None:
             self.set_auto_monitor_sync(auto_sync_monitor)

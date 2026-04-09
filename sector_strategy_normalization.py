@@ -625,6 +625,8 @@ def derive_sector_strategy_investment_horizon(source: Any) -> str:
 def normalize_sector_strategy_export_payload(result: Any, data_summary: Any = None) -> dict[str, Any]:
     payload = _unwrap_sector_strategy_payload(result)
     report_view = normalize_sector_strategy_result(payload, data_summary=data_summary)
+    export_report_view = dict(report_view)
+    export_report_view.pop("market_snapshot", None)
     predictions = _as_dict(report_view.get("predictions"))
     summary = _as_dict(report_view.get("summary"))
     export_predictions = {
@@ -648,8 +650,15 @@ def normalize_sector_strategy_export_payload(result: Any, data_summary: Any = No
     normalized_payload = dict(payload)
     normalized_payload["timestamp"] = report_view.get("meta", {}).get("timestamp") or normalized_payload.get("timestamp")
     normalized_payload["final_predictions"] = export_predictions
-    normalized_payload["report_view"] = report_view
+    normalized_payload["report_view"] = export_report_view
     normalized_payload["agents_analysis"] = _as_dict(payload.get("agents_analysis"))
     normalized_payload["comprehensive_report"] = payload.get("comprehensive_report") or ""
     normalized_payload["recommended_sectors"] = derive_sector_strategy_recommended_sectors(report_view)
+    data_summary_payload = _as_dict(normalized_payload.get("data_summary"))
+    if data_summary_payload:
+        normalized_payload["data_summary"] = {
+            "from_cache": bool(data_summary_payload.get("from_cache")),
+            "cache_warning": data_summary_payload.get("cache_warning"),
+            "data_timestamp": data_summary_payload.get("data_timestamp"),
+        }
     return normalized_payload

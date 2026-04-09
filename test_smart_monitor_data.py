@@ -92,7 +92,7 @@ class _FakeFrame:
 
 class SmartMonitorDataFetcherTests(unittest.TestCase):
     def _build_fetcher(self, tdx_fetcher=None, retry_count=3):
-        with patch.dict(os.environ, {"TUSHARE_TOKEN": ""}, clear=False):
+        with patch.dict(os.environ, {"TUSHARE_TOKEN": "", "AKSHARE_FALLBACK_ENABLED": "false"}, clear=False):
             fetcher = SmartMonitorDataFetcher(use_tdx=False)
         fetcher.use_tdx = tdx_fetcher is not None
         fetcher.tdx_fetcher = tdx_fetcher
@@ -228,6 +228,34 @@ class SmartMonitorDataFetcherTests(unittest.TestCase):
         self.assertEqual(result["volume_ratio_vs_vol_ma5"], 0.51)
         self.assertEqual(result["precision_mode"], "tdx_quote_tushare_daily")
 
+    def test_get_comprehensive_data_logs_stage_timings(self):
+        fetcher = self._build_fetcher(None, retry_count=1)
+
+        with patch.object(
+            fetcher,
+            "get_realtime_quote",
+            return_value={"code": "600519", "current_price": 1520.0},
+        ), patch.object(
+            fetcher,
+            "get_technical_indicators",
+            return_value={"ma5": 1508.0},
+        ), patch(
+            "smart_monitor_data.time.perf_counter",
+            side_effect=[10.0, 11.25, 12.0, 20.0, 22.25, 30.0],
+        ), patch.object(fetcher.logger, "info") as info_mock:
+            result = fetcher.get_comprehensive_data("600519")
+
+        self.assertTrue(result)
+        logged_messages = []
+        for call in info_mock.call_args_list:
+            template = call.args[0]
+            values = call.args[1:]
+            logged_messages.append(template % values if values else template)
+        self.assertTrue(any("开始获取综合数据" in message for message in logged_messages))
+        self.assertTrue(any("实时行情获取完成" in message for message in logged_messages))
+        self.assertTrue(any("技术指标获取完成" in message for message in logged_messages))
+        self.assertTrue(any("综合数据获取结束" in message for message in logged_messages))
+
     def test_get_realtime_quote_does_not_fall_back_to_tushare(self):
         fetcher = self._build_fetcher(None, retry_count=1)
 
@@ -258,9 +286,11 @@ class SmartMonitorDataFetcherTests(unittest.TestCase):
         with patch(
             "smart_monitor_data.ak.stock_individual_info_em",
             return_value=_FakeInfoFrame(),
-        ), patch("smart_monitor_data.ak.stock_zh_a_hist_min_em", side_effect=RuntimeError("akshare failed")), patch(
+            create=True,
+        ), patch("smart_monitor_data.ak.stock_zh_a_hist_min_em", side_effect=RuntimeError("akshare failed"), create=True), patch(
             "smart_monitor_data.ak.stock_zh_a_hist",
             side_effect=RuntimeError("akshare failed"),
+            create=True,
         ):
             quote = fetcher.get_realtime_quote("600519")
 
@@ -268,7 +298,11 @@ class SmartMonitorDataFetcherTests(unittest.TestCase):
         self.assertEqual(fetcher.ts_pro.calls, 0)
 
     def test_get_realtime_quote_leaves_missing_intraday_fields_empty_without_daily_fallback(self):
-        fetcher = self._build_fetcher(None, retry_count=1)
+        with patch.dict(os.environ, {"AKSHARE_FALLBACK_ENABLED": "true"}, clear=False):
+            fetcher = SmartMonitorDataFetcher(use_tdx=False)
+        fetcher.use_tdx = False
+        fetcher.tdx_fetcher = None
+        fetcher.intraday_tdx_retry_count = 1
 
         min_frame = _FakeFrame([
             _FakeRow(
@@ -282,9 +316,11 @@ class SmartMonitorDataFetcherTests(unittest.TestCase):
         with patch.object(fetcher, "_resolve_stock_name", return_value="贵州茅台"), patch(
             "smart_monitor_data.ak.stock_zh_a_hist_min_em",
             return_value=min_frame,
+            create=True,
         ), patch(
             "smart_monitor_data.ak.stock_zh_a_hist",
             side_effect=AssertionError("daily history should not be used for intraday quote fallback"),
+            create=True,
         ):
             quote = fetcher.get_realtime_quote("600519")
 

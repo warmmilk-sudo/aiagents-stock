@@ -127,6 +127,15 @@ def set_metadata(conn: sqlite3.Connection, key: str, value: str) -> None:
     )
 
 
+def sqlite_table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (table_name,),
+    )
+    return cursor.fetchone() is not None
+
+
 def cleanup_single_account_data(
     conn: sqlite3.Connection,
     *,
@@ -141,6 +150,28 @@ def cleanup_single_account_data(
     cleaned: dict[str, int] = {}
     normalized_default = str(default_account_name).strip() or DEFAULT_ACCOUNT_NAME
     timestamp = datetime.now().isoformat()
+
+    existing_tables = {
+        table_name
+        for table_name in (
+            "assets",
+            "asset_action_queue",
+            "asset_trade_history",
+            "monitoring_items",
+            "monitoring_events",
+            "monitoring_price_history",
+            "ai_decisions",
+            "analysis_records",
+            "portfolio_daily_snapshots",
+            "portfolio_stocks",
+            "portfolio_settings",
+        )
+        if sqlite_table_exists(conn, table_name)
+    }
+
+    if "assets" not in existing_tables:
+        set_metadata(conn, metadata_key, timestamp)
+        return {}
 
     cursor.execute(
         """
@@ -161,7 +192,11 @@ def cleanup_single_account_data(
             ("monitoring_events", "monitoring_item_id"),
             ("monitoring_price_history", "monitoring_item_id"),
         ):
+            if table not in existing_tables:
+                continue
             if table in {"monitoring_events", "monitoring_price_history"}:
+                if "monitoring_items" not in existing_tables:
+                    continue
                 cursor.execute(
                     f"""
                     DELETE FROM {table}
@@ -188,6 +223,8 @@ def cleanup_single_account_data(
         ("portfolio_daily_snapshots", "account_name"),
         ("portfolio_stocks", "account_name"),
     ):
+        if table not in existing_tables:
+            continue
         cursor.execute(
             f"""
             DELETE FROM {table}
@@ -197,49 +234,52 @@ def cleanup_single_account_data(
         )
         cleaned[table] = cleaned.get(table, 0) + int(cursor.rowcount or 0)
 
-    cursor.execute(
-        """
-        DELETE FROM monitoring_events
-        WHERE monitoring_item_id NOT IN (SELECT id FROM monitoring_items)
-        """
-    )
-    cleaned["monitoring_events"] = cleaned.get("monitoring_events", 0) + int(cursor.rowcount or 0)
-    cursor.execute(
-        """
-        DELETE FROM monitoring_price_history
-        WHERE monitoring_item_id NOT IN (SELECT id FROM monitoring_items)
-        """
-    )
-    cleaned["monitoring_price_history"] = cleaned.get("monitoring_price_history", 0) + int(cursor.rowcount or 0)
-
-    cursor.execute(
-        """
-        SELECT value
-        FROM portfolio_settings
-        WHERE key = 'portfolio_account_total_assets_v1'
-        LIMIT 1
-        """
-    )
-    row = cursor.fetchone()
-    if row:
-        try:
-            parsed_settings = json.loads(row[0] or "{}")
-        except (TypeError, json.JSONDecodeError):
-            parsed_settings = {}
-        next_total_assets = 0.0
-        if isinstance(parsed_settings, dict):
-            try:
-                next_total_assets = max(0.0, float(parsed_settings.get(normalized_default) or 0.0))
-            except (TypeError, ValueError):
-                next_total_assets = 0.0
+    if "monitoring_events" in existing_tables and "monitoring_items" in existing_tables:
         cursor.execute(
             """
-            UPDATE portfolio_settings
-            SET value = ?, updated_at = CURRENT_TIMESTAMP
-            WHERE key = 'portfolio_account_total_assets_v1'
-            """,
-            (json.dumps({normalized_default: next_total_assets}, ensure_ascii=False),),
+            DELETE FROM monitoring_events
+            WHERE monitoring_item_id NOT IN (SELECT id FROM monitoring_items)
+            """
         )
+        cleaned["monitoring_events"] = cleaned.get("monitoring_events", 0) + int(cursor.rowcount or 0)
+    if "monitoring_price_history" in existing_tables and "monitoring_items" in existing_tables:
+        cursor.execute(
+            """
+            DELETE FROM monitoring_price_history
+            WHERE monitoring_item_id NOT IN (SELECT id FROM monitoring_items)
+            """
+        )
+        cleaned["monitoring_price_history"] = cleaned.get("monitoring_price_history", 0) + int(cursor.rowcount or 0)
+
+    if "portfolio_settings" in existing_tables:
+        cursor.execute(
+            """
+            SELECT value
+            FROM portfolio_settings
+            WHERE key = 'portfolio_account_total_assets_v1'
+            LIMIT 1
+            """
+        )
+        row = cursor.fetchone()
+        if row:
+            try:
+                parsed_settings = json.loads(row[0] or "{}")
+            except (TypeError, json.JSONDecodeError):
+                parsed_settings = {}
+            next_total_assets = 0.0
+            if isinstance(parsed_settings, dict):
+                try:
+                    next_total_assets = max(0.0, float(parsed_settings.get(normalized_default) or 0.0))
+                except (TypeError, ValueError):
+                    next_total_assets = 0.0
+            cursor.execute(
+                """
+                UPDATE portfolio_settings
+                SET value = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE key = 'portfolio_account_total_assets_v1'
+                """,
+                (json.dumps({normalized_default: next_total_assets}, ensure_ascii=False),),
+            )
         cleaned["portfolio_settings"] = int(cursor.rowcount or 0)
 
     set_metadata(

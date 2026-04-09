@@ -176,8 +176,20 @@ export async function downloadApiFile(path: string, init: RequestInit = {}): Pro
 
   const blob = await response.blob();
   const contentDisposition = response.headers.get("content-disposition") || "";
-  const filenameMatch = contentDisposition.match(/filename="?(.*?)"?$/i);
-  const filename = filenameMatch?.[1] || "download.bin";
+  const utf8FilenameMatch = contentDisposition.match(/filename\*\s*=\s*UTF-8''([^;]+)/i);
+  let filename = "download.bin";
+  if (utf8FilenameMatch?.[1]) {
+    try {
+      filename = decodeURIComponent(utf8FilenameMatch[1]);
+    } catch {
+      filename = utf8FilenameMatch[1];
+    }
+  } else {
+    const filenameMatch = contentDisposition.match(/filename="?(.*?)"?(?:;|$)/i);
+    if (filenameMatch?.[1]) {
+      filename = filenameMatch[1];
+    }
+  }
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;

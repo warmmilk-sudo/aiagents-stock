@@ -49,6 +49,12 @@ class ConfigManager:
                 "required": False,
                 "type": "text",
             },
+            "SMART_MONITOR_DATA_FETCH_TIMEOUT_SECONDS": {
+                "value": "45",
+                "description": "智能盯盘单股市场数据抓取总超时（秒）",
+                "required": False,
+                "type": "text",
+            },
             "SMART_MONITOR_REASONING_MAX_TOKENS": {
                 "value": "3000",
                 "description": "智能盯盘推理模型最大输出令牌数",

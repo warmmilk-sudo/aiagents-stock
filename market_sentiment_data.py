@@ -1,11 +1,10 @@
 """
 市场情绪数据获取和计算模块
-优先使用 Tushare 获取结构化情绪数据，AkShare 仅补充市场快照等缺失能力。
+优先使用 Tushare 获取结构化情绪数据。
 """
 
 import pandas as pd
 import numpy as np
-import akshare as ak
 from datetime import datetime, timedelta
 import warnings
 import sys
@@ -62,13 +61,25 @@ class MarketSentimentDataFetcher:
 
         try:
             ts_code = data_source_manager._convert_to_ts_code(symbol)
+            for offset in range(0, 15):
+                trade_date = (datetime.now() - timedelta(days=offset)).strftime('%Y%m%d')
+                try:
+                    df = data_source_manager.tushare_api.daily_basic(
+                        ts_code=ts_code,
+                        trade_date=trade_date,
+                        fields=fields,
+                    )
+                    if df is not None and not df.empty:
+                        return df.iloc[0]
+                except Exception:
+                    continue
+
             end_date = datetime.now().strftime('%Y%m%d')
-            start_date = (datetime.now() - timedelta(days=10)).strftime('%Y%m%d')
+            start_date = (datetime.now() - timedelta(days=20)).strftime('%Y%m%d')
             df = data_source_manager.tushare_api.daily_basic(
                 ts_code=ts_code,
                 start_date=start_date,
                 end_date=end_date,
-                fields=fields,
             )
             if df is None or df.empty:
                 return None
@@ -83,7 +94,7 @@ class MarketSentimentDataFetcher:
 
         try:
             end_date = datetime.now().strftime('%Y%m%d')
-            start_date = (datetime.now() - timedelta(days=10)).strftime('%Y%m%d')
+            start_date = (datetime.now() - timedelta(days=20)).strftime('%Y%m%d')
             df = data_source_manager.tushare_api.index_daily(
                 ts_code=ts_code,
                 start_date=start_date,
@@ -205,7 +216,7 @@ class MarketSentimentDataFetcher:
         BR = (N日内(H-CY)之和 / N日内(CY-L)之和) × 100
         """
         try:
-            # 如果没有提供stock_data，则重新获取（支持akshare和tushare自动切换）
+            # 如果没有提供stock_data，则重新获取
             if stock_data is None or stock_data.empty:
                 end_date = datetime.now().strftime('%Y%m%d')
                 start_date = (datetime.now() - timedelta(days=150)).strftime('%Y%m%d')
@@ -407,7 +418,7 @@ class MarketSentimentDataFetcher:
         }
     
     def _get_turnover_rate(self, symbol):
-        """获取换手率数据（支持akshare和tushare自动切换）"""
+        """获取换手率数据。"""
         if data_source_manager.tushare_available:
             try:
                 print(f"   [Tushare] 正在获取换手率数据...")
@@ -423,30 +434,11 @@ class MarketSentimentDataFetcher:
                     }
             except Exception as te:
                 print(f"   [Tushare] ❌ 获取失败: {te}")
-
-        try:
-            print(f"   [Akshare] Tushare失败，尝试获取换手率数据...")
-            df = ak.stock_zh_a_spot_em()
-            if df is not None and not df.empty:
-                stock_data = df[df['代码'] == symbol]
-                if not stock_data.empty:
-                    row = stock_data.iloc[0]
-                    turnover_rate = row['换手率']
-
-                    interpretation = self._interpret_turnover_rate(turnover_rate)
-
-                    print(f"   [Akshare] ✅ 成功获取换手率: {turnover_rate}%")
-                    return {
-                        "current_turnover_rate": turnover_rate,
-                        "interpretation": interpretation
-                    }
-        except Exception as e:
-            print(f"   [Akshare] ❌ 获取换手率失败: {e}")
         
         return None
     
     def _get_market_index_sentiment(self):
-        """获取大盘指数情绪（支持akshare和tushare自动切换）"""
+        """获取大盘指数情绪。"""
         result = None
         if data_source_manager.tushare_available:
             try:
@@ -461,43 +453,6 @@ class MarketSentimentDataFetcher:
                     }
             except Exception as te:
                 print(f"   [Tushare] ❌ 获取失败: {te}")
-
-        try:
-            print(f"   [Akshare] 正在获取市场涨跌家数补充数据...")
-            market_summary = ak.stock_zh_a_spot_em()
-            if market_summary is not None and not market_summary.empty:
-                up_count = len(market_summary[market_summary['涨跌幅'] > 0])
-                down_count = len(market_summary[market_summary['涨跌幅'] < 0])
-                total_count = len(market_summary)
-                flat_count = total_count - up_count - down_count
-                sentiment_score = (up_count - down_count) / total_count * 100
-
-                if sentiment_score > 30:
-                    sentiment = "市场情绪极度乐观"
-                elif sentiment_score > 10:
-                    sentiment = "市场情绪偏多"
-                elif sentiment_score > -10:
-                    sentiment = "市场情绪中性"
-                elif sentiment_score > -30:
-                    sentiment = "市场情绪偏空"
-                else:
-                    sentiment = "市场情绪极度悲观"
-
-                if result is None:
-                    result = {"index_name": "上证指数"}
-                result.update(
-                    {
-                        "up_count": up_count,
-                        "down_count": down_count,
-                        "flat_count": flat_count,
-                        "total_count": total_count,
-                        "sentiment_score": f"{sentiment_score:.2f}",
-                        "sentiment_interpretation": sentiment,
-                    }
-                )
-                print(f"   [Akshare] ✅ 成功获取市场涨跌家数")
-        except Exception as e:
-            print(f"   [Akshare] ❌ 获取市场涨跌家数失败: {e}")
 
         return result
     
@@ -518,22 +473,6 @@ class MarketSentimentDataFetcher:
                 if limit_down_df is not None and not limit_down_df.empty:
                     limit_down_count = len(limit_down_df)
                     trade_date = recent_down_trade_date or trade_date
-
-            if limit_up_count is None or limit_down_count is None:
-                print(f"   [Akshare] Tushare失败，尝试获取涨跌停统计数据...")
-                try:
-                    limit_up_df = ak.stock_zt_pool_em(date=trade_date)
-                    if limit_up_df is not None and not limit_up_df.empty:
-                        limit_up_count = len(limit_up_df)
-                except Exception:
-                    pass
-
-                try:
-                    limit_down_df = ak.stock_zt_pool_dtgc_em(date=trade_date)
-                    if limit_down_df is not None and not limit_down_df.empty:
-                        limit_down_count = len(limit_down_df)
-                except Exception:
-                    pass
 
             if limit_up_count is None and limit_down_count is None:
                 return None
@@ -610,20 +549,6 @@ class MarketSentimentDataFetcher:
                 except Exception as e:
                     print(f"   [Tushare] ❌ 获取融资融券失败: {e}")
 
-            try:
-                print(f"   [Akshare] Tushare失败，尝试获取融资融券数据...")
-                df = ak.stock_margin_szsh()
-                if df is not None and not df.empty:
-                    latest = df.iloc[-1]
-                    return {
-                        "margin_balance": latest['融资余额'],
-                        "short_balance": latest['融券余额'],
-                        "interpretation": ["市场整体融资融券数据"],
-                        "date": latest['交易日期']
-                    }
-            except Exception:
-                pass
-
         except Exception as e:
             print(f"获取融资融券数据失败: {e}")
         return None
@@ -671,19 +596,6 @@ class MarketSentimentDataFetcher:
                         turnover_value = float(current_turnover_rate)
                         score += max(-8, min(8, (turnover_value - 2) * 1.5))
                         factors.append(f"换手率: {turnover_value:.2f}%")
-                except Exception:
-                    pass
-
-            if not factors:
-                try:
-                    market_summary = ak.stock_zh_a_spot_em()
-                    if market_summary is not None and not market_summary.empty:
-                        up_count = len(market_summary[market_summary['涨跌幅'] > 0])
-                        down_count = len(market_summary[market_summary['涨跌幅'] < 0])
-                        total = len(market_summary)
-                        up_ratio = up_count / total
-                        score += (up_ratio - 0.5) * 60
-                        factors.append(f"涨跌家数比例: {up_ratio:.1%}")
                 except Exception:
                     pass
 

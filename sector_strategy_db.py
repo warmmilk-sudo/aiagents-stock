@@ -753,7 +753,7 @@ class SectorStrategyDatabase:
     # =====================
     # 缓存与最近数据读取接口
     # =====================
-    def save_news_data(self, news_list, news_date, source="akshare"):
+    def save_news_data(self, news_list, news_date, source="rsshub_tushare"):
         """
         保存新闻列表（字典列表）到数据库，用于非DataFrame场景
         Args:

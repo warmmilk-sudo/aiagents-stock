@@ -1,13 +1,12 @@
 """
 智能盯盘 - A股数据获取模块
-实时行情优先使用 TDX，结构化日线与补充数据优先使用 Tushare，AkShare 仅作兜底补充。
+实时行情优先使用 TDX，结构化日线与补充数据优先使用 Tushare。
 盘中分析可强制使用 TDX。
 """
 
 import logging
 import os
 import time
-import akshare as ak
 import pandas as pd
 from typing import Dict, Optional
 from datetime import datetime, timedelta
@@ -16,7 +15,7 @@ from tushare_utils import create_tushare_pro
 
 
 class SmartMonitorDataFetcher:
-    """A股数据获取器（实时价优先 TDX，结构化日线优先 Tushare，AkShare 兜底）"""
+    """A股数据获取器（实时价优先 TDX，结构化日线优先 Tushare）"""
     
     def __init__(self, use_tdx: bool = None, tdx_base_url: str = None):
         """
@@ -103,6 +102,17 @@ class SmartMonitorDataFetcher:
             result.update(quote)
         return result
 
+    def _log_timed_stage(self, stock_code: str, stage_name: str, started_at: float, success: bool) -> float:
+        elapsed = time.perf_counter() - started_at
+        self.logger.info(
+            "[%s] %s完成，耗时 %.2fs，success=%s",
+            stock_code,
+            stage_name,
+            elapsed,
+            success,
+        )
+        return elapsed
+
     def _call_tdx_with_retry(self, stock_code: str, operation_label: str, callback):
         last_error = ""
         for attempt in range(1, self.intraday_tdx_retry_count + 1):
@@ -145,22 +155,42 @@ class SmartMonitorDataFetcher:
         return None
 
     def _get_intraday_tdx_comprehensive_data(self, stock_code: str) -> Dict:
+        total_started_at = time.perf_counter()
         if not (self.use_tdx and self.tdx_fetcher):
+            self.logger.warning(
+                "[%s] 盘中严格模式综合数据获取失败，耗时 %.2fs，原因=TDX未启用或不可用",
+                stock_code,
+                time.perf_counter() - total_started_at,
+            )
             return self._build_precision_error("盘中分析必须使用TDX数据，但当前TDX未启用或不可用。", stock_code)
 
+        quote_started_at = time.perf_counter()
         quote = self._call_tdx_with_retry(
             stock_code,
             "quote",
             lambda: self.tdx_fetcher.get_realtime_quote(stock_code),
         )
+        self._log_timed_stage(stock_code, "盘中严格模式TDX实时行情获取", quote_started_at, bool(quote))
         if not quote:
+            self.logger.warning(
+                "[%s] 盘中严格模式综合数据获取失败，耗时 %.2fs，原因=TDX实时行情连续失败",
+                stock_code,
+                time.perf_counter() - total_started_at,
+            )
             return self._build_precision_error(
                 f"盘中分析必须使用TDX数据，实时行情连续{self.intraday_tdx_retry_count}次获取失败。",
                 stock_code,
             )
 
+        indicators_started_at = time.perf_counter()
         indicators = self._get_technical_indicators_from_tushare(stock_code, "daily")
+        self._log_timed_stage(stock_code, "盘中严格模式Tushare日线指标获取", indicators_started_at, bool(indicators))
         if not indicators:
+            self.logger.warning(
+                "[%s] 盘中严格模式综合数据获取失败，耗时 %.2fs，原因=Tushare日线指标缺失",
+                stock_code,
+                time.perf_counter() - total_started_at,
+            )
             return self._build_precision_error(
                 "盘中分析必须使用Tushare日线技术指标，但Tushare未返回有效数据。",
                 stock_code,
@@ -171,6 +201,12 @@ class SmartMonitorDataFetcher:
         result["precision_status"] = "validated"
         result["precision_mode"] = "tdx_quote_tushare_daily"
         result["tdx_retry_count"] = self.intraday_tdx_retry_count
+        self.logger.info(
+            "[%s] 盘中严格模式综合数据获取完成，耗时 %.2fs，precision_status=%s",
+            stock_code,
+            time.perf_counter() - total_started_at,
+            result["precision_status"],
+        )
         return result
 
     def _stock_code_to_ts_code(self, stock_code: str) -> Optional[str]:
@@ -265,17 +301,7 @@ class SmartMonitorDataFetcher:
             return None
 
     def _resolve_stock_name(self, stock_code: str) -> Optional[str]:
-        """解析股票名称，AKShare失败时降级到Tushare。"""
-        try:
-            info_df = ak.stock_individual_info_em(symbol=stock_code)
-            if info_df is not None and not info_df.empty:
-                info_dict = dict(zip(info_df['item'], info_df['value']))
-                stock_name = info_dict.get('股票简称')
-                if stock_name:
-                    return stock_name
-        except Exception as e:
-            self.logger.warning(f"AKShare获取股票名称失败 {stock_code}: {type(e).__name__}: {str(e)[:80]}")
-
+        """解析股票名称，优先 Tushare。"""
         if self.ts_pro:
             try:
                 ts_code = self._stock_code_to_ts_code(stock_code)
@@ -290,8 +316,8 @@ class SmartMonitorDataFetcher:
     
     def get_realtime_quote(self, stock_code: str, retry: int = 1) -> Optional[Dict]:
         """
-        获取实时行情（带重试和降级机制）
-        优先使用TDX，失败时降级到AKShare实时接口，不再用Tushare日线冒充实时数据
+        获取实时行情。
+        优先使用TDX，不再用日线数据冒充实时数据。
         
         Args:
             stock_code: 股票代码（如：600519）
@@ -301,7 +327,6 @@ class SmartMonitorDataFetcher:
             实时行情数据
         """
         import math
-        import time
         
         # 方法1: 尝试使用TDX（如果启用）
         if self.use_tdx and self.tdx_fetcher:
@@ -318,97 +343,19 @@ class SmartMonitorDataFetcher:
                         normalized_quote["current_price"] = price_value
                         normalized_quote["price"] = price_value
                         return normalized_quote
-                    self.logger.warning(f"TDX返回无效价格 {stock_code}，尝试降级到AKShare")
+                    self.logger.warning(f"TDX返回无效价格 {stock_code}")
                 else:
-                    self.logger.warning(f"TDX获取失败 {stock_code}，尝试降级到AKShare")
+                    self.logger.warning(f"TDX获取失败 {stock_code}")
             except Exception as e:
-                self.logger.warning(f"TDX获取异常 {stock_code}: {e}，尝试降级到AKShare")
-        
-        # 方法2: 组合使用AKShare分钟行情 + 基本信息
-        for attempt in range(retry):
-            try:
-                stock_name = self._resolve_stock_name(stock_code)
+                self.logger.warning(f"TDX获取异常 {stock_code}: {e}")
 
-                # 1.2 获取分钟级实时行情
-                min_df = ak.stock_zh_a_hist_min_em(symbol=stock_code, period='1', adjust='')
-                if min_df.empty:
-                    self.logger.warning(f"AKShare未找到股票 {stock_code} 的分钟行情数据")
-                    if attempt < retry - 1:
-                        time.sleep(2)
-                        continue
-                    break
-
-                # 提取最新分钟数据，仅保留分钟级实时字段，不回填日线历史值
-                latest = min_df.iloc[-1]
-                current_price = float(latest['收盘'])
-                if not math.isfinite(current_price) or current_price <= 0:
-                    raise ValueError("实时行情价格无效")
-
-                def _optional_float(*field_names: str) -> Optional[float]:
-                    for field_name in field_names:
-                        value = latest.get(field_name)
-                        if value is None or pd.isna(value):
-                            continue
-                        try:
-                            numeric = float(value)
-                        except (TypeError, ValueError):
-                            continue
-                        if math.isfinite(numeric):
-                            return numeric
-                    return None
-
-                change_amount = _optional_float("涨跌额", "涨跌额(元)")
-                change_pct = _optional_float("涨跌幅", "涨跌幅(%)")
-                pre_close = _optional_float("昨收", "昨收价")
-                if change_amount is None and pre_close is not None:
-                    change_amount = current_price - pre_close
-                if change_pct is None and change_amount is not None and pre_close not in (None, 0):
-                    change_pct = (change_amount / pre_close * 100) if pre_close > 0 else None
-
-                volume = _optional_float("成交量", "总量")
-                amount = _optional_float("成交额", "总额")
-                daily_high = _optional_float("最高")
-                daily_low = _optional_float("最低")
-                daily_open = _optional_float("开盘")
-                turnover_rate = _optional_float("换手率")
-                volume_ratio = _optional_float("量比")
-
-                self.logger.info(f"✅ AKShare成功获取 {stock_code} ({stock_name}) 实时行情")
-                
-                return {
-                    'code': stock_code,
-                    'name': stock_name,
-                    'current_price': current_price,
-                    'change_pct': change_pct,
-                    'change_amount': change_amount,
-                    'volume': volume,  # 手
-                    'amount': amount,  # 元
-                    'high': daily_high,
-                    'low': daily_low,
-                    'open': daily_open,
-                    'pre_close': pre_close,
-                    'turnover_rate': turnover_rate,
-                    'volume_ratio': volume_ratio,
-                    'update_time': str(latest['时间']),
-                    'data_source': 'akshare',
-                    'precision_status': 'partial',
-                    'precision_mode': 'akshare_minute_only',
-                }
-                
-            except Exception as e:
-                if attempt < retry - 1:
-                    self.logger.warning(f"AKShare获取失败 {stock_code}，第{attempt+1}次重试... 错误: {type(e).__name__}: {str(e)[:50]}")
-                    time.sleep(2)  # 等待2秒后重试
-                else:
-                    self.logger.warning(f"AKShare获取失败 {stock_code}（已重试{retry}次），尝试降级")
-        
-        self.logger.error(f"TDX和AKShare均无法获取 {stock_code} 的实时行情")
+        self.logger.error(f"TDX不可用，无法获取 {stock_code} 的实时行情")
         return None
     
     def get_technical_indicators(self, stock_code: str, period: str = 'daily', retry: int = 1) -> Optional[Dict]:
         """
-        计算技术指标（带降级机制）
-        日线优先使用Tushare，非日线周期按TDX -> AKShare -> Tushare 的顺序降级
+        计算技术指标。
+        日线优先使用Tushare，非日线周期优先使用TDX。
 
         Args:
             stock_code: 股票代码
@@ -436,56 +383,15 @@ class SmartMonitorDataFetcher:
                 if indicators:
                     return indicators
                 else:
-                    self.logger.warning(f"TDX计算技术指标失败 {stock_code}，尝试降级到AKShare")
+                    self.logger.warning(f"TDX计算技术指标失败 {stock_code}")
             except Exception as e:
-                self.logger.warning(f"TDX计算技术指标异常 {stock_code}: {e}，尝试降级到AKShare")
-        
-        # 方法2: 尝试使用AKShare
-        for attempt in range(retry):
-            try:
-                # 获取历史数据（最近200个交易日，用于计算指标）
-                end_date = datetime.now().strftime('%Y%m%d')
-                start_date = (datetime.now() - timedelta(days=300)).strftime('%Y%m%d')
-                
-                # 获取历史数据
-                df = ak.stock_zh_a_hist(
-                    symbol=stock_code,
-                    period=normalized_period,
-                    start_date=start_date,
-                    end_date=end_date,
-                    adjust="qfq"  # 前复权
-                )
-                
-                if df.empty or len(df) < 60:
-                    if attempt < retry - 1:
-                        self.logger.warning(f"AKShare历史数据不足 {stock_code}，第{attempt+1}次重试...")
-                        time.sleep(1)
-                        continue
-                    else:
-                        self.logger.warning(f"AKShare历史数据不足 {stock_code}，尝试降级")
-                        break
-                
-                # 数据充足，计算技术指标
-                return self._calculate_all_indicators(df, stock_code)
-                
-            except Exception as e:
-                if attempt < retry - 1:
-                    self.logger.warning(f"AKShare获取历史数据失败 {stock_code}，第{attempt+1}次重试... 错误: {type(e).__name__}: {str(e)[:50]}")
-                    time.sleep(1)
-                else:
-                    self.logger.warning(f"AKShare获取历史数据失败 {stock_code}（已重试{retry}次），尝试降级到Tushare")
-                    break
-        
-        # 方法3: 降级到Tushare
-        if self.ts_pro:
-            self.logger.info(f"降级到Tushare获取 {stock_code} 历史数据...")
-            if normalized_period == "daily":
-                return self._get_technical_indicators_from_tushare(stock_code, normalized_period)
-            self.logger.warning(f"Tushare仅作为日线技术指标数据源，当前周期={normalized_period}")
-            return None
-        else:
-            self.logger.error(f"AKShare失败且未配置Tushare，无法获取 {stock_code} 技术指标")
-            return None
+                self.logger.warning(f"TDX计算技术指标异常 {stock_code}: {e}")
+
+        if self.ts_pro and normalized_period == "daily":
+            return self._get_technical_indicators_from_tushare(stock_code, normalized_period)
+
+        self.logger.error(f"无法获取 {stock_code} 技术指标，当前周期={normalized_period}")
+        return None
     
     def _calculate_all_indicators(self, df: pd.DataFrame, stock_code: str) -> Optional[Dict]:
         """
@@ -661,78 +567,13 @@ class SmartMonitorDataFetcher:
         """
         import time
         
-        for attempt in range(retry):
-            try:
-                # 获取个股资金流（新版AKShare API参数调整）
-                try:
-                    df = ak.stock_individual_fund_flow_rank(market="今日")
-                except TypeError:
-                    # 如果market参数也不支持，尝试无参数调用
-                    try:
-                        df = ak.stock_individual_fund_flow_rank()
-                    except TypeError as te:
-                        self.logger.warning(f"AKShare API参数不兼容: {te}")
-                        return None
-                
-                stock_data = df[df['代码'] == stock_code]
-                
-                if stock_data.empty:
-                    self.logger.warning(f"未找到股票 {stock_code} 的资金流向数据")
-                    return None
-                
-                row = stock_data.iloc[0]
-                
-                # 主力净额
-                required_fields = (
-                    '主力净流入-净额',
-                    '主力净流入-净占比',
-                    '超大单净流入-净额',
-                    '大单净流入-净额',
-                    '中单净流入-净额',
-                    '小单净流入-净额',
-                )
-                if any(field not in row.index or pd.isna(row[field]) for field in required_fields):
-                    return None
-                main_net = float(row['主力净流入-净额']) / 10000  # 转换为万元
-                main_net_pct = float(row['主力净流入-净占比'])
-                
-                # 判断主力动向
-                if main_net > 0 and main_net_pct > 5:
-                    trend = '大幅流入'
-                elif main_net > 0:
-                    trend = '小幅流入'
-                elif main_net < 0 and main_net_pct < -5:
-                    trend = '大幅流出'
-                elif main_net < 0:
-                    trend = '小幅流出'
-                else:
-                    trend = '观望'
-                
-                return {
-                    'main_net': main_net,  # 万元
-                    'main_net_pct': main_net_pct,  # 百分比
-                    'super_net': float(row['超大单净流入-净额']) / 10000,
-                    'big_net': float(row['大单净流入-净额']) / 10000,
-                    'mid_net': float(row['中单净流入-净额']) / 10000,
-                    'small_net': float(row['小单净流入-净额']) / 10000,
-                    'trend': trend,
-                    'data_source': 'akshare'
-                }
-                
-            except Exception as e:
-                if attempt < retry - 1:
-                    self.logger.warning(f"AKShare获取资金流向失败 {stock_code}，第{attempt+1}次重试... 错误: {type(e).__name__}")
-                    time.sleep(1)  # 等待1秒后重试
-                else:
-                    self.logger.warning(f"AKShare获取资金流向失败 {stock_code}（已重试{retry}次），尝试降级到Tushare")
-                    break
-        
-        # 降级到Tushare
         if self.ts_pro:
-            return self._get_main_force_from_tushare(stock_code)
-        else:
-            self.logger.error(f"AKShare失败且未配置Tushare，无法获取 {stock_code} 资金流向")
-            return None
+            tushare_result = self._get_main_force_from_tushare(stock_code)
+            if tushare_result:
+                return tushare_result
+
+        self.logger.error(f"Tushare未返回有效数据，无法获取 {stock_code} 资金流向")
+        return None
     
     def get_comprehensive_data(self, stock_code: str, intraday_strict: bool = False) -> Dict:
         """
@@ -746,14 +587,30 @@ class SmartMonitorDataFetcher:
         Returns:
             综合数据
         """
+        total_started_at = time.perf_counter()
+        mode_label = "intraday_strict" if intraday_strict else "best_effort"
+        self.logger.info("[%s] 开始获取综合数据，mode=%s", stock_code, mode_label)
         if intraday_strict:
-            return self._get_intraday_tdx_comprehensive_data(stock_code)
+            result = self._get_intraday_tdx_comprehensive_data(stock_code)
+            self.logger.info(
+                "[%s] 综合数据获取结束，mode=%s，耗时 %.2fs，success=%s，precision_status=%s",
+                stock_code,
+                mode_label,
+                time.perf_counter() - total_started_at,
+                bool(result),
+                (result or {}).get("precision_status"),
+            )
+            return result
 
         # 实时行情
+        quote_started_at = time.perf_counter()
         quote = self.get_realtime_quote(stock_code)
+        quote_elapsed = self._log_timed_stage(stock_code, "实时行情获取", quote_started_at, bool(quote))
         
         # 技术指标
+        indicators_started_at = time.perf_counter()
         indicators = self.get_technical_indicators(stock_code)
+        indicators_elapsed = self._log_timed_stage(stock_code, "技术指标获取", indicators_started_at, bool(indicators))
         result = self._merge_quote_and_indicators(quote, indicators)
         
         # 主力资金（已禁用 - 接口不稳定）
@@ -764,6 +621,16 @@ class SmartMonitorDataFetcher:
         if result:
             result.setdefault("precision_status", "best_effort")
             result.setdefault("precision_mode", "fallback_allowed")
+        self.logger.info(
+            "[%s] 综合数据获取结束，mode=%s，耗时 %.2fs，quote=%.2fs，indicators=%.2fs，success=%s，precision_status=%s",
+            stock_code,
+            mode_label,
+            time.perf_counter() - total_started_at,
+            quote_elapsed,
+            indicators_elapsed,
+            bool(result),
+            (result or {}).get("precision_status"),
+        )
         
         return result
     

@@ -80,8 +80,9 @@ class NewsFlowEngine:
             reasoning_model=reasoning_model,
         )
     
-    def run_quick_analysis(self, platforms: List[str] = None, 
-                           category: str = None) -> Dict:
+    def run_quick_analysis(self, platforms: List[str] = None,
+                           category: str = None,
+                           progress_callback=None) -> Dict:
         """
         运行快速分析（不含AI）
         
@@ -104,9 +105,17 @@ class NewsFlowEngine:
             start_time = time.time()
             data_warning = ""
             data_from_cache = False
+
+            def report_progress(current: int, total: int, message: str):
+                if progress_callback:
+                    try:
+                        progress_callback(current, total, message)
+                    except Exception as progress_error:
+                        logger.debug("新闻流量快速分析进度回调失败: %s", progress_error)
             
             # 1. 获取多平台新闻数据
             logger.info("📊 获取新闻数据...")
+            report_progress(12, 100, "正在获取多平台新闻数据...")
             if not self.fetcher:
                 return {'success': False, 'error': '数据获取模块不可用'}
             
@@ -142,18 +151,22 @@ class NewsFlowEngine:
             
             # 2. 提取股票相关新闻
             logger.info("🔍 提取股票相关新闻...")
+            report_progress(24, 100, "正在提取股票相关新闻...")
             stock_news = self.fetcher.extract_stock_related_news(platforms_data)
             
             # 3. 获取热门话题
             logger.info("🔥 分析热门话题...")
+            report_progress(34, 100, "正在聚合热点话题...")
             hot_topics = self.fetcher.get_hot_topics(platforms_data, top_n=20)
             
             # 4. 计算流量得分（基础）
             logger.info("📈 计算流量得分...")
+            report_progress(44, 100, "正在计算流量得分...")
             flow_data = self.fetcher.calculate_flow_score(platforms_data)
             
             # 5. 运行流量模型
             logger.info("🔬 运行流量模型...")
+            report_progress(52, 100, "正在运行流量模型...")
             history_scores = self._get_history_scores(hours=24)
             model_data = None
             if self.model:
@@ -163,6 +176,7 @@ class NewsFlowEngine:
             
             # 6. 情绪分析
             logger.info("💭 分析市场情绪...")
+            report_progress(60, 100, "正在分析市场情绪...")
             sentiment_data = None
             if self.sentiment:
                 history_sentiments = self._get_history_sentiments(limit=10)
@@ -173,9 +187,13 @@ class NewsFlowEngine:
             
             # 7. 保存到数据库
             logger.info("💾 保存分析结果...")
+            report_progress(68, 100, "正在保存快照结果...")
             snapshot_id = None
             if self.db:
                 analysis_text = flow_data.get('analysis', '')
+                top_topics = [topic.get('topic') for topic in hot_topics[:3] if topic.get('topic')]
+                if top_topics:
+                    analysis_text = f"{analysis_text}\n\n当前高频主题：{'、'.join(top_topics)}。".strip()
                 if data_warning:
                     analysis_text = f"{analysis_text}\n\n{data_warning}".strip()
                 snapshot_id = self.db.save_flow_snapshot(
@@ -223,7 +241,8 @@ class NewsFlowEngine:
                           include_ai: bool = True,
                           model: str = None,
                           lightweight_model: str = None,
-                          reasoning_model: str = None) -> Dict:
+                          reasoning_model: str = None,
+                          progress_callback=None) -> Dict:
         """
         运行完整分析（含AI）
         
@@ -245,12 +264,22 @@ class NewsFlowEngine:
         try:
             logger.info("🚀 开始完整分析...")
             start_time = time.time()
+
+            def report_progress(current: int, total: int, message: str):
+                if progress_callback:
+                    try:
+                        progress_callback(current, total, message)
+                    except Exception as progress_error:
+                        logger.debug("新闻流量完整分析进度回调失败: %s", progress_error)
             
             # 1. 先运行快速分析
-            quick_result = self.run_quick_analysis(platforms, category)
+            report_progress(5, 100, "正在初始化新闻流量分析...")
+            quick_result = self.run_quick_analysis(platforms, category, progress_callback=report_progress)
             
             if not quick_result['success']:
                 return quick_result
+
+            report_progress(72, 100, "正在整理分析上下文...")
             
             # 2. AI智能分析
             ai_analysis = None
@@ -267,6 +296,7 @@ class NewsFlowEngine:
                     logger.warning("⚠️ DeepSeek API不可用，请检查API密钥配置")
                 else:
                     logger.info("🤖 运行AI分析...")
+                    report_progress(78, 100, "正在生成 AI 投资摘要...")
                     
                     model_data = quick_result.get('model_data', {})
                     sentiment_data = quick_result.get('sentiment_data', {})
@@ -283,6 +313,7 @@ class NewsFlowEngine:
                     
                     # 多板块深度分析（多次调用DeepSeek）
                     logger.info("🔍 开始多板块深度分析...")
+                    report_progress(88, 100, "正在执行多板块深度分析...")
                     multi_sector_analysis = local_agents.run_multi_sector_analysis(
                         quick_result['hot_topics'],
                         quick_result['stock_news']
@@ -308,18 +339,22 @@ class NewsFlowEngine:
                             'advice': ai_analysis.get('investment_advice', {}).get('advice', '观望'),
                             'confidence': ai_analysis.get('investment_advice', {}).get('confidence', 50),
                             'summary': ai_analysis.get('investment_advice', {}).get('summary', ''),
+                            'raw_response': json.dumps(ai_analysis, ensure_ascii=False),
                             'model_used': json.dumps(model_selection, ensure_ascii=False) if model_selection else 'unknown',
                             'analysis_time': ai_analysis.get('analysis_time', 0),
                         }
                         self.db.save_ai_analysis(quick_result['snapshot_id'], ai_record)
             
             # 3. 生成交易信号
+            report_progress(96, 100, "正在生成交易信号...")
             trading_signals = self._generate_trading_signals(
                 quick_result.get('flow_data', {}),
                 quick_result.get('model_data', {}),
                 quick_result.get('sentiment_data', {}),
                 ai_analysis
             )
+
+            report_progress(99, 100, "正在汇总分析结果...")
             
             duration = time.time() - start_time
             logger.info(f"✅ 完整分析完成，耗时 {duration:.2f} 秒")

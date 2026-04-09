@@ -187,7 +187,7 @@ class MacroCyclePDFGenerator:
         <b>分析框架:</b> 三维周期定位系统<br/>
         <b>AI分析师:</b> 4位专业分析师协同研判<br/>
         <b>分析维度:</b> 康波长周期 · 美林中短周期 · 中国政策环境<br/>
-        <b>数据来源:</b> AKShare宏观经济数据
+        <b>数据来源:</b> Tushare / NewsFlow / yfinance 宏观数据
         </para>
         """
         elements.append(Paragraph(info_text, styles['Normal']))

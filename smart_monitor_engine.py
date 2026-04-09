@@ -26,7 +26,7 @@ from internal_events import event_bus, Events
 class SmartMonitorEngine:
     """智能盯盘引擎"""
 
-    DATA_FETCH_TIMEOUT_SECONDS = 10
+    DATA_FETCH_TIMEOUT_SECONDS = 45
     AI_DECISION_TIMEOUT_SECONDS = 25
     
     def __init__(self, deepseek_api_key: str = None, model: str = None,
@@ -41,11 +41,11 @@ class SmartMonitorEngine:
         self.logger = logging.getLogger(__name__)
         
         # 从配置管理器读取配置
-        config = config_manager.read_env()
+        env_config = config_manager.read_env()
         
         # DeepSeek API
         if deepseek_api_key is None:
-            deepseek_api_key = config.get('DEEPSEEK_API_KEY', '')
+            deepseek_api_key = env_config.get('DEEPSEEK_API_KEY', '')
 
         self.model = model
         self.lightweight_model = lightweight_model
@@ -57,6 +57,16 @@ class SmartMonitorEngine:
             model=model,
             lightweight_model=lightweight_model,
             reasoning_model=reasoning_model,
+        )
+        self.data_fetch_timeout_seconds = max(
+            int(
+                getattr(
+                    config,
+                    "SMART_MONITOR_DATA_FETCH_TIMEOUT_SECONDS",
+                    self.DATA_FETCH_TIMEOUT_SECONDS,
+                ) or self.DATA_FETCH_TIMEOUT_SECONDS
+            ),
+            int(getattr(config, "TDX_TIMEOUT_SECONDS", 10) or 10) + 5,
         )
         self.ai_decision_timeout_seconds = max(
             int(getattr(config, "SMART_MONITOR_AI_TIMEOUT_SECONDS", self.AI_DECISION_TIMEOUT_SECONDS) or self.AI_DECISION_TIMEOUT_SECONDS),
@@ -74,7 +84,11 @@ class SmartMonitorEngine:
         # 注册事件总线监听
         event_bus.subscribe(Events.STOCK_ABNORMAL_FLUCTUATION, self._on_radar_event)
         
-        self.logger.info("智能盯盘引擎初始化完成, 已订阅事件总线。")
+        self.logger.info(
+            "智能盯盘引擎初始化完成, 已订阅事件总线。data_fetch_timeout=%ss ai_timeout=%ss",
+            self.data_fetch_timeout_seconds,
+            self.ai_decision_timeout_seconds,
+        )
 
     def set_model_overrides(self, model: str = None,
                             lightweight_model: str = None,
@@ -500,7 +514,7 @@ class SmartMonitorEngine:
                 market_data_kwargs["intraday_strict"] = bool(session_info.get("can_trade", False))
             market_data = self._run_with_timeout(
                 self.data_fetcher.get_comprehensive_data,
-                self.DATA_FETCH_TIMEOUT_SECONDS,
+                self.data_fetch_timeout_seconds,
                 stock_code,
                 **market_data_kwargs,
             )

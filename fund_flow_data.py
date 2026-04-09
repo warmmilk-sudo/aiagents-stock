@@ -1,14 +1,14 @@
 """
 资金流向数据获取模块
-优先使用 Tushare 获取个股资金流向，AkShare 仅作为兜底补充。
+优先使用 Tushare 获取个股资金流向。
 """
 
 import pandas as pd
 import sys
 import io
 import warnings
+import time
 from datetime import datetime, timedelta
-import akshare as ak
 from data_source_manager import data_source_manager
 
 warnings.filterwarnings('ignore')
@@ -25,13 +25,40 @@ def _setup_stdout_encoding():
 _setup_stdout_encoding()
 
 
-class FundFlowAkshareDataFetcher:
-    """资金流向数据获取类（多源策略：Tushare 主源，AkShare 兜底）"""
+class FundFlowDataFetcher:
+    """资金流向数据获取类（Tushare 主源）"""
     
     def __init__(self):
         self.days = 30  # 获取最近30个交易日
         self.available = True
-        print("[OK] 资金流向数据获取器初始化成功（多源策略：Tushare 主源）")
+        self.tushare_retry_count = 2
+        self.tushare_retry_delay_seconds = 0.6
+        print("[OK] 资金流向数据获取器初始化成功（Tushare 主源）")
+
+    def _call_tushare_dataframe(self, api_name, **kwargs):
+        helper = getattr(data_source_manager, "call_tushare_api", None)
+        if callable(helper):
+            return helper(api_name, **kwargs)
+
+        method = getattr(getattr(data_source_manager, "tushare_api", None), api_name, None)
+        if method is None:
+            return None
+
+        result = None
+        for attempt in range(1, self.tushare_retry_count + 1):
+            try:
+                result = method(**kwargs)
+            except Exception as exc:
+                if attempt < self.tushare_retry_count:
+                    time.sleep(self.tushare_retry_delay_seconds)
+                    continue
+                raise exc
+
+            if result is not None and not result.empty:
+                return result
+            if attempt < self.tushare_retry_count:
+                time.sleep(self.tushare_retry_delay_seconds)
+        return result
 
     @staticmethod
     def _safe_float(value, default=0.0):
@@ -51,22 +78,24 @@ class FundFlowAkshareDataFetcher:
         end_date = datetime.now().strftime('%Y%m%d')
         start_date = (datetime.now() - timedelta(days=self.days * 2)).strftime('%Y%m%d')
 
-        flow_df = data_source_manager.tushare_api.moneyflow(
+        flow_df = self._call_tushare_dataframe(
+            "moneyflow",
             ts_code=ts_code,
             start_date=start_date,
-            end_date=end_date
+            end_date=end_date,
         )
         if flow_df is None or flow_df.empty:
             print(f"   [Tushare] ❌ 未找到资金流向数据")
             return None
 
-        daily_df = data_source_manager.tushare_api.daily(
+        daily_df = self._call_tushare_dataframe(
+            "daily",
             ts_code=ts_code,
             start_date=start_date,
-            end_date=end_date
+            end_date=end_date,
         )
         if daily_df is None or daily_df.empty:
-            print(f"   [Tushare] ⚠ 未找到行情数据，将仅使用资金流向原始字段")
+            print(f"   [Tushare] ⚠ 行情数据为空，将仅使用资金流向原始字段")
             daily_df = pd.DataFrame(columns=["trade_date", "close", "pct_chg"])
 
         merged = flow_df.merge(
@@ -140,7 +169,7 @@ class FundFlowAkshareDataFetcher:
             "symbol": symbol,
             "fund_flow_data": None,
             "data_success": False,
-            "source": "akshare"
+            "source": "tushare"
         }
         
         # 只支持中国股票
@@ -194,7 +223,7 @@ class FundFlowAkshareDataFetcher:
             return 'sz'
     
     def _get_individual_fund_flow(self, symbol, market):
-        """获取个股资金流向数据（支持akshare和tushare自动切换）"""
+        """获取个股资金流向数据。"""
         try:
             df = None
             if data_source_manager.tushare_available:
@@ -204,18 +233,11 @@ class FundFlowAkshareDataFetcher:
                     print(f"   [Tushare] ❌ 获取失败: {te}")
 
             if df is None or df.empty:
-                print(f"   [Akshare] Tushare失败，尝试获取资金流向 (市场: {market})...")
-                df = ak.stock_individual_fund_flow(stock=symbol, market=market)
-                if df is None or df.empty:
-                    print(f"   [Akshare] ❌ 未找到资金流向数据")
-                    return None
+                print("   [Tushare] 未找到资金流向数据")
+                return None
             
             if "日期" in df.columns:
                 df = df.sort_values("日期", ascending=False).reset_index(drop=True).head(self.days)
-            else:
-                # akshare 返回的数据通常按时间正序排列（从旧到新）
-                df = df.tail(self.days)
-                df = df.iloc[::-1].reset_index(drop=True)
             
             # 转换为字典列表
             data_list = []
@@ -241,7 +263,7 @@ class FundFlowAkshareDataFetcher:
                 "days": len(data_list),
                 "columns": df.columns.tolist(),
                 "market": market,
-                "source": "tushare" if "主力净流入-净额" in df.columns and "小单买入" not in df.columns else "akshare",
+                "source": "tushare",
                 "query_time": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             }
             
@@ -358,7 +380,7 @@ if __name__ == "__main__":
     print("测试资金流向数据获取（多源策略）...")
     print("="*60)
     
-    fetcher = FundFlowAkshareDataFetcher()
+    fetcher = FundFlowDataFetcher()
     
     if not fetcher.available:
         print("[ERROR] 资金流向数据获取器不可用")

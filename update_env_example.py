@@ -67,6 +67,9 @@ TDX_BASE_URL=
 # TDX 请求超时（秒）
 TDX_TIMEOUT_SECONDS=10
 
+# 单股市场数据抓取总超时（秒），需覆盖 TDX 重试和 Tushare 日线指标获取
+SMART_MONITOR_DATA_FETCH_TIMEOUT_SECONDS=45
+
 # ========== 邮件通知配置（可选）==========
 # 是否启用邮件通知
 EMAIL_ENABLED=false
@@ -132,4 +135,3 @@ with open('.env.example', 'w', encoding='utf-8') as f:
 print("[OK] .env.example file updated successfully")
 print("[OK] File encoding: UTF-8")
 print("[OK] All Chinese characters should display correctly")
-

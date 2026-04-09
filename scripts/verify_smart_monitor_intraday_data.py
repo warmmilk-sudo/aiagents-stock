@@ -449,7 +449,7 @@ def main() -> int:
         from smart_monitor_data import SmartMonitorDataFetcher  # noqa: WPS433
     except ModuleNotFoundError as exc:
         print(
-            "无法导入 smart_monitor_data 依赖模块，通常是因为缺少 akshare/pandas 等运行依赖。",
+            "无法导入 smart_monitor_data 依赖模块，通常是因为缺少 pandas 等运行依赖。",
             file=sys.stderr,
         )
         print(f"原始错误: {exc}", file=sys.stderr)

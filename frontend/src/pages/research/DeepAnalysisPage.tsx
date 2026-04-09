@@ -7,10 +7,7 @@ import { PageFeedback } from "../../components/common/PageFeedback";
 import { PageFrame } from "../../components/common/PageFrame";
 import { TaskProgressBar } from "../../components/common/TaskProgressBar";
 import type { ActionPayload } from "../../components/research/AnalysisActionButtons";
-import {
-  AnalysisDetailPanel,
-  type AnalysisRecordDetail,
-} from "../../components/research/AnalysisDetailPanel";
+import { type AnalysisRecordDetail } from "../../components/research/AnalysisDetailPanel";
 import { ANALYST_OPTIONS, analystConfigToKeys, analystKeysToConfig, type AnalystKey } from "../../constants/analysts";
 import { usePageFeedback } from "../../hooks/usePageFeedback";
 import { usePollingLoader } from "../../hooks/usePollingLoader";
@@ -32,11 +29,15 @@ interface TaskResult {
   mode: "single" | "batch";
   record_id?: number;
   symbol?: string;
+  stock_info?: {
+    name?: string;
+  } | null;
   results?: TaskResultRow[];
 }
 
 interface TaskDetail {
   id: string;
+  label?: string;
   status: string;
   message: string;
   current?: number;
@@ -75,7 +76,7 @@ function buildSingleRecordFromTask(task: TaskDetail | null): AnalysisRecordDetai
   return {
     id: result.record_id,
     symbol: result.symbol,
-    stock_name: result.symbol,
+    stock_name: result.stock_info?.name || result.symbol,
   };
 }
 
@@ -185,10 +186,6 @@ function FollowupAssetList({
 export function DeepAnalysisPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const batchMode = useDeepAnalysisStore((state) => state.batchMode);
-  const setBatchMode = useDeepAnalysisStore((state) => state.setBatchMode);
-  const maxWorkers = useDeepAnalysisStore((state) => state.maxWorkers);
-  const setMaxWorkers = useDeepAnalysisStore((state) => state.setMaxWorkers);
   const analysts = useDeepAnalysisStore((state) => state.analysts);
   const setAnalysts = useDeepAnalysisStore((state) => state.setAnalysts);
   const clearSmartMonitorPageCache = useSmartMonitorStore((state) => state.clearPageCache);
@@ -196,6 +193,7 @@ export function DeepAnalysisPage() {
   const [stockInput, setStockInput] = useState("");
   const [section, setSection] = useState<SectionKey>("start");
   const [task, setTask] = useState<TaskDetail | null>(null);
+  const [queuedTasks, setQueuedTasks] = useState<TaskDetail[]>([]);
   const [singleRecord, setSingleRecord] = useState<AnalysisRecordDetail | null>(null);
   const [followupAssets, setFollowupAssets] = useState<FollowupAsset[]>([]);
   const [followupSearch, setFollowupSearch] = useState("");
@@ -210,8 +208,13 @@ export function DeepAnalysisPage() {
   );
 
   const loadTask = async () => {
-    const latest = await apiFetch<TaskDetail | null>("/api/tasks/latest");
-    setTask(latest);
+    const [active, latest, pending] = await Promise.all([
+      apiFetch<TaskDetail | null>("/api/tasks/active"),
+      apiFetch<TaskDetail | null>("/api/tasks/latest"),
+      apiFetch<TaskDetail[]>("/api/tasks/pending"),
+    ]);
+    setTask(active);
+    setQueuedTasks((pending ?? []).filter((item) => item.status === "queued" && item.id !== active?.id));
     if (latest?.status === "success" && latest.result?.mode === "single" && latest.result.record_id) {
       const record = await apiFetch<AnalysisRecordDetail>(`/api/analysis-history/${latest.result.record_id}`);
       setSingleRecord(record);
@@ -271,8 +274,8 @@ export function DeepAnalysisPage() {
         method: "POST",
         body: JSON.stringify({
           stock_input: stockInput,
-          batch_mode: batchMode,
-          max_workers: maxWorkers,
+          batch_mode: "顺序分析",
+          max_workers: 1,
           analysts,
         }),
       });
@@ -297,7 +300,7 @@ export function DeepAnalysisPage() {
         body: JSON.stringify({
           stock_input: symbol,
           batch_mode: "顺序分析",
-          max_workers: maxWorkers,
+          max_workers: 1,
           analysts,
         }),
       });
@@ -345,7 +348,26 @@ export function DeepAnalysisPage() {
         total={task?.total ?? 1}
         message={task?.message || "等待任务状态..."}
         tone={taskProgressTone(task)}
+        showCounter={false}
       />
+      {queuedTasks.length ? (
+        <div className={styles.list}>
+          <div className={styles.listItem}>
+            <strong>排队任务</strong>
+            <p className={styles.muted}>当前任务继续执行，以下任务会按顺序依次开始。</p>
+            <div className={styles.list}>
+              {queuedTasks.map((queuedTask, index) => (
+                <div className={styles.listItem} key={queuedTask.id}>
+                  <strong>
+                    {index + 1}. {queuedTask.label || "深度分析任务"}
+                  </strong>
+                  <p className={styles.muted}>{queuedTask.message || "等待前序任务完成后开始执行"}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : null}
       {task?.error ? <p className={styles.dangerText}>{task.error}</p> : null}
       {task?.status === "success" && task.result?.mode === "batch" ? (
         <div className={styles.tableWrap}>
@@ -395,7 +417,7 @@ export function DeepAnalysisPage() {
         <PageFeedback error={error} message={message} />
 
         {section === "start" ? (
-          <ModuleCard hideTitleOnMobile title="分析任务" summary="股票输入、分析模式、并发和分析师配置集中在同一模块内。">
+          <ModuleCard hideTitleOnMobile title="分析任务" summary="股票输入和分析师配置集中在同一模块内；深度分析当前固定按顺序执行。">
             <form className={styles.moduleSection} id="deep-analysis-form" onSubmit={handleSubmit}>
               <div className={styles.field}>
                 <label htmlFor="stockInput">股票代码（支持逗号或换行分隔）</label>
@@ -407,35 +429,7 @@ export function DeepAnalysisPage() {
                   value={stockInput}
                 />
               </div>
-              <div className={styles.formGrid}>
-                <div className={styles.field}>
-                  <label htmlFor="batchMode">批量模式</label>
-                  <select
-                    id="batchMode"
-                    onChange={(event) => setBatchMode(event.target.value as "顺序分析" | "多线程并行")}
-                    value={batchMode}
-                  >
-                    <option value="顺序分析">顺序分析</option>
-                    <option value="多线程并行">多线程并行</option>
-                  </select>
-                </div>
-                {batchMode === "多线程并行" ? (
-                  <div className={styles.field}>
-                    <label htmlFor="maxWorkers">并行线程数</label>
-                    <select
-                      id="maxWorkers"
-                      onChange={(event) => setMaxWorkers(Number(event.target.value) || 3)}
-                      value={maxWorkers}
-                    >
-                      {[1, 2, 3, 4, 5].map((value) => (
-                        <option key={value} value={value}>
-                          {value}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                ) : null}
-              </div>
+              <p className={styles.muted}>当前有任务运行时仍可继续提交，新任务会按顺序排队执行。</p>
               <div className={styles.field}>
                 <label>分析师配置</label>
                 <AnalystSelector
@@ -454,9 +448,23 @@ export function DeepAnalysisPage() {
 
             {task ? taskSection : null}
 
-            {singleRecord ? (
+            {singleRecord?.id ? (
               <div className={styles.moduleSection}>
-                <AnalysisDetailPanel record={singleRecord} />
+                <div className={styles.listItem}>
+                  <strong>分析已完成</strong>
+                  <p className={styles.muted}>
+                    {singleRecord.stock_name || singleRecord.symbol} 的详细报告不在当前页展开显示。
+                  </p>
+                  <div className={styles.actions}>
+                    <button
+                      className={styles.secondaryButton}
+                      onClick={() => navigate(`/research/history?recordId=${singleRecord.id}`)}
+                      type="button"
+                    >
+                      查看分析历史
+                    </button>
+                  </div>
+                </div>
               </div>
             ) : null}
           </ModuleCard>

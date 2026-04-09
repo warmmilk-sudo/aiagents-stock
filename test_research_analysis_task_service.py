@@ -150,7 +150,7 @@ class ResearchAnalysisTaskServiceTests(unittest.TestCase):
             return "task-staged"
 
         with patch.object(services.config, "DEEPSEEK_API_KEY", "test-key"), \
-             patch.object(services.portfolio_analysis_task_manager, "get_active_task", return_value=None), \
+             patch.object(services.portfolio_analysis_task_manager, "get_active_task_any", return_value=None), \
              patch.object(services.portfolio_analysis_task_manager, "start_task", side_effect=fake_start_task):
             services.submit_research_analysis_task(
                 session_key="session-stage",
@@ -209,11 +209,6 @@ class ResearchAnalysisTaskServiceTests(unittest.TestCase):
             return "task-queued"
 
         with patch.object(services.config, "DEEPSEEK_API_KEY", "test-key"), \
-             patch.object(
-                 services.portfolio_analysis_task_manager,
-                 "get_active_task",
-                 return_value={"id": "running-task", "status": "running"},
-             ), \
              patch.object(services.portfolio_analysis_task_manager, "start_task", side_effect=fake_start_task):
             task_id = services.submit_research_analysis_task(
                 session_key="session-queue",
@@ -230,7 +225,24 @@ class ResearchAnalysisTaskServiceTests(unittest.TestCase):
         self.assertEqual(captured["session_key"], "session-queue")
         self.assertEqual(captured["label"], "深度分析 600519")
 
-    def test_submit_research_analysis_task_records_clamped_worker_metadata(self):
+    def test_submit_research_analysis_task_rejects_parallel_batch_mode(self):
+        with patch.object(services.config, "DEEPSEEK_API_KEY", "test-key"), \
+             patch.object(services.portfolio_analysis_task_manager, "start_task") as start_task:
+            with self.assertRaisesRegex(ValueError, "暂不支持并行执行"):
+                services.submit_research_analysis_task(
+                    session_key="session-parallel",
+                    symbols=["600519", "000001"],
+                    period="1y",
+                    batch_mode="多线程并行",
+                    max_workers=5,
+                    analysts={"technical": True, "fundamental": False, "fund_flow": False, "risk": False, "sentiment": False, "news": False},
+                    lightweight_model=None,
+                    reasoning_model=None,
+                )
+
+        start_task.assert_not_called()
+
+    def test_submit_research_analysis_task_records_single_worker_metadata(self):
         captured: dict = {}
 
         def fake_start_task(session_key, **kwargs):
@@ -238,13 +250,12 @@ class ResearchAnalysisTaskServiceTests(unittest.TestCase):
             return "task-123"
 
         with patch.object(services.config, "DEEPSEEK_API_KEY", "test-key"), \
-             patch.object(services.portfolio_analysis_task_manager, "get_active_task", return_value=None), \
              patch.object(services.portfolio_analysis_task_manager, "start_task", side_effect=fake_start_task):
             task_id = services.submit_research_analysis_task(
                 session_key="session-a",
                 symbols=["600519", "000001"],
                 period="1y",
-                batch_mode="多线程并行",
+                batch_mode="顺序分析",
                 max_workers=99,
                 analysts={"technical": True, "fundamental": False, "fund_flow": False, "risk": False, "sentiment": False, "news": False},
                 lightweight_model=None,
@@ -252,56 +263,90 @@ class ResearchAnalysisTaskServiceTests(unittest.TestCase):
             )
 
         self.assertEqual(task_id, "task-123")
-        self.assertEqual(captured["metadata"]["max_workers"], 5)
-        self.assertEqual(captured["metadata"]["batch_mode"], "多线程并行")
+        self.assertEqual(captured["metadata"]["max_workers"], 1)
+        self.assertEqual(captured["metadata"]["batch_mode"], "顺序分析")
+        self.assertEqual(captured["metadata"]["symbols"], ["600519", "000001"])
 
-    def test_parallel_batch_runner_uses_clamped_worker_count(self):
+    def test_submit_research_analysis_task_rejects_duplicate_symbol_against_running_task(self):
+        with patch.object(services.config, "DEEPSEEK_API_KEY", "test-key"), \
+             patch.object(
+                 services.portfolio_analysis_task_manager,
+                 "get_pending_tasks",
+                 return_value=[
+                     {
+                         "id": "task-running",
+                         "status": "running",
+                         "metadata": {"mode": "single", "symbol": "600519", "symbols": ["600519"]},
+                     }
+                 ],
+             ), \
+             patch.object(services.portfolio_analysis_task_manager, "start_task") as start_task:
+            with self.assertRaisesRegex(ValueError, "600519"):
+                services.submit_research_analysis_task(
+                    session_key="session-dup",
+                    symbols=["600519"],
+                    period="1y",
+                    batch_mode="顺序分析",
+                    max_workers=1,
+                    analysts={"technical": True, "fundamental": False, "fund_flow": False, "risk": False, "sentiment": False, "news": False},
+                    lightweight_model=None,
+                    reasoning_model=None,
+                )
+
+        start_task.assert_not_called()
+
+    def test_submit_research_analysis_task_rejects_duplicate_symbol_against_queued_batch_task(self):
+        with patch.object(services.config, "DEEPSEEK_API_KEY", "test-key"), \
+             patch.object(
+                 services.portfolio_analysis_task_manager,
+                 "get_pending_tasks",
+                 return_value=[
+                     {
+                         "id": "task-queued",
+                         "status": "queued",
+                         "metadata": {"mode": "batch", "symbols": ["000001", "600519"]},
+                     }
+                 ],
+             ), \
+             patch.object(services.portfolio_analysis_task_manager, "start_task") as start_task:
+            with self.assertRaisesRegex(ValueError, "600519"):
+                services.submit_research_analysis_task(
+                    session_key="session-dup-batch",
+                    symbols=["600519", "300750"],
+                    period="1y",
+                    batch_mode="顺序分析",
+                    max_workers=1,
+                    analysts={"technical": True, "fundamental": False, "fund_flow": False, "risk": False, "sentiment": False, "news": False},
+                    lightweight_model=None,
+                    reasoning_model=None,
+                )
+
+        start_task.assert_not_called()
+
+    def test_submit_research_analysis_task_deduplicates_symbols_within_request(self):
         captured: dict = {}
 
         def fake_start_task(session_key, **kwargs):
             captured.update(kwargs)
-            return "task-456"
+            return "task-dedup"
 
         with patch.object(services.config, "DEEPSEEK_API_KEY", "test-key"), \
-             patch.object(services.portfolio_analysis_task_manager, "get_active_task", return_value=None), \
+             patch.object(services.portfolio_analysis_task_manager, "get_pending_tasks", return_value=[]), \
              patch.object(services.portfolio_analysis_task_manager, "start_task", side_effect=fake_start_task):
-            services.submit_research_analysis_task(
-                session_key="session-b",
-                symbols=["600519", "000001"],
+            task_id = services.submit_research_analysis_task(
+                session_key="session-dedup",
+                symbols=["600519", "600519", "000001", "000001"],
                 period="1y",
-                batch_mode="多线程并行",
-                max_workers=0,
+                batch_mode="顺序分析",
+                max_workers=1,
                 analysts={"technical": True, "fundamental": False, "fund_flow": False, "risk": False, "sentiment": False, "news": False},
                 lightweight_model=None,
                 reasoning_model=None,
             )
 
-        runner = captured["runner"]
-        executor_instance = MagicMock()
-        futures = []
-
-        def fake_submit(fn, symbol):
-            future = MagicMock()
-            future.result.return_value = {
-                "symbol": symbol,
-                "success": True,
-                "saved_to_db": True,
-            }
-            futures.append(future)
-            return future
-
-        executor_instance.submit.side_effect = fake_submit
-
-        with patch.object(services, "analyze_single_stock_for_batch", return_value={"success": True, "saved_to_db": True}), \
-             patch("backend.services.concurrent.futures.ThreadPoolExecutor") as executor_cls, \
-             patch("backend.services.concurrent.futures.wait", side_effect=lambda items, **kwargs: (set(items), set())), \
-             patch("backend.services.time.time", side_effect=[0, 0, 1]):
-            executor_cls.return_value = executor_instance
-            result = runner("task-456", lambda **kwargs: None)
-
-        self.assertEqual(executor_cls.call_args.kwargs["max_workers"], 1)
-        self.assertEqual(result["max_workers"], 1)
-        executor_instance.shutdown.assert_called_once_with(wait=False, cancel_futures=True)
+        self.assertEqual(task_id, "task-dedup")
+        self.assertEqual(captured["metadata"]["symbols"], ["600519", "000001"])
+        self.assertEqual(captured["label"], "批量深度分析 2 只股票")
 
     def test_sequential_batch_runner_ignores_parallel_worker_setting(self):
         captured: dict = {}
@@ -311,7 +356,6 @@ class ResearchAnalysisTaskServiceTests(unittest.TestCase):
             return "task-789"
 
         with patch.object(services.config, "DEEPSEEK_API_KEY", "test-key"), \
-             patch.object(services.portfolio_analysis_task_manager, "get_active_task", return_value=None), \
              patch.object(services.portfolio_analysis_task_manager, "start_task", side_effect=fake_start_task):
             services.submit_research_analysis_task(
                 session_key="session-c",
@@ -334,44 +378,6 @@ class ResearchAnalysisTaskServiceTests(unittest.TestCase):
 
         executor_cls.assert_not_called()
         self.assertEqual(result["max_workers"], 1)
-
-    def test_parallel_batch_runner_marks_timeout_without_waiting_for_result(self):
-        captured: dict = {}
-
-        def fake_start_task(session_key, **kwargs):
-            captured.update(kwargs)
-            return "task-timeout"
-
-        with patch.object(services.config, "DEEPSEEK_API_KEY", "test-key"), \
-             patch.object(services.portfolio_analysis_task_manager, "get_active_task", return_value=None), \
-             patch.object(services.portfolio_analysis_task_manager, "start_task", side_effect=fake_start_task):
-            services.submit_research_analysis_task(
-                session_key="session-timeout",
-                symbols=["600519", "000001"],
-                period="1y",
-                batch_mode="多线程并行",
-                max_workers=2,
-                analysts={"technical": True, "fundamental": False, "fund_flow": False, "risk": False, "sentiment": False, "news": False},
-                lightweight_model=None,
-                reasoning_model=None,
-            )
-
-        runner = captured["runner"]
-        executor_instance = MagicMock()
-        future_a = MagicMock()
-        future_b = MagicMock()
-        executor_instance.submit.side_effect = [future_a, future_b]
-
-        with patch.object(services, "analyze_single_stock_for_batch", return_value={"success": True, "saved_to_db": True}), \
-             patch("backend.services.concurrent.futures.ThreadPoolExecutor", return_value=executor_instance), \
-             patch("backend.services.concurrent.futures.wait", return_value=(set(), set())), \
-             patch("backend.services.time.time", side_effect=[0, 0, 301]):
-            result = runner("task-timeout", lambda **kwargs: None)
-
-        self.assertEqual(result["success_count"], 0)
-        self.assertTrue(all(item["error"] == "分析超时（5分钟）" for item in result["results"]))
-        future_a.result.assert_not_called()
-        future_b.result.assert_not_called()
 
     def test_submit_portfolio_analysis_task_allows_queue_when_task_exists(self):
         captured: dict = {}

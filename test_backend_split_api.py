@@ -293,6 +293,24 @@ class BackendSplitApiTests(unittest.TestCase):
         self.assertIn('attachment; filename="newsflow.pdf"', response.headers.get("content-disposition", ""))
         mocked.assert_called_once()
 
+    def test_sector_strategy_markdown_export_supports_utf8_filename(self):
+        self.login()
+        with patch(
+            "backend.services.export_sector_strategy_markdown",
+            return_value=(b"sector", "智策报告_20260408.md", "text/markdown; charset=utf-8"),
+        ) as mocked:
+            response = self.client.post(
+                "/api/exports/sector-strategy/markdown",
+                json={"result": {"success": True}},
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.content, b"sector")
+        disposition = response.headers.get("content-disposition", "")
+        self.assertIn('attachment; filename="', disposition)
+        self.assertIn("filename*=UTF-8''", disposition)
+        self.assertIn("%E6%99%BA%E7%AD%96%E6%8A%A5%E5%91%8A_20260408.md", disposition)
+        mocked.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

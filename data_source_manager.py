@@ -1,10 +1,11 @@
 """
 数据源管理器
-实现akshare和tushare的自动切换机制
+优先使用 Tushare/TDX。
 """
 
 import logging
 import os
+import time
 import pandas as pd
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
@@ -16,7 +17,7 @@ load_dotenv()
 
 
 class DataSourceManager:
-    """数据源管理器 - 实现akshare与tushare自动切换"""
+    """数据源管理器 - 优先 Tushare/TDX"""
 
     _MISSING_TEXT_VALUES = {"", "-", "--", "N/A", "NA", "未知", "null", "None", "nan"}
     _INDUSTRY_LABELS = {
@@ -31,13 +32,15 @@ class DataSourceManager:
         "行业",
     }
     _INDUSTRY_LABEL_EXCLUDES = ("市盈率", "市净率", "涨跌", "换手", "资金", "排名", "概念", "指数")
-    
+
     def __init__(self):
         self.logger = logging.getLogger(__name__)
         self.tushare_token = os.getenv('TUSHARE_TOKEN', '')
         self.tushare_url = os.getenv('TUSHARE_URL', 'https://api.tushare.pro')
         self.tushare_available = False
         self.tushare_api = None
+        self.tushare_retry_count = max(1, int(os.getenv('TUSHARE_RETRY_COUNT', '2') or 2))
+        self.tushare_retry_delay_seconds = max(0.2, float(os.getenv('TUSHARE_RETRY_DELAY_SECONDS', '0.6') or 0.6))
         self.tdx_fetcher = None
         self.tdx_enabled = bool(config.TDX_CONFIG.get('enabled', False) or config.TDX_CONFIG.get('base_url', ''))
         self.tdx_base_url = str(config.TDX_CONFIG.get('base_url', '') or '').strip()
@@ -59,7 +62,7 @@ class DataSourceManager:
                 print(f"[Tushare] 数据源初始化失败: {e}")
                 self.tushare_available = False
         else:
-            print("[INFO] 未配置Tushare Token，将仅使用Akshare数据源")
+            print("[INFO] 未配置 Tushare Token")
 
     def _coerce_quote_number(self, value, default=None):
         if value is None:
@@ -170,6 +173,57 @@ class DataSourceManager:
                 fuzzy_match = fuzzy_match or value
 
         return fuzzy_match
+
+    @staticmethod
+    def _is_cn_fund_like_symbol(symbol: str) -> bool:
+        if not symbol or len(symbol) != 6 or not symbol.isdigit():
+            return False
+        return (
+            symbol.startswith('5')
+            or symbol.startswith('11')
+            or symbol.startswith('12')
+            or symbol.startswith('15')
+            or symbol.startswith('16')
+            or symbol.startswith('18')
+        )
+
+    def call_tushare_api(self, api_name, *, empty_ok=False, **kwargs):
+        """调用 Tushare 接口，并在异常或空返回时做轻量重试。"""
+        if not self.tushare_available or self.tushare_api is None:
+            return None
+
+        method = getattr(self.tushare_api, api_name, None)
+        if method is None:
+            raise AttributeError(f"Tushare API 不支持方法: {api_name}")
+
+        last_error = None
+        for attempt in range(1, self.tushare_retry_count + 1):
+            try:
+                result = method(**kwargs)
+            except Exception as exc:
+                last_error = exc
+                if attempt < self.tushare_retry_count:
+                    print(
+                        f"[Tushare] {api_name} 调用异常，第{attempt}/{self.tushare_retry_count}次重试前等待 "
+                        f"{self.tushare_retry_delay_seconds:.1f}s: {exc}"
+                    )
+                    time.sleep(self.tushare_retry_delay_seconds)
+                    continue
+                print(f"[Tushare] {api_name} 调用失败: {exc}")
+                return None
+
+            is_empty = result is None or (isinstance(result, pd.DataFrame) and result.empty)
+            if not is_empty or empty_ok:
+                return result
+
+            if attempt < self.tushare_retry_count:
+                print(
+                    f"[Tushare] {api_name} 返回空数据，第{attempt}/{self.tushare_retry_count}次重试前等待 "
+                    f"{self.tushare_retry_delay_seconds:.1f}s"
+                )
+                time.sleep(self.tushare_retry_delay_seconds)
+
+        return result
     
     def _fetch_stock_hist_data_from_tushare(self, symbol, start_date=None, end_date=None, adjust='qfq'):
         if not self.tushare_available:
@@ -180,12 +234,45 @@ class DataSourceManager:
         adj_dict = {'qfq': 'qfq', 'hfq': 'hfq', '': None}
         adj = adj_dict.get(adjust, 'qfq')
 
-        df = self.tushare_api.daily(
-            ts_code=ts_code,
-            start_date=start_date,
-            end_date=end_date,
-            adj=adj
-        )
+        df = None
+        try:
+            df = self.call_tushare_api(
+                'daily',
+                ts_code=ts_code,
+                start_date=start_date,
+                end_date=end_date,
+                adj=adj,
+            )
+        except TypeError:
+            df = None
+        except Exception as exc:
+            print(f"[Tushare] daily(adj) 获取失败: {exc}")
+
+        if df is None or df.empty:
+            try:
+                df = self.call_tushare_api(
+                    'daily',
+                    ts_code=ts_code,
+                    start_date=start_date,
+                    end_date=end_date,
+                    empty_ok=False,
+                )
+            except Exception as exc:
+                print(f"[Tushare] daily 获取失败: {exc}")
+                df = None
+
+        if df is None or df.empty:
+            if self._is_cn_fund_like_symbol(symbol):
+                try:
+                    df = self.call_tushare_api(
+                        'fund_daily',
+                        ts_code=ts_code,
+                        start_date=start_date,
+                        end_date=end_date,
+                    )
+                except Exception as exc:
+                    print(f"[Tushare] fund_daily 获取失败: {exc}")
+                    df = None
 
         if df is None or df.empty:
             print(f"[Tushare] 未返回 {symbol} 的历史数据")
@@ -204,42 +291,9 @@ class DataSourceManager:
         print(f"[Tushare] 获取成功，共 {len(df)} 条数据")
         return df
 
-    def _fetch_stock_hist_data_from_akshare(self, symbol, start_date=None, end_date=None, adjust='qfq'):
-        import akshare as ak
-
-        print(f"[Akshare] 正在获取 {symbol} 的历史数据...")
-        df = ak.stock_zh_a_hist(
-            symbol=symbol,
-            period="daily",
-            start_date=start_date,
-            end_date=end_date,
-            adjust=adjust
-        )
-
-        if df is None or df.empty:
-            print(f"[Akshare] 未返回 {symbol} 的历史数据")
-            return None
-
-        df = df.rename(columns={
-            '日期': 'date',
-            '开盘': 'open',
-            '收盘': 'close',
-            '最高': 'high',
-            '最低': 'low',
-            '成交量': 'volume',
-            '成交额': 'amount',
-            '振幅': 'amplitude',
-            '涨跌幅': 'pct_change',
-            '涨跌额': 'change',
-            '换手率': 'turnover'
-        })
-        df['date'] = pd.to_datetime(df['date'])
-        print(f"[Akshare] 获取成功，共 {len(df)} 条数据")
-        return df
-
     def get_stock_hist_data(self, symbol, start_date=None, end_date=None, adjust='qfq'):
         """
-        获取股票历史数据（优先akshare，失败时使用tushare）
+        获取股票历史数据（优先 Tushare）
         
         Args:
             symbol: 股票代码（6位数字）
@@ -266,20 +320,12 @@ class DataSourceManager:
             except Exception as e:
                 print(f"[Tushare] 获取失败: {e}")
 
-        try:
-            df = self._fetch_stock_hist_data_from_akshare(symbol, start_date=start_date, end_date=end_date, adjust=adjust)
-            if df is not None and not df.empty:
-                return df
-        except Exception as e:
-            print(f"[Akshare] 获取失败: {e}")
-        
-        # 两个数据源都失败
-        print("[ERROR] 所有数据源均获取失败")
+        print("[ERROR] Tushare 未返回历史数据")
         return None
     
     def get_stock_basic_info(self, symbol):
         """
-        获取股票基本信息（优先akshare，失败时使用tushare）
+        获取股票基本信息（优先 Tushare）
         
         Args:
             symbol: 股票代码
@@ -299,15 +345,28 @@ class DataSourceManager:
                 print(f"[Tushare] 正在获取 {symbol} 的基本信息...")
                 
                 ts_code = self._convert_to_ts_code(symbol)
-                df = self.tushare_api.stock_basic(
+                df = self.call_tushare_api(
+                    'stock_basic',
                     ts_code=ts_code,
-                    fields='ts_code,name,area,industry,market,list_date'
+                    fields='ts_code,name,area,industry,market,list_date',
                 )
+
+                if (df is None or df.empty) and self._is_cn_fund_like_symbol(symbol):
+                    df = self.call_tushare_api(
+                        'fund_basic',
+                        ts_code=ts_code,
+                        market='E',
+                        fields='ts_code,name,management,custodian,found_date,due_date,list_date,issue_date,market',
+                    )
                 
                 if df is not None and not df.empty:
                     row = df.iloc[0]
                     info['name'] = self._clean_text_value(row.get('name')) or info['name']
-                    info['industry'] = self._clean_text_value(row.get('industry')) or info['industry']
+                    info['industry'] = (
+                        self._clean_text_value(row.get('industry'))
+                        or self._clean_text_value(row.get('management'))
+                        or info['industry']
+                    )
                     info['market'] = self._clean_text_value(row.get('market')) or info['market']
                     info['list_date'] = self._clean_text_value(row.get('list_date')) or info.get('list_date')
                     
@@ -316,47 +375,11 @@ class DataSourceManager:
             except Exception as e:
                 print(f"[Tushare] 获取失败: {e}")
 
-        try:
-            import akshare as ak
-            print(f"[Akshare] Tushare失败，尝试获取 {symbol} 的基本信息...")
-
-            stock_info = ak.stock_individual_info_em(symbol=symbol)
-            if stock_info is not None and not stock_info.empty:
-                extracted_industry = self._extract_industry_from_stock_info(stock_info)
-                if extracted_industry:
-                    info['industry'] = extracted_industry
-
-                for _, row in stock_info.iterrows():
-                    key = self._clean_text_value(
-                        self._get_row_value(row, 'item', '项目', '名称', '字段', 'title', 'key')
-                    ).replace(" ", "")
-                    value = self._clean_text_value(
-                        self._get_row_value(row, 'value', '值', '内容', 'data', 'val')
-                    )
-                    if not key or not value:
-                        continue
-
-                    if key == '股票简称':
-                        info['name'] = value
-                    elif key in self._INDUSTRY_LABELS:
-                        info['industry'] = value
-                    elif key == '上市时间':
-                        info['list_date'] = value
-                    elif key == '总市值':
-                        info['market_cap'] = value
-                    elif key == '流通市值':
-                        info['circulating_market_cap'] = value
-
-                if info['name'] is not None or info['industry'] is not None:
-                    print(f"[Akshare] 成功获取基本信息")
-        except Exception as e:
-            print(f"[Akshare] 获取失败: {e}")
-
         return info
     
     def get_realtime_quotes(self, symbol):
         """
-        获取实时行情数据（优先TDX，失败时回退AkShare，不回退到Tushare日线）
+        获取实时行情数据（优先 TDX，不回退到日线数据）
         
         Args:
             symbol: 股票代码
@@ -377,39 +400,11 @@ class DataSourceManager:
             except Exception as e:
                 print(f"[TDX] 获取失败: {e}")
 
-        try:
-            import akshare as ak
-            print(f"[Akshare] TDX失败，尝试获取 {symbol} 的实时行情...")
-
-            df = ak.stock_zh_a_spot_em()
-            stock_df = df[df['代码'] == symbol]
-
-            if not stock_df.empty:
-                row = stock_df.iloc[0]
-                quotes = {
-                    'symbol': symbol,
-                    'name': row['名称'],
-                    'price': row['最新价'],
-                    'change_percent': row['涨跌幅'],
-                    'change': row['涨跌额'],
-                    'volume': row['成交量'],
-                    'amount': row['成交额'],
-                    'high': row['最高'],
-                    'low': row['最低'],
-                    'open': row['今开'],
-                    'pre_close': row['昨收'],
-                    'data_source': 'akshare'
-                }
-                print(f"[Akshare] 成功获取实时行情")
-                return quotes
-        except Exception as e:
-            print(f"[Akshare] 获取失败: {e}")
-
         return quotes
     
     def get_financial_data(self, symbol, report_type='income'):
         """
-        获取财务数据（优先akshare，失败时使用tushare）
+        获取财务数据（优先 Tushare）
         
         Args:
             symbol: 股票代码
@@ -418,39 +413,18 @@ class DataSourceManager:
         Returns:
             DataFrame: 财务数据
         """
-        # 优先使用akshare
-        try:
-            import akshare as ak
-            print(f"[Akshare] 正在获取 {symbol} 的财务数据...")
-            
-            if report_type == 'income':
-                df = ak.stock_financial_report_sina(stock=symbol, symbol="利润表")
-            elif report_type == 'balance':
-                df = ak.stock_financial_report_sina(stock=symbol, symbol="资产负债表")
-            elif report_type == 'cashflow':
-                df = ak.stock_financial_report_sina(stock=symbol, symbol="现金流量表")
-            else:
-                df = None
-            
-            if df is not None and not df.empty:
-                print(f"[Akshare] 成功获取财务数据")
-                return df
-        except Exception as e:
-            print(f"[Akshare] 获取失败: {e}")
-        
-        # akshare失败，尝试tushare
         if self.tushare_available:
             try:
-                print(f"[Tushare] 正在获取 {symbol} 的财务数据（备用数据源）...")
+                print(f"[Tushare] 正在获取 {symbol} 的财务数据...")
                 
                 ts_code = self._convert_to_ts_code(symbol)
                 
                 if report_type == 'income':
-                    df = self.tushare_api.income(ts_code=ts_code)
+                    df = self.call_tushare_api('income', ts_code=ts_code)
                 elif report_type == 'balance':
-                    df = self.tushare_api.balancesheet(ts_code=ts_code)
+                    df = self.call_tushare_api('balancesheet', ts_code=ts_code)
                 elif report_type == 'cashflow':
-                    df = self.tushare_api.cashflow(ts_code=ts_code)
+                    df = self.call_tushare_api('cashflow', ts_code=ts_code)
                 else:
                     df = None
                 
@@ -459,7 +433,7 @@ class DataSourceManager:
                     return df
             except Exception as e:
                 print(f"[Tushare] 获取失败: {e}")
-        
+
         return None
     
     def _convert_to_ts_code(self, symbol):
@@ -476,10 +450,17 @@ class DataSourceManager:
             return symbol
         
         # 根据代码判断市场
-        if symbol.startswith('6'):
+        if symbol.startswith('6') or symbol.startswith('5') or symbol.startswith('11'):
             # 上海主板
             return f"{symbol}.SH"
-        elif symbol.startswith('0') or symbol.startswith('3'):
+        elif (
+            symbol.startswith('0')
+            or symbol.startswith('3')
+            or symbol.startswith('12')
+            or symbol.startswith('15')
+            or symbol.startswith('16')
+            or symbol.startswith('18')
+        ):
             # 深圳主板和创业板
             return f"{symbol}.SZ"
         elif symbol.startswith('8') or symbol.startswith('4'):

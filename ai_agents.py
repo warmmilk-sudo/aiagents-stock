@@ -125,7 +125,7 @@ class StockAnalysisAgents:
         
         # 如果有资金流向数据，显示数据来源
         if fund_flow_data and fund_flow_data.get('data_success'):
-            print("   ✓ 已获取资金流向数据（akshare数据源）")
+            print("   ✓ 已获取资金流向数据（tushare数据源）")
         else:
             print("   ⚠ 未获取到资金流向数据，将基于技术指标分析")
 
@@ -169,6 +169,11 @@ class StockAnalysisAgents:
             symbol=stock_info.get("symbol", "N/A"),
             name=stock_info.get("name", "N/A"),
             current_price=stock_info.get("current_price", "N/A"),
+            pe_ratio=stock_info.get("pe_ratio", "N/A"),
+            pb_ratio=stock_info.get("pb_ratio", "N/A"),
+            market_cap=stock_info.get("market_cap", "N/A"),
+            industry=stock_info.get("industry", "N/A"),
+            sector=stock_info.get("sector", stock_info.get("industry", "N/A")),
             beta=stock_info.get("beta", "N/A"),
             high_52_week=stock_info.get("52_week_high", "N/A"),
             low_52_week=stock_info.get("52_week_low", "N/A"),
@@ -212,7 +217,7 @@ class StockAnalysisAgents:
 【市场情绪实际数据】
 {fetcher.format_sentiment_data_for_ai(sentiment_data)}
 
-以上是通过akshare获取的实际市场情绪数据，请重点基于这些数据进行分析。
+以上是基于Tushare获取并计算的实际市场情绪数据，请重点基于这些数据进行分析。
 """
         
         messages = build_messages(
@@ -247,8 +252,10 @@ class StockAnalysisAgents:
         # 如果有新闻数据，显示数据来源
         if news_data and news_data.get('data_success'):
             news_count = news_data.get('news_data', {}).get('count', 0) if news_data.get('news_data') else 0
+            announcement_count = news_data.get('announcement_data', {}).get('count', 0) if news_data.get('announcement_data') else 0
+            supplemental_count = news_data.get('supplemental_news_data', {}).get('count', 0) if news_data.get('supplemental_news_data') else 0
             source = news_data.get('source', 'unknown')
-            print(f"   ✓ 已从 {source} 获取 {news_count} 条新闻")
+            print(f"   ✓ 已从 {source} 获取 新闻{news_count}条 / 公告{announcement_count}条 / 补充{supplemental_count}条")
         else:
             print("   ⚠ 未获取到新闻数据，将基于基本信息分析")
 
@@ -256,14 +263,14 @@ class StockAnalysisAgents:
         news_text = ""
         if news_data and news_data.get('data_success'):
             # 使用格式化的新闻数据
-            from qstock_news_data import QStockNewsDataFetcher
-            fetcher = QStockNewsDataFetcher()
+            from stock_research_news_data import StockResearchNewsDataFetcher
+            fetcher = StockResearchNewsDataFetcher()
             news_text = f"""
 
-【最新新闻数据】
+【最新新闻公告数据】
 {fetcher.format_news_for_ai(news_data)}
 
-以上是通过qstock获取的实际新闻数据，请重点基于这些数据进行分析。
+以上是通过巨潮资讯、pywencai 和 RSSHub 聚合得到的实际新闻公告数据，请重点基于这些数据进行分析。
 """
         
         messages = build_messages(

@@ -79,6 +79,7 @@ PROFIT_GROWTH_TASK_TYPE = "profit_growth_selection"
 VALUE_STOCK_TASK_TYPE = "value_stock_selection"
 MACRO_CYCLE_TASK_TYPE = "macro_cycle_analysis"
 NEWS_FLOW_TASK_TYPE = "news_flow_analysis"
+HOME_STOCK_ANALYSIS_TASK_TYPE = "home_stock_analysis"
 PORTFOLIO_SCHEDULER_TASK_TYPE = "batch"
 SMART_MONITOR_BASELINE_REFRESH_TASK_TYPE = "smart_monitor_baseline_refresh"
 SMART_MONITOR_INTRADAY_INTERVAL_KEY = "smart_monitor_intraday_decision_interval_minutes"
@@ -261,6 +262,49 @@ def build_task_summary(task: Optional[dict[str, Any]]) -> Optional[dict[str, Any
     }
 
 
+def _normalize_symbol_list(symbols: list[str]) -> list[str]:
+    normalized_symbols: list[str] = []
+    seen_symbols: set[str] = set()
+    for item in symbols:
+        normalized = str(item or "").strip().upper()
+        if not normalized or normalized in seen_symbols:
+            continue
+        seen_symbols.add(normalized)
+        normalized_symbols.append(normalized)
+    return normalized_symbols
+
+
+def _extract_task_symbols(task: Optional[dict[str, Any]]) -> list[str]:
+    metadata = task.get("metadata") if isinstance(task, dict) else {}
+    if not isinstance(metadata, dict):
+        return []
+
+    symbols_value = metadata.get("symbols")
+    if isinstance(symbols_value, list):
+        return _normalize_symbol_list(symbols_value)
+
+    symbol_value = metadata.get("symbol")
+    if symbol_value not in (None, ""):
+        return _normalize_symbol_list([str(symbol_value)])
+
+    return []
+
+
+def _find_duplicate_research_symbols(session_key: str, symbols: list[str]) -> list[str]:
+    pending_tasks = portfolio_analysis_task_manager.get_pending_tasks(
+        session_key,
+        task_type=HOME_STOCK_ANALYSIS_TASK_TYPE,
+    )
+    if not pending_tasks:
+        return []
+
+    requested_symbols = set(_normalize_symbol_list(symbols))
+    duplicate_symbols: set[str] = set()
+    for task in pending_tasks:
+        duplicate_symbols.update(requested_symbols.intersection(_extract_task_symbols(task)))
+    return sorted(duplicate_symbols)
+
+
 def submit_research_analysis_task(
     *,
     session_key: str,
@@ -272,13 +316,21 @@ def submit_research_analysis_task(
     lightweight_model: Optional[str],
     reasoning_model: Optional[str],
 ) -> str:
-    normalized_symbols = [str(item or "").strip().upper() for item in symbols if str(item or "").strip()]
+    normalized_symbols = _normalize_symbol_list(symbols)
     if not normalized_symbols:
         raise ValueError("请输入有效的股票代码")
     if not any(analysts.values()):
         raise ValueError("请至少选择一位分析师参与分析")
     if not getattr(config, "DEEPSEEK_API_KEY", ""):
         raise ValueError("请先配置 DeepSeek API Key")
+    if batch_mode == "多线程并行":
+        raise ValueError("深度分析暂不支持并行执行，请使用顺序分析")
+
+    duplicate_symbols = _find_duplicate_research_symbols(session_key, normalized_symbols)
+    if duplicate_symbols:
+        raise ValueError(
+            f"以下股票已有深度分析任务正在执行或排队：{'、'.join(duplicate_symbols)}"
+        )
 
     if len(normalized_symbols) == 1:
         symbol = normalized_symbols[0]
@@ -315,14 +367,20 @@ def submit_research_analysis_task(
 
         return portfolio_analysis_task_manager.start_task(
             session_key,
-            task_type="home_stock_analysis",
+            task_type=HOME_STOCK_ANALYSIS_TASK_TYPE,
             label=f"深度分析 {symbol}",
             runner=runner,
-            metadata={"mode": "single", "symbol": symbol, "period": period, "max_workers": 1},
+            metadata={
+                "mode": "single",
+                "symbol": symbol,
+                "symbols": [symbol],
+                "period": period,
+                "batch_mode": "顺序分析",
+                "max_workers": 1,
+            },
         )
 
     total = len(normalized_symbols)
-    worker_count = _clamp_int(max_workers, 1, 5, 3)
 
     def batch_runner(_task_id: str, report_progress) -> dict[str, Any]:
         results_by_symbol: dict[str, dict[str, Any]] = {}
@@ -338,67 +396,14 @@ def submit_research_analysis_task(
                 save_to_global_history=True,
             )
 
-        if batch_mode == "多线程并行":
-            executor = concurrent.futures.ThreadPoolExecutor(max_workers=worker_count)
-            try:
-                submitted_at = {}
-                pending_futures = {}
-                for symbol in normalized_symbols:
-                    future = executor.submit(analyze_one, symbol)
-                    pending_futures[future] = symbol
-                    submitted_at[future] = time.time()
-
-                completed_count = 0
-                timeout_seconds = 300
-                while pending_futures:
-                    done_futures, _ = concurrent.futures.wait(
-                        pending_futures.keys(),
-                        timeout=1,
-                        return_when=concurrent.futures.FIRST_COMPLETED,
-                    )
-
-                    now_ts = time.time()
-                    timed_out_futures = {
-                        future for future in list(pending_futures.keys())
-                        if now_ts - submitted_at[future] > timeout_seconds
-                    }
-
-                    for future in list(done_futures | timed_out_futures):
-                        symbol = pending_futures.pop(future)
-                        submitted_at.pop(future, None)
-                        if future in timed_out_futures:
-                            results_by_symbol[symbol] = {
-                                "symbol": symbol,
-                                "error": "分析超时（5分钟）",
-                                "success": False,
-                            }
-                        else:
-                            try:
-                                results_by_symbol[symbol] = future.result()
-                            except Exception as exc:
-                                results_by_symbol[symbol] = {
-                                    "symbol": symbol,
-                                    "error": str(exc),
-                                    "success": False,
-                                }
-                        completed_count += 1
-                        current_result = results_by_symbol[symbol]
-                        report_progress(
-                            current=completed_count,
-                            total=total,
-                            message=f"[{completed_count}/{total}] {symbol} {'分析完成' if current_result.get('success') else '分析失败'}",
-                        )
-            finally:
-                executor.shutdown(wait=False, cancel_futures=True)
-        else:
-            for index, symbol in enumerate(normalized_symbols, start=1):
-                results_by_symbol[symbol] = analyze_one(symbol)
-                current_result = results_by_symbol[symbol]
-                report_progress(
-                    current=index,
-                    total=total,
-                    message=f"[{index}/{total}] {symbol} {'分析完成' if current_result.get('success') else '分析失败'}",
-                )
+        for index, symbol in enumerate(normalized_symbols, start=1):
+            results_by_symbol[symbol] = analyze_one(symbol)
+            current_result = results_by_symbol[symbol]
+            report_progress(
+                current=index,
+                total=total,
+                message=f"[{index}/{total}] {symbol} {'分析完成' if current_result.get('success') else '分析失败'}",
+            )
 
         ordered_results = [results_by_symbol[symbol] for symbol in normalized_symbols if symbol in results_by_symbol]
         success_count = sum(1 for item in ordered_results if item.get("success"))
@@ -406,8 +411,8 @@ def submit_research_analysis_task(
         return {
             "mode": "batch",
             "results": ordered_results,
-            "batch_mode": batch_mode,
-            "max_workers": worker_count if batch_mode == "多线程并行" else 1,
+            "batch_mode": "顺序分析",
+            "max_workers": 1,
             "success_count": success_count,
             "failed_count": total - success_count,
             "saved_count": saved_count,
@@ -416,14 +421,15 @@ def submit_research_analysis_task(
 
     return portfolio_analysis_task_manager.start_task(
         session_key,
-        task_type="home_stock_analysis",
+        task_type=HOME_STOCK_ANALYSIS_TASK_TYPE,
         label=f"批量深度分析 {total} 只股票",
         runner=batch_runner,
         metadata={
             "mode": "batch",
+            "symbols": normalized_symbols,
             "total": total,
-            "batch_mode": batch_mode,
-            "max_workers": worker_count if batch_mode == "多线程并行" else 1,
+            "batch_mode": "顺序分析",
+            "max_workers": 1,
         },
     )
 
@@ -573,6 +579,14 @@ def get_latest_task_for_session(session_key: str) -> Optional[dict[str, Any]]:
 def get_active_task_for_session(session_key: str) -> Optional[dict[str, Any]]:
     portfolio_analysis_task_manager.prune_session_tasks(session_key)
     return build_task_summary(portfolio_analysis_task_manager.get_active_task(session_key))
+
+
+def get_pending_tasks_for_session(session_key: str) -> list[dict[str, Any]]:
+    portfolio_analysis_task_manager.prune_session_tasks(session_key)
+    return [
+        build_task_summary(task)
+        for task in portfolio_analysis_task_manager.get_pending_tasks(session_key)
+    ]
 
 
 def get_task_for_session(session_key: str, task_id: str) -> Optional[dict[str, Any]]:
@@ -2012,12 +2026,17 @@ def submit_news_flow_task(
     reasoning_model: Optional[str],
 ) -> str:
     def runner(_task_id: str, report_progress) -> dict[str, Any]:
-        report_progress(current=10, total=100, message="正在获取多平台新闻数据...")
+        report_progress(current=3, total=100, message="正在准备新闻流量分析...")
         result = _get_news_flow_engine().run_full_analysis(
             category=category,
             include_ai=True,
             lightweight_model=lightweight_model,
             reasoning_model=reasoning_model,
+            progress_callback=lambda current, total, message: report_progress(
+                current=int(current or 0),
+                total=int(total or 100) or 100,
+                message=message or "新闻流量分析进行中...",
+            ),
         )
         if not result.get("success"):
             raise RuntimeError(result.get("error") or "新闻流量分析失败")
@@ -2328,6 +2347,7 @@ def list_portfolio_stocks(account_name: Optional[str] = None) -> list[dict[str, 
     all_stocks = portfolio_manager.get_all_latest_analysis(
         account_name=normalize_account_name(account_name) or DEFAULT_ACCOUNT_NAME,
     )
+    all_stocks = portfolio_manager.backfill_portfolio_stock_names(all_stocks)
     trade_summary_map = portfolio_manager.get_trade_summary_map(
         [stock.get("id") for stock in all_stocks if stock.get("id")]
     )
@@ -2445,8 +2465,8 @@ def update_portfolio_scheduler(payload: dict[str, Any]) -> dict[str, Any]:
     if schedule_times:
         portfolio_scheduler.set_schedule_times(schedule_times)
     portfolio_scheduler.update_config(
-        analysis_mode=payload.get("analysis_mode"),
-        max_workers=payload.get("max_workers"),
+        analysis_mode="sequential",
+        max_workers=1,
         auto_sync_monitor=payload.get("auto_sync_monitor"),
         send_notification=payload.get("send_notification"),
         selected_agents=payload.get("selected_agents"),

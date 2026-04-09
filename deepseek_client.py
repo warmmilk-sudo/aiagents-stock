@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional
 import openai
 
 import config
+from final_decision_calibration import calibrate_final_decision
 from model_routing import ModelTier, describe_model_selection, resolve_model_name
 from prompt_registry import build_messages
 
@@ -101,7 +102,7 @@ class DeepSeekClient:
         temperature: float = 0.7,
         max_tokens: int = 2000,
         tier: Optional[ModelTier] = None,
-        include_reasoning: bool = True,
+        include_reasoning: bool = False,
     ) -> str:
         """调用DeepSeek API"""
         model_to_use = resolve_model_name(
@@ -238,7 +239,7 @@ class DeepSeekClient:
 【最近8期季报详细数据】
 {fetcher.format_quarterly_reports_for_ai(quarterly_data)}
 
-以上是通过akshare获取的最近8期季度财务报告，请重点基于这些数据进行趋势分析。
+以上是通过Tushare获取的最近8期季度财务报告，请重点基于这些数据进行趋势分析。
 """
         
         messages = build_messages(
@@ -265,18 +266,17 @@ class DeepSeekClient:
     def fund_flow_analysis(self, stock_info: Dict, indicators: Dict, fund_flow_data: Dict = None) -> str:
         """资金面分析"""
         
-        # 构建资金流向数据部分 - 使用akshare格式化数据
+        # 构建资金流向数据部分
         fund_flow_section = ""
         if fund_flow_data and fund_flow_data.get('data_success'):
-            # 使用格式化的资金流向数据
-            from fund_flow_akshare import FundFlowAkshareDataFetcher
-            fetcher = FundFlowAkshareDataFetcher()
+            from fund_flow_data import FundFlowDataFetcher
+            fetcher = FundFlowDataFetcher()
             fund_flow_section = f"""
 
 【近20个交易日资金流向详细数据】
 {fetcher.format_fund_flow_for_ai(fund_flow_data)}
 
-以上是通过akshare从东方财富获取的实际资金流向数据，请重点基于这些数据进行趋势分析。
+以上是通过Tushare获取的实际资金流向数据，请重点基于这些数据进行趋势分析。
 """
         else:
             fund_flow_section = "\n【资金流向数据】\n注意：未能获取到资金流向数据，将基于成交量进行分析。\n"
@@ -313,12 +313,17 @@ class DeepSeekClient:
     def final_decision(self, comprehensive_discussion: str, stock_info: Dict, 
                       indicators: Dict) -> Dict[str, Any]:
         """最终投资决策"""
+        has_position = bool(stock_info.get("has_position"))
+        position_status = "已持仓" if has_position else "未持仓"
+        rating_options = "增持/持有/减持/卖出" if has_position else "买入/强烈买入/观望"
         messages = build_messages(
             "stock_analysis/final_decision.system.txt",
             "stock_analysis/final_decision.user.txt",
             symbol=stock_info.get("symbol", "N/A"),
             name=stock_info.get("name", "N/A"),
             current_price=stock_info.get("current_price", "N/A"),
+            position_status=position_status,
+            rating_options=rating_options,
             comprehensive_discussion=comprehensive_discussion,
             ma20=indicators.get("ma20", "N/A"),
             bb_upper=indicators.get("bb_upper", "N/A"),
@@ -348,4 +353,8 @@ class DeepSeekClient:
         )
 
         decision_json = self._extract_json_object(response)
-        return decision_json
+        return calibrate_final_decision(
+            decision_json,
+            stock_info=stock_info,
+            has_position=has_position,
+        )

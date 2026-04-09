@@ -86,6 +86,7 @@ class NewsFlowDatabase:
             publish_time TEXT,
             matched_keywords TEXT,
             keyword_count INTEGER,
+            cross_platform INTEGER DEFAULT 1,
             score INTEGER,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (snapshot_id) REFERENCES flow_snapshots(id)
@@ -232,6 +233,7 @@ class NewsFlowDatabase:
             # (表名, 列名, 列定义)
             ('stock_related_news', 'score', 'INTEGER DEFAULT 0'),
             ('stock_related_news', 'rank', 'INTEGER'),
+            ('stock_related_news', 'cross_platform', 'INTEGER DEFAULT 1'),
             ('platform_news', 'rank', 'INTEGER'),
             ('hot_topics', 'cross_platform', 'INTEGER'),
             ('hot_topics', 'sources', 'TEXT'),
@@ -320,8 +322,8 @@ class NewsFlowDatabase:
                 cursor.execute('''
                 INSERT INTO stock_related_news
                 (snapshot_id, platform, platform_name, category, weight,
-                 title, content, url, source, publish_time, matched_keywords, keyword_count, score)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 title, content, url, source, publish_time, matched_keywords, keyword_count, cross_platform, score)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (
                     snapshot_id,
                     news['platform'],
@@ -335,6 +337,7 @@ class NewsFlowDatabase:
                     news.get('publish_time') or '',
                     json.dumps(news.get('matched_keywords', []), ensure_ascii=False),
                     news.get('keyword_count', 0),
+                    news.get('cross_platform', 1),
                     news.get('score', 0)
                 ))
             
@@ -456,7 +459,7 @@ class NewsFlowDatabase:
         cursor.execute('''
         SELECT * FROM stock_related_news
         WHERE snapshot_id = ?
-        ORDER BY COALESCE(score, 0) DESC, weight DESC
+        ORDER BY COALESCE(cross_platform, 1) DESC, COALESCE(score, 0) DESC, weight DESC
         ''', (snapshot_id,))
         
         stock_news = []
@@ -503,10 +506,7 @@ class NewsFlowDatabase:
         ai_row = cursor.fetchone()
         ai_analysis = None
         if ai_row:
-            ai_analysis = dict(ai_row)
-            ai_analysis['affected_sectors'] = json.loads(ai_analysis['affected_sectors']) if ai_analysis['affected_sectors'] else []
-            ai_analysis['recommended_stocks'] = json.loads(ai_analysis['recommended_stocks']) if ai_analysis['recommended_stocks'] else []
-            ai_analysis['risk_factors'] = json.loads(ai_analysis['risk_factors']) if ai_analysis['risk_factors'] else []
+            ai_analysis = self._decode_ai_analysis_row(ai_row)
         
         conn.close()
         
@@ -585,7 +585,7 @@ class NewsFlowDatabase:
         FROM stock_related_news srn
         JOIN flow_snapshots fs ON srn.snapshot_id = fs.id
         WHERE srn.title LIKE ? OR srn.content LIKE ?
-        ORDER BY srn.created_at DESC
+        ORDER BY COALESCE(srn.cross_platform, 1) DESC, COALESCE(srn.score, 0) DESC, srn.created_at DESC
         LIMIT ?
         ''', (f'%{keyword}%', f'%{keyword}%', limit))
         
@@ -754,7 +754,29 @@ class NewsFlowDatabase:
         conn.close()
     
     # ==================== AI分析相关方法 ====================
-    
+
+    @staticmethod
+    def _decode_json_field(value, default):
+        if not value:
+            return default
+        try:
+            return json.loads(value)
+        except Exception:
+            return default
+
+    def _decode_ai_analysis_row(self, row) -> Dict:
+        analysis = dict(row)
+        analysis['affected_sectors'] = self._decode_json_field(analysis.get('affected_sectors'), [])
+        analysis['recommended_stocks'] = self._decode_json_field(analysis.get('recommended_stocks'), [])
+        analysis['risk_factors'] = self._decode_json_field(analysis.get('risk_factors'), [])
+        raw_payload = self._decode_json_field(analysis.get('raw_response'), None)
+        if isinstance(raw_payload, dict):
+            analysis['raw_payload'] = raw_payload
+            for key in ('investment_advice', 'sector_analysis', 'risk_assess', 'stock_recommend', 'multi_sector'):
+                if key in raw_payload and key not in analysis:
+                    analysis[key] = raw_payload[key]
+        return analysis
+
     def save_ai_analysis(self, snapshot_id: int, analysis_data: Dict) -> int:
         """保存AI分析结果"""
         conn = self.get_connection()
@@ -800,13 +822,9 @@ class NewsFlowDatabase:
         
         row = cursor.fetchone()
         conn.close()
-        
+
         if row:
-            analysis = dict(row)
-            analysis['affected_sectors'] = json.loads(analysis['affected_sectors']) if analysis['affected_sectors'] else []
-            analysis['recommended_stocks'] = json.loads(analysis['recommended_stocks']) if analysis['recommended_stocks'] else []
-            analysis['risk_factors'] = json.loads(analysis['risk_factors']) if analysis['risk_factors'] else []
-            return analysis
+            return self._decode_ai_analysis_row(row)
         return None
     
     def get_ai_analysis_history(self, limit: int = 20) -> List[Dict]:
@@ -824,11 +842,7 @@ class NewsFlowDatabase:
         
         results = []
         for row in cursor.fetchall():
-            analysis = dict(row)
-            analysis['affected_sectors'] = json.loads(analysis['affected_sectors']) if analysis['affected_sectors'] else []
-            analysis['recommended_stocks'] = json.loads(analysis['recommended_stocks']) if analysis['recommended_stocks'] else []
-            analysis['risk_factors'] = json.loads(analysis['risk_factors']) if analysis['risk_factors'] else []
-            results.append(analysis)
+            results.append(self._decode_ai_analysis_row(row))
         
         conn.close()
         return results

@@ -71,10 +71,11 @@ class ConfigManagerEnvFormatTests(unittest.TestCase):
             env_path = Path(temp_dir) / ".env"
             manager = ConfigManager(str(env_path))
 
-            values = manager.read_env()
+        values = manager.read_env()
 
-            self.assertEqual(values["TDX_BASE_URL"], "")
-            self.assertEqual(values["TDX_TIMEOUT_SECONDS"], "10")
+        self.assertEqual(values["TDX_BASE_URL"], "")
+        self.assertEqual(values["TDX_TIMEOUT_SECONDS"], "10")
+        self.assertEqual(values["SMART_MONITOR_DATA_FETCH_TIMEOUT_SECONDS"], "45")
 
     def test_validate_config_requires_tdx_url_when_enabled(self):
         with tempfile.TemporaryDirectory() as temp_dir:

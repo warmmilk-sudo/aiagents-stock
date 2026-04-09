@@ -8,6 +8,7 @@ from typing import Callable, Dict, Optional
 
 from ai_agents import StockAnalysisAgents
 from asset_service import asset_service
+from asset_repository import STATUS_PORTFOLIO, asset_repository
 from database import db
 from stock_data import StockDataFetcher
 from stock_data_cache import strip_cache_meta
@@ -64,6 +65,21 @@ def _get_stock_data(symbol: str, period: str):
     return stock_info, stock_data_with_indicators, indicators
 
 
+def _resolve_position_state(symbol: str, has_position: Optional[bool] = None) -> bool:
+    if has_position is not None:
+        return bool(has_position)
+    try:
+        assets = asset_repository.list_assets(
+            status=STATUS_PORTFOLIO,
+            symbol=symbol,
+            include_deleted=False,
+        )
+        return bool(assets)
+    except Exception as exc:
+        logger.warning("[%s] failed resolving holding state: %s", symbol, exc)
+        return False
+
+
 def _fetch_optional_data(symbol: str, source_name: str, fetch_func: Callable[[], object], strip_meta: bool = False):
     """Fetch optional data source and downgrade on expected source/runtime failures."""
     try:
@@ -94,8 +110,8 @@ def _collect_optional_context_data(symbol: str, stock_data, enabled_analysts_con
 
     if enabled_analysts_config.get("fund_flow", True) and is_chinese_stock:
         tasks["fund_flow_data"] = (
-            "fund_flow_akshare",
-            lambda: __import__("fund_flow_akshare").FundFlowAkshareDataFetcher().get_fund_flow_data(symbol),
+            "fund_flow_data",
+            lambda: __import__("fund_flow_data").FundFlowDataFetcher().get_fund_flow_data(symbol),
             False,
         )
 
@@ -108,8 +124,8 @@ def _collect_optional_context_data(symbol: str, stock_data, enabled_analysts_con
 
     if enabled_analysts_config.get("news", False) and is_chinese_stock:
         tasks["news_data"] = (
-            "qstock_news_data",
-            lambda: __import__("qstock_news_data").QStockNewsDataFetcher().get_stock_news(symbol),
+            "stock_research_news_data",
+            lambda: __import__("stock_research_news_data").StockResearchNewsDataFetcher().get_stock_news(symbol),
             False,
         )
 
@@ -176,6 +192,7 @@ def analyze_single_stock_for_batch(
     selected_reasoning_model=None,
     save_to_global_history: bool = True,
     progress_callback: Optional[Callable[[int, int, str], None]] = None,
+    has_position: Optional[bool] = None,
 ):
     """Analyze one stock for batch mode via the shared backend analysis pipeline."""
     try:
@@ -205,6 +222,9 @@ def analyze_single_stock_for_batch(
 
         stock_info = strip_cache_meta(stock_info)
         stock_data = strip_cache_meta(stock_data)
+        resolved_has_position = _resolve_position_state(symbol, has_position=has_position)
+        stock_info["has_position"] = resolved_has_position
+        stock_info["position_status"] = "已持仓" if resolved_has_position else "未持仓"
         context_started_at = time.perf_counter()
         context_data = _collect_optional_context_data(symbol, stock_data, enabled_analysts_config)
         logger.info("[%s] optional context data prepared in %.2fs", symbol, time.perf_counter() - context_started_at)

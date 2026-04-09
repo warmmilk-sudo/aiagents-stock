@@ -4,6 +4,7 @@ from sector_strategy_normalization import (
     _split_report_sections,
     build_sector_strategy_summary,
     derive_sector_strategy_recommended_sectors,
+    normalize_sector_strategy_export_payload,
     normalize_sector_strategy_predictions,
     normalize_sector_strategy_result,
 )
@@ -213,6 +214,31 @@ class SectorStrategyNormalizationTests(unittest.TestCase):
         self.assertEqual([item["sector_name"] for item in recommended[:3]], ["半导体", "算力"])
         self.assertEqual(recommended[0]["type"], "看多主线")
         self.assertEqual(recommended[1]["type"], "轮动潜力")
+
+    def test_export_payload_removes_market_snapshot_details(self) -> None:
+        export_payload = normalize_sector_strategy_export_payload(
+            {
+                **self.complete_result,
+                "data_summary": {
+                    "from_cache": True,
+                    "cache_warning": "使用缓存快照。",
+                    "data_timestamp": "2026-03-15 15:00:00",
+                    "market_overview": {"up_count": 3200},
+                    "sectors": {"半导体": {}},
+                    "concepts": {"AI应用": {}},
+                },
+            }
+        )
+
+        self.assertNotIn("market_snapshot", export_payload["report_view"])
+        self.assertEqual(
+            export_payload["data_summary"],
+            {
+                "from_cache": True,
+                "cache_warning": "使用缓存快照。",
+                "data_timestamp": "2026-03-15 15:00:00",
+            },
+        )
 
     def test_split_report_sections_extracts_reasoning_before_report_body(self) -> None:
         body, reasoning = _split_report_sections(

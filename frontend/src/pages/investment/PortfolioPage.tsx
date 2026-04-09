@@ -7,8 +7,8 @@ import { PageFeedback } from "../../components/common/PageFeedback";
 import { PageFrame } from "../../components/common/PageFrame";
 import { SchedulerControl } from "../../components/common/SchedulerControl";
 import { TaskProgressBar } from "../../components/common/TaskProgressBar";
-import { ANALYST_OPTIONS, analystKeysToConfig, normalizeAnalystKeys, type AnalystKey } from "../../constants/analysts";
-import { DEFAULT_SCHEDULER_TIME, DEFAULT_SCHEDULER_WORKERS, schedulerModeLabel } from "../../constants/scheduler";
+import { analystKeysToConfig, normalizeAnalystKeys, type AnalystKey } from "../../constants/analysts";
+import { DEFAULT_SCHEDULER_TIME } from "../../constants/scheduler";
 import { usePageFeedback } from "../../hooks/usePageFeedback";
 import { usePollingLoader } from "../../hooks/usePollingLoader";
 import { StatusBadge } from "../../components/common/StatusBadge";
@@ -209,10 +209,6 @@ function resolvePnlTone(value: unknown, stylesMap: Record<string, string>) {
     return stylesMap.muted;
   }
   return numeric > 0 ? stylesMap.dangerText : numeric < 0 ? stylesMap.successText : stylesMap.muted;
-}
-
-function normalizeSchedulerMode(value?: string): "sequential" | "parallel" {
-  return value === "parallel" ? "parallel" : "sequential";
 }
 
 function isPendingTaskStatus(status?: string | null) {
@@ -560,12 +556,6 @@ export function PortfolioPage() {
   const [positionForm, setPositionForm] = useState(defaultPositionForm);
   const [tradeForm, setTradeForm] = useState(defaultTradeForm);
   const [schedulerTimes, setSchedulerTimes] = useState(() => cachedPage?.schedulerTimes ?? DEFAULT_SCHEDULER_TIME);
-  const [schedulerMode, setSchedulerMode] = useState<"sequential" | "parallel">(
-    () => (cachedPage?.scheduler as SchedulerStatus | null)?.analysis_mode === "parallel" ? "parallel" : "sequential",
-  );
-  const [schedulerMaxWorkers, setSchedulerMaxWorkers] = useState(
-    () => (cachedPage?.scheduler as SchedulerStatus | null)?.max_workers ?? DEFAULT_SCHEDULER_WORKERS,
-  );
   const [schedulerAnalysts, setSchedulerAnalysts] = useState<AnalystKey[]>(
     () => normalizeAnalystKeys((cachedPage?.scheduler as SchedulerStatus | null)?.selected_agents),
   );
@@ -592,8 +582,6 @@ export function PortfolioPage() {
   const applySchedulerState = (schedulerData: SchedulerStatus | null) => {
     setScheduler(schedulerData);
     setSchedulerTimes((schedulerData?.schedule_times ?? [])[0] || DEFAULT_SCHEDULER_TIME);
-    setSchedulerMode(schedulerData?.analysis_mode === "parallel" ? "parallel" : "sequential");
-    setSchedulerMaxWorkers(schedulerData?.max_workers ?? DEFAULT_SCHEDULER_WORKERS);
     setSchedulerAnalysts(normalizeAnalystKeys(schedulerData?.selected_agents));
   };
 
@@ -881,13 +869,6 @@ export function PortfolioPage() {
     : holdingsAnalysisBusy
       ? `分析中 ${taskCounterLabel(holdingsAnalysisTask)}`
       : "深度分析当前持仓";
-  const schedulerAnalystLabels = useMemo(
-    () =>
-      normalizeAnalystKeys(scheduler?.selected_agents)
-        .map((item) => ANALYST_OPTIONS.find((option) => option.key === item)?.label || item),
-    [scheduler?.selected_agents],
-  );
-
   const renderHoldingsAnalysisTask = () => {
     if (!holdingsAnalysisTaskId && !holdingsAnalysisTask) {
       return null;
@@ -926,12 +907,6 @@ export function PortfolioPage() {
               <strong>{holdingsTaskSummary.saved}</strong>
             </div>
           </div>
-        ) : null}
-        {holdingsAnalysisTask?.metadata ? (
-          <p className={styles.helperText}>
-            执行方式：{String(holdingsAnalysisTask.metadata.batch_mode || "顺序分析")}
-            {Number(holdingsAnalysisTask.metadata.max_workers || 1) > 1 ? ` | 并发 ${Number(holdingsAnalysisTask.metadata.max_workers)}` : ""}
-          </p>
         ) : null}
         {holdingsTaskSummary?.failedSymbols?.length ? (
           <p className={styles.dangerText}>失败股票：{holdingsTaskSummary.failedSymbols.join("、")}</p>
@@ -1085,8 +1060,8 @@ export function PortfolioPage() {
       const taskData = await apiFetch<{ task_id: string }>("/api/portfolio/analysis/tasks", {
         method: "POST",
         body: JSON.stringify({
-          batch_mode: normalizeSchedulerMode(scheduler?.analysis_mode) === "parallel" ? "多线程并行" : "顺序分析",
-          max_workers: scheduler?.max_workers ?? DEFAULT_SCHEDULER_WORKERS,
+          batch_mode: "顺序分析",
+          max_workers: 1,
           analysts: analystKeysToConfig(normalizeAnalystKeys(scheduler?.selected_agents)),
         }),
       });
@@ -1313,8 +1288,6 @@ export function PortfolioPage() {
         method: "PUT",
         body: JSON.stringify({
           schedule_times: [schedulerTimes.trim() || DEFAULT_SCHEDULER_TIME],
-          analysis_mode: schedulerMode,
-          max_workers: schedulerMaxWorkers,
           selected_agents: schedulerAnalysts,
         }),
       });
@@ -1726,7 +1699,7 @@ export function PortfolioPage() {
         ) : null}
 
         {section === "scheduler" ? (
-          <ModuleCard hideTitleOnMobile title="定时分析" summary="执行时间、模式、分析师配置和运行状态统一收口到一个模块。">
+          <ModuleCard hideTitleOnMobile title="定时分析" summary="执行时间和分析师配置统一在这里维护；定时任务固定按顺序分析执行。">
             <SchedulerControl
               enabled={Boolean(scheduler?.is_running)}
               label="启用定时分析"
@@ -1746,33 +1719,6 @@ export function PortfolioPage() {
                         value={schedulerTimes}
                       />
                     </div>
-                    <div className={styles.field}>
-                      <label htmlFor="scheduler-mode">默认分析模式</label>
-                      <select
-                        id="scheduler-mode"
-                        onChange={(event) => setSchedulerMode(event.target.value as "sequential" | "parallel")}
-                        value={schedulerMode}
-                      >
-                        <option value="sequential">顺序分析</option>
-                        <option value="parallel">并行分析</option>
-                      </select>
-                    </div>
-                    {schedulerMode === "parallel" ? (
-                      <div className={styles.field}>
-                        <label htmlFor="scheduler-workers">默认并发线程数</label>
-                        <select
-                          id="scheduler-workers"
-                          onChange={(event) => setSchedulerMaxWorkers(Number(event.target.value) || DEFAULT_SCHEDULER_WORKERS)}
-                          value={schedulerMaxWorkers}
-                        >
-                          {[1, 2, 3, 4, 5].map((value) => (
-                            <option key={value} value={value}>
-                              {value}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                    ) : null}
                   </div>
                   <div className={styles.field}>
                     <label>分析师配置</label>
@@ -1790,34 +1736,7 @@ export function PortfolioPage() {
                   </div>
                 </>
               )}
-              statusFields={(
-                <>
-                  {renderSchedulerTask()}
-                  <div className={styles.compactGrid}>
-                    <div className={styles.metric}>
-                      <span className={styles.muted}>运行状态</span>
-                      <strong>{scheduler?.is_running ? "运行中" : "未启动"}</strong>
-                    </div>
-                    <div className={styles.metric}>
-                      <span className={styles.muted}>执行时间</span>
-                      <strong>{schedulerTimes || "未配置"}</strong>
-                      <div className={styles.muted}>仅周一至周五执行</div>
-                    </div>
-                    <div className={styles.metric}>
-                      <span className={styles.muted}>默认模式</span>
-                      <strong>{schedulerModeLabel(scheduler?.analysis_mode)}</strong>
-                    </div>
-                    <div className={styles.metric}>
-                      <span className={styles.muted}>默认并发</span>
-                      <strong>{scheduler?.max_workers ?? DEFAULT_SCHEDULER_WORKERS}</strong>
-                    </div>
-                    <div className={styles.metric}>
-                      <span className={styles.muted}>分析师配置</span>
-                      <strong>{schedulerAnalystLabels.join("、") || "未配置"}</strong>
-                    </div>
-                  </div>
-                </>
-              )}
+              statusFields={renderSchedulerTask()}
             />
           </ModuleCard>
         ) : null}

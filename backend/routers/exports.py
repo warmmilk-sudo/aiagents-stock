@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import os
+import re
+from urllib.parse import quote
+
 from fastapi import APIRouter, Request, Response
 
 from backend import services
@@ -10,9 +14,20 @@ from backend.dto import LonghubangExportRequest, MacroCycleExportRequest, MainFo
 router = APIRouter(prefix="/api/exports", tags=["exports"])
 
 
+def _build_content_disposition(filename: str) -> str:
+    raw_name = str(filename or "").strip() or "download.bin"
+    raw_name = raw_name.replace("\\", "_").replace("/", "_")
+    stem, suffix = os.path.splitext(raw_name)
+    safe_stem = re.sub(r"[^A-Za-z0-9._-]+", "_", stem).strip("._") or "download"
+    safe_suffix = re.sub(r"[^A-Za-z0-9.]+", "", suffix)
+    ascii_name = f"{safe_stem}{safe_suffix or '.bin'}"
+    encoded_name = quote(raw_name, safe="!#$&+-.^_`|~")
+    return f'attachment; filename="{ascii_name}"; filename*=UTF-8\'\'{encoded_name}'
+
+
 def _build_file_response(data: bytes, filename: str, media_type: str) -> Response:
     headers = {
-        "Content-Disposition": f'attachment; filename="{filename}"',
+        "Content-Disposition": _build_content_disposition(filename),
     }
     return Response(content=data, media_type=media_type, headers=headers)
 

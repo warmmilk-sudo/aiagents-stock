@@ -128,6 +128,45 @@ class PortfolioDB:
             numeric = 0.0
         return round(max(0.0, numeric), 2)
 
+    @staticmethod
+    def _normalize_stock_name_text(value: Any) -> str:
+        return str(value or "").strip()
+
+    @classmethod
+    def _is_valid_stock_name(cls, name: Any, code: Any) -> bool:
+        normalized_name = cls._normalize_stock_name_text(name)
+        normalized_code = str(code or "").strip().upper()
+        if not normalized_name:
+            return False
+
+        invalid_names = {
+            "",
+            "N/A",
+            "未知",
+            f"股票{normalized_code}",
+            f"港股{normalized_code}",
+            f"美股{normalized_code}",
+        }
+        return normalized_name not in invalid_names and normalized_name.upper() != normalized_code
+
+    def _resolve_stock_display_name(self, stock: Dict[str, Any], latest_record: Optional[Dict[str, Any]] = None) -> str:
+        code = stock.get("code") or stock.get("symbol") or ""
+        latest_record = latest_record or {}
+        latest_stock_info = latest_record.get("stock_info") if isinstance(latest_record, dict) else {}
+        if not isinstance(latest_stock_info, dict):
+            latest_stock_info = {}
+
+        candidates = (
+            stock.get("name"),
+            latest_record.get("stock_name"),
+            latest_stock_info.get("name"),
+            latest_stock_info.get("股票名称"),
+        )
+        for candidate in candidates:
+            if self._is_valid_stock_name(candidate, code):
+                return self._normalize_stock_name_text(candidate)
+        return self._normalize_stock_name_text(code)
+
     def _deserialize_analysis_row(self, row) -> Dict:
         record = dict(row)
         record["stock_info"] = self._deserialize_json_object(record.pop("stock_info_json", None))
@@ -1236,7 +1275,7 @@ class PortfolioDB:
                 merged["account_name"] = stock.get("account_name", DEFAULT_ACCOUNT_NAME)
                 merged["symbol"] = stock.get("code") or stock.get("symbol")
                 merged["code"] = stock.get("code") or stock.get("symbol")
-                merged["name"] = stock.get("name") or latest_record.get("stock_name") or stock.get("code")
+                merged["name"] = self._resolve_stock_display_name(stock, latest_record)
                 merged["cost_price"] = stock.get("cost_price")
                 merged["quantity"] = stock.get("quantity")
                 merged["note"] = stock.get("note")
@@ -1246,6 +1285,17 @@ class PortfolioDB:
                 merged["origin_analysis_id"] = stock.get("origin_analysis_id")
                 merged["last_trade_at"] = stock.get("last_trade_at")
                 merged["analysis_record_id"] = latest_record.get("id")
+                if (
+                    stock.get("id")
+                    and merged["name"] != self._normalize_stock_name_text(stock.get("name"))
+                    and self._is_valid_stock_name(merged["name"], merged.get("code"))
+                ):
+                    try:
+                        self.asset_repository.update_asset(int(stock["id"]), name=merged["name"])
+                    except Exception:
+                        pass
+            else:
+                merged["name"] = self._resolve_stock_display_name(stock)
             result.append(merged)
         return result
 

@@ -22,6 +22,12 @@ def get_active_task(request: Request) -> dict:
     return success_payload(services.get_active_task_for_session(build_session_key(payload)))
 
 
+@router.get("/pending")
+def get_pending_tasks(request: Request) -> dict:
+    payload = require_session(request)
+    return success_payload(services.get_pending_tasks_for_session(build_session_key(payload)))
+
+
 @router.get("/{task_id}")
 def get_task(request: Request, task_id: str) -> dict:
     payload = require_session(request)
