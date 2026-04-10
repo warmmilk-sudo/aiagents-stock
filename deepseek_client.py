@@ -315,7 +315,7 @@ class DeepSeekClient:
         """最终投资决策"""
         has_position = bool(stock_info.get("has_position"))
         position_status = "已持仓" if has_position else "未持仓"
-        rating_options = "增持/持有/减持/卖出" if has_position else "买入/强烈买入/观望"
+        rating_options = "加仓/持有/减仓/卖出" if has_position else "买入/强烈买入/观望"
         messages = build_messages(
             "stock_analysis/final_decision.system.txt",
             "stock_analysis/final_decision.user.txt",

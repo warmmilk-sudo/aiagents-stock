@@ -5,7 +5,7 @@ from typing import Any, Dict, Optional
 from investment_action_utils import extract_first_number, resolve_entry_range
 
 
-_POSITION_RATINGS = ("增持", "持有", "减持", "卖出")
+_POSITION_RATINGS = ("加仓", "持有", "减仓", "卖出")
 _RESEARCH_RATINGS = ("买入", "强烈买入", "观望")
 
 _HIGH_RISK_KEYWORDS = (
@@ -36,6 +36,29 @@ _LOW_CONVICTION_POSITION_KEYWORDS = ("轻仓", "试仓", "小仓位")
 
 def _clean_rating_label(value: Any) -> str:
     text = str(value or "").strip()
+    aliases = {
+        "买入": "买入",
+        "强烈买入": "强烈买入",
+        "buy": "买入",
+        "strong buy": "强烈买入",
+        "持有": "持有",
+        "hold": "持有",
+        "观望": "观望",
+        "中性": "观望",
+        "watch": "观望",
+        "neutral": "观望",
+        "卖出": "卖出",
+        "sell": "卖出",
+        "增持": "加仓",
+        "减持": "减仓",
+        "add": "加仓",
+        "reduce": "减仓",
+    }
+    lowered = text.lower()
+    if lowered in aliases:
+        return aliases[lowered]
+    if text in aliases:
+        return aliases[text]
     return text
 
 

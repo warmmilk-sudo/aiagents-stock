@@ -282,8 +282,7 @@ class SmartMonitorEngine:
         return fallback or "持有"
 
     @staticmethod
-    def _normalize_monitor_levels(decision: Dict) -> Optional[Dict]:
-        raw_levels = decision.get("monitor_levels")
+    def _normalize_monitor_levels_payload(raw_levels: Optional[Dict]) -> Optional[Dict]:
         if not isinstance(raw_levels, dict):
             return None
         normalized: Dict[str, float] = {}
@@ -296,6 +295,41 @@ class SmartMonitorEngine:
             except (TypeError, ValueError):
                 return None
         return normalized
+
+    @classmethod
+    def _normalize_monitor_levels(cls, decision: Dict) -> Optional[Dict]:
+        return cls._normalize_monitor_levels_payload(
+            decision.get("monitor_levels") if isinstance(decision, dict) else None
+        )
+
+    @classmethod
+    def _classify_decision_change(
+        cls,
+        *,
+        latest_decision: Optional[Dict],
+        current_decision: Dict,
+    ) -> Dict[str, bool]:
+        latest_action = str((latest_decision or {}).get("action") or "").upper()
+        current_action = str(current_decision.get("action") or "").upper()
+        action_changed = not latest_action or latest_action != current_action
+
+        latest_levels = cls._normalize_monitor_levels_payload((latest_decision or {}).get("monitor_levels"))
+        current_levels = cls._normalize_monitor_levels(current_decision)
+        thresholds_changed = False
+        if current_levels is not None:
+            if latest_levels is None:
+                thresholds_changed = True
+            else:
+                thresholds_changed = any(
+                    abs(float(latest_levels[key]) - float(current_levels[key])) > 0.01
+                    for key in ("entry_min", "entry_max", "take_profit", "stop_loss")
+                )
+
+        return {
+            "action_changed": action_changed,
+            "thresholds_changed": thresholds_changed,
+            "decision_changed": action_changed or thresholds_changed,
+        }
 
     def _resolve_latest_strategy_context(
         self,
@@ -656,8 +690,23 @@ class SmartMonitorEngine:
                            f"(信心度: {decision['confidence']}%)")
             self.logger.info(f"[{stock_code}] 决策理由: {decision['reasoning'][:100]}...")
             
+            latest_decision = self.db.get_latest_ai_decision_for_context(
+                stock_code=stock_code,
+                account_name=account_name,
+                asset_id=asset_id,
+                portfolio_stock_id=portfolio_stock_id,
+            )
+            change_flags = self._classify_decision_change(
+                latest_decision=latest_decision,
+                current_decision=decision,
+            )
+            action_changed = bool(change_flags["action_changed"])
+            thresholds_changed = bool(change_flags["thresholds_changed"])
+            decision_changed = bool(change_flags["decision_changed"])
+            actionable_signal = str(decision.get("action", "")).upper() in {"BUY", "SELL"}
+
             # 6. 保存AI决策到数据库
-            decision_id, decision_changed = self.db.save_ai_decision_if_changed({
+            decision_id = self.db.save_ai_decision({
                 'stock_code': stock_code,
                 'stock_name': market_data.get('name'),
                 'account_name': account_name,
@@ -677,7 +726,7 @@ class SmartMonitorEngine:
                 'market_data': market_data,
                 'account_info': account_info,
                 'execution_mode': 'manual_only',
-                'action_status': 'pending' if str(decision.get('action', '')).upper() in {'BUY', 'SELL'} else 'suggested',
+                'action_status': 'pending' if actionable_signal and action_changed else 'suggested',
             })
 
             if decision_changed:
@@ -695,7 +744,7 @@ class SmartMonitorEngine:
             # 7. 手工执行模式下只生成待处理动作
             execution_result = None
             pending_action = None
-            if decision_changed and str(decision.get('action', '')).upper() in {'BUY', 'SELL'}:
+            if action_changed and actionable_signal:
                 pending_action = self._create_pending_action(
                     stock_code=stock_code,
                     stock_name=market_data.get('name') or stock_code,
@@ -708,7 +757,7 @@ class SmartMonitorEngine:
                 execution_result = pending_action
 
             # 8. 发送通知
-            if notify and decision_changed:
+            if notify and action_changed:
                 self._send_notification(
                     stock_code=stock_code,
                     stock_name=market_data.get('name'),
@@ -733,6 +782,8 @@ class SmartMonitorEngine:
                 'decision': decision,
                 'decision_id': decision_id,
                 'decision_changed': decision_changed,
+                'action_changed': action_changed,
+                'thresholds_changed': thresholds_changed,
                 'execution_result': execution_result,
                 'pending_action': pending_action,
                 'account_name': account_name,

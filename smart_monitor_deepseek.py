@@ -1168,16 +1168,28 @@ KDJ:
         return normalized
 
     def _enforce_action_policy(self, decision: Dict, has_position: bool) -> Dict:
+        def _append_constraint_reasoning(message: str) -> None:
+            original_reasoning = str(decision.get("reasoning") or "").strip()
+            if original_reasoning:
+                decision["reasoning"] = f"{original_reasoning}\n\n[动作约束] {message}"
+            else:
+                decision["reasoning"] = message
+
         allowed_actions = {"BUY", "SELL", "HOLD"}
         action = str(decision.get("action", "HOLD") or "HOLD").upper()
         if action not in allowed_actions:
             decision["action"] = "HOLD"
-            original_reasoning = str(decision.get("reasoning") or "").strip()
-            if original_reasoning:
-                decision["reasoning"] = f"{original_reasoning}\n\n[动作约束] 原始动作 {action} 不在允许集合 {sorted(allowed_actions)} 中，已降级为 HOLD。"
-            else:
-                decision["reasoning"] = f"原始动作 {action} 不在允许集合 {sorted(allowed_actions)} 中，已降级为 HOLD。"
+            _append_constraint_reasoning(
+                f"原始动作 {action} 不在允许集合 {sorted(allowed_actions)} 中，已降级为 HOLD。"
+            )
             decision["risk_level"] = "high"
-        else:
-            decision["action"] = action
+            return decision
+
+        if not has_position and action == "SELL":
+            decision["action"] = "HOLD"
+            _append_constraint_reasoning("当前无持仓，SELL 不可执行，已降级为 HOLD。")
+            decision["risk_level"] = "high"
+            return decision
+
+        decision["action"] = action
         return decision

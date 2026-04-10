@@ -22,6 +22,9 @@ warnings.filterwarnings('ignore')
 
 class SectorStrategyDataFetcher:
     """板块策略数据获取类"""
+
+    _CORE_DATA_KEYS = ("sectors", "concepts", "sector_fund_flow")
+    _OPTIONAL_DATA_KEYS = ("market_overview", "north_flow", "news")
     
     def __init__(self):
         print("[智策] 板块数据获取器初始化...")
@@ -70,6 +73,55 @@ class SectorStrategyDataFetcher:
         except Exception:
             return []
 
+    @staticmethod
+    def _new_data_payload(*, success=False):
+        return {
+            "success": success,
+            "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            "sectors": {},
+            "concepts": {},
+            "sector_fund_flow": {},
+            "market_overview": {},
+            "north_flow": {},
+            "news": [],
+        }
+
+    def _read_cached_content(
+        self,
+        *,
+        log_label,
+        default_factory,
+        content_type,
+        cache_key=None,
+        fetcher_name="get_latest_raw_data",
+        log_on_hit=False,
+    ):
+        database = getattr(self, "database", None)
+        default_value = default_factory()
+        if database is None:
+            return default_value
+
+        fetcher = getattr(database, fetcher_name, None)
+        if fetcher is None:
+            return default_value
+
+        try:
+            cached_payload = fetcher(cache_key) if cache_key is not None else fetcher()
+        except Exception as exc:
+            self.logger.warning("[智策数据] 读取%s缓存失败: %s", log_label, exc)
+            return default_value
+
+        if not isinstance(cached_payload, dict):
+            return default_value
+
+        cached_content = cached_payload.get("data_content")
+        if not isinstance(cached_content, content_type) or not cached_content:
+            return default_value
+
+        if log_on_hit:
+            self.logger.warning("[智策数据] %s已回退到最近缓存快照", log_label)
+        return cached_content
+
     def _build_market_breadth_overview(self, rows):
         if not rows:
             return {}
@@ -111,65 +163,15 @@ class SectorStrategyDataFetcher:
             "limit_down": limit_down,
         }
 
-    def _peek_cached_market_overview(self):
-        database = getattr(self, "database", None)
-        if database is None:
-            return {}
-        try:
-            cached_payload = database.get_latest_raw_data("market_overview")
-        except Exception:
-            return {}
-
-        if isinstance(cached_payload, dict):
-            cached_content = cached_payload.get("data_content")
-            if isinstance(cached_content, dict):
-                return cached_content
-        return {}
-
     def _get_market_breadth_rows(self):
-        rows = self._get_market_breadth_rows_from_tushare()
-        if rows:
-            return rows
-        return []
-
-    def _get_market_breadth_rows_from_sina(self):
-        return []
+        return self._get_market_breadth_rows_from_tushare()
 
     def _get_market_breadth_rows_from_tushare(self):
         df = self._fetch_tushare_trade_data('daily', fields='ts_code,trade_date,pct_chg')
-        rows = self._iter_frame_rows(df)
-        if rows:
-            self.logger.warning("[智策数据] 市场涨跌家数已切换到Tushare备用数据源")
-        return rows
-
-    def _extract_index_snapshot(self, rows):
-        index_map = {
-            "上证指数": ("sh_index", "000001"),
-            "深证成指": ("sz_index", "399001"),
-            "创业板指": ("cyb_index", "399006"),
-        }
-        overview = {}
-
-        for row in rows:
-            name = self._clean_value(row.get('名称'))
-            if name not in index_map:
-                continue
-            target_key, code = index_map[name]
-            overview[target_key] = {
-                "code": code,
-                "name": name,
-                "close": self._clean_value(row.get('最新价')),
-                "change_pct": self._clean_value(row.get('涨跌幅')),
-                "change": self._clean_value(row.get('涨跌额')),
-            }
-
-        return overview
+        return self._iter_frame_rows(df)
 
     def _get_market_index_overview(self):
-        tushare_overview = self._get_market_index_overview_from_tushare()
-        if tushare_overview:
-            return tushare_overview
-        return self._get_cached_market_overview() or {}
+        return self._get_market_index_overview_from_tushare()
 
     def _get_market_index_overview_from_tushare(self):
         index_map = {
@@ -199,51 +201,6 @@ class SectorStrategyDataFetcher:
 
         return overview
 
-    def _get_cached_market_overview(self):
-        try:
-            cached_content = self._peek_cached_market_overview()
-        except Exception as exc:
-            self.logger.warning("[智策数据] 读取市场概况缓存失败: %s", exc)
-            return {}
-
-        if cached_content:
-            self.logger.warning("[智策数据] 市场概况实时抓取失败，已回退到最近缓存快照")
-        return cached_content
-
-    def _get_cached_data_content(self, key, *, log_label):
-        database = getattr(self, "database", None)
-        if database is None:
-            return {}
-        try:
-            cached_payload = database.get_latest_raw_data(key)
-        except Exception as exc:
-            self.logger.warning("[智策数据] 读取%s缓存失败: %s", log_label, exc)
-            return {}
-
-        if isinstance(cached_payload, dict):
-            cached_content = cached_payload.get("data_content")
-            if cached_content:
-                self.logger.warning("[智策数据] %s已回退到最近缓存快照", log_label)
-                return cached_content
-        return {}
-
-    def _get_cached_news_list(self):
-        database = getattr(self, "database", None)
-        if database is None:
-            return []
-        try:
-            cached_payload = database.get_latest_news_data()
-        except Exception as exc:
-            self.logger.warning("[智策数据] 读取财经新闻缓存失败: %s", exc)
-            return []
-
-        if isinstance(cached_payload, dict):
-            cached_content = cached_payload.get("data_content")
-            if isinstance(cached_content, list) and cached_content:
-                self.logger.warning("[智策数据] 财经新闻已回退到最近缓存快照")
-                return cached_content
-        return []
-    
     def get_all_sector_data(self):
         """
         获取所有板块的综合数据
@@ -253,48 +210,40 @@ class SectorStrategyDataFetcher:
         """
         print("[智策] 开始获取板块综合数据...")
         
-        data = {
-            "success": False,
-            "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            "sectors": {},
-            "concepts": {},
-            "sector_fund_flow": {},
-            "market_overview": {},
-            "north_flow": {},
-            "news": []
-        }
-        
-        try:
-            fetch_specs = {
-                "sectors": ("[1/6] 获取行业板块行情...", self._get_sector_performance),
-                "concepts": ("[2/6] 获取概念板块行情...", self._get_concept_performance),
-                "sector_fund_flow": ("[3/6] 获取行业资金流向...", self._get_sector_fund_flow),
-                "market_overview": ("[4/6] 获取市场总体情况...", self._get_market_overview),
-                "north_flow": ("[5/6] 获取北向资金流向...", self._get_north_money_flow),
-                "news": ("[6/6] 获取财经新闻...", self._get_financial_news),
-            }
+        data = self._new_data_payload()
 
-            for _, (step_label, _) in fetch_specs.items():
+        try:
+            fetch_specs = [
+                ("sectors", "[1/6] 获取行业板块行情...", self._get_sector_performance, True),
+                ("concepts", "[2/6] 获取概念板块行情...", self._get_concept_performance, True),
+                ("sector_fund_flow", "[3/6] 获取行业资金流向...", self._get_sector_fund_flow, True),
+                ("market_overview", "[4/6] 获取市场总体情况...", self._get_market_overview, False),
+                ("north_flow", "[5/6] 获取北向资金流向...", self._get_north_money_flow, False),
+                ("news", "[6/6] 获取财经新闻...", self._get_financial_news, False),
+            ]
+
+            for _, step_label, _, _ in fetch_specs:
                 print(f"  {step_label}")
 
             with concurrent.futures.ThreadPoolExecutor(
                 max_workers=min(len(fetch_specs), max(1, int(getattr(self, "max_fetch_workers", 3) or 3)))
             ) as executor:
                 future_map = {
-                    executor.submit(self._fetch_data_source, step_label, fetch_func): result_key
-                    for result_key, (step_label, fetch_func) in fetch_specs.items()
+                    executor.submit(self._fetch_data_source, step_label, fetch_func): (result_key, is_core)
+                    for result_key, step_label, fetch_func, is_core in fetch_specs
                 }
 
-                non_critical_keys = {"market_overview", "north_flow", "news"}
+                fetch_errors = {}
                 for future in concurrent.futures.as_completed(future_map):
-                    result_key = future_map[future]
+                    result_key, is_core = future_map[future]
                     step_label, payload, error = future.result()
                     if error is not None:
                         print(f"    ✗ {step_label} 失败: {error}")
-                        if result_key in non_critical_keys:
+                        if is_core:
+                            fetch_errors[result_key] = error
+                        else:
                             self.logger.warning("[智策数据] 非核心步骤失败，继续执行: %s -> %s", result_key, error)
-                            continue
-                        raise error
+                        continue
 
                     if not payload:
                         continue
@@ -313,12 +262,13 @@ class SectorStrategyDataFetcher:
                     elif result_key == "news":
                         print(f"    ✓ 成功获取 {len(payload)} 条新闻")
 
-            missing_core = [
-                key for key in ("sectors", "concepts", "sector_fund_flow")
-                if not data.get(key)
-            ]
+            missing_core = [key for key in self._CORE_DATA_KEYS if not data.get(key)]
             if missing_core:
-                raise RuntimeError(f"核心板块数据缺失: {', '.join(missing_core)}")
+                missing_parts = []
+                for key in missing_core:
+                    error = fetch_errors.get(key)
+                    missing_parts.append(f"{key}({error})" if error else key)
+                raise RuntimeError(f"核心板块数据缺失: {', '.join(missing_parts)}")
 
             data["success"] = True
             print("[智策] ✓ 板块数据获取完成！")
@@ -437,7 +387,13 @@ class SectorStrategyDataFetcher:
         if tushare_df is not None and not tushare_df.empty:
             print(f"    [Tushare] 行业板块数据获取成功，共 {len(tushare_df)} 条")
             return self._convert_tushare_board_snapshot(tushare_df)
-        return self._get_cached_data_content("sectors", log_label="行业板块数据")
+        return self._read_cached_content(
+            cache_key="sectors",
+            log_label="行业板块数据",
+            default_factory=dict,
+            content_type=dict,
+            log_on_hit=True,
+        )
     
     def _get_concept_performance(self):
         """获取概念板块表现"""
@@ -445,7 +401,13 @@ class SectorStrategyDataFetcher:
         if tushare_df is not None and not tushare_df.empty:
             print(f"    [Tushare] 概念板块数据获取成功，共 {len(tushare_df)} 条")
             return self._convert_tushare_board_snapshot(tushare_df)
-        return self._get_cached_data_content("concepts", log_label="概念板块数据")
+        return self._read_cached_content(
+            cache_key="concepts",
+            log_label="概念板块数据",
+            default_factory=dict,
+            content_type=dict,
+            log_on_hit=True,
+        )
     
     def _get_sector_fund_flow(self):
         """获取行业资金流向"""
@@ -454,7 +416,13 @@ class SectorStrategyDataFetcher:
             content_type="行业",
         )
         if tushare_df is None or tushare_df.empty:
-            return self._get_cached_data_content("fund_flow", log_label="行业资金流向")
+            return self._read_cached_content(
+                cache_key="fund_flow",
+                log_label="行业资金流向",
+                default_factory=dict,
+                content_type=dict,
+                log_on_hit=True,
+            )
 
         sector_snapshot = self._get_tushare_board_snapshot("行业板块")
         pct_map = {}
@@ -497,78 +465,70 @@ class SectorStrategyDataFetcher:
     
     def _get_market_overview(self):
         """获取市场总体情况"""
-        try:
-            overview = {}
-            breadth_overview = self._build_market_breadth_overview(self._get_market_breadth_rows())
+        breadth_overview = self._build_market_breadth_overview(self._get_market_breadth_rows())
+        index_overview = self._get_market_index_overview()
+        overview = {}
+        if breadth_overview:
             overview.update(breadth_overview)
-            overview.update(self._get_market_index_overview())
-            cached_overview = self._get_cached_market_overview()
+        if index_overview:
+            overview.update(index_overview)
+
+        cached_overview = self._read_cached_content(
+            cache_key="market_overview",
+            log_label="市场概况",
+            default_factory=dict,
+            content_type=dict,
+            log_on_hit=False,
+        )
+        if not overview:
             if cached_overview:
-                for key, value in cached_overview.items():
-                    overview.setdefault(key, value)
-            if not breadth_overview:
-                overview.update(self._build_market_breadth_overview(self._get_market_breadth_rows_from_tushare()))
-            if overview:
-                return overview
+                self.logger.warning("[智策数据] 市场概况已回退到最近缓存快照")
             return cached_overview
-        except Exception as e:
-            print(f"    获取市场概况失败: {e}")
-            cached_overview = self._get_cached_market_overview()
-            if cached_overview:
-                return cached_overview
-            return {}
+
+        for key, value in cached_overview.items():
+            overview.setdefault(key, value)
+        return overview
     
     def _get_north_money_flow(self):
         """获取北向资金流向。"""
+        if not self._ensure_tushare_api():
+            return {}
+
+        print("    [Tushare] 正在获取沪深港通资金流向...")
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=20)
+
         try:
-            if self._ensure_tushare_api():
-                print("    [Tushare] 正在获取沪深港通资金流向...")
-                
-                # 获取最近30天的数据
-                end_date = datetime.now()
-                start_date = end_date - timedelta(days=20)
-                
-                df = self._call_tushare_api(
-                    'moneyflow_hsgt',
-                    start_date=start_date.strftime('%Y%m%d'),
-                    end_date=end_date.strftime('%Y%m%d')
-                )
-                
-                if df is not None and not df.empty:
-                    print("    [Tushare] 成功获取数据")
-                    
-                    # 按日期降序排列，获取最新数据
-                    df = df.sort_values('trade_date', ascending=False)
-                    latest = df.iloc[0]
-                    
-                    # 转换数据格式以匹配原有结构
-                    north_flow = {
-                        "date": str(latest['trade_date']),
-                        "north_net_inflow": float(latest['north_money']),
-                        "hgt_net_inflow": float(latest['hgt']),
-                        "sgt_net_inflow": float(latest['sgt']),
-                        "north_total_amount": float(latest['north_money'])  # Tushare没有总成交金额，使用净流入作为近似值
-                    }
-                    
-                    # 获取历史趋势（最近20天）
-                    history = []
-                    for idx, row in df.head(20).iterrows():
-                        history.append({
-                            "date": str(row['trade_date']),
-                            "net_inflow": float(row['north_money'])
-                        })
-                    north_flow["history"] = history
-                    
-                    return north_flow
-                else:
-                    print("    [Tushare] 未获取到数据")
-            else:
-                print("    [Tushare] 不可用")
-        except Exception as e:
-            print(f"    [Tushare] 获取北向资金失败: {e}")
-        
-        print("    [ERROR] 所有数据源均获取失败")
-        return {}
+            df = self._call_tushare_api(
+                'moneyflow_hsgt',
+                start_date=start_date.strftime('%Y%m%d'),
+                end_date=end_date.strftime('%Y%m%d')
+            )
+        except Exception as exc:
+            self.logger.warning("[智策数据] 北向资金获取失败: %s", exc)
+            return {}
+
+        if df is None or df.empty:
+            return {}
+
+        df = df.sort_values('trade_date', ascending=False)
+        latest = df.iloc[0]
+        north_flow = {
+            "date": str(latest['trade_date']),
+            "north_net_inflow": float(latest['north_money']),
+            "hgt_net_inflow": float(latest['hgt']),
+            "sgt_net_inflow": float(latest['sgt']),
+            "north_total_amount": float(latest['north_money']),
+            "history": [
+                {
+                    "date": str(row['trade_date']),
+                    "net_inflow": float(row['north_money']),
+                }
+                for _, row in df.head(20).iterrows()
+            ],
+        }
+        print("    [Tushare] 成功获取数据")
+        return north_flow
     
     def _get_financial_news(self):
         """获取财经新闻"""
@@ -599,9 +559,13 @@ class SectorStrategyDataFetcher:
                 return news_list[:150]
         except Exception as e:
             self.logger.warning("[智策数据] RSSHub财经新闻获取失败: %s", e)
-
-        self.logger.warning("[智策数据] RSSHub财经新闻不可用，回退到本地缓存新闻")
-        return self._get_cached_news_list()
+        return self._read_cached_content(
+            log_label="财经新闻",
+            default_factory=list,
+            content_type=list,
+            fetcher_name="get_latest_news_data",
+            log_on_hit=True,
+        )
     
     def format_data_for_ai(self, data):
         """
@@ -895,81 +859,40 @@ class SectorStrategyDataFetcher:
                 return cached_data
             else:
                 print("[智策] ✗ 无可用缓存数据")
-                return {
-                    "success": False,
-                    "error": "无法获取数据且无可用缓存",
-                    "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                }
+                failed_data = self._new_data_payload()
+                failed_data["error"] = "无法获取数据且无可用缓存"
+                return failed_data
                 
         except Exception as e:
             self.logger.error(f"[智策数据] 获取数据失败: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-                "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            }
+            failed_data = self._new_data_payload()
+            failed_data["error"] = str(e)
+            return failed_data
     
     def _load_cached_data(self):
         """加载缓存数据"""
-        try:
-            # 获取最近的各类数据
-            cached_data = {
-                "success": True,
-                "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                "sectors": {},
-                "concepts": {},
-                "sector_fund_flow": {},
-                "market_overview": {},
-                "north_flow": {},
-                "news": []
-            }
-            
-            # 加载板块数据
-            sectors_data = self.database.get_latest_raw_data("sectors")
-            if sectors_data:
-                cached_data["sectors"] = sectors_data.get("data_content", {})
-            
-            # 加载概念数据
-            concepts_data = self.database.get_latest_raw_data("concepts")
-            if concepts_data:
-                cached_data["concepts"] = concepts_data.get("data_content", {})
-            
-            # 加载资金流向数据
-            fund_flow_data = self.database.get_latest_raw_data("fund_flow")
-            if fund_flow_data:
-                cached_data["sector_fund_flow"] = fund_flow_data.get("data_content", {})
-            
-            # 加载市场概况数据
-            market_data = self.database.get_latest_raw_data("market_overview")
-            if market_data:
-                cached_data["market_overview"] = market_data.get("data_content", {})
-            
-            # 加载北向资金数据
-            north_data = self.database.get_latest_raw_data("north_flow")
-            if north_data:
-                cached_data["north_flow"] = north_data.get("data_content", {})
-            
-            # 加载新闻数据
-            news_data = self.database.get_latest_news_data()
-            if news_data:
-                # 仅传递内容列表给下游分析，避免结构不一致
-                cached_data["news"] = news_data.get("data_content", [])
-            
-            # 检查是否有有效数据
-            has_data = any([
-                cached_data["sectors"],
-                cached_data["concepts"],
-                cached_data["sector_fund_flow"],
-                cached_data["market_overview"],
-                cached_data["north_flow"],
-                cached_data["news"]
-            ])
-            
-            return cached_data if has_data else None
-            
-        except Exception as e:
-            self.logger.error(f"[智策数据] 加载缓存数据失败: {e}")
-            return None
+        cached_data = self._new_data_payload(success=True)
+        cache_specs = (
+            ("sectors", "sectors", dict, "行业板块数据", "get_latest_raw_data"),
+            ("concepts", "concepts", dict, "概念板块数据", "get_latest_raw_data"),
+            ("sector_fund_flow", "fund_flow", dict, "行业资金流向", "get_latest_raw_data"),
+            ("market_overview", "market_overview", dict, "市场概况", "get_latest_raw_data"),
+            ("north_flow", "north_flow", dict, "北向资金", "get_latest_raw_data"),
+            ("news", None, list, "财经新闻", "get_latest_news_data"),
+        )
+
+        for result_key, cache_key, content_type, log_label, fetcher_name in cache_specs:
+            cached_data[result_key] = self._read_cached_content(
+                cache_key=cache_key,
+                log_label=log_label,
+                default_factory=content_type,
+                content_type=content_type,
+                fetcher_name=fetcher_name,
+                log_on_hit=False,
+            )
+
+        has_data = any(cached_data[key] for key in self._CORE_DATA_KEYS + self._OPTIONAL_DATA_KEYS)
+        return cached_data if has_data else None
 
 
 # 测试函数

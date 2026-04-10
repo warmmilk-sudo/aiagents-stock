@@ -80,6 +80,8 @@ class DeepSeekClientTests(unittest.TestCase):
             symbol="000001",
             name="平安银行",
             current_price="12.34",
+            position_status="未持仓",
+            rating_options="买入/强烈买入/观望",
             comprehensive_discussion="偏多但需控制回撤。",
             ma20="12.00",
             bb_upper="12.80",
@@ -90,7 +92,7 @@ class DeepSeekClientTests(unittest.TestCase):
         self.assertEqual(messages[1]["role"], "user")
         self.assertIn("投资决策专家", messages[0]["content"])
         self.assertIn("股票代码：000001", messages[1]["content"])
-        self.assertIn('"rating": "买入/持有/卖出"', messages[1]["content"])
+        self.assertIn("若当前状态为“未持仓”，只能输出：买入 / 强烈买入 / 观望", messages[1]["content"])
 
     def test_technical_analysis_uses_external_prompt_template(self):
         captured = {}
@@ -184,6 +186,34 @@ class DeepSeekClientTests(unittest.TestCase):
         self.assertIn("筹码数据源：tushare.cyq_chips/cyq_perf", captured["messages"][1]["content"])
         self.assertEqual(result["rating"], "买入")
         self.assertEqual(result["confidence_level"], 8.0)
+
+    def test_final_decision_uses_position_rating_options_for_portfolio_stock(self):
+        captured = {}
+        client = DeepSeekClient.__new__(DeepSeekClient)
+
+        def fake_call_api(
+            self,
+            messages,
+            model=None,
+            temperature=0.7,
+            max_tokens=2000,
+            tier=None,
+            include_reasoning=True,
+        ):
+            captured["messages"] = messages
+            return '{"rating":"加仓","target_price":"12","take_profit":"12","stop_loss":"9.2","confidence_level":"8"}'
+
+        client.call_api = types.MethodType(fake_call_api, client)
+
+        result = client.final_decision(
+            comprehensive_discussion="Position can be increased on confirmation.",
+            stock_info={"symbol": "000001", "name": "PingAn", "current_price": 10.0, "has_position": True},
+            indicators={"ma20": 9.8, "bb_upper": 10.8, "bb_lower": 9.2},
+        )
+
+        self.assertIn("当前状态：已持仓", captured["messages"][1]["content"])
+        self.assertIn("加仓 / 持有 / 减仓 / 卖出", captured["messages"][1]["content"])
+        self.assertEqual(result["rating"], "加仓")
 
     def test_final_decision_extracts_json_from_wrapped_text(self):
         client = DeepSeekClient.__new__(DeepSeekClient)

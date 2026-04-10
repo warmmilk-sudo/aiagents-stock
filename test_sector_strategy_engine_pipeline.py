@@ -32,6 +32,10 @@ SectorStrategyEngine = sector_strategy_engine_module.SectorStrategyEngine
 
 
 class SectorStrategyEnginePipelineTests(unittest.TestCase):
+    def test_legacy_fallback_apis_are_removed(self):
+        self.assertFalse(hasattr(SectorStrategyEngine, "save_raw_data_with_fallback"))
+        self.assertFalse(hasattr(SectorStrategyEngine, "get_data_with_fallback"))
+
     def test_run_comprehensive_analysis_parallelizes_agent_stage_and_reports_progress(self):
         engine = SectorStrategyEngine.__new__(SectorStrategyEngine)
         engine.logger = logging.getLogger("test-sector-strategy-engine")
@@ -106,6 +110,7 @@ class SectorStrategyEnginePipelineTests(unittest.TestCase):
         self.assertEqual(captured["max_tokens"], 5000)
         self.assertEqual(captured["tier"].value, "reasoning")
         self.assertIn("首席策略官", captured["messages"][0]["content"])
+        self.assertIn("分析基准日期", captured["messages"][1]["content"])
         self.assertIn("【宏观策略师报告】", captured["messages"][1]["content"])
         self.assertIn("【市场情绪解码员报告】", captured["messages"][1]["content"])
 
@@ -126,6 +131,7 @@ class SectorStrategyEnginePipelineTests(unittest.TestCase):
             raw_response="错误输出",
             comprehensive_report="综合结论",
             sectors_str="半导体, AI算力",
+            analysis_date="2026-04-10 09:00:00",
         )
 
         self.assertEqual(result, '{"summary":{"market_view":"中性"}}')
@@ -133,8 +139,27 @@ class SectorStrategyEnginePipelineTests(unittest.TestCase):
         self.assertEqual(captured["max_tokens"], 5000)
         self.assertEqual(captured["tier"].value, "reasoning")
         self.assertIn("JSON 修复助手", captured["messages"][0]["content"])
+        self.assertIn("分析基准日期", captured["messages"][1]["content"])
         self.assertIn("【原始输出】", captured["messages"][1]["content"])
         self.assertIn("错误输出", captured["messages"][1]["content"])
+
+    def test_generate_final_predictions_repairs_stale_year_json(self):
+        responses = iter([
+            '{"summary":{"market_view":"延续2024年主线","key_opportunity":"算力","major_risk":"波动","strategy":"均衡配置"},"long_short":{"bullish":[],"bearish":[],"neutral":[]},"rotation":{"current_strong":[],"potential":[],"declining":[]},"heat":{"hottest":[],"heating":[],"cooling":[]},"confidence_score":78,"risk_level":"中等","market_outlook":"中性"}',
+            '{"summary":{"market_view":"近期主线延续","key_opportunity":"算力","major_risk":"波动","strategy":"均衡配置"},"long_short":{"bullish":[],"bearish":[],"neutral":[]},"rotation":{"current_strong":[],"potential":[],"declining":[]},"heat":{"hottest":[],"heating":[],"cooling":[]},"confidence_score":78,"risk_level":"中等","market_outlook":"中性"}',
+        ])
+        engine = SectorStrategyEngine.__new__(SectorStrategyEngine)
+        engine.deepseek_client = types.SimpleNamespace(
+            call_api=lambda *args, **kwargs: next(responses)
+        )
+
+        result = engine._generate_final_predictions(
+            comprehensive_report="综合结论",
+            agents_results={},
+            raw_data={"timestamp": "2026-04-10 09:00:00", "sectors": {"半导体": {"change_pct": 1.2}}},
+        )
+
+        self.assertEqual(result["summary"]["market_view"], "近期主线延续")
 
 
 if __name__ == "__main__":

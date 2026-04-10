@@ -9,8 +9,6 @@ import logging
 import re
 from typing import Any, Callable, Dict, Optional
 
-import pandas as pd
-
 from sector_strategy_agents import SectorStrategyAgents
 from sector_strategy_db import SectorStrategyDatabase
 from deepseek_client import DeepSeekClient
@@ -61,75 +59,6 @@ class SectorStrategyEngine:
             return
         progress_callback(current, total, message)
     
-    def save_raw_data_with_fallback(self, data_type, data_df, data_date=None):
-        """
-        保存原始数据，支持失败回退机制
-        
-        Args:
-            data_type: 数据类型
-            data_df: 数据DataFrame
-            data_date: 数据日期，默认为今天
-            
-        Returns:
-            tuple: (success, version, message)
-        """
-        if data_date is None:
-            data_date = local_today_str()
-        
-        try:
-            is_empty = False
-            if data_df is None:
-                is_empty = True
-            elif hasattr(data_df, 'empty'):
-                is_empty = data_df.empty
-            elif isinstance(data_df, (list, tuple, set, dict)):
-                is_empty = len(data_df) == 0
-            if is_empty:
-                self.logger.warning(f"[智策引擎] {data_type}数据为空，跳过保存")
-                return False, None, "数据为空"
-            
-            version = self.database.save_raw_data(data_date, data_type, data_df)
-            return True, version, f"保存成功，版本: {version}"
-            
-        except Exception as e:
-            self.logger.error(f"[智策引擎] 保存{data_type}数据失败: {e}")
-            return False, None, str(e)
-    
-    def get_data_with_fallback(self, data_type, data_date=None):
-        """
-        获取数据，支持失败时回退到历史数据
-        
-        Args:
-            data_type: 数据类型
-            data_date: 数据日期，默认为今天
-            
-        Returns:
-            tuple: (data_df, is_fallback, message)
-        """
-        if data_date is None:
-            data_date = local_today_str()
-        
-        try:
-            # 尝试获取指定日期的数据
-            data_df = self.database.get_latest_data(data_type, data_date)
-            
-            if not data_df.empty:
-                return data_df, False, f"获取{data_date}数据成功"
-            
-            # 如果指定日期没有数据，获取最新的历史数据
-            self.logger.warning(f"[智策引擎] {data_date}的{data_type}数据不存在，尝试获取历史数据")
-            data_df = self.database.get_latest_data(data_type)
-            
-            if not data_df.empty:
-                fallback_date = data_df.iloc[0].get('data_date', '未知日期')
-                return data_df, True, f"回退到{fallback_date}的历史数据"
-            else:
-                return pd.DataFrame(), True, "无可用的历史数据"
-                
-        except Exception as e:
-            self.logger.error(f"[智策引擎] 获取{data_type}数据失败: {e}")
-            return pd.DataFrame(), True, str(e)
-    
     def run_comprehensive_analysis(
         self,
         data: Dict,
@@ -168,6 +97,7 @@ class SectorStrategyEngine:
                     lambda: self.agents.macro_strategist_agent(
                         market_data=data.get("market_overview", {}),
                         news_data=data.get("news", []),
+                        analysis_date=str(data.get("timestamp") or local_now_str()),
                     ),
                 ),
                 "sector": (
@@ -176,6 +106,7 @@ class SectorStrategyEngine:
                         sectors_data=data.get("sectors", {}),
                         concepts_data=data.get("concepts", {}),
                         market_data=data.get("market_overview", {}),
+                        analysis_date=str(data.get("timestamp") or local_now_str()),
                     ),
                 ),
                 "fund": (
@@ -184,6 +115,7 @@ class SectorStrategyEngine:
                         fund_flow_data=data.get("sector_fund_flow", {}),
                         north_flow_data=data.get("north_flow", {}),
                         sectors_data=data.get("sectors", {}),
+                        analysis_date=str(data.get("timestamp") or local_now_str()),
                     ),
                 ),
                 "sentiment": (
@@ -192,6 +124,7 @@ class SectorStrategyEngine:
                         market_data=data.get("market_overview", {}),
                         sectors_data=data.get("sectors", {}),
                         concepts_data=data.get("concepts", {}),
+                        analysis_date=str(data.get("timestamp") or local_now_str()),
                     ),
                 ),
             }
@@ -206,6 +139,7 @@ class SectorStrategyEngine:
                 for future in concurrent.futures.as_completed(future_map):
                     key = future_map[future]
                     agents_results[key] = future.result()
+            agents_results["_analysis_date"] = str(data.get("timestamp") or local_now_str())
 
             results["agents_analysis"] = agents_results
             print("\n✓ 所有智能体分析完成")
@@ -270,9 +204,11 @@ class SectorStrategyEngine:
         fund_analysis = agents_results.get("fund", {}).get("analysis", "")
         sentiment_analysis = agents_results.get("sentiment", {}).get("analysis", "")
         
+        analysis_date = str(agents_results.get("_analysis_date") or local_now_str())
         messages = build_messages(
             "sector_strategy/comprehensive_discussion.system.txt",
             "sector_strategy/comprehensive_discussion.user.txt",
+            analysis_date=analysis_date,
             macro_analysis=macro_analysis,
             sector_analysis=sector_analysis,
             fund_analysis=fund_analysis,
@@ -283,6 +219,14 @@ class SectorStrategyEngine:
             messages,
             max_tokens=5000,
             tier=ModelTier.REASONING,
+        )
+        report = self._enforce_text_time_freshness(
+            text=report,
+            reference_date=analysis_date,
+            label="综合研判",
+            context_text="\n\n".join(
+                part for part in (macro_analysis, sector_analysis, fund_analysis, sentiment_analysis) if str(part or "").strip()
+            ),
         )
         
         print("  ✓ 综合研判完成")
@@ -301,10 +245,12 @@ class SectorStrategyEngine:
             sectors_list = [name for name, _ in sorted_sectors[:30]]  # 取前30个活跃板块
         
         sectors_str = ", ".join(sectors_list) if sectors_list else "未知板块"
-        
+        analysis_date = str(raw_data.get("timestamp") or local_now_str())
+
         messages = build_messages(
             "sector_strategy/final_predictions.system.txt",
             "sector_strategy/final_predictions.user.txt",
+            analysis_date=analysis_date,
             comprehensive_report=comprehensive_report,
             sectors_str=sectors_str,
         )
@@ -315,20 +261,29 @@ class SectorStrategyEngine:
             max_tokens=6000,
             tier=ModelTier.REASONING,
         )
-        
+        if self._contains_stale_year_reference(str(response or ""), analysis_date):
+            print("  ⚠ 最终预测出现过期年份引用，尝试修复输出")
+            response = self._repair_prediction_response(
+                raw_response=response,
+                comprehensive_report=comprehensive_report,
+                sectors_str=sectors_str,
+                analysis_date=analysis_date,
+            )
+
         parsed = self._parse_prediction_json(response)
-        if self._prediction_payload_is_valid(parsed):
+        if self._prediction_payload_is_valid(parsed) and not self._payload_contains_stale_year_reference(parsed, analysis_date):
             print("  ✓ 预测报告生成成功（JSON格式）")
             return self._build_prediction_storage_payload(parsed)
 
-        print("  ⚠ 初次预测结构不完整，尝试修复输出")
+        print("  ⚠ 初次预测结构不完整或存在过期年份，尝试修复输出")
         repaired_response = self._repair_prediction_response(
             raw_response=response,
             comprehensive_report=comprehensive_report,
             sectors_str=sectors_str,
+            analysis_date=analysis_date,
         )
         repaired = self._parse_prediction_json(repaired_response)
-        if self._prediction_payload_is_valid(repaired):
+        if self._prediction_payload_is_valid(repaired) and not self._payload_contains_stale_year_reference(repaired, analysis_date):
             print("  ✓ 修复后的预测报告解析成功")
             return self._build_prediction_storage_payload(repaired)
 
@@ -354,10 +309,55 @@ class SectorStrategyEngine:
         normalized = normalize_sector_strategy_predictions(payload)
         return not normalized.get("warnings", {}).get("missing_fields")
 
-    def _repair_prediction_response(self, raw_response: str, comprehensive_report: str, sectors_str: str) -> str:
+    def _extract_year_tokens(self, text: Any) -> set[str]:
+        return set(re.findall(r"20\d{2}", str(text or "")))
+
+    def _contains_stale_year_reference(self, text: Any, reference_date: str) -> bool:
+        content = str(text or "").strip()
+        if not content or not reference_date:
+            return False
+        allowed_years = self._extract_year_tokens(reference_date)
+        if not allowed_years:
+            return False
+        return bool({year for year in self._extract_year_tokens(content) if year not in allowed_years})
+
+    def _payload_contains_stale_year_reference(self, payload: Any, reference_date: str) -> bool:
+        if isinstance(payload, dict):
+            return any(self._payload_contains_stale_year_reference(value, reference_date) for value in payload.values())
+        if isinstance(payload, list):
+            return any(self._payload_contains_stale_year_reference(item, reference_date) for item in payload)
+        if isinstance(payload, str):
+            return self._contains_stale_year_reference(payload, reference_date)
+        return False
+
+    def _enforce_text_time_freshness(self, *, text: str, reference_date: str, label: str, context_text: str) -> str:
+        if not self._contains_stale_year_reference(text, reference_date):
+            return text
+        print(f"  ⚠ {label}出现过期年份引用，按 {reference_date} 重新修正")
+        messages = build_messages(
+            "sector_strategy/repair_time_freshness_generic.system.txt",
+            "sector_strategy/repair_time_freshness_generic.user.txt",
+            agent_label=label,
+            reference_date=reference_date,
+            context_text=context_text or "暂无额外上下文",
+            raw_analysis=text,
+        )
+        repaired = self.deepseek_client.call_api(
+            messages,
+            temperature=0.1,
+            max_tokens=5000,
+            tier=ModelTier.REASONING,
+        )
+        if self._contains_stale_year_reference(repaired, reference_date):
+            print(f"  ⚠ {label}修正后仍含过期年份，保留原始输出")
+            return text
+        return repaired
+
+    def _repair_prediction_response(self, raw_response: str, comprehensive_report: str, sectors_str: str, analysis_date: str) -> str:
         messages = build_messages(
             "sector_strategy/repair_prediction.system.txt",
             "sector_strategy/repair_prediction.user.txt",
+            analysis_date=analysis_date,
             comprehensive_report=comprehensive_report,
             sectors_str=sectors_str,
             raw_response=raw_response,
@@ -438,41 +438,54 @@ class SectorStrategyEngine:
         except Exception as e:
             self.logger.error(f"[智策引擎] 保存分析报告失败: {e}")
             raise
+
+    def _derive_report_value(self, results: Dict, derive_fn, default):
+        try:
+            report_view = normalize_sector_strategy_result(results)
+            value = derive_fn(report_view)
+        except Exception:
+            return default
+        return default if value is None else value
     
     def _generate_report_summary(self, results: Dict) -> str:
         """生成报告摘要"""
-        try:
-            return build_sector_strategy_summary(normalize_sector_strategy_result(results)).get("headline", "智策板块分析报告")
-        except Exception:
-            return "智策板块分析报告"
+        return self._derive_report_value(
+            results,
+            lambda report_view: build_sector_strategy_summary(report_view).get("headline", "智策板块分析报告"),
+            "智策板块分析报告",
+        )
     
     def _extract_confidence_score(self, results: Dict) -> float:
         """提取置信度分数"""
-        try:
-            return float(build_sector_strategy_summary(normalize_sector_strategy_result(results)).get("confidence_score", 0))
-        except Exception:
-            return 0.0
+        return self._derive_report_value(
+            results,
+            lambda report_view: float(build_sector_strategy_summary(report_view).get("confidence_score", 0)),
+            0.0,
+        )
     
     def _extract_risk_level(self, results: Dict) -> str:
         """提取风险等级"""
-        try:
-            return build_sector_strategy_summary(normalize_sector_strategy_result(results)).get("risk_level", "中等")
-        except Exception:
-            return "中等"
+        return self._derive_report_value(
+            results,
+            lambda report_view: build_sector_strategy_summary(report_view).get("risk_level", "中等"),
+            "中等",
+        )
     
     def _extract_investment_horizon(self, results: Dict) -> str:
         """提取投资周期"""
-        try:
-            return derive_sector_strategy_investment_horizon(normalize_sector_strategy_result(results))
-        except Exception:
-            return DEFAULT_INVESTMENT_HORIZON
+        return self._derive_report_value(
+            results,
+            derive_sector_strategy_investment_horizon,
+            DEFAULT_INVESTMENT_HORIZON,
+        )
     
     def _extract_market_outlook(self, results: Dict) -> str:
         """提取市场展望"""
-        try:
-            return build_sector_strategy_summary(normalize_sector_strategy_result(results)).get("market_outlook", "中性")
-        except Exception:
-            return "中性"
+        return self._derive_report_value(
+            results,
+            lambda report_view: build_sector_strategy_summary(report_view).get("market_outlook", "中性"),
+            "中性",
+        )
     
     def get_historical_reports(self, limit=10):
         """获取历史报告"""

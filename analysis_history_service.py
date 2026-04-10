@@ -52,10 +52,11 @@ def _normalize_decision_label(value: object) -> str:
     aliases = {
         "买入": "买入",
         "强烈买入": "强烈买入",
-        "增持": "增持",
+        "增持": "加仓",
+        "加仓": "加仓",
         "buy": "买入",
         "strong buy": "强烈买入",
-        "add": "增持",
+        "add": "加仓",
         "持有": "持有",
         "中性": "观望",
         "观望": "观望",
@@ -63,9 +64,10 @@ def _normalize_decision_label(value: object) -> str:
         "neutral": "观望",
         "watch": "观望",
         "卖出": "卖出",
-        "减持": "减持",
+        "减持": "减仓",
+        "减仓": "减仓",
         "sell": "卖出",
-        "reduce": "减持",
+        "reduce": "减仓",
     }
     lowered = text.lower()
     if lowered in aliases:
@@ -74,10 +76,10 @@ def _normalize_decision_label(value: object) -> str:
         return aliases[text]
     if "强烈买入" in text or "strong buy" in lowered:
         return "强烈买入"
-    if "增持" in text or "add" in lowered:
-        return "增持"
-    if "减持" in text or "reduce" in lowered:
-        return "减持"
+    if any(token in text for token in ("加仓", "增持")) or "add" in lowered:
+        return "加仓"
+    if any(token in text for token in ("减仓", "减持")) or "reduce" in lowered:
+        return "减仓"
     if "观望" in text or "watch" in lowered:
         return "观望"
     if "买入" in text or "buy" in lowered:
@@ -107,7 +109,7 @@ def _extract_decision_label(record: Dict) -> str:
     match = re.search(r"(?:投资)?评级\s*[:：]\s*([^\s；;，,。]+)", summary)
     if match:
         return _normalize_decision_label(match.group(1))
-    for token in ("强烈买入", "买入", "增持", "持有", "观望", "减持", "卖出"):
+    for token in ("强烈买入", "买入", "加仓", "持有", "观望", "减仓", "卖出", "增持", "减持"):
         if token in summary:
             return _normalize_decision_label(token)
     return ""

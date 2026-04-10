@@ -136,6 +136,7 @@ class SectorStrategyDataFetcherTests(unittest.TestCase):
 
         result = fetcher._get_sector_performance()
 
+        fetcher.database.get_latest_raw_data.assert_called_once_with("sectors")
         self.assertEqual(result["半导体"]["change_pct"], 1.5)
 
     def test_sector_fund_flow_falls_back_to_tushare(self):
@@ -180,6 +181,7 @@ class SectorStrategyDataFetcherTests(unittest.TestCase):
 
         result = fetcher._get_sector_fund_flow()
 
+        fetcher.database.get_latest_raw_data.assert_called_once_with("fund_flow")
         self.assertEqual(result["today"][0]["sector"], "半导体")
         self.assertEqual(result["today"][0]["main_net_inflow"], 123.0)
 
@@ -362,65 +364,79 @@ class SectorStrategyDataFetcherTests(unittest.TestCase):
         self.assertEqual(result["market_overview"], {})
         self.assertEqual(result["north_flow"]["north_net_inflow"], 10)
 
-    def test_market_overview_prefers_cached_snapshot_before_sina_breadth(self):
+    def test_market_overview_fills_missing_fields_from_cache_without_retrying(self):
         fetcher = self._make_fetcher()
-        fetcher._get_market_breadth_rows = lambda: []
+        breadth_calls = {"count": 0}
+
+        def _get_breadth_rows():
+            breadth_calls["count"] += 1
+            return []
+
+        fetcher._get_market_breadth_rows = _get_breadth_rows
         fetcher._get_market_index_overview = lambda: {"sh_index": {"code": "000001", "name": "上证指数"}}
-        fetcher._get_cached_market_overview = lambda: {"up_count": 3000, "down_count": 1800}
-        fetcher._get_market_breadth_rows_from_tushare = lambda: []
-        sina_called = {"value": False}
-
-        def _from_sina():
-            sina_called["value"] = True
-            return [{"涨跌幅": 1.0}]
-
-        fetcher._get_market_breadth_rows_from_sina = _from_sina
+        fetcher.database = mock.Mock()
+        fetcher.database.get_latest_raw_data.return_value = {
+            "data_content": {
+                "up_count": 3000,
+                "down_count": 1800,
+                "sz_index": {"code": "399001", "name": "深证成指"},
+            }
+        }
 
         result = fetcher._get_market_overview()
 
-        self.assertFalse(sina_called["value"])
+        self.assertEqual(breadth_calls["count"], 1)
+        self.assertEqual(result["up_count"], 3000)
+        self.assertEqual(result["down_count"], 1800)
+        self.assertEqual(result["sh_index"]["code"], "000001")
+        self.assertEqual(result["sz_index"]["code"], "399001")
+
+    def test_market_overview_returns_cached_snapshot_when_realtime_empty(self):
+        fetcher = self._make_fetcher()
+        fetcher._get_market_breadth_rows = lambda: []
+        fetcher._get_market_index_overview = lambda: {}
+        fetcher.database = mock.Mock()
+        fetcher.database.get_latest_raw_data.return_value = {
+            "data_content": {
+                "up_count": 3000,
+                "down_count": 1800,
+                "sh_index": {"code": "000001", "name": "上证指数"},
+            }
+        }
+
+        result = fetcher._get_market_overview()
+
         self.assertEqual(result["up_count"], 3000)
         self.assertEqual(result["down_count"], 1800)
         self.assertEqual(result["sh_index"]["code"], "000001")
 
-    def test_market_overview_uses_tushare_before_sina(self):
+    def test_get_cached_data_with_fallback_marks_cached_snapshot(self):
         fetcher = self._make_fetcher()
-        fetcher._get_market_breadth_rows = lambda: []
-        fetcher._get_cached_market_overview = lambda: {}
-        fetcher._safe_request = lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("eastmoney failed"))
-        sina_called = {"value": False}
+        fetcher.get_all_sector_data = lambda: {"success": False, "error": "fresh failed"}
+        fetcher._load_cached_data = lambda: {
+            **fetcher._new_data_payload(success=True),
+            "sectors": {"半导体": {"change_pct": 1.2}},
+        }
 
-        def _from_sina():
-            sina_called["value"] = True
-            return []
+        with contextlib.redirect_stdout(io.StringIO()):
+            result = fetcher.get_cached_data_with_fallback()
 
-        fetcher._get_market_breadth_rows_from_sina = _from_sina
+        self.assertTrue(result["success"])
+        self.assertTrue(result["from_cache"])
+        self.assertIn("缓存数据", result["cache_warning"])
+        self.assertIn("半导体", result["sectors"])
 
-        def fake_tushare(api_name, **kwargs):
-            if api_name == "daily":
-                return pd.DataFrame([{"pct_chg": 1.0}, {"pct_chg": -0.5}, {"pct_chg": 0.0}])
-            if api_name == "index_daily":
-                ts_code = kwargs.get("ts_code")
-                if ts_code == "000001.SH":
-                    return pd.DataFrame([{"close": 3200.0, "change": 12.0, "pct_chg": 0.38}])
-                if ts_code == "399001.SZ":
-                    return pd.DataFrame([{"close": 10000.0, "change": -22.0, "pct_chg": -0.22}])
-                if ts_code == "399006.SZ":
-                    return pd.DataFrame([{"close": 2000.0, "change": 15.0, "pct_chg": 0.75}])
-            return pd.DataFrame()
+    def test_get_cached_data_with_fallback_returns_error_when_cache_missing(self):
+        fetcher = self._make_fetcher()
+        fetcher.get_all_sector_data = lambda: {"success": False, "error": "fresh failed"}
+        fetcher._load_cached_data = lambda: None
 
-        fetcher._fetch_tushare_trade_data = fake_tushare
+        with contextlib.redirect_stdout(io.StringIO()):
+            result = fetcher.get_cached_data_with_fallback()
 
-        result = fetcher._get_market_overview()
-
-        self.assertFalse(sina_called["value"])
-        self.assertEqual(result["total_stocks"], 3)
-        self.assertEqual(result["up_count"], 1)
-        self.assertEqual(result["down_count"], 1)
-        self.assertEqual(result["flat_count"], 1)
-        self.assertEqual(result["sh_index"]["code"], "000001")
-        self.assertEqual(result["sz_index"]["code"], "399001")
-        self.assertEqual(result["cyb_index"]["code"], "399006")
+        self.assertFalse(result["success"])
+        self.assertEqual(result["error"], "无法获取数据且无可用缓存")
+        self.assertEqual(result["news"], [])
 
 
 if __name__ == "__main__":

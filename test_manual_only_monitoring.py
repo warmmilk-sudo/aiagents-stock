@@ -97,9 +97,13 @@ class FakeSmartMonitorDB:
         )
         self.saved_decisions = []
         self.pending_actions = []
+        self.latest_decision = None
 
     def get_monitor_task_by_code(self, *args, **kwargs):
         return {}
+
+    def get_latest_ai_decision_for_context(self, *args, **kwargs):
+        return self.latest_decision
 
     def save_ai_decision(self, payload):
         self.saved_decisions.append(payload)
@@ -210,7 +214,15 @@ class ManualOnlyMonitoringTests(unittest.TestCase):
     def test_same_action_as_latest_decision_does_not_create_new_message(self):
         fake_db = FakeSmartMonitorDB()
         notifications = []
-        fake_db.save_ai_decision_if_changed = lambda payload: (7, False)
+        fake_db.latest_decision = {
+            "action": "SELL",
+            "monitor_levels": {
+                "entry_min": 1505,
+                "entry_max": 1515,
+                "take_profit": 1702.4,
+                "stop_loss": 1444.0,
+            },
+        }
 
         with patch.object(smart_monitor_engine_module, "SmartMonitorDB", return_value=fake_db), patch.object(
             smart_monitor_engine_module.event_bus,
@@ -259,11 +271,82 @@ class ManualOnlyMonitoringTests(unittest.TestCase):
 
         self.assertTrue(result["success"])
         self.assertFalse(result["decision_changed"])
+        self.assertFalse(result["action_changed"])
+        self.assertFalse(result["thresholds_changed"])
         self.assertIsNone(result["execution_result"])
         self.assertIsNone(result["pending_action"])
-        self.assertEqual(result["decision_id"], 7)
+        self.assertEqual(result["decision_id"], 1)
         self.assertEqual(len(fake_db.pending_actions), 0)
         self.assertEqual(notifications, [])
+        self.assertEqual(fake_db.saved_decisions[0]["action_status"], "suggested")
+
+    def test_same_action_with_updated_thresholds_syncs_runtime_without_new_message(self):
+        fake_db = FakeSmartMonitorDB()
+        notifications = []
+        threshold_sync_calls = []
+        fake_db.latest_decision = {
+            "action": "HOLD",
+            "monitor_levels": {
+                "entry_min": 1498.0,
+                "entry_max": 1506.0,
+                "take_profit": 1588.0,
+                "stop_loss": 1452.0,
+            },
+        }
+
+        with patch.object(smart_monitor_engine_module, "SmartMonitorDB", return_value=fake_db), patch.object(
+            smart_monitor_engine_module.event_bus,
+            "subscribe",
+            return_value=None,
+        ):
+            engine = smart_monitor_engine_module.SmartMonitorEngine(deepseek_api_key="stub")
+        engine.lifecycle_service.asset_service = fake_db.asset_service
+
+        engine.deepseek.get_trading_session = lambda: {
+            "session": "上午盘",
+            "can_trade": True,
+            "recommendation": "",
+        }
+        engine.data_fetcher.get_comprehensive_data = lambda stock_code: {
+            "name": "贵州茅台",
+            "current_price": 1521.5,
+            "change_pct": 1.35,
+            "change_amount": 20.2,
+            "volume": 128000,
+            "turnover_rate": 0.82,
+        }
+        engine.deepseek.analyze_stock_and_decide = lambda **kwargs: {
+            "success": True,
+            "decision": {
+                "action": "HOLD",
+                "confidence": 81,
+                "reasoning": "维持观望，但盘中阈值应上移。",
+                "position_size_pct": 20,
+                "stop_loss_pct": 5,
+                "take_profit_pct": 12,
+                "risk_level": "中",
+                "key_price_levels": {"support": 1508, "resistance": 1592},
+                "monitor_levels": {
+                    "entry_min": 1501.0,
+                    "entry_max": 1508.0,
+                    "take_profit": 1592.0,
+                    "stop_loss": 1458.0,
+                },
+            },
+        }
+        engine._send_notification = lambda **kwargs: notifications.append(kwargs)
+        engine._sync_runtime_thresholds = lambda **kwargs: threshold_sync_calls.append(kwargs) or True
+
+        result = engine.analyze_stock("600519", notify=True, account_name="测试账户")
+
+        self.assertTrue(result["success"])
+        self.assertTrue(result["decision_changed"])
+        self.assertFalse(result["action_changed"])
+        self.assertTrue(result["thresholds_changed"])
+        self.assertEqual(len(threshold_sync_calls), 1)
+        self.assertEqual(len(fake_db.pending_actions), 0)
+        self.assertEqual(notifications, [])
+        self.assertEqual(fake_db.saved_decisions[0]["action_status"], "suggested")
 
     def test_intraday_analysis_refreshes_latest_strategy_context_before_decision(self):
         fake_db = FakeSmartMonitorDB()

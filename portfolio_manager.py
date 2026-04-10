@@ -1700,11 +1700,13 @@ class PortfolioManager:
             "买入": "买入",
             "强烈买入": "买入",
             "增持": "买入",
+            "加仓": "买入",
             "持有": "持有",
             "中性": "持有",
             "观望": "持有",
             "卖出": "卖出",
             "减持": "卖出",
+            "减仓": "卖出",
             "鎸佹湁": "持有",
             "涔板叆": "买入",
             "鍗栧嚭": "卖出",
@@ -1715,11 +1717,11 @@ class PortfolioManager:
         lowered = text.lower()
         if text in {"未知", "待分析", "N/A"} or lowered in {"unknown", "n/a", "na"}:
             return default
-        if any(token in text for token in ("买入", "强烈买入", "增持")) or any(
+        if any(token in text for token in ("买入", "强烈买入", "增持", "加仓")) or any(
             token in lowered for token in ("buy", "add")
         ):
             return "买入"
-        if any(token in text for token in ("卖出", "减持")) or any(
+        if any(token in text for token in ("卖出", "减持", "减仓")) or any(
             token in lowered for token in ("sell", "reduce")
         ):
             return "卖出"

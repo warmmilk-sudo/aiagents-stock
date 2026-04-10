@@ -15,6 +15,15 @@ class SmartMonitorDeepSeekTests(unittest.TestCase):
         self.assertEqual(decision["action"], "BUY")
         self.assertNotIn("降级为 HOLD", decision["reasoning"])
 
+    def test_enforce_action_policy_downgrades_sell_when_no_position(self):
+        client = SmartMonitorDeepSeek(api_key="test-key")
+
+        decision = client._enforce_action_policy({"action": "SELL", "reasoning": "test"}, has_position=False)
+
+        self.assertEqual(decision["action"], "HOLD")
+        self.assertEqual(decision["risk_level"], "high")
+        self.assertIn("当前无持仓", decision["reasoning"])
+
     def test_parse_decision_repairs_json_like_response(self):
         client = SmartMonitorDeepSeek(api_key="test-key")
         ai_response = """

@@ -277,6 +277,23 @@ class AnalysisHistoryServiceTests(unittest.TestCase):
         self.assertEqual(records[summary_only_id]["decision_label"], "卖出")
         self.assertEqual(records[rating_only_id]["decision_label"], "买入")
 
+    def test_legacy_position_labels_are_normalized_to_new_display_labels(self):
+        record_id = self.repository.save_record(
+            symbol="002594",
+            stock_name="比亚迪",
+            period="1y",
+            summary="评级: 增持；等待放量确认。",
+            final_decision={"rating": "减持", "confidence_level": 6.8},
+            account_name="账户A",
+            analysis_scope="portfolio",
+            analysis_source="portfolio_single_analysis",
+            has_full_report=True,
+        )
+
+        record = self.service.get_record(record_id)
+        self.assertIsNotNone(record)
+        self.assertEqual(record["decision_label"], "减仓")
+
 
 if __name__ == "__main__":
     unittest.main()

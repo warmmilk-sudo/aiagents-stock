@@ -3,10 +3,12 @@
 包含四个专业分析师智能体
 """
 
+import re
+from typing import Any, Dict
+
 from deepseek_client import DeepSeekClient
 from model_routing import ModelTier
 from prompt_registry import build_messages
-from typing import Dict, Any
 import time
 
 
@@ -24,7 +26,7 @@ class SectorStrategyAgents:
         )
         print(f"[智策] AI智能体系统初始化 (模型配置: {self.deepseek_client.model_selection})")
     
-    def macro_strategist_agent(self, market_data: Dict, news_data: list) -> Dict[str, Any]:
+    def macro_strategist_agent(self, market_data: Dict, news_data: list, analysis_date: str = "") -> Dict[str, Any]:
         """
         宏观策略师 - 分析宏观经济和新闻对板块的影响
         
@@ -69,9 +71,11 @@ class SectorStrategyAgents:
   涨停: {market_data['limit_up']} | 跌停: {market_data['limit_down']}
 """
         
+        reference_date = str(analysis_date or "").strip()
         messages = build_messages(
             "sector_strategy/macro.system.txt",
             "sector_strategy/macro.user.txt",
+            analysis_date=reference_date or "未提供",
             market_summary=market_summary,
             news_summary=news_summary,
         )
@@ -80,6 +84,15 @@ class SectorStrategyAgents:
             messages,
             max_tokens=4000,
             tier=ModelTier.REASONING,
+        )
+        analysis = self._enforce_generic_time_freshness(
+            analysis=analysis,
+            reference_date=reference_date,
+            context_sections={
+                "market_summary": market_summary,
+                "news_summary": news_summary,
+            },
+            agent_label="宏观策略师",
         )
         
         print("  ✓ 宏观策略师分析完成")
@@ -92,7 +105,13 @@ class SectorStrategyAgents:
             "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
         }
     
-    def sector_diagnostician_agent(self, sectors_data: Dict, concepts_data: Dict, market_data: Dict) -> Dict[str, Any]:
+    def sector_diagnostician_agent(
+        self,
+        sectors_data: Dict,
+        concepts_data: Dict,
+        market_data: Dict,
+        analysis_date: str = "",
+    ) -> Dict[str, Any]:
         """
         板块诊断师 - 分析板块的走势、估值和基本面
         
@@ -135,9 +154,11 @@ class SectorStrategyAgents:
             for idx, (name, info) in enumerate(sorted_concepts[:15], 1):
                 concept_summary += f"{idx}. {name}: {info['change_pct']:+.2f}% | 换手率: {info['turnover']:.2f}% | 领涨股: {info['top_stock']} ({info['top_stock_change']:+.2f}%)\n"
         
+        reference_date = str(analysis_date or "").strip()
         messages = build_messages(
             "sector_strategy/sector_diagnostician.system.txt",
             "sector_strategy/sector_diagnostician.user.txt",
+            analysis_date=reference_date or "未提供",
             market_overview=self._format_market_overview(market_data),
             sector_summary=sector_summary,
             concept_summary=concept_summary,
@@ -147,6 +168,13 @@ class SectorStrategyAgents:
             messages,
             max_tokens=4000,
             tier=ModelTier.REASONING,
+        )
+        analysis = self._enforce_time_freshness(
+            analysis=analysis,
+            reference_date=reference_date,
+            market_overview=self._format_market_overview(market_data),
+            sector_summary=sector_summary,
+            concept_summary=concept_summary,
         )
         
         print("  ✓ 板块诊断师分析完成")
@@ -158,8 +186,93 @@ class SectorStrategyAgents:
             "focus_areas": ["板块走势", "估值分析", "基本面", "技术形态", "板块轮动"],
             "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
         }
+
+    def _extract_year_tokens(self, text: str) -> set[str]:
+        return set(re.findall(r"20\d{2}", str(text or "")))
+
+    def _contains_stale_year_reference(self, analysis: str, reference_date: str) -> bool:
+        if not analysis or not reference_date:
+            return False
+        allowed_years = self._extract_year_tokens(reference_date)
+        if not allowed_years:
+            return False
+        analysis_years = self._extract_year_tokens(analysis)
+        stale_years = {year for year in analysis_years if year not in allowed_years}
+        return bool(stale_years)
+
+    def _enforce_time_freshness(
+        self,
+        *,
+        analysis: str,
+        reference_date: str,
+        market_overview: str,
+        sector_summary: str,
+        concept_summary: str,
+    ) -> str:
+        if not self._contains_stale_year_reference(analysis, reference_date):
+            return analysis
+
+        print(f"  ⚠ 板块诊断报告出现过期年份引用，按 {reference_date} 重新修正")
+        repair_messages = build_messages(
+            "sector_strategy/repair_time_freshness.system.txt",
+            "sector_strategy/repair_time_freshness.user.txt",
+            reference_date=reference_date,
+            market_overview=market_overview,
+            sector_summary=sector_summary,
+            concept_summary=concept_summary,
+            raw_analysis=analysis,
+        )
+        repaired = self.deepseek_client.call_api(
+            repair_messages,
+            temperature=0.1,
+            max_tokens=4000,
+            tier=ModelTier.REASONING,
+        )
+        if self._contains_stale_year_reference(repaired, reference_date):
+            print("  ⚠ 修正后仍含过期年份，返回原始内容并记录问题")
+            return analysis
+        return repaired
+
+    def _enforce_generic_time_freshness(
+        self,
+        *,
+        analysis: str,
+        reference_date: str,
+        context_sections: Dict[str, str],
+        agent_label: str,
+    ) -> str:
+        if not self._contains_stale_year_reference(analysis, reference_date):
+            return analysis
+
+        print(f"  ⚠ {agent_label}报告出现过期年份引用，按 {reference_date} 重新修正")
+        repair_messages = build_messages(
+            "sector_strategy/repair_time_freshness_generic.system.txt",
+            "sector_strategy/repair_time_freshness_generic.user.txt",
+            agent_label=agent_label,
+            reference_date=reference_date,
+            context_text="\n\n".join(
+                section for section in context_sections.values() if str(section or "").strip()
+            ) or "暂无额外上下文",
+            raw_analysis=analysis,
+        )
+        repaired = self.deepseek_client.call_api(
+            repair_messages,
+            temperature=0.1,
+            max_tokens=4000,
+            tier=ModelTier.REASONING,
+        )
+        if self._contains_stale_year_reference(repaired, reference_date):
+            print(f"  ⚠ {agent_label}修正后仍含过期年份，返回原始内容并记录问题")
+            return analysis
+        return repaired
     
-    def fund_flow_analyst_agent(self, fund_flow_data: Dict, north_flow_data: Dict, sectors_data: Dict) -> Dict[str, Any]:
+    def fund_flow_analyst_agent(
+        self,
+        fund_flow_data: Dict,
+        north_flow_data: Dict,
+        sectors_data: Dict,
+        analysis_date: str = "",
+    ) -> Dict[str, Any]:
         """
         资金流向分析师 - 分析板块资金流向和主力行为
         
@@ -214,9 +327,11 @@ class SectorStrategyAgents:
                 for item in north_flow_data['history'][:10]:
                     north_summary += f"  {item['date']}: {item['net_inflow']:.2f}万\n"
         
+        reference_date = str(analysis_date or "").strip()
         messages = build_messages(
             "sector_strategy/fund_flow.system.txt",
             "sector_strategy/fund_flow.user.txt",
+            analysis_date=reference_date or "未提供",
             fund_flow_summary=fund_flow_summary,
             north_summary=north_summary,
         )
@@ -225,6 +340,15 @@ class SectorStrategyAgents:
             messages,
             max_tokens=4000,
             tier=ModelTier.LIGHTWEIGHT,
+        )
+        analysis = self._enforce_generic_time_freshness(
+            analysis=analysis,
+            reference_date=reference_date,
+            context_sections={
+                "fund_flow_summary": fund_flow_summary,
+                "north_summary": north_summary,
+            },
+            agent_label="资金流向分析师",
         )
         
         print("  ✓ 资金流向分析师分析完成")
@@ -237,7 +361,13 @@ class SectorStrategyAgents:
             "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
         }
     
-    def market_sentiment_decoder_agent(self, market_data: Dict, sectors_data: Dict, concepts_data: Dict) -> Dict[str, Any]:
+    def market_sentiment_decoder_agent(
+        self,
+        market_data: Dict,
+        sectors_data: Dict,
+        concepts_data: Dict,
+        analysis_date: str = "",
+    ) -> Dict[str, Any]:
         """
         市场情绪解码员 - 从多维度解读市场情绪
         
@@ -303,9 +433,11 @@ class SectorStrategyAgents:
             for idx, (name, info) in enumerate(sorted_concepts[:10], 1):
                 hot_concepts += f"{idx}. {name}: {info['change_pct']:+.2f}% | 换手率: {info['turnover']:.2f}%\n"
         
+        reference_date = str(analysis_date or "").strip()
         messages = build_messages(
             "sector_strategy/market_sentiment.system.txt",
             "sector_strategy/market_sentiment.user.txt",
+            analysis_date=reference_date or "未提供",
             sentiment_summary=sentiment_summary,
             hot_sectors=hot_sectors,
             hot_concepts=hot_concepts,
@@ -315,6 +447,16 @@ class SectorStrategyAgents:
             messages,
             max_tokens=4000,
             tier=ModelTier.LIGHTWEIGHT,
+        )
+        analysis = self._enforce_generic_time_freshness(
+            analysis=analysis,
+            reference_date=reference_date,
+            context_sections={
+                "sentiment_summary": sentiment_summary,
+                "hot_sectors": hot_sectors,
+                "hot_concepts": hot_concepts,
+            },
+            agent_label="市场情绪解码员",
         )
         
         print("  ✓ 市场情绪解码员分析完成")

@@ -918,8 +918,6 @@ class SectorStrategySummaryTests(unittest.TestCase):
 
         self.assertIn("市场风险偏好回升", summary)
         self.assertIn("高景气成长板块有轮动机会", summary)
-        self.assertIn("看多板块", summary)
-        self.assertIn("关注风险板块", summary)
 
 
 if __name__ == "__main__":
