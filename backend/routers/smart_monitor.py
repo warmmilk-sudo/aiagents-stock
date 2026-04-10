@@ -203,6 +203,12 @@ def list_decisions(request: Request, limit: int = 100) -> dict:
     return success_payload(services.list_smart_monitor_decisions(limit=limit))
 
 
+@router.get("/decisions/summary")
+def get_decision_summary(request: Request, limit: int = 120) -> dict:
+    require_session(request)
+    return success_payload(services.get_smart_monitor_decision_summary(limit=limit))
+
+
 @router.get("/trades")
 def list_trade_records(request: Request, limit: int = 100) -> dict:
     require_session(request)

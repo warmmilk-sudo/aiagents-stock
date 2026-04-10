@@ -3123,6 +3123,10 @@ def list_smart_monitor_decisions(limit: int = 100) -> list[dict[str, Any]]:
     return smart_monitor_db.get_ai_decisions(limit=limit)
 
 
+def get_smart_monitor_decision_summary(limit: int = 120) -> dict[str, Any]:
+    return smart_monitor_db.get_ai_decision_intraday_summary(limit=limit)
+
+
 def list_smart_monitor_trade_records(limit: int = 100) -> list[dict[str, Any]]:
     return smart_monitor_db.get_trade_records(limit=limit)
 

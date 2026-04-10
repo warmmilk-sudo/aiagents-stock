@@ -67,6 +67,33 @@ interface DecisionItem {
   };
 }
 
+interface DecisionSummaryActionCount {
+  action: string;
+  count: number;
+}
+
+interface DecisionSummaryBiasActionCount {
+  action: string;
+  count: number;
+}
+
+interface DecisionSummaryBiasItem {
+  intraday_bias: string;
+  count: number;
+  action_counts: DecisionSummaryBiasActionCount[];
+}
+
+interface DecisionSummary {
+  limit: number;
+  total: number;
+  with_intraday_context: number;
+  coverage_pct: number;
+  latest_decision_time?: string | null;
+  action_counts: DecisionSummaryActionCount[];
+  intraday_bias_counts: DecisionSummaryBiasItem[];
+  signal_label_counts: Array<{ label: string; count: number }>;
+}
+
 interface SystemStatus {
   monitor_service?: {
     running?: boolean;
@@ -294,6 +321,14 @@ const isSellDecision = (decision: DecisionItem) => String(decision.action || "")
 const isVisibleDecision = (decision: DecisionItem, tasks: SmartMonitorTask[]) =>
   isDecisionHolding(decision, tasks) || !isSellDecision(decision);
 
+const actionTone = (action: string): NotificationTone => {
+  const normalized = String(action || "").toUpperCase();
+  if (normalized === "BUY") return "success";
+  if (normalized === "SELL") return "danger";
+  if (normalized === "HOLD") return "info";
+  return "warning";
+};
+
 const findLatestDecisionForTask = (task: SmartMonitorTask, decisions: DecisionItem[]) =>
   decisions.find((decision) => matchesTaskDecision(task, decision) && (Boolean(task.has_position) || task.asset_status === "portfolio" || !isSellDecision(decision)))
   || decisions.find((decision) => decision.stock_code === task.stock_code && !isSellDecision(decision));
@@ -339,6 +374,7 @@ export function SmartMonitorPage() {
   const setPageCache = useSmartMonitorStore((state) => state.setPageCache);
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(() => (cachedPage?.systemStatus as SystemStatus | null) ?? null);
   const [tasks, setTasks] = useState<SmartMonitorTask[]>(() => (cachedPage?.tasks as SmartMonitorTask[]) ?? []);
+  const [decisionSummary, setDecisionSummary] = useState<DecisionSummary | null>(() => (cachedPage?.decisionSummary as DecisionSummary | null) ?? null);
   const [decisions, setDecisions] = useState<DecisionItem[]>(() => (cachedPage?.decisions as DecisionItem[]) ?? []);
   const [notifications, setNotifications] = useState<PriceAlertNotification[]>(() => (cachedPage?.notifications as PriceAlertNotification[]) ?? []);
   const [monitorConfig, setMonitorConfig] = useState<MonitorConfig | null>(() => (cachedPage?.monitorConfig as MonitorConfig | null) ?? null);
@@ -367,6 +403,7 @@ export function SmartMonitorPage() {
     }
     setSystemStatus((cache.systemStatus as SystemStatus | null) ?? null);
     setTasks(cache.tasks as SmartMonitorTask[]);
+    setDecisionSummary((cache.decisionSummary as DecisionSummary | null) ?? null);
     setDecisions(cache.decisions as DecisionItem[]);
     setNotifications(cache.notifications as PriceAlertNotification[]);
     setMonitorConfig((cache.monitorConfig as MonitorConfig | null) ?? null);
@@ -398,9 +435,10 @@ export function SmartMonitorPage() {
       queryParams.has_position = filterHasPosition === "true";
     }
 
-    const [statusData, taskData, decisionData, monitorConfigData, runtimeData] = await Promise.all([
+    const [statusData, taskData, decisionSummaryData, decisionData, monitorConfigData, runtimeData] = await Promise.all([
       apiFetch<SystemStatus>("/api/system/status"),
       apiFetch<SmartMonitorTask[]>(`/api/smart-monitor/tasks${buildQuery(queryParams)}`),
+      apiFetch<DecisionSummary>("/api/smart-monitor/decisions/summary?limit=120"),
       apiFetch<DecisionItem[]>("/api/smart-monitor/decisions?limit=30"),
       apiFetch<MonitorConfig>("/api/smart-monitor/config"),
       apiFetch<RuntimeConfig>("/api/smart-monitor/runtime-config"),
@@ -416,6 +454,7 @@ export function SmartMonitorPage() {
     );
     setSystemStatus(statusData);
     setTasks(taskData);
+    setDecisionSummary(decisionSummaryData);
     setDecisions(decisionData);
     setNotifications(notificationData);
     setMonitorConfig(monitorConfigData);
@@ -423,6 +462,7 @@ export function SmartMonitorPage() {
     setPageCache(cacheModeKey, {
       systemStatus: statusData,
       tasks: taskData,
+      decisionSummary: decisionSummaryData,
       decisions: decisionData,
       notifications: notificationData,
       monitorConfig: monitorConfigData,
@@ -856,6 +896,11 @@ export function SmartMonitorPage() {
     }
     return accumulator;
   }, []);
+  const summaryActionCounts = decisionSummary?.action_counts ?? [];
+  const summaryBiasCounts = decisionSummary?.intraday_bias_counts ?? [];
+  const summarySignalCounts = decisionSummary?.signal_label_counts ?? [];
+  const topBiasRows = summaryBiasCounts.slice(0, 3);
+  const topSignalRows = summarySignalCounts.slice(0, 5);
 
   const renderTaskForm = () => (
     <form className={styles.moduleSection} onSubmit={submitTask}>
@@ -931,6 +976,86 @@ export function SmartMonitorPage() {
               </label>
               {serviceStatusHint ? <p className={styles.helperText}>{serviceStatusHint}</p> : null}
             </div>
+
+            {decisionSummary ? (
+              <div className={styles.moduleSection}>
+                <div className={styles.noticeCard}>
+                  <div className={styles.noticeMeta}>
+                    <StatusBadge label={`近${decisionSummary.limit}条复盘`} tone="info" />
+                    <span className={styles.muted}>
+                      覆盖率 {decisionSummary.coverage_pct}% · 含盘中摘要 {decisionSummary.with_intraday_context}/{decisionSummary.total}
+                    </span>
+                    {decisionSummary.latest_decision_time ? (
+                      <small className={styles.muted}>
+                        最新更新时间 {formatDateTime(decisionSummary.latest_decision_time, "暂无时间")}
+                      </small>
+                    ) : null}
+                  </div>
+
+                  <div className={styles.summaryMetricGrid}>
+                    <div className={styles.metric}>
+                      <span className={styles.muted}>决策总数</span>
+                      <strong>{decisionSummary.total}</strong>
+                    </div>
+                    <div className={styles.metric}>
+                      <span className={styles.muted}>含盘中摘要</span>
+                      <strong>{decisionSummary.with_intraday_context}</strong>
+                    </div>
+                  </div>
+
+                  <div className={styles.formGrid}>
+                    <div className={styles.field}>
+                      <label>动作分布</label>
+                      <div className={styles.list}>
+                        {summaryActionCounts.length
+                          ? summaryActionCounts.map((item) => (
+                              <div className={styles.listItem} key={item.action}>
+                                <div className={styles.noticeMeta}>
+                                  <StatusBadge label={item.action || "UNKNOWN"} tone={actionTone(item.action)} />
+                                  <strong>{item.count}</strong>
+                                </div>
+                              </div>
+                            ))
+                          : <div className={styles.listItem}><span className={styles.muted}>暂无动作分布</span></div>}
+                      </div>
+                    </div>
+                    <div className={styles.field}>
+                      <label>盘中偏向</label>
+                      <div className={styles.list}>
+                        {topBiasRows.length
+                          ? topBiasRows.map((item) => (
+                              <div className={styles.listItem} key={item.intraday_bias}>
+                                <div className={styles.noticeMeta}>
+                                  <StatusBadge label={item.intraday_bias || "unclassified"} tone="default" />
+                                  <strong>{item.count}</strong>
+                                </div>
+                                <div className={styles.muted}>
+                                  {item.action_counts.length
+                                    ? item.action_counts.map((actionItem) => `${actionItem.action}:${actionItem.count}`).join(" · ")
+                                    : "暂无动作分布"}
+                                </div>
+                              </div>
+                            ))
+                          : <div className={styles.listItem}><span className={styles.muted}>暂无盘中偏向数据</span></div>}
+                      </div>
+                    </div>
+                    <div className={styles.field}>
+                      <label>高频信号</label>
+                      <div className={styles.list}>
+                        {topSignalRows.length
+                          ? topSignalRows.map((item) => (
+                              <div className={styles.listItem} key={item.label}>
+                                <div>{item.label}</div>
+                                <small className={styles.muted}>{item.count} 次</small>
+                              </div>
+                            ))
+                          : <div className={styles.listItem}><span className={styles.muted}>暂无信号标签</span></div>}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : null}
 
             <div className={styles.moduleSection}>
               <div className={styles.dualToggleGrid}>

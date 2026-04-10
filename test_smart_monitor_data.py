@@ -20,14 +20,6 @@ sys.modules.setdefault(
 )
 sys.modules.setdefault("dotenv", types.SimpleNamespace(load_dotenv=lambda *args, **kwargs: None))
 sys.modules.setdefault("ta", types.SimpleNamespace())
-sys.modules.setdefault(
-    "akshare",
-    types.SimpleNamespace(
-        stock_individual_info_em=lambda *args, **kwargs: None,
-        stock_zh_a_hist_min_em=lambda *args, **kwargs: None,
-        stock_zh_a_hist=lambda *args, **kwargs: None,
-    ),
-)
 
 from smart_monitor_data import SmartMonitorDataFetcher
 
@@ -64,30 +56,8 @@ class _FakeTDXFetcher:
     def get_technical_indicators(self, stock_code, period="daily"):
         raise AssertionError("TDX technical indicators should not be used when Tushare daily data is available")
 
-
-class _FakeRow(dict):
-    @property
-    def index(self):
-        return list(self.keys())
-
-
-class _FakeILoc:
-    def __init__(self, rows):
-        self._rows = rows
-
-    def __getitem__(self, index):
-        return self._rows[index]
-
-
-class _FakeFrame:
-    def __init__(self, rows):
-        self._rows = rows
-        self.empty = not bool(rows)
-        self.columns = list(rows[0].keys()) if rows else []
-        self.iloc = _FakeILoc(rows)
-
-    def __len__(self):
-        return len(self._rows)
+    def get_intraday_context(self, stock_code):
+        return {}
 
 
 class SmartMonitorDataFetcherTests(unittest.TestCase):
@@ -256,6 +226,45 @@ class SmartMonitorDataFetcherTests(unittest.TestCase):
         self.assertTrue(any("技术指标获取完成" in message for message in logged_messages))
         self.assertTrue(any("综合数据获取结束" in message for message in logged_messages))
 
+    def test_get_comprehensive_data_does_not_attach_market_and_sector_context(self):
+        fetcher = self._build_fetcher(None, retry_count=1)
+
+        with patch.object(
+            fetcher,
+            "get_realtime_quote",
+            return_value={"code": "600519", "current_price": 1520.0},
+        ), patch.object(
+            fetcher,
+            "get_technical_indicators",
+            return_value={"ma5": 1508.0},
+        ):
+            result = fetcher.get_comprehensive_data("600519")
+
+        self.assertNotIn("market_context", result)
+        self.assertNotIn("sector_context", result)
+
+    def test_get_comprehensive_data_attaches_tdx_intraday_context(self):
+        tdx_fetcher = _FakeTDXFetcher()
+        tdx_fetcher.get_intraday_context = lambda stock_code: {
+            "minute_point_count": 120,
+            "last_5m_change_pct": 0.88,
+        }
+        fetcher = self._build_fetcher(tdx_fetcher, retry_count=1)
+
+        with patch.object(
+            fetcher,
+            "get_realtime_quote",
+            return_value={"code": "600519", "current_price": 1520.0, "data_source": "tdx"},
+        ), patch.object(
+            fetcher,
+            "get_technical_indicators",
+            return_value={"ma5": 1508.0},
+        ):
+            result = fetcher.get_comprehensive_data("600519")
+
+        self.assertEqual(result["intraday_context"]["minute_point_count"], 120)
+        self.assertEqual(result["intraday_context"]["last_5m_change_pct"], 0.88)
+
     def test_get_realtime_quote_does_not_fall_back_to_tushare(self):
         fetcher = self._build_fetcher(None, retry_count=1)
 
@@ -271,72 +280,12 @@ class SmartMonitorDataFetcherTests(unittest.TestCase):
                 self.calls += 1
                 raise AssertionError("tushare should not be used for realtime quote")
 
-        class _FakeInfoFrame:
-            empty = False
-
-            def __getitem__(self, key):
-                if key == "item":
-                    return ["股票简称"]
-                if key == "value":
-                    return ["贵州茅台"]
-                raise KeyError(key)
-
         fetcher.ts_pro = _FakeTushare()
 
-        with patch(
-            "smart_monitor_data.ak.stock_individual_info_em",
-            return_value=_FakeInfoFrame(),
-            create=True,
-        ), patch("smart_monitor_data.ak.stock_zh_a_hist_min_em", side_effect=RuntimeError("akshare failed"), create=True), patch(
-            "smart_monitor_data.ak.stock_zh_a_hist",
-            side_effect=RuntimeError("akshare failed"),
-            create=True,
-        ):
-            quote = fetcher.get_realtime_quote("600519")
+        quote = fetcher.get_realtime_quote("600519")
 
         self.assertIsNone(quote)
         self.assertEqual(fetcher.ts_pro.calls, 0)
-
-    def test_get_realtime_quote_leaves_missing_intraday_fields_empty_without_daily_fallback(self):
-        with patch.dict(os.environ, {"AKSHARE_FALLBACK_ENABLED": "true"}, clear=False):
-            fetcher = SmartMonitorDataFetcher(use_tdx=False)
-        fetcher.use_tdx = False
-        fetcher.tdx_fetcher = None
-        fetcher.intraday_tdx_retry_count = 1
-
-        min_frame = _FakeFrame([
-            _FakeRow(
-                {
-                    "时间": "2026-03-25 10:15:00",
-                    "收盘": 18.88,
-                }
-            ),
-        ])
-
-        with patch.object(fetcher, "_resolve_stock_name", return_value="贵州茅台"), patch(
-            "smart_monitor_data.ak.stock_zh_a_hist_min_em",
-            return_value=min_frame,
-            create=True,
-        ), patch(
-            "smart_monitor_data.ak.stock_zh_a_hist",
-            side_effect=AssertionError("daily history should not be used for intraday quote fallback"),
-            create=True,
-        ):
-            quote = fetcher.get_realtime_quote("600519")
-
-        self.assertIsNotNone(quote)
-        self.assertEqual(quote["current_price"], 18.88)
-        self.assertIsNone(quote["change_pct"])
-        self.assertIsNone(quote["change_amount"])
-        self.assertIsNone(quote["high"])
-        self.assertIsNone(quote["low"])
-        self.assertIsNone(quote["open"])
-        self.assertIsNone(quote["pre_close"])
-        self.assertIsNone(quote["volume"])
-        self.assertIsNone(quote["amount"])
-        self.assertIsNone(quote["turnover_rate"])
-        self.assertEqual(quote["precision_status"], "partial")
-        self.assertEqual(quote["data_source"], "akshare")
 
 
 if __name__ == "__main__":

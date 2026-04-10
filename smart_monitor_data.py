@@ -102,6 +102,17 @@ class SmartMonitorDataFetcher:
             result.update(quote)
         return result
 
+    def _attach_tdx_intraday_context(self, stock_code: str, result: Optional[Dict]) -> Dict:
+        if not result or not (self.use_tdx and self.tdx_fetcher):
+            return result
+        try:
+            intraday_context = self.tdx_fetcher.get_intraday_context(stock_code)
+            if intraday_context:
+                result["intraday_context"] = intraday_context
+        except Exception as exc:
+            self.logger.warning("[%s] 注入TDX盘中特征失败: %s", stock_code, exc)
+        return result
+
     def _log_timed_stage(self, stock_code: str, stage_name: str, started_at: float, success: bool) -> float:
         elapsed = time.perf_counter() - started_at
         self.logger.info(
@@ -197,6 +208,7 @@ class SmartMonitorDataFetcher:
             )
 
         result = self._merge_quote_and_indicators(quote, indicators)
+        result = self._attach_tdx_intraday_context(stock_code, result)
         result.setdefault("technical_data_source", "tushare")
         result["precision_status"] = "validated"
         result["precision_mode"] = "tdx_quote_tushare_daily"
@@ -579,6 +591,7 @@ class SmartMonitorDataFetcher:
         """
         获取综合数据（实时行情+技术指标）
         注意：已移除主力资金流向数据，因为该接口不稳定且AI决策不依赖此数据
+        注意：盘中决策暂不自动注入大盘/板块上下文，避免把非实时数据误当作实时背景
         
         Args:
             stock_code: 股票代码
@@ -621,6 +634,7 @@ class SmartMonitorDataFetcher:
         if result:
             result.setdefault("precision_status", "best_effort")
             result.setdefault("precision_mode", "fallback_allowed")
+            result = self._attach_tdx_intraday_context(stock_code, result)
         self.logger.info(
             "[%s] 综合数据获取结束，mode=%s，耗时 %.2fs，quote=%.2fs，indicators=%.2fs，success=%s，precision_status=%s",
             stock_code,

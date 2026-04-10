@@ -118,12 +118,67 @@ class SmartMonitorTDXDataFetcherTests(unittest.TestCase):
             fetcher,
             "get_technical_indicators",
             return_value={"vol_ma5": 20000.0, "volume_ratio_vs_vol_ma5": 0.64},
+        ), patch.object(
+            fetcher,
+            "get_intraday_context",
+            return_value={},
         ):
             result = fetcher.get_comprehensive_data("600519")
 
         self.assertEqual(result["volume_ratio"], 1.9)
         self.assertEqual(result["volume_ratio_vs_vol_ma5"], 0.64)
         self.assertEqual(result["vol_ma5"], 20000.0)
+
+    def test_get_intraday_context_summarizes_minute_and_trade_data(self):
+        with patch.object(requests, "get", return_value=_FakeResponse(status_code=200, payload={"status": "ok"})):
+            fetcher = SmartMonitorTDXDataFetcher(base_url="http://tdx.example.com:8181")
+
+        with patch.object(
+            fetcher,
+            "get_minute_data",
+            return_value={
+                "count": 12,
+                "points": [
+                    {"time": "10:00", "price": 10.00, "volume": 100},
+                    {"time": "10:01", "price": 10.02, "volume": 110},
+                    {"time": "10:02", "price": 10.03, "volume": 120},
+                    {"time": "10:03", "price": 10.05, "volume": 130},
+                    {"time": "10:04", "price": 10.08, "volume": 140},
+                    {"time": "10:05", "price": 10.10, "volume": 150},
+                    {"time": "10:06", "price": 10.12, "volume": 160},
+                    {"time": "10:07", "price": 10.15, "volume": 170},
+                    {"time": "10:08", "price": 10.18, "volume": 180},
+                    {"time": "10:09", "price": 10.22, "volume": 190},
+                    {"time": "10:10", "price": 10.26, "volume": 220},
+                    {"time": "10:11", "price": 10.30, "volume": 260},
+                ],
+            },
+        ), patch.object(
+            fetcher,
+            "get_trade_data",
+            return_value={
+                "count": 3,
+                "points": [
+                    {"time": "2026-04-10T10:11:59+08:00", "price": 10.30, "volume": 12, "status": 0},
+                    {"time": "2026-04-10T10:11:58+08:00", "price": 10.29, "volume": 20, "status": 1},
+                    {"time": "2026-04-10T10:11:57+08:00", "price": 10.28, "volume": 8, "status": 1},
+                ],
+            },
+        ):
+            context = fetcher.get_intraday_context("600519")
+
+        self.assertEqual(context["minute_point_count"], 12)
+        self.assertAlmostEqual(context["intraday_high"], 10.30, places=4)
+        self.assertAlmostEqual(context["intraday_low"], 10.00, places=4)
+        self.assertAlmostEqual(context["price_position_pct"], 100.0, places=4)
+        self.assertGreater(context["last_5m_change_pct"], 0)
+        self.assertGreater(context["volume_acceleration_ratio"], 1)
+        self.assertEqual(context["trade_tick_count"], 3)
+        self.assertEqual(context["latest_trade_time"], "2026-04-10T10:11:59+08:00")
+        self.assertIn("当前价格接近日内高位", context["intraday_observations"])
+        self.assertEqual(context["intraday_bias"], "trend_continuation")
+        self.assertIn("高位放量延续", context["intraday_signal_labels"])
+        self.assertIn("价格运行在分时均价上方", context["intraday_signal_labels"])
 
 
 if __name__ == "__main__":

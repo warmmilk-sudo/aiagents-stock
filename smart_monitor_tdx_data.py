@@ -359,6 +359,280 @@ class SmartMonitorTDXDataFetcher:
         except Exception as e:
             self.logger.error(f"TDX获取K线失败 {stock_code}: {type(e).__name__}: {str(e)}")
             return None
+
+    def get_minute_data(self, stock_code: str) -> Optional[Dict]:
+        """获取分时数据。"""
+        try:
+            url = f"{self.base_url}/api/minute"
+            params = {"code": stock_code}
+
+            self._log_request("/api/minute", params=params)
+            response = requests.get(url, params=params, timeout=self.timeout)
+            self._log_response("/api/minute", response)
+            result = response.json()
+
+            if result.get("code") != 0:
+                self.logger.warning("TDX获取分时数据失败 %s: %s", stock_code, result.get("message"))
+                return None
+
+            minute_list = result.get("data", {}).get("List", [])
+            if not minute_list:
+                self.logger.warning("TDX未返回股票 %s 的分时数据", stock_code)
+                return None
+
+            points = []
+            for item in minute_list:
+                time_text = item.get("Time")
+                price_raw = item.get("Price")
+                if time_text in (None, "") or price_raw in (None, ""):
+                    continue
+                try:
+                    price = float(price_raw) / 1000
+                except (TypeError, ValueError):
+                    continue
+                volume_raw = item.get("Number", item.get("Volume"))
+                try:
+                    volume = float(volume_raw) if volume_raw not in (None, "") else None
+                except (TypeError, ValueError):
+                    volume = None
+                points.append(
+                    {
+                        "time": str(time_text),
+                        "price": price,
+                        "volume": volume,
+                    }
+                )
+
+            if not points:
+                return None
+
+            return {
+                "count": int(result.get("data", {}).get("Count") or len(points)),
+                "points": points,
+            }
+        except Exception as exc:
+            self.logger.warning("TDX获取分时数据失败 %s: %s", stock_code, exc)
+            return None
+
+    def get_trade_data(self, stock_code: str) -> Optional[Dict]:
+        """获取逐笔成交数据。"""
+        try:
+            url = f"{self.base_url}/api/trade"
+            params = {"code": stock_code}
+
+            self._log_request("/api/trade", params=params)
+            response = requests.get(url, params=params, timeout=self.timeout)
+            self._log_response("/api/trade", response)
+            result = response.json()
+
+            if result.get("code") != 0:
+                self.logger.warning("TDX获取逐笔成交失败 %s: %s", stock_code, result.get("message"))
+                return None
+
+            trade_list = result.get("data", {}).get("List", [])
+            if not trade_list:
+                self.logger.warning("TDX未返回股票 %s 的逐笔成交数据", stock_code)
+                return None
+
+            points = []
+            for item in trade_list:
+                time_text = item.get("Time")
+                price_raw = item.get("Price")
+                if time_text in (None, "") or price_raw in (None, ""):
+                    continue
+                try:
+                    price = float(price_raw) / 1000
+                except (TypeError, ValueError):
+                    continue
+                volume_raw = item.get("Volume", item.get("Number"))
+                try:
+                    volume = float(volume_raw) if volume_raw not in (None, "") else None
+                except (TypeError, ValueError):
+                    volume = None
+                points.append(
+                    {
+                        "time": str(time_text),
+                        "price": price,
+                        "volume": volume,
+                        "status": item.get("Status"),
+                    }
+                )
+
+            if not points:
+                return None
+
+            return {
+                "count": int(result.get("data", {}).get("Count") or len(points)),
+                "points": points,
+            }
+        except Exception as exc:
+            self.logger.warning("TDX获取逐笔成交失败 %s: %s", stock_code, exc)
+            return None
+
+    def get_intraday_context(self, stock_code: str) -> Dict:
+        """基于 TDX 分时与逐笔成交提炼盘中执行上下文。"""
+        def _pct_change(current: Optional[float], reference: Optional[float]) -> Optional[float]:
+            if current is None or reference in (None, 0):
+                return None
+            try:
+                return (float(current) - float(reference)) / float(reference) * 100
+            except (TypeError, ValueError, ZeroDivisionError):
+                return None
+
+        def _safe_ratio(numerator: Optional[float], denominator: Optional[float]) -> Optional[float]:
+            if numerator is None or denominator in (None, 0):
+                return None
+            try:
+                return float(numerator) / float(denominator)
+            except (TypeError, ValueError, ZeroDivisionError):
+                return None
+
+        def _append_unique(items, label: str) -> None:
+            if label and label not in items:
+                items.append(label)
+
+        context: Dict = {}
+        minute_data = self.get_minute_data(stock_code)
+        if minute_data:
+            points = minute_data.get("points") or []
+            prices = [point["price"] for point in points if point.get("price") is not None]
+            volumes = [
+                float(point["volume"]) if point.get("volume") is not None else 0.0
+                for point in points
+            ]
+            if prices:
+                current_price = prices[-1]
+                intraday_high = max(prices)
+                intraday_low = min(prices)
+                intraday_vwap = None
+                weighted_volume = sum(volumes)
+                if weighted_volume > 0:
+                    intraday_vwap = sum(price * volume for price, volume in zip(prices, volumes)) / weighted_volume
+
+                def _window_change(window_size: int) -> Optional[float]:
+                    reference_index = max(0, len(prices) - window_size - 1)
+                    return _pct_change(current_price, prices[reference_index] if prices else None)
+
+                recent_5m_volume = sum(volumes[-5:]) if volumes else None
+                previous_5m_volume = sum(volumes[-10:-5]) if len(volumes) >= 10 else None
+                price_position_pct = None
+                if intraday_high > intraday_low:
+                    price_position_pct = (current_price - intraday_low) / (intraday_high - intraday_low) * 100
+
+                last_5m_change_pct = _window_change(5)
+                last_15m_change_pct = _window_change(15)
+                last_30m_change_pct = _window_change(30)
+                volume_acceleration_ratio = _safe_ratio(recent_5m_volume, previous_5m_volume)
+                intraday_observations = []
+                intraday_signal_labels = []
+                if price_position_pct is not None:
+                    if price_position_pct >= 85:
+                        _append_unique(intraday_observations, "当前价格接近日内高位")
+                    elif price_position_pct <= 15:
+                        _append_unique(intraday_observations, "当前价格接近日内低位")
+
+                if last_5m_change_pct is not None and volume_acceleration_ratio is not None:
+                    if last_5m_change_pct >= 0.8 and volume_acceleration_ratio >= 1.2:
+                        _append_unique(intraday_observations, "近5分钟放量拉升")
+                    elif last_5m_change_pct <= -0.8 and volume_acceleration_ratio >= 1.2:
+                        _append_unique(intraday_observations, "近5分钟放量回落")
+
+                if intraday_vwap is not None:
+                    if current_price > intraday_vwap:
+                        _append_unique(intraday_signal_labels, "价格运行在分时均价上方")
+                    elif current_price < intraday_vwap:
+                        _append_unique(intraday_signal_labels, "价格运行在分时均价下方")
+
+                intraday_bias = "neutral"
+                intraday_bias_text = "盘中结构中性，等待下一步方向选择"
+
+                if (
+                    price_position_pct is not None
+                    and price_position_pct >= 85
+                    and (last_15m_change_pct or 0) >= 0.8
+                    and (volume_acceleration_ratio or 0) >= 1.2
+                ):
+                    intraday_bias = "trend_continuation"
+                    intraday_bias_text = "高位放量延续，短线趋势偏强"
+                    _append_unique(intraday_signal_labels, "高位放量延续")
+                elif (
+                    price_position_pct is not None
+                    and price_position_pct >= 85
+                    and volume_acceleration_ratio is not None
+                    and volume_acceleration_ratio < 0.8
+                ):
+                    intraday_bias = "high_level_stall"
+                    intraday_bias_text = "价格靠近日内高位，但量能衰减"
+                    _append_unique(intraday_signal_labels, "高位量能衰减")
+                elif (
+                    price_position_pct is not None
+                    and price_position_pct <= 25
+                    and (last_5m_change_pct or 0) >= 0.3
+                    and (volume_acceleration_ratio or 0) >= 1.0
+                ):
+                    intraday_bias = "pullback_support"
+                    intraday_bias_text = "低位回升承接，存在回踩后的修复迹象"
+                    _append_unique(intraday_signal_labels, "低位回升承接")
+                elif (
+                    last_5m_change_pct is not None
+                    and last_5m_change_pct <= -0.8
+                    and (volume_acceleration_ratio or 0) >= 1.2
+                ):
+                    intraday_bias = "selloff_pressure"
+                    intraday_bias_text = "短线放量回落，抛压偏强"
+                    _append_unique(intraday_signal_labels, "放量回落走弱")
+                elif (
+                    last_30m_change_pct is not None
+                    and abs(last_30m_change_pct) <= 0.3
+                    and price_position_pct is not None
+                    and 35 <= price_position_pct <= 65
+                ):
+                    intraday_bias = "range_balance"
+                    intraday_bias_text = "分时震荡均衡，暂未形成明确方向"
+                    _append_unique(intraday_signal_labels, "区间震荡等待方向")
+
+                context.update(
+                    {
+                        "minute_point_count": len(points),
+                        "intraday_high": intraday_high,
+                        "intraday_low": intraday_low,
+                        "intraday_range_pct": _pct_change(intraday_high, intraday_low),
+                        "intraday_vwap": intraday_vwap,
+                        "price_position_pct": price_position_pct,
+                        "last_5m_change_pct": last_5m_change_pct,
+                        "last_15m_change_pct": last_15m_change_pct,
+                        "last_30m_change_pct": last_30m_change_pct,
+                        "recent_5m_volume": recent_5m_volume,
+                        "previous_5m_volume": previous_5m_volume,
+                        "volume_acceleration_ratio": volume_acceleration_ratio,
+                        "intraday_bias": intraday_bias,
+                        "intraday_bias_text": intraday_bias_text,
+                        "intraday_signal_labels": intraday_signal_labels,
+                        "intraday_observations": intraday_observations,
+                    }
+                )
+
+        trade_data = self.get_trade_data(stock_code)
+        if trade_data:
+            points = trade_data.get("points") or []
+            volumes = [
+                float(point["volume"]) for point in points if point.get("volume") is not None
+            ]
+            if points:
+                latest_time = max(
+                    (str(point.get("time")) for point in points if point.get("time")),
+                    default=None,
+                )
+                context.update(
+                    {
+                        "trade_tick_count": len(points),
+                        "latest_trade_time": latest_time,
+                        "avg_trade_volume": (sum(volumes) / len(volumes)) if volumes else None,
+                        "largest_trade_volume": max(volumes) if volumes else None,
+                    }
+                )
+
+        return context
     
     def get_technical_indicators(self, stock_code: str, period: str = 'daily') -> Optional[Dict]:
         """
@@ -504,8 +778,11 @@ class SmartMonitorTDXDataFetcher:
         
         # 技术指标
         indicators = self.get_technical_indicators(stock_code)
-        
-        return self._merge_quote_and_indicators(quote, indicators)
+        result = self._merge_quote_and_indicators(quote, indicators)
+        intraday_context = self.get_intraday_context(stock_code)
+        if intraday_context:
+            result["intraday_context"] = intraday_context
+        return result
     
     # ========== 技术指标计算方法 ==========
     

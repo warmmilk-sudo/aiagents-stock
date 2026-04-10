@@ -586,6 +586,16 @@ MACD金叉且柱状图持续放大，RSI 62处于健康区间。实时量比1.35
                 return "缩量"
             return "正常"
 
+        def _intraday_position_label(value: object) -> str:
+            numeric = _to_float(value)
+            if numeric is None:
+                return "N/A"
+            if numeric >= 85:
+                return "接近日内高位"
+            if numeric <= 15:
+                return "接近日内低位"
+            return "处于日内中位"
+
         turnover_rate_text = _fmt_pct(market_data.get("turnover_rate"))
         turnover_rate_line = f"换手率: {turnover_rate_text}\n" if turnover_rate_text != "N/A" else ""
         current_price = _to_float(market_data.get("current_price"))
@@ -606,6 +616,7 @@ MACD金叉且柱状图持续放大，RSI 62处于健康区间。实时量比1.35
             if trading_progress is not None and trading_progress < 1
             else "说明: 当前为非连续交易时段或已收盘，可直接参考全天累计成交量与历史均量。"
         )
+        intraday_context = market_data.get("intraday_context") if isinstance(market_data.get("intraday_context"), dict) else {}
         prompt = f"""
 [TIMER] 当前交易时段
 ═══════════════════════════════════════════════════════════
@@ -613,6 +624,10 @@ MACD金叉且柱状图持续放大，RSI 62处于健康区间。实时量比1.35
 市场状态: {session_info['volatility'].upper()}
 时段建议: {session_info['recommendation']}
 可交易: {'是' if session_info['can_trade'] else '否'}
+
+[DATA_SCOPE] 数据边界
+═══════════════════════════════════════════════════════════
+当前未注入可验证的实时大盘/板块数据，请不要自行假设当日指数、板块强弱或资金流背景。
 
 [STOCK] 股票基本信息
 ═══════════════════════════════════════════════════════════
@@ -689,6 +704,89 @@ KDJ:
 执行要求:
 - 若无充分理由，优先遵守上述共享风控设置
 - 返回的 `position_size_pct` / `stop_loss_pct` / `take_profit_pct` 应与该共享配置一致或给出偏离理由
+"""
+        if intraday_context:
+            observations = intraday_context.get("intraday_observations") if isinstance(intraday_context.get("intraday_observations"), list) else []
+            observation_text = " / ".join(str(item) for item in observations[:4] if item) or "N/A"
+            signal_labels = intraday_context.get("intraday_signal_labels") if isinstance(intraday_context.get("intraday_signal_labels"), list) else []
+            signal_label_text = " / ".join(str(item) for item in signal_labels[:4] if item) or "N/A"
+            prompt += f"""
+[INTRADAY_FLOW] TDX分时行为特征（实时参考）
+═══════════════════════════════════════════════════════════
+分时样本数: {intraday_context.get('minute_point_count', 'N/A')}
+日内高点: {_fmt_money(intraday_context.get('intraday_high'))}
+日内低点: {_fmt_money(intraday_context.get('intraday_low'))}
+日内振幅: {_fmt_pct(intraday_context.get('intraday_range_pct'))}
+分时VWAP: {_fmt_money(intraday_context.get('intraday_vwap'))}
+当前价所处日内位置: {_fmt_number(intraday_context.get('price_position_pct'))}% ({_intraday_position_label(intraday_context.get('price_position_pct'))})
+近5分钟涨跌: {_fmt_pct(intraday_context.get('last_5m_change_pct'))}
+近15分钟涨跌: {_fmt_pct(intraday_context.get('last_15m_change_pct'))}
+近30分钟涨跌: {_fmt_pct(intraday_context.get('last_30m_change_pct'))}
+近5分钟成交量: {_fmt_volume(intraday_context.get('recent_5m_volume'))}
+前5分钟成交量: {_fmt_volume(intraday_context.get('previous_5m_volume'))}
+近5分钟量能加速度: {_fmt_number(intraday_context.get('volume_acceleration_ratio'))} ({_volume_state_label(intraday_context.get('volume_acceleration_ratio'))})
+逐笔成交笔数: {intraday_context.get('trade_tick_count', 'N/A')}
+逐笔最新时间: {intraday_context.get('latest_trade_time', 'N/A')}
+平均单笔成交量: {_fmt_volume(intraday_context.get('avg_trade_volume'))}
+最大单笔成交量: {_fmt_volume(intraday_context.get('largest_trade_volume'))}
+盘中偏向: {intraday_context.get('intraday_bias_text', 'N/A')}
+盘中标签: {signal_label_text}
+实时观察: {observation_text}
+
+使用建议:
+- 重点识别是回落承接、横盘蓄势，还是短线放量拉升/放量回落
+- 若价格靠近日内高位但量能衰减，需警惕冲高回落；若价格回踩但承接稳定，可提升延续性判断
+"""
+        market_context = market_data.get("market_context") if isinstance(market_data.get("market_context"), dict) else {}
+        market_overview = market_context.get("market_overview") if isinstance(market_context.get("market_overview"), dict) else {}
+        limit_stats = market_context.get("limit_stats") if isinstance(market_context.get("limit_stats"), dict) else {}
+        north_flow = market_context.get("north_flow") if isinstance(market_context.get("north_flow"), dict) else {}
+        if market_overview or limit_stats or north_flow:
+            sh_index = market_overview.get("sh_index") if isinstance(market_overview.get("sh_index"), dict) else {}
+            sz_index = market_overview.get("sz_index") if isinstance(market_overview.get("sz_index"), dict) else {}
+            cyb_index = market_overview.get("cyb_index") if isinstance(market_overview.get("cyb_index"), dict) else {}
+            prompt += f"""
+[MARKET_CONTEXT] 大盘与市场背景（辅助参考）
+═══════════════════════════════════════════════════════════
+上证指数: {_fmt_pct(sh_index.get('change_pct'))}
+深证成指: {_fmt_pct(sz_index.get('change_pct'))}
+创业板指: {_fmt_pct(cyb_index.get('change_pct'))}
+上涨/下跌家数: {market_overview.get('up_count', 'N/A')} / {market_overview.get('down_count', 'N/A')}
+上涨家数占比: {_fmt_number(market_overview.get('up_ratio'))}%
+涨停/跌停家数: {market_overview.get('limit_up', 'N/A')} / {market_overview.get('limit_down', 'N/A')}
+情绪解读: {limit_stats.get('interpretation', 'N/A')}
+涨停占优比例: {limit_stats.get('limit_ratio', 'N/A')}
+北向资金净流入: {_fmt_number(north_flow.get('north_net_inflow'), digits=2, signed=True, comma=True)}
+
+使用建议:
+- 将大盘强弱、市场广度和情绪温度作为盘中执行的背景参考
+- 若个股与大盘方向背离，重点识别其独立强弱，而不是机械跟随指数
+"""
+        sector_context = market_data.get("sector_context") if isinstance(market_data.get("sector_context"), dict) else {}
+        sector_performance = sector_context.get("sector_performance") if isinstance(sector_context.get("sector_performance"), dict) else {}
+        sector_fund_flow = sector_context.get("sector_fund_flow") if isinstance(sector_context.get("sector_fund_flow"), dict) else {}
+        leading_sectors = sector_context.get("leading_sectors") if isinstance(sector_context.get("leading_sectors"), list) else []
+        if sector_context:
+            leading_sector_text = " / ".join(
+                f"{item.get('sector', 'N/A')}({_fmt_pct(item.get('change_pct'))})"
+                for item in leading_sectors[:3]
+            ) or "N/A"
+            prompt += f"""
+[SECTOR_CONTEXT] 所属板块背景（辅助参考）
+═══════════════════════════════════════════════════════════
+所属行业: {sector_context.get('industry', 'N/A') or 'N/A'}
+匹配板块: {sector_context.get('matched_sector', 'N/A') or 'N/A'}
+板块涨跌幅: {_fmt_pct(sector_performance.get('change_pct'))}
+板块排名: {sector_context.get('sector_rank', 'N/A')} / {sector_context.get('sector_total_count', 'N/A')}
+板块龙头股: {sector_performance.get('top_stock', 'N/A')}
+板块上涨/下跌家数: {sector_performance.get('up_count', 'N/A')} / {sector_performance.get('down_count', 'N/A')}
+板块主力净流入: {_fmt_number(sector_fund_flow.get('main_net_inflow'), digits=2, signed=True, comma=True)}
+板块主力净流入占比: {_fmt_pct(sector_fund_flow.get('main_net_inflow_pct'))}
+当前领涨行业Top3: {leading_sector_text}
+
+使用建议:
+- 结合个股与所属板块是否共振，判断信号强弱与延续性
+- 若个股明显强于所属板块，可视为独立性更强；若弱于板块，则更可能受板块轮动影响
 """
         if strategy_context:
             prompt += f"""

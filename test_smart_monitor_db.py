@@ -80,6 +80,102 @@ class SmartMonitorDBTests(unittest.TestCase):
         self.assertEqual(decisions[1]["decision_time"], "2026-03-12 09:30:00")
         self.assertEqual(decisions[1]["monitor_levels"]["entry_min"], 1498.0)
 
+    def test_get_ai_decisions_exposes_intraday_decision_context(self):
+        decision_id = self.db.save_ai_decision(
+            {
+                "stock_code": "600519",
+                "stock_name": "贵州茅台",
+                "account_name": "默认账户",
+                "decision_time": "2026-04-10 10:30:00",
+                "trading_session": "上午盘",
+                "action": "HOLD",
+                "confidence": 76,
+                "reasoning": "高位量能衰减，先观察。",
+                "risk_level": "中",
+                "decision_context": {
+                    "intraday_bias": "high_level_stall",
+                    "intraday_bias_text": "价格靠近日内高位，但量能衰减",
+                    "intraday_signal_labels": ["价格运行在分时均价上方", "高位量能衰减"],
+                    "intraday_observations": ["当前价格接近日内高位"],
+                },
+                "market_data": {"current_price": 1450.0},
+                "account_info": {"account_name": "默认账户"},
+            }
+        )
+
+        decisions = self.db.get_ai_decisions(stock_code="600519", limit=5)
+
+        self.assertEqual(decisions[0]["id"], decision_id)
+        self.assertEqual(decisions[0]["decision_context"]["intraday_bias"], "high_level_stall")
+        self.assertEqual(decisions[0]["intraday_bias"], "high_level_stall")
+        self.assertEqual(decisions[0]["intraday_bias_text"], "价格靠近日内高位，但量能衰减")
+        self.assertEqual(decisions[0]["intraday_signal_labels"], ["价格运行在分时均价上方", "高位量能衰减"])
+        self.assertEqual(decisions[0]["intraday_observations"], ["当前价格接近日内高位"])
+
+    def test_get_ai_decision_intraday_summary_groups_actions_and_biases(self):
+        self.db.save_ai_decision(
+            {
+                "stock_code": "600519",
+                "stock_name": "贵州茅台",
+                "account_name": "默认账户",
+                "decision_time": "2026-04-10 10:00:00",
+                "trading_session": "上午盘",
+                "action": "HOLD",
+                "confidence": 78,
+                "reasoning": "高位量能衰减，先观察。",
+                "decision_context": {
+                    "intraday_bias": "high_level_stall",
+                    "intraday_signal_labels": ["价格运行在分时均价上方", "高位量能衰减"],
+                },
+            }
+        )
+        self.db.save_ai_decision(
+            {
+                "stock_code": "300750",
+                "stock_name": "宁德时代",
+                "account_name": "默认账户",
+                "decision_time": "2026-04-10 10:05:00",
+                "trading_session": "上午盘",
+                "action": "BUY",
+                "confidence": 83,
+                "reasoning": "低位回升，量能开始放大。",
+                "decision_context": {
+                    "intraday_bias": "low_level_rebound",
+                    "intraday_signal_labels": ["价格运行在分时均价上方"],
+                },
+            }
+        )
+        self.db.save_ai_decision(
+            {
+                "stock_code": "000001",
+                "stock_name": "平安银行",
+                "account_name": "默认账户",
+                "decision_time": "2026-04-10 10:10:00",
+                "trading_session": "上午盘",
+                "action": "SELL",
+                "confidence": 72,
+                "reasoning": "跌破分时均价，先减仓。",
+                "decision_context": {
+                    "intraday_bias": "vwap_breakdown",
+                    "intraday_signal_labels": ["价格跌破分时均价"],
+                },
+            }
+        )
+
+        summary = self.db.get_ai_decision_intraday_summary(limit=10)
+
+        self.assertEqual(summary["total"], 3)
+        self.assertEqual(summary["with_intraday_context"], 3)
+        self.assertEqual(summary["coverage_pct"], 100.0)
+        self.assertEqual(summary["action_counts"][0], {"action": "BUY", "count": 1})
+        self.assertEqual(summary["action_counts"][1], {"action": "HOLD", "count": 1})
+        self.assertEqual(summary["action_counts"][2], {"action": "SELL", "count": 1})
+        self.assertEqual(summary["intraday_bias_counts"][0]["intraday_bias"], "high_level_stall")
+        self.assertEqual(summary["intraday_bias_counts"][0]["count"], 1)
+        self.assertEqual(summary["intraday_bias_counts"][0]["action_counts"][0], {"action": "HOLD", "count": 1})
+        self.assertIn({"label": "价格运行在分时均价上方", "count": 2}, summary["signal_label_counts"])
+        self.assertEqual(summary["latest_decision_time"], "2026-04-10 10:10:00")
+
     def test_monitor_task_strategy_context_uses_latest_report_timestamp_across_scopes(self):
         success, _, asset_id = self.db.asset_service.promote_to_watchlist(
             symbol="600519",

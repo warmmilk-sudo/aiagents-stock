@@ -466,6 +466,38 @@ class PortfolioIntegrationTests(unittest.TestCase):
         self.assertEqual(decisions[0]["asset_id"], asset_id)
         self.assertEqual(decisions[0]["execution_mode"], "manual_only")
         self.assertEqual(decisions[0]["action_status"], "pending")
+        self.assertEqual(decisions[0]["decision_context"], {})
+
+    def test_save_ai_decision_derives_decision_context_from_market_data_intraday_context(self):
+        decision_id = self.smart_monitor_db.save_ai_decision(
+            {
+                "stock_code": "600519",
+                "stock_name": "贵州茅台",
+                "action": "HOLD",
+                "confidence": 83,
+                "reasoning": "分时高位量能衰减，先观察。",
+                "market_data": {
+                    "code": "600519",
+                    "intraday_context": {
+                        "intraday_bias": "high_level_stall",
+                        "intraday_bias_text": "价格靠近日内高位，但量能衰减",
+                        "intraday_signal_labels": ["价格运行在分时均价上方", "高位量能衰减"],
+                        "intraday_observations": ["当前价格接近日内高位"],
+                        "price_position_pct": 90.56,
+                        "last_5m_change_pct": -0.08,
+                    },
+                },
+                "account_info": {"cash": 1000},
+            }
+        )
+
+        decisions = self.smart_monitor_db.get_ai_decisions("600519", limit=5)
+
+        self.assertEqual(decisions[0]["id"], decision_id)
+        self.assertEqual(decisions[0]["intraday_bias"], "high_level_stall")
+        self.assertEqual(decisions[0]["intraday_bias_text"], "价格靠近日内高位，但量能衰减")
+        self.assertEqual(decisions[0]["intraday_signal_labels"], ["价格运行在分时均价上方", "高位量能衰减"])
+        self.assertEqual(decisions[0]["decision_context"]["price_position_pct"], 90.56)
 
     def test_smart_monitor_db_cleans_invalid_and_duplicate_notifications(self):
         canonical_path = Path(self.temp_dir.name) / "investment.db"

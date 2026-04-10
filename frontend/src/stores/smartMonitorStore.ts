@@ -4,6 +4,7 @@ import { persist } from "zustand/middleware";
 export interface SmartMonitorPageCache {
   systemStatus: unknown | null;
   tasks: unknown[];
+  decisionSummary?: unknown | null;
   decisions: unknown[];
   notifications: unknown[];
   monitorConfig?: unknown | null;

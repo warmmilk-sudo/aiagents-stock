@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import sqlite3
+from collections import Counter, defaultdict
 from datetime import datetime
 from typing import Dict, List, Optional
 
@@ -89,6 +90,7 @@ class SmartMonitorDB:
                 risk_level TEXT,
                 key_price_levels TEXT,
                 monitor_levels TEXT,
+                decision_context TEXT,
                 market_data TEXT,
                 account_info TEXT,
                 execution_mode TEXT DEFAULT 'manual_only',
@@ -122,6 +124,7 @@ class SmartMonitorDB:
         self._ensure_column(cursor, "ai_decisions", "execution_mode", "TEXT DEFAULT 'manual_only'")
         self._ensure_column(cursor, "ai_decisions", "action_status", "TEXT DEFAULT 'suggested'")
         self._ensure_column(cursor, "ai_decisions", "monitor_levels", "TEXT")
+        self._ensure_column(cursor, "ai_decisions", "decision_context", "TEXT")
         conn.commit()
         conn.close()
 
@@ -147,6 +150,34 @@ class SmartMonitorDB:
         if isinstance(value, str):
             return value
         return json.dumps(value, ensure_ascii=False)
+
+    @staticmethod
+    def _extract_decision_context_snapshot(payload: Dict) -> Dict:
+        explicit_context = payload.get("decision_context")
+        if isinstance(explicit_context, dict) and explicit_context:
+            return dict(explicit_context)
+
+        market_data = payload.get("market_data")
+        if not isinstance(market_data, dict):
+            return {}
+        intraday_context = market_data.get("intraday_context")
+        if not isinstance(intraday_context, dict) or not intraday_context:
+            return {}
+
+        snapshot = {
+            "intraday_bias": intraday_context.get("intraday_bias"),
+            "intraday_bias_text": intraday_context.get("intraday_bias_text"),
+            "intraday_signal_labels": intraday_context.get("intraday_signal_labels") if isinstance(intraday_context.get("intraday_signal_labels"), list) else [],
+            "intraday_observations": intraday_context.get("intraday_observations") if isinstance(intraday_context.get("intraday_observations"), list) else [],
+            "price_position_pct": intraday_context.get("price_position_pct"),
+            "last_5m_change_pct": intraday_context.get("last_5m_change_pct"),
+            "last_15m_change_pct": intraday_context.get("last_15m_change_pct"),
+            "last_30m_change_pct": intraday_context.get("last_30m_change_pct"),
+            "volume_acceleration_ratio": intraday_context.get("volume_acceleration_ratio"),
+            "intraday_vwap": intraday_context.get("intraday_vwap"),
+            "latest_trade_time": intraday_context.get("latest_trade_time"),
+        }
+        return {key: value for key, value in snapshot.items() if value not in (None, [], {}, "")}
 
     @staticmethod
     def _query_asset_binding_by_id(cursor: sqlite3.Cursor, asset_id: int) -> Optional[Dict]:
@@ -273,6 +304,7 @@ class SmartMonitorDB:
             elif "account_name" in account_info:
                 account_info.pop("account_name", None)
             payload["account_info"] = account_info
+        payload["decision_context"] = self._extract_decision_context_snapshot(payload)
 
         action = str(payload.get("action") or "").upper()
         payload["execution_mode"] = payload.get("execution_mode") or "manual_only"
@@ -300,10 +332,10 @@ class SmartMonitorDB:
             INSERT INTO ai_decisions (
                 stock_code, stock_name, account_name, asset_id, portfolio_stock_id, origin_analysis_id,
                 decision_time, trading_session, action, confidence, reasoning, position_size_pct,
-                stop_loss_pct, take_profit_pct, risk_level, key_price_levels, monitor_levels, market_data,
+                stop_loss_pct, take_profit_pct, risk_level, key_price_levels, monitor_levels, decision_context, market_data,
                 account_info, execution_mode, action_status, executed, execution_result, created_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 payload.get("stock_code"),
@@ -323,6 +355,7 @@ class SmartMonitorDB:
                 payload.get("risk_level"),
                 self._serialize_json_field(payload.get("key_price_levels"), {}),
                 self._serialize_json_field(payload.get("monitor_levels"), {}),
+                self._serialize_json_field(payload.get("decision_context"), {}),
                 self._serialize_json_field(payload.get("market_data"), {}),
                 self._serialize_json_field(payload.get("account_info"), {}),
                 payload.get("execution_mode", "manual_only"),
@@ -367,6 +400,7 @@ class SmartMonitorDB:
             "risk_level",
             "key_price_levels",
             "monitor_levels",
+            "decision_context",
             "market_data",
             "account_info",
             "execution_mode",
@@ -409,6 +443,10 @@ class SmartMonitorDB:
                     updates["account_name"] = prepared["account_name"]
                 if decision.get("asset_id") is None and prepared.get("asset_id") is not None:
                     updates["asset_id"] = prepared["asset_id"]
+                existing_decision_context = decision.get("decision_context")
+                prepared_decision_context = self._serialize_json_field(prepared.get("decision_context"), {})
+                if (existing_decision_context in (None, "", "{}")) and prepared_decision_context not in (None, "", "{}"):
+                    updates["decision_context"] = prepared_decision_context
                 if updates and self._update_ai_decision_fields(cursor, int(decision["id"]), updates):
                     repaired_accounts += 1 if "account_name" in updates else 0
                     repaired_assets += 1 if "asset_id" in updates else 0
@@ -1137,6 +1175,7 @@ class SmartMonitorDB:
             decision = dict(row)
             decision["key_price_levels"] = json.loads(decision["key_price_levels"]) if decision.get("key_price_levels") else {}
             decision["monitor_levels"] = json.loads(decision["monitor_levels"]) if decision.get("monitor_levels") else {}
+            decision["decision_context"] = json.loads(decision["decision_context"]) if decision.get("decision_context") else {}
             decision["market_data"] = json.loads(decision["market_data"]) if decision.get("market_data") else {}
             decision["account_info"] = json.loads(decision["account_info"]) if decision.get("account_info") else {}
             decision["account_name"] = self._normalize_account_name_value(decision.get("account_name")) or DEFAULT_ACCOUNT_NAME
@@ -1147,8 +1186,97 @@ class SmartMonitorDB:
                 )
                 if normalized_info_account:
                     decision["account_info"]["account_name"] = normalized_info_account
+            decision_context = decision.get("decision_context") if isinstance(decision.get("decision_context"), dict) else {}
+            if decision_context:
+                decision["intraday_bias"] = decision_context.get("intraday_bias")
+                decision["intraday_bias_text"] = decision_context.get("intraday_bias_text")
+                decision["intraday_signal_labels"] = decision_context.get("intraday_signal_labels") or []
+                decision["intraday_observations"] = decision_context.get("intraday_observations") or []
             decisions.append(decision)
         return decisions
+
+    def get_ai_decision_intraday_summary(self, limit: int = 120) -> Dict:
+        summary_limit = max(1, int(limit or 120))
+        conn = self._connect()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT decision_time, action, decision_context
+            FROM ai_decisions
+            ORDER BY datetime(decision_time) DESC, id DESC
+            LIMIT ?
+            """,
+            (summary_limit,),
+        )
+        rows = [dict(row) for row in cursor.fetchall()]
+        conn.close()
+
+        action_counts: Counter[str] = Counter()
+        bias_counts: Counter[str] = Counter()
+        bias_action_counts: dict[str, Counter[str]] = defaultdict(Counter)
+        signal_label_counts: Counter[str] = Counter()
+        with_intraday_context = 0
+        latest_decision_time = rows[0].get("decision_time") if rows else None
+
+        for row in rows:
+            action = str(row.get("action") or "").upper() or "UNKNOWN"
+            action_counts[action] += 1
+
+            raw_context = row.get("decision_context")
+            try:
+                decision_context = json.loads(raw_context) if raw_context else {}
+            except json.JSONDecodeError:
+                decision_context = {}
+            if not isinstance(decision_context, dict) or not decision_context:
+                continue
+
+            with_intraday_context += 1
+            intraday_bias = str(decision_context.get("intraday_bias") or "unclassified").strip() or "unclassified"
+            bias_counts[intraday_bias] += 1
+            bias_action_counts[intraday_bias][action] += 1
+
+            signal_labels = decision_context.get("intraday_signal_labels")
+            if isinstance(signal_labels, list):
+                for label in signal_labels:
+                    normalized_label = str(label or "").strip()
+                    if normalized_label:
+                        signal_label_counts[normalized_label] += 1
+
+        def _sorted_count_items(counts: Counter[str], *, key_name: str) -> list[Dict[str, object]]:
+            return [
+                {key_name: key, "count": int(count)}
+                for key, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+            ]
+
+        def _sorted_action_breakdown(counts: Counter[str]) -> list[Dict[str, object]]:
+            return [
+                {"action": action, "count": int(count)}
+                for action, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+            ]
+
+        bias_rows = []
+        for bias, count in sorted(bias_counts.items(), key=lambda item: (-item[1], item[0])):
+            bias_rows.append(
+                {
+                    "intraday_bias": bias,
+                    "count": int(count),
+                    "action_counts": _sorted_action_breakdown(bias_action_counts[bias]),
+                }
+            )
+
+        total = len(rows)
+        coverage_pct = round((with_intraday_context / total * 100) if total else 0.0, 1)
+
+        return {
+            "limit": summary_limit,
+            "total": total,
+            "with_intraday_context": with_intraday_context,
+            "coverage_pct": coverage_pct,
+            "latest_decision_time": latest_decision_time,
+            "action_counts": _sorted_count_items(action_counts, key_name="action"),
+            "intraday_bias_counts": bias_rows,
+            "signal_label_counts": _sorted_count_items(signal_label_counts, key_name="label")[:8],
+        }
 
     def update_decision_execution(self, decision_id: int, executed: bool, result: str):
         def _update() -> None:
