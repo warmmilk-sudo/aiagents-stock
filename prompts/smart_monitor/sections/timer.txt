@@ -1,0 +1,6 @@
+[TIMER] 当前交易时段
+═══════════════════════════════════════════════════════════
+当前时段: $session_name (北京时间$beijing_time)
+市场状态: $volatility
+时段建议: $recommendation
+可交易: $can_trade_text

@@ -1,0 +1,10 @@
+[EXECUTION_CONTEXT] 执行与持仓上下文
+═══════════════════════════════════════════════════════════
+参考可用资金: $available_cash
+参考总资产: $total_value
+当前持仓市值: $total_market_value
+当前仓位利用率: $position_usage_pct
+当前持仓笔数: $positions_count
+账户名称: $account_name
+资产ID: $asset_id
+持仓ID: $portfolio_stock_id

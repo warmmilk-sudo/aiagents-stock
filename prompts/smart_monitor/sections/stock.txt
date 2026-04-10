@@ -1,0 +1,15 @@
+[STOCK] 股票基本信息
+═══════════════════════════════════════════════════════════
+股票代码: $stock_code
+股票名称: $stock_name
+行情源: $data_source
+行情更新时间: $update_time
+当前价格: $current_price
+今日涨跌: $change_pct
+今日涨跌额: $change_amount
+最高价: $high
+最低价: $low
+开盘价: $open_price
+昨收价: $pre_close
+成交量: $volume
+成交额: $amount

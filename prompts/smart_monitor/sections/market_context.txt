@@ -1,0 +1,15 @@
+[MARKET_CONTEXT] 大盘与市场背景（辅助参考）
+═══════════════════════════════════════════════════════════
+上证指数: $sh_index_change_pct
+深证成指: $sz_index_change_pct
+创业板指: $cyb_index_change_pct
+上涨/下跌家数: $up_count / $down_count
+上涨家数占比: $up_ratio%
+涨停/跌停家数: $limit_up / $limit_down
+情绪解读: $interpretation
+涨停占优比例: $limit_ratio
+北向资金净流入: $north_net_inflow
+
+使用建议:
+- 将大盘强弱、市场广度和情绪温度作为盘中执行的背景参考
+- 若个股与大盘方向背离，重点识别其独立强弱，而不是机械跟随指数

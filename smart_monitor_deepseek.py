@@ -18,10 +18,27 @@ import requests
 import config
 from investment_db_utils import DEFAULT_ACCOUNT_NAME
 from model_routing import ModelTier, resolve_model_name
+from prompt_registry import build_messages, render_prompt
 
 
 class SmartMonitorDeepSeek:
     """A股智能盯盘 - DeepSeek AI决策引擎"""
+
+    SYSTEM_TEMPLATE = "smart_monitor/intraday_decision.system.txt"
+    USER_TEMPLATE = "smart_monitor/intraday_decision.user.txt"
+    SECTION_TIMER_TEMPLATE = "smart_monitor/sections/timer.txt"
+    SECTION_DATA_SCOPE_TEMPLATE = "smart_monitor/sections/data_scope.txt"
+    SECTION_REALTIME_FRESHNESS_TEMPLATE = "smart_monitor/sections/realtime_freshness.txt"
+    SECTION_STOCK_TEMPLATE = "smart_monitor/sections/stock.txt"
+    SECTION_TECHNICAL_TEMPLATE = "smart_monitor/sections/technical.txt"
+    SECTION_VOLUME_TEMPLATE = "smart_monitor/sections/volume.txt"
+    SECTION_EXECUTION_CONTEXT_TEMPLATE = "smart_monitor/sections/execution_context.txt"
+    SECTION_ACCOUNT_RISK_PROFILE_TEMPLATE = "smart_monitor/sections/account_risk_profile.txt"
+    SECTION_INTRADAY_FLOW_TEMPLATE = "smart_monitor/sections/intraday_flow.txt"
+    SECTION_STRATEGY_CONTEXT_TEMPLATE = "smart_monitor/sections/strategy_context.txt"
+    SECTION_AI_PATTERN_RECOGNITION_TEMPLATE = "smart_monitor/sections/ai_pattern_recognition.txt"
+    SECTION_POSITION_HOLDING_TEMPLATE = "smart_monitor/sections/position_holding.txt"
+    SECTION_POSITION_EMPTY_TEMPLATE = "smart_monitor/sections/position_empty.txt"
 
     def __init__(self, api_key: str, model: str = None,
                  lightweight_model: str = None, reasoning_model: str = None):
@@ -345,10 +362,8 @@ class SmartMonitorDeepSeek:
         # 获取交易时段
         session_info = self.get_trading_session()
         resolved_risk_profile = self._resolve_risk_profile(risk_profile)
-        
-        # 构建Prompt
-        prompt = self._build_a_stock_prompt(
-            stock_code, market_data, account_info, 
+        messages = self._build_prompt_messages(
+            stock_code, market_data, account_info,
             has_position, session_info, position_cost, position_quantity,
             account_name=account_name,
             asset_id=asset_id,
@@ -356,156 +371,6 @@ class SmartMonitorDeepSeek:
             strategy_context=strategy_context,
             risk_profile=resolved_risk_profile,
         )
-        
-        system_prompt = f"""你是一位资深的A股盘中执行分析专家，拥有15年实战经验。
-
-你的职责是盘中战术执行，而不是重新做一遍盘后投资研究。
-如果提供了 strategy_context，请把它视为最新的战略基线，只围绕实时行情、持仓盈亏和该基线决定是否执行 BUY / SELL / HOLD。
-不要重新给出新的长期估值框架，不要扩展新的长期目标价体系。
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-⚠️ A股交易规则（与币圈完全不同！）
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-[CRITICAL] T+1规则：
-- 今天买入的股票，**今天不能卖出**，必须等到下一个交易日
-- 这意味着：一旦买入，至少要持有到明天才能卖出
-- 因此买入决策必须**极其谨慎**，不能像币圈那样快进快出
-
-[CRITICAL] 涨跌停限制：
-- 主板/中小板：±10%涨跌停
-- 创业板/科创板：±20%涨跌停
-- ST股票：±5%涨跌停
-- 一旦涨停，很难买入；一旦跌停，很难卖出
-
-[CRITICAL] 交易时间：
-- 上午：9:30-11:30
-- 下午：13:00-15:00
-- 其他时间不能交易
-
-[CRITICAL] 只能做多：
-- A股不能做空（融券门槛高，散户基本不用）
-- 只有买入和卖出两个动作
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🎯 你的交易哲学（适配T+1）
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-**因为T+1限制，你的策略必须更加稳健！**
-
-1. **买入前三思**：
-   - 买入后至少持有1天，所以必须确保趋势向上
-   - 不能像币圈那样"试探性开仓"，一旦买入就是承诺
-   - 最好在尾盘或第二天开盘前决策，避免盲目追高
-
-2. **止损更困难**：
-   - 如果今天买入后下跌，今天无法止损（T+1）
-   - 只能等明天再卖，可能面临更大亏损
-   - 因此：**宁可错过，不可做错**
-
-3. **技术分析更重要**：
-   - 日线级别趋势确认
-   - 支撑位/阻力位
-   - 成交量配合
-   - 量价关系判断
-
-4. **风险控制严格**：
-   - 当前共享单票仓位上限：{resolved_risk_profile['position_size_pct']}%（T+1风险大，不建议轻易超出）
-   - 当前共享总仓位上限：{resolved_risk_profile['total_position_pct']}%
-   - 当前共享止损位：-{resolved_risk_profile['stop_loss_pct']}%（明天开盘立即执行）
-   - 当前共享止盈位：+{resolved_risk_profile['take_profit_pct']}%（必要时可分批止盈）
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📊 可选的交易动作
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-**如果当前无持仓**：
-- action = "BUY"（买入）- 必须确保技术面强势，趋势向上
-- action = "HOLD"（观望）- 信号不明确时选择观望
-
-**如果当前有持仓**：
-- action = "SELL"（卖出）- 达到止盈/止损条件，或技术面转弱
-- action = "HOLD"（持有）- 趋势未改变，继续持有
-- ⚠️ 注意：如果股票是今天买入的，受T+1限制无法卖出，只能选择HOLD
-
-**绝对禁止**：
-- 不要在开盘前5分钟（9:30-9:35）买入，容易追高
-- 不要在尾盘最后5分钟（14:55-15:00）买入，可能被套
-- 不要逆趋势交易（趋势向下时买入）
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📈 买入信号（必须满足至少3个条件）
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-1. ✅ 趋势向上：价格 > MA5 > MA20 > MA60（多头排列）
-2. ✅ 量价配合：优先参考实时量比 > 1.2；若为盘中时段，再看“折算全天成交量/5日均量” > 1.2
-3. ✅ MACD金叉：MACD > 0 且DIF上穿DEA
-4. ✅ RSI健康：RSI在50-70区间（不超买不超卖）
-5. ✅ 突破关键位：突破前期高点或重要阻力位
-6. ✅ 布林带位置：价格接近布林中轨上方，有上行空间
-
-**加分项**：
-- 行业板块同步上涨
-- 有重大利好消息
-- 机构调研增加
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📉 卖出信号（满足任一条件立即卖出）
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-1. 🔴 止损触发：亏损 ≥ -{resolved_risk_profile['stop_loss_pct']}%（明天开盘立即卖出）
-2. 🟢 止盈触发：盈利 ≥ +{resolved_risk_profile['take_profit_pct']}%（可分批止盈）
-3. 🔴 趋势转弱：跌破MA20或MA60，且MACD死叉
-4. 🔴 放量下跌：价格下跌且实时量比明显放大，或折算全天成交量显著高于5日均量（主力出货）
-5. 🔴 技术破位：跌破重要支撑位
-6. 🔴 重大利空：公司公告重大利空消息
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-💬 返回格式（必须严格 JSON，对象外不要输出任何解释、Markdown、代码块）
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-{{
-    "action": "HOLD",
-    "confidence": 72,
-    "reasoning": "详细的决策理由，包括技术分析、风险评估等，200-300字",
-    "position_size_pct": {resolved_risk_profile['position_size_pct']},
-    "stop_loss_pct": {float(resolved_risk_profile['stop_loss_pct']):.1f},
-    "take_profit_pct": {float(resolved_risk_profile['take_profit_pct']):.1f},
-    "risk_level": "medium",
-    "key_price_levels": {{
-        "support": 12.34,
-        "resistance": 13.10,
-        "stop_loss": 11.72
-    }},
-    "monitor_levels": {{
-        "entry_min": 12.10,
-        "entry_max": 12.40,
-        "take_profit": 13.20,
-        "stop_loss": 11.70
-    }}
-}}
-
-要求：
-- 只能返回一个 JSON 对象本体，不要输出 ```json、注释、补充说明、前后缀文本。
-- 所有 key 和字符串值都必须使用双引号。
-- 不要输出尾逗号，不要使用 `//` 注释。
-- `position_size_pct` / `stop_loss_pct` / `take_profit_pct` 默认应遵守当前共享风控配置；若偏离，必须在 `reasoning` 里解释。
-- `monitor_levels` 必须输出 4 个明确价格，不要省略。
-- 如果沿用战略基线，也要把具体价格完整写入 `monitor_levels`。
-- `key_price_levels` 用于解释，`monitor_levels` 用于系统实时预警回写。
-
-**reasoning 示例**：
-"茅台当前价格1650元，日线级别呈多头排列（MA5 1645 > MA20 1620 > MA60 1580），
-MACD金叉且柱状图持续放大，RSI 62处于健康区间。实时量比1.35，按当前交易进度折算的全天成交量约为5日均量的135%，
-显示有增量资金入场。技术面支撑位在1630元附近，阻力位在1680元。综合判断短期
-趋势向上，但考虑T+1规则，建议仓位控制在{resolved_risk_profile['position_size_pct']}%，止损位设在1568元（-{resolved_risk_profile['stop_loss_pct']}%），
-止盈目标1815元（+{resolved_risk_profile['take_profit_pct']}%）。风险提示：如明日低开需谨慎..."
-"""
-
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": prompt}
-        ]
 
         try:
             response = self.chat_completion(
@@ -533,16 +398,16 @@ MACD金叉且柱状图持续放大，RSI 62处于健康区间。实时量比1.35
                 'error': str(e)
             }
 
-    def _build_a_stock_prompt(self, stock_code: str, market_data: Dict,
-                             account_info: Dict, has_position: bool,
-                             session_info: Dict, position_cost: float = 0,
-                             position_quantity: int = 0,
-                             account_name: str = DEFAULT_ACCOUNT_NAME,
-                             asset_id: Optional[int] = None,
-                             portfolio_stock_id: Optional[int] = None,
-                             strategy_context: Optional[Dict] = None,
-                             risk_profile: Optional[Dict[str, Any]] = None) -> str:
-        """构建A股分析提示词"""
+    def _build_prompt_context(self, stock_code: str, market_data: Dict,
+                              account_info: Dict, has_position: bool,
+                              session_info: Dict, position_cost: float = 0,
+                              position_quantity: int = 0,
+                              account_name: str = DEFAULT_ACCOUNT_NAME,
+                              asset_id: Optional[int] = None,
+                              portfolio_stock_id: Optional[int] = None,
+                              strategy_context: Optional[Dict] = None,
+                              risk_profile: Optional[Dict[str, Any]] = None) -> Dict[str, str]:
+        """Build template context for intraday decision prompts."""
         resolved_risk_profile = self._resolve_risk_profile(risk_profile)
 
         def _to_float(value: object) -> Optional[float]:
@@ -617,202 +482,207 @@ MACD金叉且柱状图持续放大，RSI 62处于健康区间。实时量比1.35
             else "说明: 当前为非连续交易时段或已收盘，可直接参考全天累计成交量与历史均量。"
         )
         intraday_context = market_data.get("intraday_context") if isinstance(market_data.get("intraday_context"), dict) else {}
-        prompt = f"""
-[TIMER] 当前交易时段
-═══════════════════════════════════════════════════════════
-当前时段: {session_info['session']} (北京时间{session_info.get('beijing_time') or f"{session_info['beijing_hour']:02d}:00"})
-市场状态: {session_info['volatility'].upper()}
-时段建议: {session_info['recommendation']}
-可交易: {'是' if session_info['can_trade'] else '否'}
+        timer_section = render_prompt(
+            self.SECTION_TIMER_TEMPLATE,
+            session_name=session_info["session"],
+            beijing_time=session_info.get("beijing_time") or f"{session_info['beijing_hour']:02d}:00",
+            volatility=str(session_info["volatility"]).upper(),
+            recommendation=session_info["recommendation"],
+            can_trade_text="是" if session_info["can_trade"] else "否",
+        )
 
-[DATA_SCOPE] 数据边界
-═══════════════════════════════════════════════════════════
-当前未注入可验证的实时大盘/板块数据，请不要自行假设当日指数、板块强弱或资金流背景。
+        data_scope_section = render_prompt(self.SECTION_DATA_SCOPE_TEMPLATE)
+        realtime_freshness = market_data.get("realtime_freshness") if isinstance(market_data.get("realtime_freshness"), dict) else {}
 
-[STOCK] 股票基本信息
-═══════════════════════════════════════════════════════════
-股票代码: {stock_code}
-股票名称: {market_data.get('name', 'N/A')}
-行情源: {str(market_data.get('data_source', 'N/A')).upper()}
-行情更新时间: {market_data.get('update_time', 'N/A')}
-当前价格: {current_price_text}
-今日涨跌: {_fmt_pct(market_data.get('change_pct'))}
-今日涨跌额: {_fmt_money(market_data.get('change_amount'), signed=True)}
-最高价: {_fmt_money(market_data.get('high'))}
-最低价: {_fmt_money(market_data.get('low'))}
-开盘价: {_fmt_money(market_data.get('open'))}
-昨收价: {_fmt_money(market_data.get('pre_close'))}
-成交量: {_fmt_volume(market_data.get('volume'))}
-成交额: {_fmt_money(market_data.get('amount'))}
+        def _freshness_label(status: Any) -> str:
+            mapping = {
+                "ready": "可直接用于盘中执行",
+                "degraded": "可参考但应保守使用",
+                "stale": "不适合盘中执行判断",
+                "fresh": "新鲜",
+                "stale_delay": "延迟过久",
+                "stale": "延迟过久",
+                "same_day_service_time": "同日服务响应时间",
+                "same_day_out_of_session": "同日但非交易时段",
+                "same_day_snapshot": "同日盘中快照",
+                "cross_day": "跨日旧数据",
+                "out_of_session": "时间不在交易时段",
+                "unavailable": "不可用",
+            }
+            return mapping.get(str(status or "").strip(), "未知")
 
-[TECHNICAL] 技术指标
-═══════════════════════════════════════════════════════════
-MA5: {_fmt_money(market_data.get('ma5'))}
-MA20: {_fmt_money(market_data.get('ma20'))}
-MA60: {_fmt_money(market_data.get('ma60'))}
-趋势判断: {'多头排列' if market_data.get('trend') == 'up' else '空头排列' if market_data.get('trend') == 'down' else 'N/A'}
+        quote_freshness = realtime_freshness.get("quote") if isinstance(realtime_freshness.get("quote"), dict) else {}
+        minute_freshness = realtime_freshness.get("minute") if isinstance(realtime_freshness.get("minute"), dict) else {}
+        trade_freshness = realtime_freshness.get("trade") if isinstance(realtime_freshness.get("trade"), dict) else {}
+        minute_quality = realtime_freshness.get("minute_quality") if isinstance(realtime_freshness.get("minute_quality"), dict) else {}
+        realtime_freshness_section = render_prompt(
+            self.SECTION_REALTIME_FRESHNESS_TEMPLATE,
+            asof_time=realtime_freshness.get("asof_time", "N/A"),
+            is_trading_now_text="是" if realtime_freshness.get("is_trading_now") else "否",
+            intraday_decision_ready_text="是" if realtime_freshness.get("intraday_decision_ready") else "否",
+            overall_status_text=_freshness_label(realtime_freshness.get("overall_status")),
+            quote_timestamp=quote_freshness.get("timestamp", "N/A"),
+            quote_status_text=_freshness_label(quote_freshness.get("status")),
+            minute_timestamp=minute_freshness.get("timestamp", "N/A"),
+            minute_status_text=_freshness_label(minute_freshness.get("status")),
+            trade_timestamp=trade_freshness.get("timestamp", "N/A"),
+            trade_status_text=_freshness_label(trade_freshness.get("status")),
+            minute_coverage_ratio_text=(
+                f"{float(minute_quality.get('coverage_ratio')) * 100:.1f}%"
+                if minute_quality.get("coverage_ratio") is not None
+                else "N/A"
+            ),
+            minute_max_gap_text=(
+                f"{int(minute_quality.get('max_gap'))} 分钟"
+                if minute_quality.get("max_gap") is not None
+                else "N/A"
+            ),
+            minute_quality_text=minute_quality.get("label", "未提供分时质量"),
+            freshness_summary=realtime_freshness.get("summary", "未提供实时新鲜度校验结果"),
+        )
 
-MACD:
-  DIF: {_fmt_number(market_data.get('macd_dif'), digits=4)}
-  DEA: {_fmt_number(market_data.get('macd_dea'), digits=4)}
-  MACD: {_fmt_number(market_data.get('macd'), digits=4)}
+        rsi6_value = _to_float(market_data.get("rsi6"))
+        if rsi6_value is not None and rsi6_value > 80:
+            rsi6_state = "[超买]"
+        elif rsi6_value is not None and rsi6_value < 20:
+            rsi6_state = "[超卖]"
+        elif rsi6_value is not None:
+            rsi6_state = "[正常]"
+        else:
+            rsi6_state = "[N/A]"
 
-RSI(6): {_fmt_number(market_data.get('rsi6'))} {'[超买]' if _to_float(market_data.get('rsi6')) is not None and _to_float(market_data.get('rsi6')) > 80 else '[超卖]' if _to_float(market_data.get('rsi6')) is not None and _to_float(market_data.get('rsi6')) < 20 else '[正常]' if _to_float(market_data.get('rsi6')) is not None else '[N/A]'}
-RSI(12): {_fmt_number(market_data.get('rsi12'))}
-RSI(24): {_fmt_number(market_data.get('rsi24'))}
+        stock_section = render_prompt(
+            self.SECTION_STOCK_TEMPLATE,
+            stock_code=stock_code,
+            stock_name=market_data.get("name", "N/A"),
+            data_source=str(market_data.get("data_source", "N/A")).upper(),
+            update_time=market_data.get("update_time", "N/A"),
+            current_price=current_price_text,
+            change_pct=_fmt_pct(market_data.get("change_pct")),
+            change_amount=_fmt_money(market_data.get("change_amount"), signed=True),
+            high=_fmt_money(market_data.get("high")),
+            low=_fmt_money(market_data.get("low")),
+            open_price=_fmt_money(market_data.get("open")),
+            pre_close=_fmt_money(market_data.get("pre_close")),
+            volume=_fmt_volume(market_data.get("volume")),
+            amount=_fmt_money(market_data.get("amount")),
+        )
 
-KDJ:
-  K: {_fmt_number(market_data.get('kdj_k'))}
-  D: {_fmt_number(market_data.get('kdj_d'))}
-  J: {_fmt_number(market_data.get('kdj_j'))}
+        technical_section = render_prompt(
+            self.SECTION_TECHNICAL_TEMPLATE,
+            ma5=_fmt_money(market_data.get("ma5")),
+            ma20=_fmt_money(market_data.get("ma20")),
+            ma60=_fmt_money(market_data.get("ma60")),
+            trend_label="多头排列" if market_data.get("trend") == "up" else "空头排列" if market_data.get("trend") == "down" else "N/A",
+            macd_dif=_fmt_number(market_data.get("macd_dif"), digits=4),
+            macd_dea=_fmt_number(market_data.get("macd_dea"), digits=4),
+            macd=_fmt_number(market_data.get("macd"), digits=4),
+            rsi6=_fmt_number(market_data.get("rsi6")),
+            rsi6_state=rsi6_state,
+            rsi12=_fmt_number(market_data.get("rsi12")),
+            rsi24=_fmt_number(market_data.get("rsi24")),
+            kdj_k=_fmt_number(market_data.get("kdj_k")),
+            kdj_d=_fmt_number(market_data.get("kdj_d")),
+            kdj_j=_fmt_number(market_data.get("kdj_j")),
+            boll_upper=_fmt_money(market_data.get("boll_upper")),
+            boll_mid=_fmt_money(market_data.get("boll_mid")),
+            boll_lower=_fmt_money(market_data.get("boll_lower")),
+            boll_position=market_data.get("boll_position", "N/A") or "N/A",
+        )
 
-布林带:
-  上轨: {_fmt_money(market_data.get('boll_upper'))}
-  中轨: {_fmt_money(market_data.get('boll_mid'))}
-  下轨: {_fmt_money(market_data.get('boll_lower'))}
-  位置: {market_data.get('boll_position', 'N/A') or 'N/A'}
+        volume_section = render_prompt(
+            self.SECTION_VOLUME_TEMPLATE,
+            current_volume=_fmt_volume(current_volume),
+            trading_progress=trading_progress_text,
+            projected_full_day_volume=_fmt_volume(projected_full_day_volume),
+            vol_ma5=_fmt_volume(market_data.get("vol_ma5")),
+            realtime_volume_ratio=_fmt_number(realtime_volume_ratio),
+            realtime_volume_state=_volume_state_label(realtime_volume_ratio),
+            projected_volume_ratio_vs_vol_ma5=_fmt_number(projected_volume_ratio_vs_vol_ma5),
+            projected_volume_state=_volume_state_label(projected_volume_ratio_vs_vol_ma5),
+            intraday_volume_note=intraday_volume_note,
+            turnover_rate_line=turnover_rate_line.strip(),
+        )
 
-[VOLUME] 量能分析
-═══════════════════════════════════════════════════════════
-当前累计成交量: {_fmt_volume(current_volume)}
-交易时段进度: {trading_progress_text}
-按当前节奏折算全天成交量: {_fmt_volume(projected_full_day_volume)}
-5日均量: {_fmt_volume(market_data.get('vol_ma5'))}
-实时量比: {_fmt_number(realtime_volume_ratio)} ({_volume_state_label(realtime_volume_ratio)})
-折算全天成交量/5日均量: {_fmt_number(projected_volume_ratio_vs_vol_ma5)} ({_volume_state_label(projected_volume_ratio_vs_vol_ma5)})
-{intraday_volume_note}
-{turnover_rate_line}
+        execution_context_section = render_prompt(
+            self.SECTION_EXECUTION_CONTEXT_TEMPLATE,
+            available_cash=f"¥{account_info.get('available_cash', 0):,.2f}",
+            total_value=f"¥{account_info.get('total_value', 0):,.2f}",
+            total_market_value=f"¥{account_info.get('total_market_value', 0):,.2f}",
+            position_usage_pct=f"{account_info.get('position_usage_pct', 0) * 100:.2f}%",
+            positions_count=account_info.get("positions_count", 0),
+            account_name=account_name,
+            asset_id=asset_id or "N/A",
+            portfolio_stock_id=portfolio_stock_id or "N/A",
+        )
 
-[EXECUTION_CONTEXT] 执行与持仓上下文
-═══════════════════════════════════════════════════════════
-参考可用资金: ¥{account_info.get('available_cash', 0):,.2f}
-参考总资产: ¥{account_info.get('total_value', 0):,.2f}
-当前持仓市值: ¥{account_info.get('total_market_value', 0):,.2f}
-当前仓位利用率: {account_info.get('position_usage_pct', 0) * 100:.2f}%
-当前持仓笔数: {account_info.get('positions_count', 0)}
-账户名称: {account_name}
-资产ID: {asset_id or 'N/A'}
-持仓ID: {portfolio_stock_id or 'N/A'}
-
-[ACCOUNT_RISK_PROFILE] 共享风控约束 ⭐ 重要
-═══════════════════════════════════════════════════════════
-单票参考仓位上限: {resolved_risk_profile['position_size_pct']}%
-总仓位参考上限: {resolved_risk_profile['total_position_pct']}%
-默认止损线: -{resolved_risk_profile['stop_loss_pct']}%
-默认止盈线: +{resolved_risk_profile['take_profit_pct']}%
-
-执行要求:
-- 若无充分理由，优先遵守上述共享风控设置
-- 返回的 `position_size_pct` / `stop_loss_pct` / `take_profit_pct` 应与该共享配置一致或给出偏离理由
-"""
+        account_risk_profile_section = render_prompt(
+            self.SECTION_ACCOUNT_RISK_PROFILE_TEMPLATE,
+            position_size_pct=resolved_risk_profile["position_size_pct"],
+            total_position_pct=resolved_risk_profile["total_position_pct"],
+            stop_loss_pct=resolved_risk_profile["stop_loss_pct"],
+            take_profit_pct=resolved_risk_profile["take_profit_pct"],
+        )
+        optional_sections: List[str] = []
         if intraday_context:
             observations = intraday_context.get("intraday_observations") if isinstance(intraday_context.get("intraday_observations"), list) else []
             observation_text = " / ".join(str(item) for item in observations[:4] if item) or "N/A"
             signal_labels = intraday_context.get("intraday_signal_labels") if isinstance(intraday_context.get("intraday_signal_labels"), list) else []
             signal_label_text = " / ".join(str(item) for item in signal_labels[:4] if item) or "N/A"
-            prompt += f"""
-[INTRADAY_FLOW] TDX分时行为特征（实时参考）
-═══════════════════════════════════════════════════════════
-分时样本数: {intraday_context.get('minute_point_count', 'N/A')}
-日内高点: {_fmt_money(intraday_context.get('intraday_high'))}
-日内低点: {_fmt_money(intraday_context.get('intraday_low'))}
-日内振幅: {_fmt_pct(intraday_context.get('intraday_range_pct'))}
-分时VWAP: {_fmt_money(intraday_context.get('intraday_vwap'))}
-当前价所处日内位置: {_fmt_number(intraday_context.get('price_position_pct'))}% ({_intraday_position_label(intraday_context.get('price_position_pct'))})
-近5分钟涨跌: {_fmt_pct(intraday_context.get('last_5m_change_pct'))}
-近15分钟涨跌: {_fmt_pct(intraday_context.get('last_15m_change_pct'))}
-近30分钟涨跌: {_fmt_pct(intraday_context.get('last_30m_change_pct'))}
-近5分钟成交量: {_fmt_volume(intraday_context.get('recent_5m_volume'))}
-前5分钟成交量: {_fmt_volume(intraday_context.get('previous_5m_volume'))}
-近5分钟量能加速度: {_fmt_number(intraday_context.get('volume_acceleration_ratio'))} ({_volume_state_label(intraday_context.get('volume_acceleration_ratio'))})
-逐笔成交笔数: {intraday_context.get('trade_tick_count', 'N/A')}
-逐笔最新时间: {intraday_context.get('latest_trade_time', 'N/A')}
-平均单笔成交量: {_fmt_volume(intraday_context.get('avg_trade_volume'))}
-最大单笔成交量: {_fmt_volume(intraday_context.get('largest_trade_volume'))}
-盘中偏向: {intraday_context.get('intraday_bias_text', 'N/A')}
-盘中标签: {signal_label_text}
-实时观察: {observation_text}
-
-使用建议:
-- 重点识别是回落承接、横盘蓄势，还是短线放量拉升/放量回落
-- 若价格靠近日内高位但量能衰减，需警惕冲高回落；若价格回踩但承接稳定，可提升延续性判断
-"""
-        market_context = market_data.get("market_context") if isinstance(market_data.get("market_context"), dict) else {}
-        market_overview = market_context.get("market_overview") if isinstance(market_context.get("market_overview"), dict) else {}
-        limit_stats = market_context.get("limit_stats") if isinstance(market_context.get("limit_stats"), dict) else {}
-        north_flow = market_context.get("north_flow") if isinstance(market_context.get("north_flow"), dict) else {}
-        if market_overview or limit_stats or north_flow:
-            sh_index = market_overview.get("sh_index") if isinstance(market_overview.get("sh_index"), dict) else {}
-            sz_index = market_overview.get("sz_index") if isinstance(market_overview.get("sz_index"), dict) else {}
-            cyb_index = market_overview.get("cyb_index") if isinstance(market_overview.get("cyb_index"), dict) else {}
-            prompt += f"""
-[MARKET_CONTEXT] 大盘与市场背景（辅助参考）
-═══════════════════════════════════════════════════════════
-上证指数: {_fmt_pct(sh_index.get('change_pct'))}
-深证成指: {_fmt_pct(sz_index.get('change_pct'))}
-创业板指: {_fmt_pct(cyb_index.get('change_pct'))}
-上涨/下跌家数: {market_overview.get('up_count', 'N/A')} / {market_overview.get('down_count', 'N/A')}
-上涨家数占比: {_fmt_number(market_overview.get('up_ratio'))}%
-涨停/跌停家数: {market_overview.get('limit_up', 'N/A')} / {market_overview.get('limit_down', 'N/A')}
-情绪解读: {limit_stats.get('interpretation', 'N/A')}
-涨停占优比例: {limit_stats.get('limit_ratio', 'N/A')}
-北向资金净流入: {_fmt_number(north_flow.get('north_net_inflow'), digits=2, signed=True, comma=True)}
-
-使用建议:
-- 将大盘强弱、市场广度和情绪温度作为盘中执行的背景参考
-- 若个股与大盘方向背离，重点识别其独立强弱，而不是机械跟随指数
-"""
-        sector_context = market_data.get("sector_context") if isinstance(market_data.get("sector_context"), dict) else {}
-        sector_performance = sector_context.get("sector_performance") if isinstance(sector_context.get("sector_performance"), dict) else {}
-        sector_fund_flow = sector_context.get("sector_fund_flow") if isinstance(sector_context.get("sector_fund_flow"), dict) else {}
-        leading_sectors = sector_context.get("leading_sectors") if isinstance(sector_context.get("leading_sectors"), list) else []
-        if sector_context:
-            leading_sector_text = " / ".join(
-                f"{item.get('sector', 'N/A')}({_fmt_pct(item.get('change_pct'))})"
-                for item in leading_sectors[:3]
-            ) or "N/A"
-            prompt += f"""
-[SECTOR_CONTEXT] 所属板块背景（辅助参考）
-═══════════════════════════════════════════════════════════
-所属行业: {sector_context.get('industry', 'N/A') or 'N/A'}
-匹配板块: {sector_context.get('matched_sector', 'N/A') or 'N/A'}
-板块涨跌幅: {_fmt_pct(sector_performance.get('change_pct'))}
-板块排名: {sector_context.get('sector_rank', 'N/A')} / {sector_context.get('sector_total_count', 'N/A')}
-板块龙头股: {sector_performance.get('top_stock', 'N/A')}
-板块上涨/下跌家数: {sector_performance.get('up_count', 'N/A')} / {sector_performance.get('down_count', 'N/A')}
-板块主力净流入: {_fmt_number(sector_fund_flow.get('main_net_inflow'), digits=2, signed=True, comma=True)}
-板块主力净流入占比: {_fmt_pct(sector_fund_flow.get('main_net_inflow_pct'))}
-当前领涨行业Top3: {leading_sector_text}
-
-使用建议:
-- 结合个股与所属板块是否共振，判断信号强弱与延续性
-- 若个股明显强于所属板块，可视为独立性更强；若弱于板块，则更可能受板块轮动影响
-"""
+            optional_sections.append(render_prompt(
+                self.SECTION_INTRADAY_FLOW_TEMPLATE,
+                minute_point_count=intraday_context.get("minute_point_count", "N/A"),
+                filled_minute_point_count=intraday_context.get("filled_minute_point_count", "N/A"),
+                minute_coverage_ratio=(
+                    f"{float(intraday_context.get('minute_coverage_ratio')) * 100:.1f}%"
+                    if intraday_context.get("minute_coverage_ratio") is not None
+                    else "N/A"
+                ),
+                max_minute_gap=(
+                    f"{int(intraday_context.get('max_minute_gap'))} 分钟"
+                    if intraday_context.get("max_minute_gap") is not None
+                    else "N/A"
+                ),
+                intraday_high=_fmt_money(intraday_context.get("intraday_high")),
+                intraday_low=_fmt_money(intraday_context.get("intraday_low")),
+                intraday_range_pct=_fmt_pct(intraday_context.get("intraday_range_pct")),
+                intraday_vwap=_fmt_money(intraday_context.get("intraday_vwap")),
+                price_position_pct=_fmt_number(intraday_context.get("price_position_pct")),
+                intraday_position_label=_intraday_position_label(intraday_context.get("price_position_pct")),
+                last_5m_change_pct=_fmt_pct(intraday_context.get("last_5m_change_pct")),
+                last_15m_change_pct=_fmt_pct(intraday_context.get("last_15m_change_pct")),
+                last_30m_change_pct=_fmt_pct(intraday_context.get("last_30m_change_pct")),
+                recent_5m_volume=_fmt_volume(intraday_context.get("recent_5m_volume")),
+                previous_5m_volume=_fmt_volume(intraday_context.get("previous_5m_volume")),
+                volume_acceleration_ratio=_fmt_number(intraday_context.get("volume_acceleration_ratio")),
+                volume_acceleration_state=_volume_state_label(intraday_context.get("volume_acceleration_ratio")),
+                trade_tick_count=intraday_context.get("trade_tick_count", "N/A"),
+                latest_trade_time=intraday_context.get("latest_trade_time", "N/A"),
+                avg_trade_volume=_fmt_volume(intraday_context.get("avg_trade_volume")),
+                largest_trade_volume=_fmt_volume(intraday_context.get("largest_trade_volume")),
+                intraday_bias_text=intraday_context.get("intraday_bias_text", "N/A"),
+                signal_label_text=signal_label_text,
+                observation_text=observation_text,
+            ))
         if strategy_context:
-            prompt += f"""
-[STRATEGY_CONTEXT] 最新战略基线（来自盘后研究） ⭐ 重要
-═══════════════════════════════════════════════════════════
-分析时间: {strategy_context.get('analysis_date', 'N/A')}
-分析来源: {strategy_context.get('analysis_source', 'N/A')}
-战略评级: {strategy_context.get('rating', 'N/A')}
-战略摘要: {strategy_context.get('summary', 'N/A')}
-进场区间: {strategy_context.get('entry_min', 'N/A')} - {strategy_context.get('entry_max', 'N/A')}
-止盈位: {strategy_context.get('take_profit', 'N/A')}
-止损位: {strategy_context.get('stop_loss', 'N/A')}
-
-执行要求:
-- 优先沿用上述战略基线，不要重新发明长期结论
-- 你的任务是判断当前盘中是否需要执行、等待或退出
-"""
+            optional_sections.append(render_prompt(
+                self.SECTION_STRATEGY_CONTEXT_TEMPLATE,
+                analysis_date=strategy_context.get("analysis_date", "N/A"),
+                analysis_source=strategy_context.get("analysis_source", "N/A"),
+                rating=strategy_context.get("rating", "N/A"),
+                summary=strategy_context.get("summary", "N/A"),
+                entry_min=strategy_context.get("entry_min", "N/A"),
+                entry_max=strategy_context.get("entry_max", "N/A"),
+                take_profit=strategy_context.get("take_profit", "N/A"),
+                stop_loss=strategy_context.get("stop_loss", "N/A"),
+            ))
         # --- 注入语义化标签分析 ---
         labels = market_data.get('semantic_labels', [])
         if labels:
-            prompt += f"""
-[AI_PATTERN_RECOGNITION] AI形态识别标签 ⭐ 重要
-═══════════════════════════════════════════════════════════
-预处理引擎已发现以下关键技术形态，请在决策时重点参考：
-- {chr(10) + '- '.join(labels)}
-"""
+            optional_sections.append(render_prompt(
+                self.SECTION_AI_PATTERN_RECOGNITION_TEMPLATE,
+                labels_block="\n".join(f"- {label}" for label in labels if label),
+            ))
 
         # 如果已持有该股票
         if has_position and position_cost > 0 and position_quantity > 0:
@@ -827,34 +697,22 @@ KDJ:
                 else "N/A"
             )
             current_price_text = _fmt_money(current_price)
-            
-            prompt += f"""
-[POSITION] 当前持仓（{stock_code}） ⭐ 重要
-═══════════════════════════════════════════════════════════
-持仓数量: {position_quantity}股
-成本价: ¥{position_cost:.2f}
-当前价: {current_price_text}
-持仓市值: {current_total_text}
-浮动盈亏: {profit_loss_text}
 
-⚠️ T+1限制: 该股票可以卖出（不受T+1限制）
-
-💡 决策建议：
-- 如果盈利且技术指标转弱 → 建议止盈卖出
-- 如果亏损超过止损线（通常-{resolved_risk_profile['stop_loss_pct']}%）→ 建议止损卖出
-- 如果技术指标强势且未到止盈位 → 建议继续持有
-- 如果盈利且看好后市 → 可考虑加仓（但注意仓位控制）
-"""
+            position_section = render_prompt(
+                self.SECTION_POSITION_HOLDING_TEMPLATE,
+                stock_code=stock_code,
+                position_quantity=position_quantity,
+                position_cost=f"¥{position_cost:.2f}",
+                current_price=current_price_text,
+                current_total=current_total_text,
+                profit_loss_text=profit_loss_text,
+                stop_loss_pct=resolved_risk_profile["stop_loss_pct"],
+            )
         else:
-            prompt += f"""
-[POSITION] 当前无持仓
-═══════════════════════════════════════════════════════════
-可考虑买入，但必须确保：
-1. 技术面强势（满足至少3个买入信号）
-2. 有足够的安全边际
-3. 考虑T+1规则，买入后至少持有1天
-4. 控制仓位，建议单只股票仓位≤{resolved_risk_profile['position_size_pct']}%
-"""
+            position_section = render_prompt(
+                self.SECTION_POSITION_EMPTY_TEMPLATE,
+                position_size_pct=resolved_risk_profile["position_size_pct"],
+            )
 
         # 主力资金数据（已禁用 - 接口不稳定）
         # if 'main_force' in market_data:
@@ -870,9 +728,81 @@ KDJ:
         # 主力动向: {mf.get('trend', '观望')}
         # """
 
-        prompt += "\n请基于以上数据，给出交易决策（JSON格式）。"
-        
-        return prompt
+        optional_sections_text = "\n\n".join(section.strip() for section in optional_sections if str(section).strip())
+        if has_position:
+            position_mode_title = "当前有持仓。"
+            position_mode_rules = "\n".join([
+                "- 本次只允许在 SELL / HOLD 之间决策",
+                "- 不要讨论 BUY、加仓或重新开仓",
+                "- 先判断是否达到止盈/止损/破位条件，再判断是否继续持有",
+            ])
+        else:
+            position_mode_title = "当前无持仓。"
+            position_mode_rules = "\n".join([
+                "- 本次只允许在 BUY / HOLD 之间决策",
+                "- 不要讨论 SELL、减仓或止盈卖出",
+                "- 只有当战略基线支持且盘中信号足够清晰时，才允许给出 BUY",
+            ])
+        return {
+            "position_size_pct": str(resolved_risk_profile["position_size_pct"]),
+            "total_position_pct": str(resolved_risk_profile["total_position_pct"]),
+            "stop_loss_pct": str(resolved_risk_profile["stop_loss_pct"]),
+            "take_profit_pct": str(resolved_risk_profile["take_profit_pct"]),
+            "stop_loss_pct_float": f"{float(resolved_risk_profile['stop_loss_pct']):.1f}",
+            "take_profit_pct_float": f"{float(resolved_risk_profile['take_profit_pct']):.1f}",
+            "position_mode_title": position_mode_title,
+            "position_mode_rules": position_mode_rules,
+            "timer_section": timer_section.strip(),
+            "data_scope_section": data_scope_section,
+            "realtime_freshness_section": realtime_freshness_section.strip(),
+            "stock_section": stock_section.strip(),
+            "technical_section": technical_section.strip(),
+            "volume_section": volume_section.strip(),
+            "execution_context_section": execution_context_section.strip(),
+            "account_risk_profile_section": account_risk_profile_section.strip(),
+            "optional_sections": optional_sections_text,
+            "position_section": position_section.strip(),
+        }
+
+    def _build_prompt_messages(self, stock_code: str, market_data: Dict,
+                               account_info: Dict, has_position: bool,
+                               session_info: Dict, position_cost: float = 0,
+                               position_quantity: int = 0,
+                               account_name: str = DEFAULT_ACCOUNT_NAME,
+                               asset_id: Optional[int] = None,
+                               portfolio_stock_id: Optional[int] = None,
+                               strategy_context: Optional[Dict] = None,
+                               risk_profile: Optional[Dict[str, Any]] = None) -> List[Dict[str, str]]:
+        context = self._build_prompt_context(
+            stock_code, market_data, account_info,
+            has_position, session_info, position_cost, position_quantity,
+            account_name=account_name,
+            asset_id=asset_id,
+            portfolio_stock_id=portfolio_stock_id,
+            strategy_context=strategy_context,
+            risk_profile=risk_profile,
+        )
+        return build_messages(self.SYSTEM_TEMPLATE, self.USER_TEMPLATE, **context)
+
+    def _build_a_stock_prompt(self, stock_code: str, market_data: Dict,
+                              account_info: Dict, has_position: bool,
+                              session_info: Dict, position_cost: float = 0,
+                              position_quantity: int = 0,
+                              account_name: str = DEFAULT_ACCOUNT_NAME,
+                              asset_id: Optional[int] = None,
+                              portfolio_stock_id: Optional[int] = None,
+                              strategy_context: Optional[Dict] = None,
+                              risk_profile: Optional[Dict[str, Any]] = None) -> str:
+        """构建A股分析提示词。"""
+        return self._build_prompt_messages(
+            stock_code, market_data, account_info,
+            has_position, session_info, position_cost, position_quantity,
+            account_name=account_name,
+            asset_id=asset_id,
+            portfolio_stock_id=portfolio_stock_id,
+            strategy_context=strategy_context,
+            risk_profile=risk_profile,
+        )[1]["content"]
 
     @staticmethod
     def _iter_json_candidates(ai_response: str) -> List[str]:

@@ -1,0 +1,13 @@
+[STRATEGY_CONTEXT] 最新战略基线（来自盘后研究） ⭐ 重要
+═══════════════════════════════════════════════════════════
+分析时间: $analysis_date
+分析来源: $analysis_source
+战略评级: $rating
+战略摘要: $summary
+进场区间: $entry_min - $entry_max
+止盈位: $take_profit
+止损位: $stop_loss
+
+执行要求:
+- 优先沿用上述战略基线，不要重新发明长期结论
+- 你的任务是判断当前盘中是否需要执行、等待或退出

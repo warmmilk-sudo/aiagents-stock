@@ -1,0 +1,19 @@
+[REALTIME_FRESHNESS] 实时数据新鲜度校验
+═══════════════════════════════════════════════════════════
+校验时点: $asof_time
+当前是否处于交易时段: $is_trading_now_text
+盘中执行是否可直接依赖实时流: $intraday_decision_ready_text
+整体状态: $overall_status_text
+
+TDX 报价时间: $quote_timestamp ($quote_status_text)
+TDX 分时最后时间: $minute_timestamp ($minute_status_text)
+TDX 逐笔最后时间: $trade_timestamp ($trade_status_text)
+分时覆盖率: $minute_coverage_ratio_text
+最大连续缺口: $minute_max_gap_text
+分时质量: $minute_quality_text
+
+结论: $freshness_summary
+
+使用建议:
+- 若整体状态不是“可直接用于盘中执行”，优先把盘中数据当作辅助参考，而不是强触发依据
+- `quote` 的时间更接近服务响应时间，判断新鲜度时应更重视分时最后时间和逐笔最后时间

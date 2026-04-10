@@ -1,0 +1,28 @@
+[INTRADAY_FLOW] TDX分时行为特征（实时参考）
+═══════════════════════════════════════════════════════════
+分时样本数: $minute_point_count
+补齐后分时样本数: $filled_minute_point_count
+分时覆盖率: $minute_coverage_ratio
+最大连续缺口: $max_minute_gap
+日内高点: $intraday_high
+日内低点: $intraday_low
+日内振幅: $intraday_range_pct
+分时VWAP: $intraday_vwap
+当前价所处日内位置: $price_position_pct% ($intraday_position_label)
+近5分钟涨跌: $last_5m_change_pct
+近15分钟涨跌: $last_15m_change_pct
+近30分钟涨跌: $last_30m_change_pct
+近5分钟成交量: $recent_5m_volume
+前5分钟成交量: $previous_5m_volume
+近5分钟量能加速度: $volume_acceleration_ratio ($volume_acceleration_state)
+逐笔成交笔数: $trade_tick_count
+逐笔最新时间: $latest_trade_time
+平均单笔成交量: $avg_trade_volume
+最大单笔成交量: $largest_trade_volume
+盘中偏向: $intraday_bias_text
+盘中标签: $signal_label_text
+实时观察: $observation_text
+
+使用建议:
+- 重点识别是回落承接、横盘蓄势，还是短线放量拉升/放量回落
+- 若价格靠近日内高位但量能衰减，需警惕冲高回落；若价格回踩但承接稳定，可提升延续性判断

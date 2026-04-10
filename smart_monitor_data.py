@@ -4,20 +4,25 @@
 盘中分析可强制使用 TDX。
 """
 
+import json
 import logging
 import os
 import time
+from copy import deepcopy
 import pandas as pd
-from typing import Dict, Optional
-from datetime import datetime, timedelta
+from typing import Any, Dict, Optional
+from datetime import datetime, timedelta, time as dt_time
+from zoneinfo import ZoneInfo
 import config
+from smart_monitor_cache import SmartMonitorIndicatorCacheDB
 from tushare_utils import create_tushare_pro
 
 
 class SmartMonitorDataFetcher:
     """A股数据获取器（实时价优先 TDX，结构化日线优先 Tushare）"""
+    BEIJING_TZ = ZoneInfo("Asia/Shanghai")
     
-    def __init__(self, use_tdx: bool = None, tdx_base_url: str = None):
+    def __init__(self, use_tdx: bool = None, tdx_base_url: str = None, cache_db_path: str = None):
         """
         初始化数据获取器
         
@@ -30,6 +35,21 @@ class SmartMonitorDataFetcher:
             1,
             int(getattr(config, "SMART_MONITOR_INTRADAY_TDX_RETRY_COUNT", 3) or 3),
         )
+        self.tushare_daily_failure_cooldown_seconds = max(
+            30,
+            int(getattr(config, "SMART_MONITOR_TUSHARE_FAILURE_COOLDOWN_SECONDS", 300) or 300),
+        )
+        self._tushare_daily_indicator_cache: Dict[str, Dict[str, Any]] = {}
+        resolved_cache_db_path = str(
+            cache_db_path
+            or os.getenv("SMART_MONITOR_CACHE_DB_PATH", "")
+            or "smart_monitor_cache.db"
+        ).strip()
+        self.indicator_cache_db: Optional[SmartMonitorIndicatorCacheDB] = None
+        try:
+            self.indicator_cache_db = SmartMonitorIndicatorCacheDB(resolved_cache_db_path)
+        except Exception as exc:
+            self.logger.warning("智能盯盘落盘缓存初始化失败: %s", exc)
         
         # TDX数据源配置
         if use_tdx is None:
@@ -113,6 +133,236 @@ class SmartMonitorDataFetcher:
             self.logger.warning("[%s] 注入TDX盘中特征失败: %s", stock_code, exc)
         return result
 
+    @classmethod
+    def _beijing_now(cls) -> datetime:
+        return datetime.now(cls.BEIJING_TZ)
+
+    @staticmethod
+    def _is_trading_clock(local_dt: Optional[datetime]) -> bool:
+        if local_dt is None or local_dt.weekday() >= 5:
+            return False
+
+        current_time = local_dt.timetz().replace(tzinfo=None)
+        return (
+            dt_time(9, 30) <= current_time <= dt_time(11, 30)
+            or dt_time(13, 0) <= current_time <= dt_time(15, 0)
+        )
+
+    @classmethod
+    def _parse_beijing_timestamp(
+        cls,
+        value: Optional[str],
+        *,
+        reference_date=None,
+    ) -> Optional[datetime]:
+        if value in (None, "", "N/A"):
+            return None
+
+        text = str(value).strip()
+        if not text:
+            return None
+
+        try:
+            if "T" in text:
+                parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+            elif len(text) <= 8 and ":" in text:
+                fmt = "%H:%M:%S" if text.count(":") == 2 else "%H:%M"
+                parsed_time = datetime.strptime(text, fmt).time()
+                base_date = reference_date or cls._beijing_now().date()
+                parsed = datetime.combine(base_date, parsed_time)
+            else:
+                parsed = datetime.strptime(text, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            return None
+
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=cls.BEIJING_TZ)
+        return parsed.astimezone(cls.BEIJING_TZ)
+
+    @classmethod
+    def _classify_quote_freshness(cls, update_time: Optional[str], now: datetime) -> Dict[str, object]:
+        parsed = cls._parse_beijing_timestamp(update_time)
+        if parsed is None:
+            return {
+                "timestamp": update_time or "N/A",
+                "status": "unavailable",
+                "label": "不可用",
+                "same_day": False,
+            }
+
+        same_day = parsed.date() == now.date()
+        if same_day and cls._is_trading_clock(parsed):
+            status = "same_day_service_time"
+            label = "同日服务响应时间"
+        elif same_day:
+            status = "same_day_out_of_session"
+            label = "同日但非交易时段"
+        else:
+            status = "cross_day"
+            label = "跨日旧时间"
+
+        return {
+            "timestamp": parsed.strftime("%Y-%m-%d %H:%M:%S"),
+            "status": status,
+            "label": label,
+            "same_day": same_day,
+        }
+
+    @classmethod
+    def _classify_intraday_freshness(
+        cls,
+        timestamp_text: Optional[str],
+        now: datetime,
+        *,
+        reference_date=None,
+        max_age_minutes: int = 20,
+    ) -> Dict[str, object]:
+        parsed = cls._parse_beijing_timestamp(timestamp_text, reference_date=reference_date)
+        if parsed is None:
+            return {
+                "timestamp": timestamp_text or "N/A",
+                "status": "unavailable",
+                "label": "不可用",
+                "same_day": False,
+                "age_minutes": None,
+            }
+
+        same_day = parsed.date() == now.date()
+        in_session = cls._is_trading_clock(parsed)
+        is_trading_now = cls._is_trading_clock(now)
+        age_minutes = max(0.0, (now - parsed).total_seconds() / 60)
+
+        if not same_day:
+            status = "cross_day"
+            label = "跨日旧数据"
+        elif not in_session:
+            status = "out_of_session"
+            label = "时间不在交易时段"
+        elif not is_trading_now:
+            status = "same_day_snapshot"
+            label = "同日盘中快照"
+        elif age_minutes <= max_age_minutes:
+            status = "fresh"
+            label = "新鲜"
+        else:
+            status = "stale"
+            label = "延迟过久"
+
+        return {
+            "timestamp": parsed.strftime("%Y-%m-%d %H:%M:%S"),
+            "status": status,
+            "label": label,
+            "same_day": same_day,
+            "age_minutes": round(age_minutes, 2),
+        }
+
+    @classmethod
+    def _classify_minute_quality(cls, intraday_context: Dict[str, Any]) -> Dict[str, object]:
+        coverage_ratio_raw = intraday_context.get("minute_coverage_ratio")
+        max_gap_raw = intraday_context.get("max_minute_gap")
+        raw_count_raw = intraday_context.get("minute_point_count")
+        filled_count_raw = intraday_context.get("filled_minute_point_count")
+
+        try:
+            coverage_ratio = float(coverage_ratio_raw) if coverage_ratio_raw is not None else None
+        except (TypeError, ValueError):
+            coverage_ratio = None
+
+        try:
+            max_gap = int(max_gap_raw) if max_gap_raw is not None else 0
+        except (TypeError, ValueError):
+            max_gap = 0
+
+        try:
+            raw_count = int(raw_count_raw) if raw_count_raw is not None else None
+        except (TypeError, ValueError):
+            raw_count = None
+
+        try:
+            filled_count = int(filled_count_raw) if filled_count_raw is not None else None
+        except (TypeError, ValueError):
+            filled_count = None
+
+        if coverage_ratio is None:
+            status = "unavailable"
+            label = "未提供分时质量"
+        elif coverage_ratio >= 0.98 and max_gap <= 1:
+            status = "good"
+            label = "分时覆盖完整"
+        elif coverage_ratio >= 0.9 and max_gap <= 3:
+            status = "fair"
+            label = "分时存在少量缺口"
+        else:
+            status = "poor"
+            label = "分时缺口较多"
+
+        return {
+            "status": status,
+            "label": label,
+            "coverage_ratio": round(coverage_ratio, 4) if coverage_ratio is not None else None,
+            "max_gap": max_gap,
+            "raw_point_count": raw_count,
+            "filled_point_count": filled_count,
+        }
+
+    @classmethod
+    def _build_realtime_freshness(cls, result: Optional[Dict]) -> Dict[str, object]:
+        now = cls._beijing_now()
+        intraday_context = result.get("intraday_context") if isinstance((result or {}).get("intraday_context"), dict) else {}
+        quote_info = cls._classify_quote_freshness((result or {}).get("update_time"), now)
+        minute_info = cls._classify_intraday_freshness(
+            intraday_context.get("latest_minute_time"),
+            now,
+            reference_date=now.date(),
+        )
+        trade_info = cls._classify_intraday_freshness(
+            intraday_context.get("latest_trade_time"),
+            now,
+            reference_date=now.date(),
+        )
+        minute_quality = cls._classify_minute_quality(intraday_context)
+
+        is_trading_now = cls._is_trading_clock(now)
+        timing_ready = is_trading_now and (
+            minute_info["status"] == "fresh" or trade_info["status"] == "fresh"
+        )
+        quality_ready = minute_quality["status"] in {"good", "fair", "unavailable"}
+        intraday_ready = timing_ready and quality_ready
+
+        if intraday_ready:
+            overall_status = "ready"
+            summary = "TDX 分时/逐笔时间戳足够新鲜，且分时覆盖质量可接受，可用于盘中执行判断。"
+        elif timing_ready and not quality_ready:
+            overall_status = "degraded"
+            summary = "盘中时间戳仍然较新，但分时缺口较多；可参考价格方向，不宜过度依赖短周期节奏。"
+        elif quote_info["same_day"] and (minute_info["same_day"] or trade_info["same_day"]):
+            overall_status = "degraded"
+            summary = "存在同日行情或盘中快照，但新鲜度不足；可参考方向，不宜过度依赖盘中节奏。"
+        else:
+            overall_status = "stale"
+            summary = "缺少可验证的新鲜盘中时间戳，不适合做强执行性盘中判断。"
+
+        return {
+            "asof_time": now.strftime("%Y-%m-%d %H:%M:%S"),
+            "is_trading_now": is_trading_now,
+            "quote": quote_info,
+            "minute": minute_info,
+            "trade": trade_info,
+            "minute_quality": minute_quality,
+            "intraday_decision_ready": intraday_ready,
+            "overall_status": overall_status,
+            "summary": summary,
+        }
+
+    def _attach_realtime_freshness(self, result: Optional[Dict]) -> Dict:
+        if not result:
+            return result
+        try:
+            result["realtime_freshness"] = self._build_realtime_freshness(result)
+        except Exception as exc:
+            self.logger.warning("注入实时新鲜度校验失败: %s", exc)
+        return result
+
     def _log_timed_stage(self, stock_code: str, stage_name: str, started_at: float, success: bool) -> float:
         elapsed = time.perf_counter() - started_at
         self.logger.info(
@@ -123,6 +373,115 @@ class SmartMonitorDataFetcher:
             success,
         )
         return elapsed
+
+    def _get_tushare_daily_cache_key(self, stock_code: str) -> str:
+        return f"{stock_code}:{self._beijing_now().date().isoformat()}"
+
+    def _read_tushare_daily_indicator_cache(self, stock_code: str) -> Optional[Dict[str, Any]]:
+        cache_key = self._get_tushare_daily_cache_key(stock_code)
+        entry = self._tushare_daily_indicator_cache.get(cache_key)
+        if not isinstance(entry, dict):
+            entry = None
+            if self.indicator_cache_db is not None:
+                try:
+                    persisted = self.indicator_cache_db.get_daily_indicator_cache(cache_key)
+                except Exception as exc:
+                    self.logger.warning("[%s] 读取智能盯盘落盘缓存失败: %s", stock_code, exc)
+                    persisted = None
+
+                if isinstance(persisted, dict):
+                    payload = None
+                    raw_payload = persisted.get("payload_json")
+                    if raw_payload:
+                        try:
+                            payload = json.loads(str(raw_payload))
+                        except (TypeError, ValueError, json.JSONDecodeError):
+                            payload = None
+                    entry = {
+                        "status": persisted.get("status"),
+                        "value": payload,
+                        "expires_at": float(persisted.get("expires_at") or 0),
+                    }
+                    self._tushare_daily_indicator_cache[cache_key] = entry
+
+        if not isinstance(entry, dict):
+            return None
+
+        now_ts = time.time()
+        expires_at = float(entry.get("expires_at") or 0)
+        if expires_at and now_ts > expires_at:
+            self._tushare_daily_indicator_cache.pop(cache_key, None)
+            if self.indicator_cache_db is not None:
+                try:
+                    self.indicator_cache_db.delete_cache_entry(cache_key)
+                except Exception as exc:
+                    self.logger.warning("[%s] 删除过期智能盯盘落盘缓存失败: %s", stock_code, exc)
+            return None
+
+        status = entry.get("status")
+        if status == "success":
+            cached_value = entry.get("value")
+            if isinstance(cached_value, dict):
+                self.logger.info("[%s] 命中Tushare日线指标缓存，跳过重复查询", stock_code)
+                return {"status": "success", "value": deepcopy(cached_value)}
+            self._tushare_daily_indicator_cache.pop(cache_key, None)
+            return None
+
+        if status == "failure":
+            self.logger.info(
+                "[%s] Tushare日线指标处于失败冷却期，%.0fs后再重试",
+                stock_code,
+                max(0.0, expires_at - now_ts),
+            )
+            return {"status": "failure", "value": None}
+
+        return None
+
+    def _store_tushare_daily_indicator_cache(self, stock_code: str, indicators: Optional[Dict[str, Any]]) -> None:
+        cache_key = self._get_tushare_daily_cache_key(stock_code)
+        now = self._beijing_now()
+        trade_date = now.date().isoformat()
+        next_day = datetime.combine(now.date() + timedelta(days=1), dt_time(0, 5), tzinfo=self.BEIJING_TZ)
+
+        if isinstance(indicators, dict) and indicators:
+            entry = {
+                "status": "success",
+                "value": deepcopy(indicators),
+                "expires_at": next_day.timestamp(),
+            }
+            self._tushare_daily_indicator_cache[cache_key] = entry
+            if self.indicator_cache_db is not None:
+                try:
+                    self.indicator_cache_db.upsert_daily_indicator_cache(
+                        cache_key=cache_key,
+                        stock_code=stock_code,
+                        trade_date=trade_date,
+                        status="success",
+                        payload=entry["value"],
+                        expires_at=entry["expires_at"],
+                    )
+                except Exception as exc:
+                    self.logger.warning("[%s] 写入智能盯盘落盘缓存失败: %s", stock_code, exc)
+            return
+
+        entry = {
+            "status": "failure",
+            "value": None,
+            "expires_at": time.time() + self.tushare_daily_failure_cooldown_seconds,
+        }
+        self._tushare_daily_indicator_cache[cache_key] = entry
+        if self.indicator_cache_db is not None:
+            try:
+                self.indicator_cache_db.upsert_daily_indicator_cache(
+                    cache_key=cache_key,
+                    stock_code=stock_code,
+                    trade_date=trade_date,
+                    status="failure",
+                    payload=None,
+                    expires_at=entry["expires_at"],
+                )
+            except Exception as exc:
+                self.logger.warning("[%s] 写入智能盯盘失败冷却缓存失败: %s", stock_code, exc)
 
     def _call_tdx_with_retry(self, stock_code: str, operation_label: str, callback):
         last_error = ""
@@ -209,6 +568,7 @@ class SmartMonitorDataFetcher:
 
         result = self._merge_quote_and_indicators(quote, indicators)
         result = self._attach_tdx_intraday_context(stock_code, result)
+        result = self._attach_realtime_freshness(result)
         result.setdefault("technical_data_source", "tushare")
         result["precision_status"] = "validated"
         result["precision_mode"] = "tdx_quote_tushare_daily"
@@ -551,19 +911,28 @@ class SmartMonitorDataFetcher:
                 self.logger.warning(f"Tushare日线技术指标仅支持 daily，当前周期={period}")
                 return None
 
+            cached = self._read_tushare_daily_indicator_cache(stock_code)
+            if cached is not None:
+                return cached.get("value")
+
             df = self._fetch_tushare_daily_history(stock_code)
             if df is None:
+                self._store_tushare_daily_indicator_cache(stock_code, None)
                 return None
 
             indicators = self._calculate_all_indicators(df, stock_code)
             if indicators:
                 indicators["technical_data_source"] = "tushare"
                 indicators["technical_period"] = "daily"
+                self._store_tushare_daily_indicator_cache(stock_code, indicators)
+            else:
+                self._store_tushare_daily_indicator_cache(stock_code, None)
             return indicators
         except Exception as e:
             self.logger.error(f"Tushare获取历史数据失败 {stock_code}: {type(e).__name__}: {str(e)}")
             import traceback
             self.logger.debug(traceback.format_exc())
+            self._store_tushare_daily_indicator_cache(stock_code, None)
             return None
     
     def get_main_force_flow(self, stock_code: str, retry: int = 2) -> Optional[Dict]:
@@ -635,6 +1004,7 @@ class SmartMonitorDataFetcher:
             result.setdefault("precision_status", "best_effort")
             result.setdefault("precision_mode", "fallback_allowed")
             result = self._attach_tdx_intraday_context(stock_code, result)
+            result = self._attach_realtime_freshness(result)
         self.logger.info(
             "[%s] 综合数据获取结束，mode=%s，耗时 %.2fs，quote=%.2fs，indicators=%.2fs，success=%s，precision_status=%s",
             stock_code,

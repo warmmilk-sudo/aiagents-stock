@@ -137,8 +137,12 @@ class SmartMonitorTDXDataFetcherTests(unittest.TestCase):
             fetcher,
             "get_minute_data",
             return_value={
-                "count": 12,
+                "count": 16,
                 "points": [
+                    {"time": "09:56", "price": 9.96, "volume": 80},
+                    {"time": "09:57", "price": 9.97, "volume": 85},
+                    {"time": "09:58", "price": 9.98, "volume": 90},
+                    {"time": "09:59", "price": 9.99, "volume": 95},
                     {"time": "10:00", "price": 10.00, "volume": 100},
                     {"time": "10:01", "price": 10.02, "volume": 110},
                     {"time": "10:02", "price": 10.03, "volume": 120},
@@ -167,9 +171,14 @@ class SmartMonitorTDXDataFetcherTests(unittest.TestCase):
         ):
             context = fetcher.get_intraday_context("600519")
 
-        self.assertEqual(context["minute_point_count"], 12)
+        self.assertEqual(context["minute_point_count"], 16)
+        self.assertEqual(context["filled_minute_point_count"], 16)
+        self.assertEqual(context["minute_gap_count"], 0)
+        self.assertEqual(context["max_minute_gap"], 0)
+        self.assertAlmostEqual(context["minute_coverage_ratio"], 1.0, places=4)
+        self.assertEqual(context["latest_minute_time"], "10:11")
         self.assertAlmostEqual(context["intraday_high"], 10.30, places=4)
-        self.assertAlmostEqual(context["intraday_low"], 10.00, places=4)
+        self.assertAlmostEqual(context["intraday_low"], 9.96, places=4)
         self.assertAlmostEqual(context["price_position_pct"], 100.0, places=4)
         self.assertGreater(context["last_5m_change_pct"], 0)
         self.assertGreater(context["volume_acceleration_ratio"], 1)
@@ -179,6 +188,66 @@ class SmartMonitorTDXDataFetcherTests(unittest.TestCase):
         self.assertEqual(context["intraday_bias"], "trend_continuation")
         self.assertIn("高位放量延续", context["intraday_signal_labels"])
         self.assertIn("价格运行在分时均价上方", context["intraday_signal_labels"])
+
+    def test_get_intraday_context_uses_trading_clock_windows_across_lunch_break(self):
+        with patch.object(requests, "get", return_value=_FakeResponse(status_code=200, payload={"status": "ok"})):
+            fetcher = SmartMonitorTDXDataFetcher(base_url="http://tdx.example.com:8181")
+
+        with patch.object(
+            fetcher,
+            "get_minute_data",
+            return_value={
+                "count": 11,
+                "points": [
+                    {"time": "11:27", "price": 10.01, "volume": 100},
+                    {"time": "11:28", "price": 10.02, "volume": 120},
+                    {"time": "11:29", "price": 10.03, "volume": 140},
+                    {"time": "11:30", "price": 10.04, "volume": 160},
+                    {"time": "13:00", "price": 10.05, "volume": 180},
+                    {"time": "13:01", "price": 10.07, "volume": 200},
+                    {"time": "13:02", "price": 10.09, "volume": 220},
+                    {"time": "13:03", "price": 10.10, "volume": 240},
+                    {"time": "13:04", "price": 10.12, "volume": 260},
+                    {"time": "13:05", "price": 10.15, "volume": 280},
+                    {"time": "13:06", "price": 10.18, "volume": 300},
+                ],
+            },
+        ), patch.object(fetcher, "get_trade_data", return_value=None):
+            context = fetcher.get_intraday_context("600519")
+
+        expected_5m_change = (10.18 - 10.07) / 10.07 * 100
+        self.assertAlmostEqual(context["last_5m_change_pct"], expected_5m_change, places=4)
+        self.assertEqual(context["recent_5m_volume"], 220 + 240 + 260 + 280 + 300)
+        self.assertEqual(context["previous_5m_volume"], 120 + 140 + 160 + 180 + 200)
+        self.assertEqual(context["filled_minute_point_count"], 11)
+        self.assertEqual(context["minute_gap_count"], 0)
+
+    def test_get_intraday_context_fills_sparse_minute_gaps_with_zero_volume(self):
+        with patch.object(requests, "get", return_value=_FakeResponse(status_code=200, payload={"status": "ok"})):
+            fetcher = SmartMonitorTDXDataFetcher(base_url="http://tdx.example.com:8181")
+
+        with patch.object(
+            fetcher,
+            "get_minute_data",
+            return_value={
+                "count": 3,
+                "points": [
+                    {"time": "10:00", "price": 10.00, "volume": 100},
+                    {"time": "10:03", "price": 10.04, "volume": 150},
+                    {"time": "10:11", "price": 10.12, "volume": 220},
+                ],
+            },
+        ), patch.object(fetcher, "get_trade_data", return_value=None):
+            context = fetcher.get_intraday_context("600519")
+
+        expected_5m_change = (10.12 - 10.04) / 10.04 * 100
+        self.assertAlmostEqual(context["last_5m_change_pct"], expected_5m_change, places=4)
+        self.assertEqual(context["recent_5m_volume"], 0.0 + 0.0 + 0.0 + 0.0 + 220.0)
+        self.assertEqual(context["previous_5m_volume"], 0.0 + 0.0 + 150.0 + 0.0 + 0.0)
+        self.assertEqual(context["filled_minute_point_count"], 12)
+        self.assertEqual(context["minute_gap_count"], 9)
+        self.assertEqual(context["max_minute_gap"], 7)
+        self.assertAlmostEqual(context["minute_coverage_ratio"], 3 / 12, places=4)
 
 
 if __name__ == "__main__":

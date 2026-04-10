@@ -214,6 +214,17 @@ class SmartMonitorDeepSeekTests(unittest.TestCase):
                 "boll_position": "中轨上方",
                 "vol_ma5": 240000.0,
                 "volume_ratio": 1.35,
+                "realtime_freshness": {
+                    "asof_time": "2026-04-07 10:30:00",
+                    "is_trading_now": True,
+                    "intraday_decision_ready": False,
+                    "overall_status": "degraded",
+                    "summary": "存在同日行情或盘中快照，但新鲜度不足；可参考方向，不宜过度依赖盘中节奏。",
+                    "quote": {"timestamp": "2026-04-07 10:30:00", "status": "same_day_service_time"},
+                    "minute": {"timestamp": "N/A", "status": "unavailable"},
+                    "trade": {"timestamp": "N/A", "status": "unavailable"},
+                    "minute_quality": {"coverage_ratio": None, "max_gap": 0, "label": "未提供分时质量"},
+                },
             },
             account_info={
                 "available_cash": 100000.0,
@@ -237,12 +248,169 @@ class SmartMonitorDeepSeekTests(unittest.TestCase):
         self.assertIn("交易时段进度", prompt)
         self.assertIn("按当前节奏折算全天成交量", prompt)
         self.assertIn("折算全天成交量/5日均量", prompt)
-        self.assertIn("当前未注入可验证的实时大盘/板块数据", prompt)
+        self.assertIn("当前盘中决策不使用大盘/板块背景", prompt)
+        self.assertIn("[REALTIME_FRESHNESS]", prompt)
+        self.assertIn("盘中执行是否可直接依赖实时流: 否", prompt)
+        self.assertIn("分时质量: 未提供分时质量", prompt)
         self.assertIn("盘中累计成交量不能直接与历史全天均量比较", prompt)
         self.assertIn("实时量比: 1.35 (放量)", prompt)
         self.assertIn("折算全天成交量/5日均量: 2.00 (放量)", prompt)
 
-    def test_build_prompt_includes_market_and_sector_context(self):
+    def test_build_prompt_messages_uses_template_registry_layout(self):
+        client = SmartMonitorDeepSeek(api_key="test-key")
+
+        messages = client._build_prompt_messages(
+            stock_code="600519",
+            market_data={
+                "name": "贵州茅台",
+                "current_price": 1650.0,
+                "change_pct": 1.8,
+                "change_amount": 29.2,
+                "volume": 120000,
+                "ma5": 1645.0,
+                "ma20": 1620.0,
+                "ma60": 1580.0,
+                "trend": "up",
+                "macd_dif": 1.2,
+                "macd_dea": 1.0,
+                "macd": 0.4,
+                "rsi6": 62.0,
+                "rsi12": 58.0,
+                "rsi24": 55.0,
+                "kdj_k": 70.0,
+                "kdj_d": 65.0,
+                "kdj_j": 80.0,
+                "boll_upper": 1680.0,
+                "boll_mid": 1638.0,
+                "boll_lower": 1596.0,
+                "boll_position": "中轨上方",
+                "vol_ma5": 240000.0,
+                "volume_ratio": 1.35,
+                "realtime_freshness": {
+                    "asof_time": "2026-04-10 10:30:00",
+                    "is_trading_now": True,
+                    "intraday_decision_ready": True,
+                    "overall_status": "ready",
+                    "summary": "TDX 分时/逐笔时间戳足够新鲜，且分时覆盖质量可接受，可用于盘中执行判断。",
+                    "quote": {"timestamp": "2026-04-10 10:30:00", "status": "same_day_service_time"},
+                    "minute": {"timestamp": "2026-04-10 10:29:00", "status": "fresh"},
+                    "trade": {"timestamp": "2026-04-10 10:29:58", "status": "fresh"},
+                    "minute_quality": {"coverage_ratio": 1.0, "max_gap": 0, "label": "分时覆盖完整"},
+                },
+            },
+            account_info={
+                "available_cash": 100000.0,
+                "total_value": 300000.0,
+                "total_market_value": 200000.0,
+                "position_usage_pct": 0.66,
+                "positions_count": 3,
+            },
+            has_position=False,
+            session_info={
+                "session": "上午盘",
+                "volatility": "high",
+                "recommendation": "交易活跃，波动较大",
+                "beijing_hour": 10,
+                "beijing_time": "10:30",
+                "can_trade": True,
+            },
+            risk_profile={
+                "position_size_pct": 25,
+                "total_position_pct": 70,
+                "stop_loss_pct": 6,
+                "take_profit_pct": 15,
+            },
+        )
+
+        self.assertEqual(messages[0]["role"], "system")
+        self.assertEqual(messages[1]["role"], "user")
+        self.assertIn("你是一位资深的A股盘中执行分析专家", messages[0]["content"])
+        self.assertIn("当前共享单票仓位上限：25%", messages[0]["content"])
+        self.assertIn("本次只允许在 BUY / HOLD 之间决策", messages[0]["content"])
+        self.assertIn("若 strategy_context 已提供完整的进场/止盈/止损价格，优先沿用这些价格", messages[0]["content"])
+        self.assertIn("`stop_loss < entry_min <= entry_max < take_profit`", messages[0]["content"])
+        self.assertIn("若当前价明显高于 `entry_max`（例如高出 2% 以上）", messages[0]["content"])
+        self.assertIn("50-60：证据不足，偏观察", messages[0]["content"])
+        self.assertIn("若 `action = \"BUY\"`，默认不应低于 68", messages[0]["content"])
+        self.assertIn("`risk_level = \"low\"`：结构相对清晰", messages[0]["content"])
+        self.assertIn("若 `action = \"BUY\"`，通常不应给出 `high`", messages[0]["content"])
+        self.assertIn("若 `risk_level = \"high\"`，`confidence` 不应轻易超过 85", messages[0]["content"])
+        self.assertIn("先判断实时数据是否足够新鲜", messages[0]["content"])
+        self.assertIn("先看前置门槛，三项都通过后才允许考虑 BUY", messages[0]["content"])
+        self.assertIn("在前置门槛通过后，再按 5 项执行评分判断是否 BUY", messages[0]["content"])
+        self.assertIn("[动作合法性] ...", messages[0]["content"])
+        self.assertIn("[阈值来源] ...", messages[0]["content"])
+        self.assertIn("若不存在，也要明确写“无战略基线”", messages[0]["content"])
+        self.assertIn("[TIMER] 当前交易时段", messages[1]["content"])
+        self.assertIn("[REALTIME_FRESHNESS] 实时数据新鲜度校验", messages[1]["content"])
+        self.assertIn("整体状态: 可直接用于盘中执行", messages[1]["content"])
+        self.assertIn("分时覆盖率: 100.0%", messages[1]["content"])
+        self.assertIn("分时质量: 分时覆盖完整", messages[1]["content"])
+        self.assertIn("股票名称: 贵州茅台", messages[1]["content"])
+        self.assertIn("先通过入场前置门槛，再看执行评分是否达到 BUY 阈值", messages[1]["content"])
+
+    def test_build_prompt_messages_holding_mode_disallows_buy_or_add_position(self):
+        client = SmartMonitorDeepSeek(api_key="test-key")
+
+        messages = client._build_prompt_messages(
+            stock_code="600519",
+            market_data={
+                "name": "贵州茅台",
+                "current_price": 1650.0,
+                "change_pct": 1.8,
+                "change_amount": 29.2,
+                "volume": 120000,
+                "ma5": 1645.0,
+                "ma20": 1620.0,
+                "ma60": 1580.0,
+                "trend": "up",
+                "macd_dif": 1.2,
+                "macd_dea": 1.0,
+                "macd": 0.4,
+                "rsi6": 62.0,
+                "rsi12": 58.0,
+                "rsi24": 55.0,
+                "kdj_k": 70.0,
+                "kdj_d": 65.0,
+                "kdj_j": 80.0,
+                "boll_upper": 1680.0,
+                "boll_mid": 1638.0,
+                "boll_lower": 1596.0,
+                "boll_position": "中轨上方",
+                "vol_ma5": 240000.0,
+                "volume_ratio": 1.35,
+            },
+            account_info={
+                "available_cash": 100000.0,
+                "total_value": 300000.0,
+                "total_market_value": 200000.0,
+                "position_usage_pct": 0.66,
+                "positions_count": 3,
+            },
+            has_position=True,
+            position_cost=1500.0,
+            position_quantity=100,
+            session_info={
+                "session": "上午盘",
+                "volatility": "high",
+                "recommendation": "交易活跃，波动较大",
+                "beijing_hour": 10,
+                "beijing_time": "10:30",
+                "can_trade": True,
+            },
+        )
+
+        self.assertIn("本次只允许在 SELL / HOLD 之间决策", messages[0]["content"])
+        self.assertIn("不要讨论 BUY、加仓或重新开仓", messages[0]["content"])
+        self.assertIn("先看硬退出信号，若出现任一项，可直接 SELL", messages[0]["content"])
+        self.assertIn("若没有硬退出信号，再按 4 项退出评分判断是否 SELL", messages[0]["content"])
+        self.assertIn("不得出现 `take_profit <= stop_loss`", messages[0]["content"])
+        self.assertIn("若 `action = \"SELL\"`，`reasoning` 必须明确写出主导退出触发点", messages[0]["content"])
+        self.assertIn("若 `action = \"SELL\"`，默认不应低于 70", messages[0]["content"])
+        self.assertIn("若 `action = \"SELL\"`，若由止损、破位、放量转弱或基线失效主导，通常应为 `medium` 或 `high`", messages[0]["content"])
+        self.assertIn("本次决策不讨论加仓", messages[1]["content"])
+
+    def test_build_prompt_includes_realtime_freshness_context(self):
         client = SmartMonitorDeepSeek(api_key="test-key")
 
         prompt = client._build_a_stock_prompt(
@@ -272,43 +440,16 @@ class SmartMonitorDeepSeekTests(unittest.TestCase):
                 "boll_position": "中轨上方",
                 "vol_ma5": 240000.0,
                 "volume_ratio": 1.35,
-                "market_context": {
-                    "market_overview": {
-                        "sh_index": {"change_pct": -0.72},
-                        "sz_index": {"change_pct": -0.33},
-                        "cyb_index": {"change_pct": -0.73},
-                        "up_count": 1140,
-                        "down_count": 4299,
-                        "up_ratio": 20.76,
-                        "limit_up": 64,
-                        "limit_down": 17,
-                    },
-                    "limit_stats": {
-                        "interpretation": "涨停股远多于跌停股，市场情绪火热",
-                        "limit_ratio": "97.3%",
-                    },
-                    "north_flow": {"north_net_inflow": 123.45},
-                },
-                "sector_context": {
-                    "industry": "白酒",
-                    "matched_sector": "白酒",
-                    "sector_rank": 12,
-                    "sector_total_count": 496,
-                    "sector_performance": {
-                        "change_pct": 1.26,
-                        "top_stock": "贵州茅台",
-                        "up_count": 12,
-                        "down_count": 3,
-                    },
-                    "sector_fund_flow": {
-                        "main_net_inflow": 456789000.0,
-                        "main_net_inflow_pct": 2.18,
-                    },
-                    "leading_sectors": [
-                        {"sector": "通信线缆及配套", "change_pct": 4.37},
-                        {"sector": "激光设备", "change_pct": 2.99},
-                        {"sector": "印染", "change_pct": 2.45},
-                    ],
+                "realtime_freshness": {
+                    "asof_time": "2026-04-10 10:30:00",
+                    "is_trading_now": True,
+                    "intraday_decision_ready": False,
+                    "overall_status": "degraded",
+                    "summary": "存在同日行情或盘中快照，但新鲜度不足；可参考方向，不宜过度依赖盘中节奏。",
+                    "quote": {"timestamp": "2026-04-10 10:30:00", "status": "same_day_service_time"},
+                    "minute": {"timestamp": "2026-04-10 10:08:00", "status": "stale"},
+                    "trade": {"timestamp": "2026-04-10 10:09:12", "status": "stale"},
+                    "minute_quality": {"coverage_ratio": 0.83, "max_gap": 6, "label": "分时缺口较多"},
                 },
             },
             account_info={
@@ -329,12 +470,13 @@ class SmartMonitorDeepSeekTests(unittest.TestCase):
             },
         )
 
-        self.assertIn("[MARKET_CONTEXT]", prompt)
-        self.assertIn("上证指数: -0.72%", prompt)
-        self.assertIn("情绪解读: 涨停股远多于跌停股，市场情绪火热", prompt)
-        self.assertIn("[SECTOR_CONTEXT]", prompt)
-        self.assertIn("所属行业: 白酒", prompt)
-        self.assertIn("板块排名: 12 / 496", prompt)
+        self.assertIn("[REALTIME_FRESHNESS]", prompt)
+        self.assertIn("整体状态: 可参考但应保守使用", prompt)
+        self.assertIn("TDX 分时最后时间: 2026-04-10 10:08:00 (延迟过久)", prompt)
+        self.assertIn("TDX 逐笔最后时间: 2026-04-10 10:09:12 (延迟过久)", prompt)
+        self.assertIn("分时质量: 分时缺口较多", prompt)
+        self.assertNotIn("[MARKET_CONTEXT]", prompt)
+        self.assertNotIn("[SECTOR_CONTEXT]", prompt)
 
     def test_build_prompt_includes_tdx_intraday_flow_context(self):
         client = SmartMonitorDeepSeek(api_key="test-key")
@@ -375,6 +517,10 @@ class SmartMonitorDeepSeekTests(unittest.TestCase):
                 "volume_ratio": 1.10,
                 "intraday_context": {
                     "minute_point_count": 121,
+                    "filled_minute_point_count": 121,
+                    "minute_coverage_ratio": 1.0,
+                    "max_minute_gap": 0,
+                    "latest_minute_time": "10:27",
                     "intraday_high": 1459.14,
                     "intraday_low": 1441.10,
                     "intraday_range_pct": 1.25,
@@ -394,6 +540,17 @@ class SmartMonitorDeepSeekTests(unittest.TestCase):
                     "intraday_bias_text": "高位放量延续，短线趋势偏强",
                     "intraday_signal_labels": ["高位放量延续", "价格运行在分时均价上方"],
                     "intraday_observations": ["近5分钟放量拉升", "当前价格处于日内中位偏上"],
+                },
+                "realtime_freshness": {
+                    "asof_time": "2026-04-10 10:30:00",
+                    "is_trading_now": True,
+                    "intraday_decision_ready": True,
+                    "overall_status": "ready",
+                    "summary": "TDX 分时/逐笔时间戳足够新鲜，且分时覆盖质量可接受，可用于盘中执行判断。",
+                    "quote": {"timestamp": "2026-04-10 10:30:00", "status": "same_day_service_time"},
+                    "minute": {"timestamp": "2026-04-10 10:27:00", "status": "fresh"},
+                    "trade": {"timestamp": "2026-04-10 10:28:00", "status": "fresh"},
+                    "minute_quality": {"coverage_ratio": 1.0, "max_gap": 0, "label": "分时覆盖完整"},
                 },
             },
             account_info={
@@ -415,6 +572,9 @@ class SmartMonitorDeepSeekTests(unittest.TestCase):
         )
 
         self.assertIn("[INTRADAY_FLOW]", prompt)
+        self.assertIn("补齐后分时样本数: 121", prompt)
+        self.assertIn("分时覆盖率: 100.0%", prompt)
+        self.assertIn("最大连续缺口: 0 分钟", prompt)
         self.assertIn("分时VWAP: ¥1,449.80", prompt)
         self.assertIn("近5分钟涨跌: +0.88%", prompt)
         self.assertIn("近5分钟量能加速度: 1.35 (放量)", prompt)

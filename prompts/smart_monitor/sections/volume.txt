@@ -1,0 +1,10 @@
+[VOLUME] 量能分析
+═══════════════════════════════════════════════════════════
+当前累计成交量: $current_volume
+交易时段进度: $trading_progress
+按当前节奏折算全天成交量: $projected_full_day_volume
+5日均量: $vol_ma5
+实时量比: $realtime_volume_ratio ($realtime_volume_state)
+折算全天成交量/5日均量: $projected_volume_ratio_vs_vol_ma5 ($projected_volume_state)
+$intraday_volume_note
+$turnover_rate_line

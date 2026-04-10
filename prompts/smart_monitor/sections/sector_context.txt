@@ -1,0 +1,15 @@
+[SECTOR_CONTEXT] 所属板块背景（辅助参考）
+═══════════════════════════════════════════════════════════
+所属行业: $industry
+匹配板块: $matched_sector
+板块涨跌幅: $sector_change_pct
+板块排名: $sector_rank / $sector_total_count
+板块龙头股: $top_stock
+板块上涨/下跌家数: $sector_up_count / $sector_down_count
+板块主力净流入: $main_net_inflow
+板块主力净流入占比: $main_net_inflow_pct
+当前领涨行业Top3: $leading_sector_text
+
+使用建议:
+- 结合个股与所属板块是否共振，判断信号强弱与延续性
+- 若个股明显强于所属板块，可视为独立性更强；若弱于板块，则更可能受板块轮动影响

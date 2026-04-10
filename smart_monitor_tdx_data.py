@@ -75,6 +75,202 @@ class SmartMonitorTDXDataFetcher:
         except Exception:
             return None
 
+    @staticmethod
+    def _to_trading_minute_index(time_text: Optional[str]) -> Optional[int]:
+        """Map intraday time to continuous A-share trading-minute index, skipping the lunch break."""
+        if time_text in (None, ""):
+            return None
+        text = str(time_text).strip()
+        if not text:
+            return None
+
+        try:
+            hour_text, minute_text = text[:5].split(":", 1)
+            minute_of_day = int(hour_text) * 60 + int(minute_text)
+        except (TypeError, ValueError):
+            return None
+
+        morning_open = 9 * 60 + 30
+        morning_close = 11 * 60 + 30
+        afternoon_open = 13 * 60
+        afternoon_close = 15 * 60
+
+        if morning_open <= minute_of_day <= morning_close:
+            return minute_of_day - morning_open
+        if afternoon_open <= minute_of_day <= afternoon_close:
+            return 121 + (minute_of_day - afternoon_open)
+        return None
+
+    @classmethod
+    def _build_intraday_minute_points(cls, points) -> list[Dict]:
+        """Normalize minute points to sorted trading-minute samples."""
+        normalized: Dict[int, Dict] = {}
+        for point in points or []:
+            minute_index = cls._to_trading_minute_index(point.get("time"))
+            price = point.get("price")
+            if minute_index is None or price is None:
+                continue
+            try:
+                price_value = float(price)
+            except (TypeError, ValueError):
+                continue
+            volume_raw = point.get("volume")
+            try:
+                volume_value = float(volume_raw) if volume_raw is not None else 0.0
+            except (TypeError, ValueError):
+                volume_value = 0.0
+            normalized[minute_index] = {
+                "minute_index": minute_index,
+                "time": str(point.get("time")),
+                "price": price_value,
+                "volume": volume_value,
+            }
+        return [normalized[key] for key in sorted(normalized)]
+
+    @staticmethod
+    def _trading_minute_index_to_time(minute_index: int) -> Optional[str]:
+        if minute_index < 0:
+            return None
+        morning_open = 9 * 60 + 30
+        afternoon_open = 13 * 60
+
+        if minute_index <= 120:
+            minute_of_day = morning_open + minute_index
+        else:
+            minute_of_day = afternoon_open + (minute_index - 121)
+        if minute_of_day < 0 or minute_of_day >= 24 * 60:
+            return None
+        return f"{minute_of_day // 60:02d}:{minute_of_day % 60:02d}"
+
+    @classmethod
+    def _build_complete_intraday_minute_points(cls, minute_points: list[Dict]) -> tuple[list[Dict], Dict]:
+        if not minute_points:
+            return [], {
+                "filled_points": 0,
+                "gap_count": 0,
+                "max_gap": 0,
+                "coverage_ratio": None,
+            }
+
+        observed_map = {point["minute_index"]: point for point in minute_points}
+        complete_points: list[Dict] = []
+        gap_count = 0
+        max_gap = 0
+
+        for idx, point in enumerate(minute_points):
+            complete_points.append({**point, "filled": False})
+            if idx == len(minute_points) - 1:
+                continue
+
+            next_point = minute_points[idx + 1]
+            current_index = point["minute_index"]
+            next_index = next_point["minute_index"]
+            gap_length = 0
+
+            for missing_index in range(current_index + 1, next_index):
+                # Many feeds omit the afternoon opening anchor (13:00) even when 13:01 exists.
+                if missing_index == 121 and missing_index not in observed_map:
+                    continue
+                gap_length += 1
+                complete_points.append(
+                    {
+                        "minute_index": missing_index,
+                        "time": cls._trading_minute_index_to_time(missing_index),
+                        "price": float(point["price"]),
+                        "volume": 0.0,
+                        "filled": True,
+                    }
+                )
+
+            gap_count += gap_length
+            max_gap = max(max_gap, gap_length)
+
+        complete_points.sort(key=lambda item: item["minute_index"])
+
+        expected_points = len(complete_points)
+        coverage_ratio = (
+            len(minute_points) / expected_points
+            if expected_points > 0
+            else None
+        )
+        return complete_points, {
+            "filled_points": gap_count,
+            "gap_count": gap_count,
+            "max_gap": max_gap,
+            "coverage_ratio": coverage_ratio,
+        }
+
+    @staticmethod
+    def _find_reference_point(
+        minute_points: list[Dict],
+        target_index: int,
+        *,
+        max_staleness: int = 1,
+    ) -> Optional[Dict]:
+        for point in reversed(minute_points):
+            if point["minute_index"] <= target_index:
+                if target_index - point["minute_index"] <= max_staleness:
+                    return point
+                return None
+        return None
+
+    @classmethod
+    def _compute_window_change(
+        cls,
+        minute_points: list[Dict],
+        current_index: int,
+        current_price: float,
+        window_size: int,
+        *,
+        max_staleness: int = 1,
+    ) -> Optional[float]:
+        if current_index < window_size:
+            return None
+        reference_point = cls._find_reference_point(
+            minute_points,
+            current_index - window_size,
+            max_staleness=max_staleness,
+        )
+        if reference_point is None:
+            return None
+        reference_price = reference_point.get("price")
+        if reference_price in (None, 0):
+            return None
+        try:
+            return (float(current_price) - float(reference_price)) / float(reference_price) * 100
+        except (TypeError, ValueError, ZeroDivisionError):
+            return None
+
+    @staticmethod
+    def _sum_window_volume(minute_points: list[Dict], start_index: int, end_index: int) -> Optional[float]:
+        if end_index <= start_index:
+            return None
+        window_points = [
+            point for point in minute_points
+            if start_index < point["minute_index"] <= end_index
+        ]
+        if not window_points:
+            return None
+        return sum(float(point.get("volume") or 0.0) for point in window_points)
+
+    @staticmethod
+    def _parse_trade_timestamp(time_text: Optional[str]) -> Optional[datetime]:
+        if time_text in (None, ""):
+            return None
+        text = str(time_text).strip()
+        if not text:
+            return None
+        try:
+            return datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            pass
+        for fmt in ("%H:%M:%S", "%H:%M"):
+            try:
+                return datetime.strptime(text, fmt)
+            except ValueError:
+                continue
+        return None
+
     def _probe_quote_endpoint(self) -> bool:
         """部分旧版 TDX 服务没有 /api/health，退化到行情接口探测。"""
         probe_codes = ("000001", "600000")
@@ -494,14 +690,14 @@ class SmartMonitorTDXDataFetcher:
         context: Dict = {}
         minute_data = self.get_minute_data(stock_code)
         if minute_data:
-            points = minute_data.get("points") or []
-            prices = [point["price"] for point in points if point.get("price") is not None]
-            volumes = [
-                float(point["volume"]) if point.get("volume") is not None else 0.0
-                for point in points
-            ]
-            if prices:
-                current_price = prices[-1]
+            raw_minute_points = self._build_intraday_minute_points(minute_data.get("points") or [])
+            minute_points, minute_quality = self._build_complete_intraday_minute_points(raw_minute_points)
+            prices = [point["price"] for point in raw_minute_points]
+            volumes = [point["volume"] for point in raw_minute_points]
+            if prices and raw_minute_points and minute_points:
+                latest_point = minute_points[-1]
+                current_price = latest_point["price"]
+                current_minute_index = latest_point["minute_index"]
                 intraday_high = max(prices)
                 intraday_low = min(prices)
                 intraday_vwap = None
@@ -509,19 +705,29 @@ class SmartMonitorTDXDataFetcher:
                 if weighted_volume > 0:
                     intraday_vwap = sum(price * volume for price, volume in zip(prices, volumes)) / weighted_volume
 
-                def _window_change(window_size: int) -> Optional[float]:
-                    reference_index = max(0, len(prices) - window_size - 1)
-                    return _pct_change(current_price, prices[reference_index] if prices else None)
-
-                recent_5m_volume = sum(volumes[-5:]) if volumes else None
-                previous_5m_volume = sum(volumes[-10:-5]) if len(volumes) >= 10 else None
+                recent_5m_volume = self._sum_window_volume(
+                    minute_points,
+                    current_minute_index - 5,
+                    current_minute_index,
+                )
+                previous_5m_volume = self._sum_window_volume(
+                    minute_points,
+                    current_minute_index - 10,
+                    current_minute_index - 5,
+                )
                 price_position_pct = None
                 if intraday_high > intraday_low:
                     price_position_pct = (current_price - intraday_low) / (intraday_high - intraday_low) * 100
 
-                last_5m_change_pct = _window_change(5)
-                last_15m_change_pct = _window_change(15)
-                last_30m_change_pct = _window_change(30)
+                last_5m_change_pct = self._compute_window_change(
+                    minute_points, current_minute_index, current_price, 5
+                )
+                last_15m_change_pct = self._compute_window_change(
+                    minute_points, current_minute_index, current_price, 15
+                )
+                last_30m_change_pct = self._compute_window_change(
+                    minute_points, current_minute_index, current_price, 30
+                )
                 volume_acceleration_ratio = _safe_ratio(recent_5m_volume, previous_5m_volume)
                 intraday_observations = []
                 intraday_signal_labels = []
@@ -593,7 +799,12 @@ class SmartMonitorTDXDataFetcher:
 
                 context.update(
                     {
-                        "minute_point_count": len(points),
+                        "minute_point_count": len(raw_minute_points),
+                        "filled_minute_point_count": len(minute_points),
+                        "minute_gap_count": minute_quality.get("gap_count"),
+                        "max_minute_gap": minute_quality.get("max_gap"),
+                        "minute_coverage_ratio": minute_quality.get("coverage_ratio"),
+                        "latest_minute_time": latest_point.get("time"),
                         "intraday_high": intraday_high,
                         "intraday_low": intraday_low,
                         "intraday_range_pct": _pct_change(intraday_high, intraday_low),
@@ -619,10 +830,17 @@ class SmartMonitorTDXDataFetcher:
                 float(point["volume"]) for point in points if point.get("volume") is not None
             ]
             if points:
-                latest_time = max(
-                    (str(point.get("time")) for point in points if point.get("time")),
-                    default=None,
-                )
+                latest_time = None
+                latest_dt = None
+                for point in points:
+                    candidate_time = point.get("time")
+                    candidate_dt = self._parse_trade_timestamp(candidate_time)
+                    if candidate_dt is not None:
+                        if latest_dt is None or candidate_dt > latest_dt:
+                            latest_dt = candidate_dt
+                            latest_time = str(candidate_time)
+                    elif latest_time is None and candidate_time:
+                        latest_time = str(candidate_time)
                 context.update(
                     {
                         "trade_tick_count": len(points),

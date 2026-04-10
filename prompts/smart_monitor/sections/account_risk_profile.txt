@@ -1,0 +1,10 @@
+[ACCOUNT_RISK_PROFILE] 共享风控约束 ⭐ 重要
+═══════════════════════════════════════════════════════════
+单票参考仓位上限: $position_size_pct%
+总仓位参考上限: $total_position_pct%
+默认止损线: -$stop_loss_pct%
+默认止盈线: +$take_profit_pct%
+
+执行要求:
+- 若无充分理由，优先遵守上述共享风控设置
+- 返回的 `position_size_pct` / `stop_loss_pct` / `take_profit_pct` 应与该共享配置一致或给出偏离理由

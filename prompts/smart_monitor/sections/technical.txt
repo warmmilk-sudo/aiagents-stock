@@ -1,0 +1,26 @@
+[TECHNICAL] 技术指标
+═══════════════════════════════════════════════════════════
+MA5: $ma5
+MA20: $ma20
+MA60: $ma60
+趋势判断: $trend_label
+
+MACD:
+  DIF: $macd_dif
+  DEA: $macd_dea
+  MACD: $macd
+
+RSI(6): $rsi6 $rsi6_state
+RSI(12): $rsi12
+RSI(24): $rsi24
+
+KDJ:
+  K: $kdj_k
+  D: $kdj_d
+  J: $kdj_j
+
+布林带:
+  上轨: $boll_upper
+  中轨: $boll_mid
+  下轨: $boll_lower
+  位置: $boll_position
