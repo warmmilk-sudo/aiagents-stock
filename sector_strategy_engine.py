@@ -37,7 +37,7 @@ class SectorStrategyEngine:
             lightweight_model=lightweight_model,
             reasoning_model=reasoning_model,
         )
-        self.deepseek_client = DeepSeekClient(
+        self.llm_client = DeepSeekClient(
             model=model,
             lightweight_model=lightweight_model,
             reasoning_model=reasoning_model,
@@ -46,7 +46,7 @@ class SectorStrategyEngine:
         self.logger = logging.getLogger(__name__)
         if not self.logger.handlers:
             logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(levelname)s %(name)s: %(message)s')
-        print(f"[智策引擎] 初始化完成 (模型配置: {self.deepseek_client.model_selection})")
+        print(f"[智策引擎] 初始化完成 (模型配置: {self.llm_client.model_selection})")
 
     def _report_stage_progress(
         self,
@@ -215,7 +215,7 @@ class SectorStrategyEngine:
             sentiment_analysis=sentiment_analysis,
         )
         
-        report = self.deepseek_client.call_api(
+        report = self.llm_client.call_api(
             messages,
             max_tokens=5000,
             tier=ModelTier.REASONING,
@@ -255,7 +255,7 @@ class SectorStrategyEngine:
             sectors_str=sectors_str,
         )
         
-        response = self.deepseek_client.call_api(
+        response = self.llm_client.call_api(
             messages,
             temperature=0.3,
             max_tokens=6000,
@@ -342,7 +342,7 @@ class SectorStrategyEngine:
             context_text=context_text or "暂无额外上下文",
             raw_analysis=text,
         )
-        repaired = self.deepseek_client.call_api(
+        repaired = self.llm_client.call_api(
             messages,
             temperature=0.1,
             max_tokens=5000,
@@ -362,7 +362,7 @@ class SectorStrategyEngine:
             sectors_str=sectors_str,
             raw_response=raw_response,
         )
-        return self.deepseek_client.call_api(
+        return self.llm_client.call_api(
             messages,
             temperature=0.1,
             max_tokens=5000,

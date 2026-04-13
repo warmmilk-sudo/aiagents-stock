@@ -39,7 +39,7 @@ class SectorStrategyEnginePipelineTests(unittest.TestCase):
     def test_run_comprehensive_analysis_parallelizes_agent_stage_and_reports_progress(self):
         engine = SectorStrategyEngine.__new__(SectorStrategyEngine)
         engine.logger = logging.getLogger("test-sector-strategy-engine")
-        engine.deepseek_client = None
+        engine.llm_client = None
         engine.database = None
         engine.save_analysis_report = lambda results, data: 99
 
@@ -95,7 +95,7 @@ class SectorStrategyEnginePipelineTests(unittest.TestCase):
             captured["tier"] = tier
             return "综合研判报告"
 
-        engine.deepseek_client = types.SimpleNamespace(call_api=fake_call_api)
+        engine.llm_client = types.SimpleNamespace(call_api=fake_call_api)
 
         result = engine._conduct_comprehensive_discussion(
             {
@@ -125,7 +125,7 @@ class SectorStrategyEnginePipelineTests(unittest.TestCase):
             captured["tier"] = tier
             return '{"summary":{"market_view":"中性"}}'
 
-        engine.deepseek_client = types.SimpleNamespace(call_api=fake_call_api)
+        engine.llm_client = types.SimpleNamespace(call_api=fake_call_api)
 
         result = engine._repair_prediction_response(
             raw_response="错误输出",
@@ -149,7 +149,7 @@ class SectorStrategyEnginePipelineTests(unittest.TestCase):
             '{"summary":{"market_view":"近期主线延续","key_opportunity":"算力","major_risk":"波动","strategy":"均衡配置"},"long_short":{"bullish":[],"bearish":[],"neutral":[]},"rotation":{"current_strong":[],"potential":[],"declining":[]},"heat":{"hottest":[],"heating":[],"cooling":[]},"confidence_score":78,"risk_level":"中等","market_outlook":"中性"}',
         ])
         engine = SectorStrategyEngine.__new__(SectorStrategyEngine)
-        engine.deepseek_client = types.SimpleNamespace(
+        engine.llm_client = types.SimpleNamespace(
             call_api=lambda *args, **kwargs: next(responses)
         )
 

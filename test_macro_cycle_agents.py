@@ -24,7 +24,7 @@ class MacroCycleAgentsTests(unittest.TestCase):
             captured["tier"] = tier
             return "康波分析结果"
 
-        agent.deepseek_client = types.SimpleNamespace(call_api=fake_call_api)
+        agent.llm_client = types.SimpleNamespace(call_api=fake_call_api)
 
         result = agent.kondratieff_wave_agent("GDP增速回落，CPI温和。")
 

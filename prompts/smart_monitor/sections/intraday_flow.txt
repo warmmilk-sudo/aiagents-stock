@@ -7,7 +7,7 @@
 日内高点: $intraday_high
 日内低点: $intraday_low
 日内振幅: $intraday_range_pct
-分时VWAP: $intraday_vwap
+分时均价: $intraday_vwap
 当前价所处日内位置: $price_position_pct% ($intraday_position_label)
 近5分钟涨跌: $last_5m_change_pct
 近15分钟涨跌: $last_15m_change_pct

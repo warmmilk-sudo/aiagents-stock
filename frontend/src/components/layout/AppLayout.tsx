@@ -200,17 +200,11 @@ export function AppLayout() {
     setModelError("");
     setSavingModelKey(fieldKey);
 
-    try {
-      const values = Object.fromEntries(
-        Object.entries(configFields).map(([key, field]) => [key, field.value]),
-      );
+  try {
       const data = await apiFetch<ConfigPayload>("/api/config", {
         method: "PUT",
         body: JSON.stringify({
-          values: {
-            ...values,
-            [fieldKey]: value,
-          },
+          values: { [fieldKey]: value },
         }),
       });
       setConfigFields(data.config);

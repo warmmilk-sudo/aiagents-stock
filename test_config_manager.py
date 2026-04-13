@@ -12,7 +12,7 @@ class ConfigManagerEnvFormatTests(unittest.TestCase):
             env_path.write_text(
                 "# top comment\n"
                 "LIGHTWEIGHT_MODEL_NAME=\"deepseek-chat\"\n"
-                "DEEPSEEK_BASE_URL = https://api.deepseek.com/v1  # inline comment\n"
+                "LLM_BASE_URL = https://api.deepseek.com/v1  # inline comment\n"
                 "REASONING_MODEL_NAME='deepseek-reasoner'\n"
                 "OTHER_KEY=keepme\n",
                 encoding="utf-8",
@@ -22,7 +22,7 @@ class ConfigManagerEnvFormatTests(unittest.TestCase):
             saved = manager.write_env(
                 {
                     "LIGHTWEIGHT_MODEL_NAME": "qwen-plus",
-                    "DEEPSEEK_BASE_URL": "https://example.com/v1",
+                    "LLM_BASE_URL": "https://example.com/v1",
                     "REASONING_MODEL_NAME": "qwen-max",
                 }
             )
@@ -32,7 +32,7 @@ class ConfigManagerEnvFormatTests(unittest.TestCase):
                 env_path.read_text(encoding="utf-8"),
                 "# top comment\n"
                 "LIGHTWEIGHT_MODEL_NAME=\"qwen-plus\"\n"
-                "DEEPSEEK_BASE_URL = https://example.com/v1  # inline comment\n"
+                "LLM_BASE_URL = https://example.com/v1  # inline comment\n"
                 "REASONING_MODEL_NAME='qwen-max'\n"
                 "OTHER_KEY=keepme\n",
             )
@@ -84,7 +84,7 @@ class ConfigManagerEnvFormatTests(unittest.TestCase):
 
             is_valid, message = manager.validate_config(
                 {
-                    "DEEPSEEK_API_KEY": "x" * 20,
+                    "LLM_API_KEY": "x" * 20,
                     "TDX_ENABLED": "true",
                     "TDX_BASE_URL": "",
                 }
@@ -93,14 +93,14 @@ class ConfigManagerEnvFormatTests(unittest.TestCase):
             self.assertFalse(is_valid)
             self.assertIn("TDX API 地址不能为空", message)
 
-    def test_validate_config_allows_short_deepseek_api_key(self):
+    def test_validate_config_allows_short_llm_api_key(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             env_path = Path(temp_dir) / ".env"
             manager = ConfigManager(str(env_path))
 
             is_valid, message = manager.validate_config(
                 {
-                    "DEEPSEEK_API_KEY": "short-key",
+                    "LLM_API_KEY": "short-key",
                     "TDX_ENABLED": "false",
                     "TDX_BASE_URL": "",
                 }
@@ -118,20 +118,37 @@ class ConfigManagerEnvFormatTests(unittest.TestCase):
 
             self.assertNotIn("SMART_MONITOR_AI_INTERVAL_MINUTES", config_info)
             self.assertNotIn("SMART_MONITOR_DEFAULT_STOP_LOSS_PCT", config_info)
-            self.assertIn("DEEPSEEK_API_KEY", config_info)
+            self.assertIn("LLM_API_KEY", config_info)
 
     def test_filter_system_config_values_excludes_smart_monitor_fields(self):
         manager = ConfigManager()
 
         filtered = manager.filter_system_config_values(
             {
-                "DEEPSEEK_API_KEY": "key",
+                "LLM_API_KEY": "key",
                 "SMART_MONITOR_AI_INTERVAL_MINUTES": "15",
                 "SMART_MONITOR_DEFAULT_STOP_LOSS_PCT": "6",
             }
         )
 
-        self.assertEqual(filtered, {"DEEPSEEK_API_KEY": "key"})
+        self.assertEqual(filtered, {"LLM_API_KEY": "key"})
+
+    def test_read_env_ignores_unknown_keys(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            env_path = Path(temp_dir) / ".env"
+            env_path.write_text(
+                "UNKNOWN_API_KEY=legacy-key\n"
+                "UNKNOWN_BASE_URL=https://legacy.example.com/v1\n",
+                encoding="utf-8",
+            )
+
+            manager = ConfigManager(str(env_path))
+            values = manager.read_env()
+
+            self.assertNotIn("UNKNOWN_API_KEY", values)
+            self.assertNotIn("UNKNOWN_BASE_URL", values)
+            self.assertEqual(values["LLM_API_KEY"], "")
+            self.assertEqual(values["LLM_BASE_URL"], "https://api.deepseek.com/v1")
 
 
 if __name__ == "__main__":

@@ -43,16 +43,16 @@ class SmartMonitorDeepSeek:
     def __init__(self, api_key: str, model: str = None,
                  lightweight_model: str = None, reasoning_model: str = None):
         """
-        初始化DeepSeek客户端
-        
+        初始化LLM客户端
+
         Args:
-            api_key: DeepSeek API密钥
+            api_key: LLM API密钥
         """
         self.api_key = api_key
         self.model = model
         self.lightweight_model = lightweight_model
         self.reasoning_model = reasoning_model
-        self.base_url = config.DEEPSEEK_BASE_URL
+        self.base_url = config.LLM_BASE_URL
         self.headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
@@ -310,7 +310,7 @@ class SmartMonitorDeepSeek:
                 if attempt_index >= self.http_retry_count:
                     break
                 self.logger.warning(
-                    "DeepSeek API请求超时或连接失败，准备重试 (%s/%s)，model=%s，read_timeout=%ss: %s",
+                    "LLM API请求超时或连接失败，准备重试 (%s/%s)，model=%s，read_timeout=%ss: %s",
                     attempt_index + 1,
                     total_attempts,
                     model_to_use,
@@ -320,7 +320,7 @@ class SmartMonitorDeepSeek:
                 time_module.sleep(min(2, attempt_index + 1))
             except Exception as exc:
                 self.logger.error(
-                    "DeepSeek API调用失败，model=%s，timeout=%ss: %s",
+                    "LLM API调用失败，model=%s，timeout=%ss: %s",
                     model_to_use,
                     self.http_timeout_seconds,
                     exc,
@@ -329,13 +329,13 @@ class SmartMonitorDeepSeek:
 
         if last_error is not None:
             self.logger.error(
-                "DeepSeek API调用失败，重试后仍未成功，model=%s，timeout=%ss: %s",
+                "LLM API调用失败，重试后仍未成功，model=%s，timeout=%ss: %s",
                 model_to_use,
                 self.http_timeout_seconds,
                 last_error,
             )
             raise last_error
-        raise RuntimeError("DeepSeek API调用失败: unknown_request_error")
+        raise RuntimeError("LLM API调用失败: unknown_request_error")
 
     def analyze_stock_and_decide(self, stock_code: str, market_data: Dict,
                                  account_info: Dict, has_position: bool = False,
@@ -730,14 +730,12 @@ class SmartMonitorDeepSeek:
 
         optional_sections_text = "\n\n".join(section.strip() for section in optional_sections if str(section).strip())
         if has_position:
-            position_mode_title = "当前有持仓。"
             position_mode_rules = "\n".join([
                 "- 本次只允许在 SELL / HOLD 之间决策",
                 "- 不要讨论 BUY、加仓或重新开仓",
                 "- 先判断是否达到止盈/止损/破位条件，再判断是否继续持有",
             ])
         else:
-            position_mode_title = "当前无持仓。"
             position_mode_rules = "\n".join([
                 "- 本次只允许在 BUY / HOLD 之间决策",
                 "- 不要讨论 SELL、减仓或止盈卖出",
@@ -750,7 +748,6 @@ class SmartMonitorDeepSeek:
             "take_profit_pct": str(resolved_risk_profile["take_profit_pct"]),
             "stop_loss_pct_float": f"{float(resolved_risk_profile['stop_loss_pct']):.1f}",
             "take_profit_pct_float": f"{float(resolved_risk_profile['take_profit_pct']):.1f}",
-            "position_mode_title": position_mode_title,
             "position_mode_rules": position_mode_rules,
             "timer_section": timer_section.strip(),
             "data_scope_section": data_scope_section,
@@ -1199,9 +1196,9 @@ class SmartMonitorDeepSeek:
         def _append_constraint_reasoning(message: str) -> None:
             original_reasoning = str(decision.get("reasoning") or "").strip()
             if original_reasoning:
-                decision["reasoning"] = f"{original_reasoning}\n\n[动作约束] {message}"
+                decision["reasoning"] = f"{original_reasoning}\n\n补充说明：{message}"
             else:
-                decision["reasoning"] = message
+                decision["reasoning"] = f"补充说明：{message}"
 
         allowed_actions = {"BUY", "SELL", "HOLD"}
         action = str(decision.get("action", "HOLD") or "HOLD").upper()

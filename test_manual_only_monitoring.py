@@ -163,10 +163,10 @@ class ManualOnlyMonitoringTests(unittest.TestCase):
             "subscribe",
             return_value=None,
         ):
-            engine = smart_monitor_engine_module.SmartMonitorEngine(deepseek_api_key="stub")
+            engine = smart_monitor_engine_module.SmartMonitorEngine(llm_api_key="stub")
         engine.lifecycle_service.asset_service = fake_db.asset_service
 
-        engine.deepseek.get_trading_session = lambda: {
+        engine.llm_client.get_trading_session = lambda: {
             "session": "上午盘",
             "can_trade": True,
             "recommendation": "",
@@ -179,7 +179,7 @@ class ManualOnlyMonitoringTests(unittest.TestCase):
             "volume": 123456,
             "turnover_rate": 0.75,
         }
-        engine.deepseek.analyze_stock_and_decide = lambda **kwargs: {
+        engine.llm_client.analyze_stock_and_decide = lambda **kwargs: {
             "success": True,
             "decision": {
                 "action": "BUY",
@@ -229,10 +229,10 @@ class ManualOnlyMonitoringTests(unittest.TestCase):
             "subscribe",
             return_value=None,
         ):
-            engine = smart_monitor_engine_module.SmartMonitorEngine(deepseek_api_key="stub")
+            engine = smart_monitor_engine_module.SmartMonitorEngine(llm_api_key="stub")
         engine.lifecycle_service.asset_service = fake_db.asset_service
 
-        engine.deepseek.get_trading_session = lambda: {
+        engine.llm_client.get_trading_session = lambda: {
             "session": "涓婂崍鐩?",
             "can_trade": True,
             "recommendation": "",
@@ -245,7 +245,7 @@ class ManualOnlyMonitoringTests(unittest.TestCase):
             "volume": 123456,
             "turnover_rate": 0.75,
         }
-        engine.deepseek.analyze_stock_and_decide = lambda **kwargs: {
+        engine.llm_client.analyze_stock_and_decide = lambda **kwargs: {
             "success": True,
             "decision": {
                 "action": "SELL",
@@ -299,10 +299,10 @@ class ManualOnlyMonitoringTests(unittest.TestCase):
             "subscribe",
             return_value=None,
         ):
-            engine = smart_monitor_engine_module.SmartMonitorEngine(deepseek_api_key="stub")
+            engine = smart_monitor_engine_module.SmartMonitorEngine(llm_api_key="stub")
         engine.lifecycle_service.asset_service = fake_db.asset_service
 
-        engine.deepseek.get_trading_session = lambda: {
+        engine.llm_client.get_trading_session = lambda: {
             "session": "上午盘",
             "can_trade": True,
             "recommendation": "",
@@ -315,7 +315,7 @@ class ManualOnlyMonitoringTests(unittest.TestCase):
             "volume": 128000,
             "turnover_rate": 0.82,
         }
-        engine.deepseek.analyze_stock_and_decide = lambda **kwargs: {
+        engine.llm_client.analyze_stock_and_decide = lambda **kwargs: {
             "success": True,
             "decision": {
                 "action": "HOLD",
@@ -400,10 +400,10 @@ class ManualOnlyMonitoringTests(unittest.TestCase):
             "subscribe",
             return_value=None,
         ):
-            engine = smart_monitor_engine_module.SmartMonitorEngine(deepseek_api_key="stub")
+            engine = smart_monitor_engine_module.SmartMonitorEngine(llm_api_key="stub")
         engine.lifecycle_service.asset_service = fake_db.asset_service
 
-        engine.deepseek.get_trading_session = lambda: {
+        engine.llm_client.get_trading_session = lambda: {
             "session": "上午盘",
             "can_trade": True,
             "recommendation": "",
@@ -439,7 +439,7 @@ class ManualOnlyMonitoringTests(unittest.TestCase):
                 },
             }
 
-        engine.deepseek.analyze_stock_and_decide = _fake_ai_decision
+        engine.llm_client.analyze_stock_and_decide = _fake_ai_decision
         engine._send_notification = lambda **kwargs: None
         engine._sync_runtime_thresholds = lambda **kwargs: True
 
@@ -506,10 +506,10 @@ class ManualOnlyMonitoringTests(unittest.TestCase):
             "subscribe",
             return_value=None,
         ):
-            engine = smart_monitor_engine_module.SmartMonitorEngine(deepseek_api_key="stub")
+            engine = smart_monitor_engine_module.SmartMonitorEngine(llm_api_key="stub")
         engine.lifecycle_service.asset_service = fake_db.asset_service
 
-        engine.deepseek.get_trading_session = lambda: {
+        engine.llm_client.get_trading_session = lambda: {
             "session": "上午盘",
             "can_trade": True,
             "recommendation": "",
@@ -522,7 +522,7 @@ class ManualOnlyMonitoringTests(unittest.TestCase):
             "volume": 123456,
             "turnover_rate": 0.75,
         }
-        engine.deepseek.analyze_stock_and_decide = lambda **kwargs: {
+        engine.llm_client.analyze_stock_and_decide = lambda **kwargs: {
             "success": True,
             "decision": {
                 "action": "BUY",

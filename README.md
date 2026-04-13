@@ -566,7 +566,7 @@ cp .env.example .env
 
 编辑 `.env` 文件，填入您的 DeepSeek API Key：
 ```env
-DEEPSEEK_API_KEY=sk-your-actual-api-key-here
+LLM_API_KEY=sk-your-actual-api-key-here
 ```
 
 #### 3. 启动服务
@@ -640,8 +640,8 @@ cp .env.example .env
 2. 编辑 `.env` 文件，设置您的配置（也可在前端web界面-环境配置中设置）：
 ```env
 # DeepSeek API配置（必需）
-DEEPSEEK_API_KEY=your_actual_deepseek_api_key_here
-DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
+LLM_API_KEY=your_actual_deepseek_api_key_here
+LLM_BASE_URL=https://api.deepseek.com/v1
 
 # AI模型名称（可选，支持OpenAI兼容模型）
 # 常用：deepseek-chat, deepseek-reasoner, qwen-plus, gpt-4o
@@ -668,7 +668,7 @@ WEBHOOK_KEYWORD=股票  # 钉钉自定义关键词，飞书可留空
 
 #### 方法二：设置系统环境变量
 您也可以直接在系统环境变量中设置：
-- 变量名：`DEEPSEEK_API_KEY`
+- 变量名：`LLM_API_KEY`
 - 变量值：您的API密钥
 
 **注意**：环境变量文件的优先级高于系统环境变量。
@@ -1381,8 +1381,8 @@ AI股票分析系统
 ### API配置
 ```env
 # .env 文件
-DEEPSEEK_API_KEY=your_api_key
-DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
+LLM_API_KEY=your_api_key
+LLM_BASE_URL=https://api.deepseek.com/v1
 DEFAULT_MODEL_NAME=deepseek-chat   # 支持任意OpenAI兼容模型
 ```
 
@@ -1407,7 +1407,7 @@ DEFAULT_INTERVAL = "1d"    # 默认数据间隔
 ### 常见问题
 
 1. **API Key错误**
-   - 检查.env文件中的DEEPSEEK_API_KEY设置
+   - 检查.env文件中的LLM_API_KEY设置
    - 确保.env文件存在且格式正确
    - 确保API Key有效且有足够余额
 

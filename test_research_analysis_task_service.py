@@ -101,7 +101,7 @@ class ResearchAnalysisTaskServiceTests(unittest.TestCase):
             captured.update(kwargs)
             return "sector-task-1"
 
-        with patch.object(services.config, "DEEPSEEK_API_KEY", "test-key"), \
+        with patch.object(services.config, "LLM_API_KEY", "test-key"), \
              patch.object(services, "start_ui_analysis_task", side_effect=fake_start_ui_analysis_task):
             task_id = services.submit_sector_strategy_task(
                 lightweight_model=None,
@@ -149,7 +149,7 @@ class ResearchAnalysisTaskServiceTests(unittest.TestCase):
             captured.update(kwargs)
             return "task-staged"
 
-        with patch.object(services.config, "DEEPSEEK_API_KEY", "test-key"), \
+        with patch.object(services.config, "LLM_API_KEY", "test-key"), \
              patch.object(services.portfolio_analysis_task_manager, "get_active_task_any", return_value=None), \
              patch.object(services.portfolio_analysis_task_manager, "start_task", side_effect=fake_start_task):
             services.submit_research_analysis_task(
@@ -208,7 +208,7 @@ class ResearchAnalysisTaskServiceTests(unittest.TestCase):
             captured.update(kwargs)
             return "task-queued"
 
-        with patch.object(services.config, "DEEPSEEK_API_KEY", "test-key"), \
+        with patch.object(services.config, "LLM_API_KEY", "test-key"), \
              patch.object(services.portfolio_analysis_task_manager, "start_task", side_effect=fake_start_task):
             task_id = services.submit_research_analysis_task(
                 session_key="session-queue",
@@ -226,7 +226,7 @@ class ResearchAnalysisTaskServiceTests(unittest.TestCase):
         self.assertEqual(captured["label"], "深度分析 600519")
 
     def test_submit_research_analysis_task_rejects_parallel_batch_mode(self):
-        with patch.object(services.config, "DEEPSEEK_API_KEY", "test-key"), \
+        with patch.object(services.config, "LLM_API_KEY", "test-key"), \
              patch.object(services.portfolio_analysis_task_manager, "start_task") as start_task:
             with self.assertRaisesRegex(ValueError, "暂不支持并行执行"):
                 services.submit_research_analysis_task(
@@ -249,7 +249,7 @@ class ResearchAnalysisTaskServiceTests(unittest.TestCase):
             captured.update(kwargs)
             return "task-123"
 
-        with patch.object(services.config, "DEEPSEEK_API_KEY", "test-key"), \
+        with patch.object(services.config, "LLM_API_KEY", "test-key"), \
              patch.object(services.portfolio_analysis_task_manager, "start_task", side_effect=fake_start_task):
             task_id = services.submit_research_analysis_task(
                 session_key="session-a",
@@ -268,7 +268,7 @@ class ResearchAnalysisTaskServiceTests(unittest.TestCase):
         self.assertEqual(captured["metadata"]["symbols"], ["600519", "000001"])
 
     def test_submit_research_analysis_task_rejects_duplicate_symbol_against_running_task(self):
-        with patch.object(services.config, "DEEPSEEK_API_KEY", "test-key"), \
+        with patch.object(services.config, "LLM_API_KEY", "test-key"), \
              patch.object(
                  services.portfolio_analysis_task_manager,
                  "get_pending_tasks",
@@ -296,7 +296,7 @@ class ResearchAnalysisTaskServiceTests(unittest.TestCase):
         start_task.assert_not_called()
 
     def test_submit_research_analysis_task_rejects_duplicate_symbol_against_queued_batch_task(self):
-        with patch.object(services.config, "DEEPSEEK_API_KEY", "test-key"), \
+        with patch.object(services.config, "LLM_API_KEY", "test-key"), \
              patch.object(
                  services.portfolio_analysis_task_manager,
                  "get_pending_tasks",
@@ -330,7 +330,7 @@ class ResearchAnalysisTaskServiceTests(unittest.TestCase):
             captured.update(kwargs)
             return "task-dedup"
 
-        with patch.object(services.config, "DEEPSEEK_API_KEY", "test-key"), \
+        with patch.object(services.config, "LLM_API_KEY", "test-key"), \
              patch.object(services.portfolio_analysis_task_manager, "get_pending_tasks", return_value=[]), \
              patch.object(services.portfolio_analysis_task_manager, "start_task", side_effect=fake_start_task):
             task_id = services.submit_research_analysis_task(
@@ -355,7 +355,7 @@ class ResearchAnalysisTaskServiceTests(unittest.TestCase):
             captured.update(kwargs)
             return "task-789"
 
-        with patch.object(services.config, "DEEPSEEK_API_KEY", "test-key"), \
+        with patch.object(services.config, "LLM_API_KEY", "test-key"), \
              patch.object(services.portfolio_analysis_task_manager, "start_task", side_effect=fake_start_task):
             services.submit_research_analysis_task(
                 session_key="session-c",
@@ -387,7 +387,7 @@ class ResearchAnalysisTaskServiceTests(unittest.TestCase):
             captured.update(kwargs)
             return "portfolio-task-queued"
 
-        with patch.object(services.config, "DEEPSEEK_API_KEY", "test-key"), \
+        with patch.object(services.config, "LLM_API_KEY", "test-key"), \
              patch.object(
                  services.portfolio_analysis_task_manager,
                  "get_active_task",

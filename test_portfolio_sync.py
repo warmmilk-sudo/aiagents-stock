@@ -693,7 +693,7 @@ class PortfolioIntegrationTests(unittest.TestCase):
             "subscribe",
             return_value=None,
         ), patch("monitor_db.monitor_db", self.realtime_monitor_db):
-            engine = smart_monitor_engine_module.SmartMonitorEngine(deepseek_api_key="stub")
+            engine = smart_monitor_engine_module.SmartMonitorEngine(llm_api_key="stub")
             synced = engine._sync_runtime_thresholds(
                 stock_code="600519",
                 stock_name="贵州茅台",

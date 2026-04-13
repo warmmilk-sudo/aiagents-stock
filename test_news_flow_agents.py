@@ -36,7 +36,7 @@ class NewsFlowAgentsJsonParseTests(unittest.TestCase):
 
     def test_sector_impact_agent_uses_external_prompt_templates(self):
         captured = {}
-        self.agent.deepseek_client = types.SimpleNamespace()
+        self.agent.llm_client = types.SimpleNamespace()
         self.agent.is_available = lambda: True
 
         def fake_call_api(messages, temperature=None, max_tokens=None, tier=None):
@@ -44,7 +44,7 @@ class NewsFlowAgentsJsonParseTests(unittest.TestCase):
             captured["tier"] = tier
             return '{"benefited_sectors":[{"name":"AI算力"}],"damaged_sectors":[],"hot_themes":[]}'
 
-        self.agent.deepseek_client.call_api = fake_call_api
+        self.agent.llm_client.call_api = fake_call_api
 
         result = self.agent.sector_impact_agent(
             hot_topics=[{"topic": "AI算力", "heat": 88, "cross_platform": 3}],
@@ -60,7 +60,7 @@ class NewsFlowAgentsJsonParseTests(unittest.TestCase):
 
     def test_analyze_sector_deep_uses_external_prompt_templates(self):
         captured = {}
-        self.agent.deepseek_client = types.SimpleNamespace()
+        self.agent.llm_client = types.SimpleNamespace()
         self.agent.is_available = lambda: True
 
         def fake_call_api(messages, temperature=None, max_tokens=None, tier=None):
@@ -68,7 +68,7 @@ class NewsFlowAgentsJsonParseTests(unittest.TestCase):
             captured["tier"] = tier
             return '{"sector_name":"机器人","heat_score":91}'
 
-        self.agent.deepseek_client.call_api = fake_call_api
+        self.agent.llm_client.call_api = fake_call_api
 
         result = self.agent.analyze_sector_deep(
             "机器人",

@@ -66,7 +66,7 @@ cp .env.example .env
 
 3. **编辑 `.env` 文件，填入您的配置**
 ```env
-DEEPSEEK_API_KEY=sk-your-actual-api-key-here
+LLM_API_KEY=sk-your-actual-api-key-here
 EMAIL_ENABLED=false
 # ... 其他配置
 ```
@@ -324,7 +324,7 @@ services:
     secrets:
       - deepseek_api_key
     environment:
-      - DEEPSEEK_API_KEY_FILE=/run/secrets/deepseek_api_key
+      - LLM_API_KEY_FILE=/run/secrets/deepseek_api_key
 
 secrets:
   deepseek_api_key:

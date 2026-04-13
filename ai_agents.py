@@ -16,7 +16,7 @@ class StockAnalysisAgents:
         self.model = model
         self.lightweight_model = lightweight_model
         self.reasoning_model = reasoning_model
-        self.deepseek_client = DeepSeekClient(
+        self.llm_client = DeepSeekClient(
             model=model,
             lightweight_model=lightweight_model,
             reasoning_model=reasoning_model,
@@ -85,7 +85,7 @@ class StockAnalysisAgents:
     def technical_analyst_agent(self, stock_info: Dict, stock_data: Any, indicators: Dict) -> Dict[str, Any]:
         """技术面分析智能体"""
         print("🔍 技术分析师正在分析中...")
-        analysis = self.deepseek_client.technical_analysis(stock_info, stock_data, indicators)
+        analysis = self.llm_client.technical_analysis(stock_info, stock_data, indicators)
 
         return {
             "agent_name": "技术分析师",
@@ -108,7 +108,7 @@ class StockAnalysisAgents:
         else:
             print("   ⚠ 未获取到季报数据，将基于基本财务数据分析")
 
-        analysis = self.deepseek_client.fundamental_analysis(stock_info, financial_data, quarterly_data)
+        analysis = self.llm_client.fundamental_analysis(stock_info, financial_data, quarterly_data)
 
         return {
             "agent_name": "基本面分析师", 
@@ -129,7 +129,7 @@ class StockAnalysisAgents:
         else:
             print("   ⚠ 未获取到资金流向数据，将基于技术指标分析")
 
-        analysis = self.deepseek_client.fund_flow_analysis(stock_info, indicators, fund_flow_data)
+        analysis = self.llm_client.fund_flow_analysis(stock_info, indicators, fund_flow_data)
 
         return {
             "agent_name": "资金面分析师",
@@ -181,7 +181,7 @@ class StockAnalysisAgents:
             risk_data_text=risk_data_text,
         )
 
-        analysis = self.deepseek_client.call_api(
+        analysis = self.llm_client.call_api(
             messages,
             max_tokens=6000,
             tier=ModelTier.REASONING,
@@ -230,7 +230,7 @@ class StockAnalysisAgents:
             sentiment_data_text=sentiment_data_text,
         )
 
-        analysis = self.deepseek_client.call_api(
+        analysis = self.llm_client.call_api(
             messages,
             max_tokens=4000,
             tier=ModelTier.LIGHTWEIGHT,
@@ -283,7 +283,7 @@ class StockAnalysisAgents:
             news_text=news_text,
         )
 
-        analysis = self.deepseek_client.call_api(
+        analysis = self.llm_client.call_api(
             messages,
             max_tokens=4000,
             tier=ModelTier.LIGHTWEIGHT,
@@ -404,7 +404,7 @@ class StockAnalysisAgents:
             all_reports=all_reports,
         )
         
-        discussion_result = self.deepseek_client.call_api(
+        discussion_result = self.llm_client.call_api(
             messages,
             max_tokens=6000,
             tier=ModelTier.REASONING,
@@ -416,7 +416,7 @@ class StockAnalysisAgents:
     def make_final_decision(self, discussion_result: str, stock_info: Dict, indicators: Dict) -> Dict[str, Any]:
         """制定最终投资决策"""
         print("📋 正在制定最终投资决策...")
-        decision = self.deepseek_client.final_decision(discussion_result, stock_info, indicators)
+        decision = self.llm_client.final_decision(discussion_result, stock_info, indicators)
 
         print("✅ 最终投资决策完成")
         return decision

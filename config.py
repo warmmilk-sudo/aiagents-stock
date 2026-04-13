@@ -56,8 +56,8 @@ def _parse_model_options_env(key: str, fallback_model: str) -> list[str]:
     return options
 
 
-DEEPSEEK_API_KEY = _safe_str_env("DEEPSEEK_API_KEY")
-DEEPSEEK_BASE_URL = _safe_str_env("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
+LLM_API_KEY = _safe_str_env("LLM_API_KEY")
+LLM_BASE_URL = _safe_str_env("LLM_BASE_URL", "https://api.deepseek.com/v1")
 
 LIGHTWEIGHT_MODEL_NAME = _safe_str_env("LIGHTWEIGHT_MODEL_NAME", "deepseek-chat")
 REASONING_MODEL_NAME = _safe_str_env("REASONING_MODEL_NAME", "deepseek-reasoner")

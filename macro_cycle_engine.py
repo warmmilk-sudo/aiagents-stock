@@ -29,7 +29,7 @@ class MacroCycleEngine:
         self.logger = logging.getLogger(__name__)
         if not self.logger.handlers:
             logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(levelname)s %(name)s: %(message)s')
-        print(f"[宏观周期引擎] 初始化完成 (模型配置: {self.agents.deepseek_client.model_selection})")
+        print(f"[宏观周期引擎] 初始化完成 (模型配置: {self.agents.llm_client.model_selection})")
 
     def run_full_analysis(self, progress_callback=None) -> Dict[str, Any]:
         """

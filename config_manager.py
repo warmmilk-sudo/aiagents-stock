@@ -19,15 +19,15 @@ class ConfigManager:
     def __init__(self, env_file: str = ".env"):
         self.env_file = Path(env_file)
         self.default_config = {
-            "DEEPSEEK_API_KEY": {
+            "LLM_API_KEY": {
                 "value": "",
-                "description": "DeepSeek API 密钥",
+                "description": "LLM API 密钥",
                 "required": True,
                 "type": "password",
             },
-            "DEEPSEEK_BASE_URL": {
+            "LLM_BASE_URL": {
                 "value": "https://api.deepseek.com/v1",
-                "description": "DeepSeek API 地址",
+                "description": "LLM API 地址",
                 "required": False,
                 "type": "text",
             },
@@ -281,7 +281,8 @@ class ConfigManager:
         return {
             key: value
             for key, value in config.items()
-            if key in self.default_config and self._is_system_config_visible_key(key)
+            if key in self.default_config
+            and self._is_system_config_visible_key(key)
         }
 
     def _split_value_and_comment(self, raw_value: str) -> tuple[str, str]:
@@ -425,7 +426,8 @@ class ConfigManager:
                             continue
 
                         key = match.group("key").strip()
-                        config[key] = self._decode_env_value(match.group("value"))
+                        if key in self.default_config:
+                            config[key] = self._decode_env_value(match.group("value"))
             except Exception as e:
                 print(f"读取 .env 失败: {e}")
 
@@ -438,14 +440,10 @@ class ConfigManager:
         """Update managed configuration in `.env` while preserving existing layout."""
         try:
             updates = {
-                key: self._normalize_env_value(config.get(key, self.default_config[key]["value"]))
-                for key in self.default_config
-                if key in config
+                key: self._normalize_env_value(value)
+                for key, value in config.items()
+                if key in self.default_config
             }
-
-            for key, value in config.items():
-                if key not in updates and key in self.default_config:
-                    updates[key] = self._normalize_env_value(value)
 
             if not updates:
                 return True

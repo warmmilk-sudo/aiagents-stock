@@ -31,7 +31,7 @@ sudo sh get-docker.sh
 cp .env.template .env
 
 # 编辑 .env 文件，填入你的 DeepSeek API Key
-# DEEPSEEK_API_KEY=sk-your-actual-api-key-here
+# LLM_API_KEY=sk-your-actual-api-key-here
 ```
 
 ### 3️⃣ 启动服务

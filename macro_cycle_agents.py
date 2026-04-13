@@ -17,12 +17,12 @@ class MacroCycleAgents:
         self.model = model
         self.lightweight_model = lightweight_model
         self.reasoning_model = reasoning_model
-        self.deepseek_client = DeepSeekClient(
+        self.llm_client = DeepSeekClient(
             model=model,
             lightweight_model=lightweight_model,
             reasoning_model=reasoning_model,
         )
-        print(f"[宏观周期] AI智能体系统初始化 (模型配置: {self.deepseek_client.model_selection})")
+        print(f"[宏观周期] AI智能体系统初始化 (模型配置: {self.llm_client.model_selection})")
 
     def kondratieff_wave_agent(self, macro_data_text: str) -> Dict[str, Any]:
         """
@@ -43,7 +43,7 @@ class MacroCycleAgents:
             macro_data_text=macro_data_text,
         )
 
-        analysis = self.deepseek_client.call_api(
+        analysis = self.llm_client.call_api(
             messages,
             max_tokens=6000,
             tier=ModelTier.REASONING,
@@ -77,7 +77,7 @@ class MacroCycleAgents:
             macro_data_text=macro_data_text,
         )
 
-        analysis = self.deepseek_client.call_api(
+        analysis = self.llm_client.call_api(
             messages,
             max_tokens=6000,
             tier=ModelTier.REASONING,
@@ -111,7 +111,7 @@ class MacroCycleAgents:
             macro_data_text=macro_data_text,
         )
 
-        analysis = self.deepseek_client.call_api(
+        analysis = self.llm_client.call_api(
             messages,
             max_tokens=5000,
             tier=ModelTier.REASONING,
@@ -147,7 +147,7 @@ class MacroCycleAgents:
             policy_report=policy_report,
         )
 
-        analysis = self.deepseek_client.call_api(
+        analysis = self.llm_client.call_api(
             messages,
             max_tokens=6000,
             tier=ModelTier.REASONING,

@@ -293,7 +293,7 @@ class NewsFlowEngine:
                 if not local_agents:
                     logger.warning("⚠️ AI代理模块未初始化")
                 elif not local_agents.is_available():
-                    logger.warning("⚠️ DeepSeek API不可用，请检查API密钥配置")
+                    logger.warning("⚠️ LLM API不可用，请检查API密钥配置")
                 else:
                     logger.info("🤖 运行AI分析...")
                     report_progress(78, 100, "正在生成 AI 投资摘要...")
@@ -311,7 +311,7 @@ class NewsFlowEngine:
                         flow_type=model_data.get('flow_type', {}).get('flow_type', '未知') if model_data else '未知',
                     )
                     
-                    # 多板块深度分析（多次调用DeepSeek）
+                    # 多板块深度分析（多次调用 LLM）
                     logger.info("🔍 开始多板块深度分析...")
                     report_progress(88, 100, "正在执行多板块深度分析...")
                     multi_sector_analysis = local_agents.run_multi_sector_analysis(
@@ -324,7 +324,7 @@ class NewsFlowEngine:
                         ai_analysis['multi_sector'] = multi_sector_analysis
                     
                     model_selection = getattr(
-                        getattr(local_agents, 'deepseek_client', None),
+                        getattr(local_agents, 'llm_client', None),
                         'model_selection',
                         None,
                     )

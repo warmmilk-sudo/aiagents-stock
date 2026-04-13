@@ -213,7 +213,7 @@ class BatchAnalysisServiceTests(unittest.TestCase):
         mock_fetcher_cls.return_value = mock_fetcher
 
         mock_agents = MagicMock()
-        mock_agents.run_multi_agent_analysis.side_effect = RuntimeError("DeepSeek API调用失败")
+        mock_agents.run_multi_agent_analysis.side_effect = RuntimeError("LLM API调用失败")
         mock_agents_cls.return_value = mock_agents
 
         result = batch_analysis_service.analyze_single_stock_for_batch(
@@ -223,7 +223,7 @@ class BatchAnalysisServiceTests(unittest.TestCase):
         )
 
         self.assertFalse(result["success"])
-        self.assertIn("DeepSeek API调用失败", result["error"])
+        self.assertIn("LLM API调用失败", result["error"])
         mock_db.save_analysis.assert_not_called()
 
     @patch("batch_analysis_service.StockDataFetcher")

@@ -17,12 +17,12 @@ class LonghubangAgents:
         self.model = model
         self.lightweight_model = lightweight_model
         self.reasoning_model = reasoning_model
-        self.deepseek_client = DeepSeekClient(
+        self.llm_client = DeepSeekClient(
             model=model,
             lightweight_model=lightweight_model,
             reasoning_model=reasoning_model,
         )
-        print(f"[智瞰龙虎] AI分析师系统初始化 (模型配置: {self.deepseek_client.model_selection})")
+        print(f"[智瞰龙虎] AI分析师系统初始化 (模型配置: {self.llm_client.model_selection})")
     
     def youzi_behavior_analyst(self, longhubang_data: str, summary: Dict) -> Dict[str, Any]:
         """
@@ -56,7 +56,7 @@ class LonghubangAgents:
             longhubang_data=longhubang_data[:8000],
         )
         
-        analysis = self.deepseek_client.call_api(
+        analysis = self.llm_client.call_api(
             messages,
             max_tokens=4000,
             tier=ModelTier.REASONING,
@@ -101,7 +101,7 @@ class LonghubangAgents:
             longhubang_data=longhubang_data[:8000],
         )
         
-        analysis = self.deepseek_client.call_api(
+        analysis = self.llm_client.call_api(
             messages,
             max_tokens=4000,
             tier=ModelTier.REASONING,
@@ -145,7 +145,7 @@ class LonghubangAgents:
             longhubang_data=longhubang_data[:8000],
         )
         
-        analysis = self.deepseek_client.call_api(
+        analysis = self.llm_client.call_api(
             messages,
             max_tokens=4000,
             tier=ModelTier.REASONING,
@@ -185,7 +185,7 @@ class LonghubangAgents:
             longhubang_data=longhubang_data[:8000],
         )
         
-        analysis = self.deepseek_client.call_api(
+        analysis = self.llm_client.call_api(
             messages,
             max_tokens=4000,
             tier=ModelTier.REASONING,
@@ -228,7 +228,7 @@ class LonghubangAgents:
             analyses_text=analyses_text[:15000],
         )
         
-        analysis = self.deepseek_client.call_api(
+        analysis = self.llm_client.call_api(
             messages,
             max_tokens=5000,
             tier=ModelTier.REASONING,

@@ -1,6 +1,6 @@
 """
 新闻流量智能分析代理模块
-使用DeepSeek进行AI驱动的分析
+使用 LLM 进行 AI 驱动的分析
 包含：板块影响分析、股票推荐、风险评估、投资建议
 """
 import json
@@ -30,25 +30,25 @@ class NewsFlowAgents:
         self.model = model
         self.lightweight_model = lightweight_model
         self.reasoning_model = reasoning_model
-        self.deepseek_client = None
+        self.llm_client = None
         self._init_client()
     
     def _init_client(self):
-        """初始化DeepSeek客户端"""
+        """初始化 LLM 客户端"""
         try:
-            self.deepseek_client = DeepSeekClient(
+            self.llm_client = DeepSeekClient(
                 model=self.model,
                 lightweight_model=self.lightweight_model,
                 reasoning_model=self.reasoning_model,
             )
-            logger.info(f"✅ DeepSeek客户端初始化成功，模型配置: {self.deepseek_client.model_selection}")
+            logger.info(f"✅ LLM客户端初始化成功，模型配置: {self.llm_client.model_selection}")
         except Exception as e:
-            logger.error(f"❌ DeepSeek客户端初始化失败: {e}")
-            self.deepseek_client = None
+            logger.error(f"❌ LLM客户端初始化失败: {e}")
+            self.llm_client = None
     
     def is_available(self) -> bool:
-        """检查AI是否可用"""
-        return self.deepseek_client is not None
+        """检查 AI 是否可用"""
+        return self.llm_client is not None
     
     def sector_impact_agent(self, hot_topics: List[Dict], 
                             stock_news: List[Dict],
@@ -98,7 +98,7 @@ class NewsFlowAgents:
                 flow_info=flow_info,
             )
             
-            response = self.deepseek_client.call_api(
+            response = self.llm_client.call_api(
                 messages,
                 temperature=0.5,
                 max_tokens=2000,
@@ -165,7 +165,7 @@ class NewsFlowAgents:
                 sectors_text=sectors_text,
             )
             
-            response = self.deepseek_client.call_api(
+            response = self.llm_client.call_api(
                 messages,
                 temperature=0.6,
                 max_tokens=2000,
@@ -221,7 +221,7 @@ class NewsFlowAgents:
                 flow_type=flow_type,
             )
             
-            response = self.deepseek_client.call_api(
+            response = self.llm_client.call_api(
                 messages,
                 temperature=0.4,
                 max_tokens=1500,
@@ -293,7 +293,7 @@ class NewsFlowAgents:
                 risk_factors_text=", ".join(risk_assess.get("risk_factors", [])[:3]),
             )
             
-            response = self.deepseek_client.call_api(
+            response = self.llm_client.call_api(
                 messages,
                 temperature=0.5,
                 max_tokens=2000,
@@ -403,7 +403,7 @@ class NewsFlowAgents:
         """
         深度分析单个板块
         
-        为每个热门板块单独调用DeepSeek进行深度分析
+        为每个热门板块单独调用 LLM 进行深度分析
         """
         if not self.is_available():
             return {'success': False, 'error': 'AI不可用'}
@@ -427,7 +427,7 @@ class NewsFlowAgents:
                 topics_text=topics_text,
             )
             
-            response = self.deepseek_client.call_api(
+            response = self.llm_client.call_api(
                 messages,
                 temperature=0.5,
                 max_tokens=2000,
@@ -451,7 +451,7 @@ class NewsFlowAgents:
         """
         多板块并行分析
         
-        对多个热门板块分别调用DeepSeek进行深度分析
+        对多个热门板块分别调用 LLM 进行深度分析
         
         Args:
             hot_topics: 热门话题列表

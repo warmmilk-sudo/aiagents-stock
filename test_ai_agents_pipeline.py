@@ -21,7 +21,7 @@ StockAnalysisAgents = ai_agents_module.StockAnalysisAgents
 class StockAnalysisAgentsPipelineTests(unittest.TestCase):
     def test_run_multi_agent_analysis_uses_risk_key(self):
         agent = StockAnalysisAgents.__new__(StockAnalysisAgents)
-        agent.deepseek_client = None
+        agent.llm_client = None
         agent.technical_analyst_agent = lambda *args, **kwargs: {"analysis": "技术"}
         agent.fundamental_analyst_agent = lambda *args, **kwargs: {"analysis": "基本面"}
         agent.fund_flow_analyst_agent = lambda *args, **kwargs: {"analysis": "资金"}
@@ -48,7 +48,7 @@ class StockAnalysisAgentsPipelineTests(unittest.TestCase):
 
     def test_conduct_team_discussion_rejects_empty_reports(self):
         agent = StockAnalysisAgents.__new__(StockAnalysisAgents)
-        agent.deepseek_client = types.SimpleNamespace()
+        agent.llm_client = types.SimpleNamespace()
 
         with self.assertRaisesRegex(RuntimeError, "没有可用于团队讨论的分析师报告"):
             agent.conduct_team_discussion({}, {"symbol": "600519", "name": "贵州茅台"})
@@ -61,7 +61,7 @@ class StockAnalysisAgentsPipelineTests(unittest.TestCase):
             captured["prompt"] = messages[1]["content"]
             return "讨论结果"
 
-        agent.deepseek_client = types.SimpleNamespace(call_api=fake_call_api)
+        agent.llm_client = types.SimpleNamespace(call_api=fake_call_api)
 
         result = agent.conduct_team_discussion(
             {
@@ -86,7 +86,7 @@ class StockAnalysisAgentsPipelineTests(unittest.TestCase):
             captured["prompt"] = messages[1]["content"]
             return "讨论结果"
 
-        agent.deepseek_client = types.SimpleNamespace(call_api=fake_call_api)
+        agent.llm_client = types.SimpleNamespace(call_api=fake_call_api)
 
         agent.conduct_team_discussion(
             {"technical": {"analysis": "技术分析正文"}},
@@ -112,7 +112,7 @@ class StockAnalysisAgentsPipelineTests(unittest.TestCase):
             captured["prompt"] = messages[1]["content"]
             return "风险分析"
 
-        agent.deepseek_client = types.SimpleNamespace(call_api=fake_call_api)
+        agent.llm_client = types.SimpleNamespace(call_api=fake_call_api)
 
         result = agent.risk_management_agent(
             stock_info={

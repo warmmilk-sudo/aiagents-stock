@@ -1,6 +1,7 @@
 import os
 from dotenv import load_dotenv
 import logging
+import config
 from smart_monitor_deepseek import SmartMonitorDeepSeek
 from smart_monitor_data import SmartMonitorDataFetcher
 
@@ -20,7 +21,7 @@ def test_labeling_and_ai():
     # 模拟账户
     account_info = {'available_cash': 100000, 'total_value': 100000, 'positions_count': 0}
     
-    engine = SmartMonitorDeepSeek(api_key=os.getenv('DEEPSEEK_API_KEY'))
+    engine = SmartMonitorDeepSeek(api_key=config.LLM_API_KEY)
     print("Sending to AI...")
     result = engine.analyze_stock_and_decide('600519', data, account_info)
     

@@ -19,12 +19,12 @@ class SectorStrategyAgents:
         self.model = model
         self.lightweight_model = lightweight_model
         self.reasoning_model = reasoning_model
-        self.deepseek_client = DeepSeekClient(
+        self.llm_client = DeepSeekClient(
             model=model,
             lightweight_model=lightweight_model,
             reasoning_model=reasoning_model,
         )
-        print(f"[智策] AI智能体系统初始化 (模型配置: {self.deepseek_client.model_selection})")
+        print(f"[智策] AI智能体系统初始化 (模型配置: {self.llm_client.model_selection})")
     
     def macro_strategist_agent(self, market_data: Dict, news_data: list, analysis_date: str = "") -> Dict[str, Any]:
         """
@@ -80,7 +80,7 @@ class SectorStrategyAgents:
             news_summary=news_summary,
         )
         
-        analysis = self.deepseek_client.call_api(
+        analysis = self.llm_client.call_api(
             messages,
             max_tokens=4000,
             tier=ModelTier.REASONING,
@@ -164,7 +164,7 @@ class SectorStrategyAgents:
             concept_summary=concept_summary,
         )
         
-        analysis = self.deepseek_client.call_api(
+        analysis = self.llm_client.call_api(
             messages,
             max_tokens=4000,
             tier=ModelTier.REASONING,
@@ -222,7 +222,7 @@ class SectorStrategyAgents:
             concept_summary=concept_summary,
             raw_analysis=analysis,
         )
-        repaired = self.deepseek_client.call_api(
+        repaired = self.llm_client.call_api(
             repair_messages,
             temperature=0.1,
             max_tokens=4000,
@@ -255,7 +255,7 @@ class SectorStrategyAgents:
             ) or "暂无额外上下文",
             raw_analysis=analysis,
         )
-        repaired = self.deepseek_client.call_api(
+        repaired = self.llm_client.call_api(
             repair_messages,
             temperature=0.1,
             max_tokens=4000,
@@ -336,7 +336,7 @@ class SectorStrategyAgents:
             north_summary=north_summary,
         )
         
-        analysis = self.deepseek_client.call_api(
+        analysis = self.llm_client.call_api(
             messages,
             max_tokens=4000,
             tier=ModelTier.LIGHTWEIGHT,
@@ -443,7 +443,7 @@ class SectorStrategyAgents:
             hot_concepts=hot_concepts,
         )
         
-        analysis = self.deepseek_client.call_api(
+        analysis = self.llm_client.call_api(
             messages,
             max_tokens=4000,
             tier=ModelTier.LIGHTWEIGHT,

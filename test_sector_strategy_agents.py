@@ -24,7 +24,7 @@ class SectorStrategyAgentsTests(unittest.TestCase):
             captured["tier"] = tier
             return "宏观分析结果"
 
-        agent.deepseek_client = types.SimpleNamespace(call_api=fake_call_api)
+        agent.llm_client = types.SimpleNamespace(call_api=fake_call_api)
 
         result = agent.macro_strategist_agent(
             market_data={
@@ -64,7 +64,7 @@ class SectorStrategyAgentsTests(unittest.TestCase):
                 return "板块静态PE约25-30倍，2024年业绩增速预计20%-30%，估值合理。"
             return "板块静态PE约25-30倍。当前输入未提供相关估值/业绩数据，无法做更细的年度量化判断。"
 
-        agent.deepseek_client = types.SimpleNamespace(call_api=fake_call_api)
+        agent.llm_client = types.SimpleNamespace(call_api=fake_call_api)
 
         result = agent.sector_diagnostician_agent(
             sectors_data={
@@ -104,7 +104,7 @@ class SectorStrategyAgentsTests(unittest.TestCase):
                 return "当前宏观环境延续2024年宽松周期。"
             return "当前输入未提供相关数据，无法做更细的年度量化判断，应仅按当日新闻与市场结构解读。"
 
-        agent.deepseek_client = types.SimpleNamespace(call_api=fake_call_api)
+        agent.llm_client = types.SimpleNamespace(call_api=fake_call_api)
 
         result = agent.macro_strategist_agent(
             market_data={

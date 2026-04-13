@@ -35,7 +35,7 @@ class SmartMonitorEngineTimeoutTests(unittest.TestCase):
         with patch.object(
             smart_monitor_engine_module.config_manager,
             "read_env",
-            return_value={"DEEPSEEK_API_KEY": "stub"},
+            return_value={"LLM_API_KEY": "stub"},
         ), patch.object(
             smart_monitor_engine_module.config,
             "SMART_MONITOR_DATA_FETCH_TIMEOUT_SECONDS",

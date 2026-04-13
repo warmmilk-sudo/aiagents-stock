@@ -29,7 +29,7 @@ class DeepSeekClientTests(unittest.TestCase):
             )
         )
 
-        with self.assertRaisesRegex(RuntimeError, "DeepSeek API调用失败"):
+        with self.assertRaisesRegex(RuntimeError, "LLM API调用失败"):
             client.call_api([{"role": "user", "content": "hello"}])
 
     def test_call_api_omits_reasoning_when_disabled(self):

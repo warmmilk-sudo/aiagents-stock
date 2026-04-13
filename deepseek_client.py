@@ -10,7 +10,7 @@ from prompt_registry import build_messages
 
 
 class DeepSeekClient:
-    """DeepSeek API客户端"""
+    """LLM API客户端"""
 
     def __init__(self, model=None, lightweight_model=None, reasoning_model=None):
         # 兼容旧接口：model 表示强制所有任务统一使用一个模型
@@ -18,8 +18,8 @@ class DeepSeekClient:
         self.lightweight_model = lightweight_model
         self.reasoning_model = reasoning_model
         self.client = openai.OpenAI(
-            api_key=config.DEEPSEEK_API_KEY,
-            base_url=config.DEEPSEEK_BASE_URL
+            api_key=config.LLM_API_KEY,
+            base_url=config.LLM_BASE_URL
         )
         self.model_selection = describe_model_selection(
             forced_model=self.model,
@@ -104,7 +104,7 @@ class DeepSeekClient:
         tier: Optional[ModelTier] = None,
         include_reasoning: bool = False,
     ) -> str:
-        """调用DeepSeek API"""
+        """调用LLM API"""
         model_to_use = resolve_model_name(
             tier=tier,
             explicit_model=model,
@@ -143,7 +143,7 @@ class DeepSeekClient:
             return result if result else "API返回空响应"
 
         except Exception as e:
-            raise RuntimeError(f"DeepSeek API调用失败: {str(e)}") from e
+            raise RuntimeError(f"LLM API调用失败: {str(e)}") from e
 
     def technical_analysis(self, stock_info: Dict, stock_data: Any, indicators: Dict) -> str:
         """技术面分析"""

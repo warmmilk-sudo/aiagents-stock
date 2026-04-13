@@ -1,6 +1,6 @@
 """
 智能盯盘 - 主引擎
-整合DeepSeek AI决策、数据获取、待办生成、通知等功能
+整合 LLM 决策、数据获取、待办生成、通知等功能
 """
 
 import logging
@@ -29,31 +29,31 @@ class SmartMonitorEngine:
     DATA_FETCH_TIMEOUT_SECONDS = 45
     AI_DECISION_TIMEOUT_SECONDS = 25
     
-    def __init__(self, deepseek_api_key: str = None, model: str = None,
+    def __init__(self, llm_api_key: str = None, model: str = None,
                  lightweight_model: str = None, reasoning_model: str = None,
                  lifecycle_service: InvestmentLifecycleService = None):
         """
         初始化智能盯盘引擎
         
         Args:
-            deepseek_api_key: DeepSeek API密钥（可选，从配置读取）
+            llm_api_key: LLM API密钥（可选，从配置读取）
         """
         self.logger = logging.getLogger(__name__)
         
         # 从配置管理器读取配置
         env_config = config_manager.read_env()
-        
-        # DeepSeek API
-        if deepseek_api_key is None:
-            deepseek_api_key = env_config.get('DEEPSEEK_API_KEY', '')
+
+        # LLM API
+        if llm_api_key is None:
+            llm_api_key = env_config.get('LLM_API_KEY', '')
 
         self.model = model
         self.lightweight_model = lightweight_model
         self.reasoning_model = reasoning_model
         
         # 初始化各个模块
-        self.deepseek = SmartMonitorDeepSeek(
-            deepseek_api_key,
+        self.llm_client = SmartMonitorDeepSeek(
+            llm_api_key,
             model=model,
             lightweight_model=lightweight_model,
             reasoning_model=reasoning_model,
@@ -70,7 +70,7 @@ class SmartMonitorEngine:
         )
         self.ai_decision_timeout_seconds = max(
             int(getattr(config, "SMART_MONITOR_AI_TIMEOUT_SECONDS", self.AI_DECISION_TIMEOUT_SECONDS) or self.AI_DECISION_TIMEOUT_SECONDS),
-            int(getattr(self.deepseek, "http_timeout_seconds", self.AI_DECISION_TIMEOUT_SECONDS) or self.AI_DECISION_TIMEOUT_SECONDS) + 10,
+            int(getattr(self.llm_client, "http_timeout_seconds", self.AI_DECISION_TIMEOUT_SECONDS) or self.AI_DECISION_TIMEOUT_SECONDS) + 10,
         )
         self.data_fetcher = SmartMonitorDataFetcher()
         self.db = SmartMonitorDB()
@@ -97,7 +97,7 @@ class SmartMonitorEngine:
         self.model = model
         self.lightweight_model = lightweight_model
         self.reasoning_model = reasoning_model
-        self.deepseek.set_model_overrides(
+        self.llm_client.set_model_overrides(
             model=model,
             lightweight_model=lightweight_model,
             reasoning_model=reasoning_model,
@@ -526,7 +526,7 @@ class SmartMonitorEngine:
             self.logger.info(f"[{stock_code}] 开始分析...")
             
             # 1. 检查交易时段
-            session_info = self.deepseek.get_trading_session()
+            session_info = self.llm_client.get_trading_session()
             self.logger.info(f"[{stock_code}] 当前时段: {session_info['session']}")
             
             # 如果启用了仅交易时段分析，且当前不在交易时段，则跳过分析
@@ -645,9 +645,9 @@ class SmartMonitorEngine:
                     strategy_context.get("analysis_date"),
                 )
 
-            # 5. 调用DeepSeek AI决策
+            # 5. 调用 LLM AI 决策
             ai_result = self._run_with_timeout(
-                self.deepseek.analyze_stock_and_decide,
+                self.llm_client.analyze_stock_and_decide,
                 self.ai_decision_timeout_seconds,
                 stock_code=stock_code,
                 market_data=market_data,
@@ -912,7 +912,7 @@ class SmartMonitorEngine:
             if position_quantity is None:
                 position_quantity = int(task_config.get('position_quantity', 0) or 0)
             if session_info is None:
-                session_info = self.deepseek.get_trading_session()
+                session_info = self.llm_client.get_trading_session()
 
             current_price = _to_float(market_data.get('current_price'))
             profit_loss_pct = None
@@ -1027,7 +1027,7 @@ if __name__ == '__main__':
     )
     
     engine = SmartMonitorEngine(
-        deepseek_api_key=os.getenv('DEEPSEEK_API_KEY'),
+        llm_api_key=config.LLM_API_KEY,
     )
     
     # 测试分析贵州茅台

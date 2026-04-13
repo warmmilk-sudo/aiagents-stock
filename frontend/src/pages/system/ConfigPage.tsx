@@ -18,7 +18,7 @@ const sectionTabs = [
 ];
 
 const BASIC_PANELS = [
-  { title: "基础连接", keys: ["DEEPSEEK_API_KEY", "DEEPSEEK_BASE_URL"] },
+  { title: "基础连接", keys: ["LLM_API_KEY", "LLM_BASE_URL"] },
   {
     title: "模型配置",
     keys: ["LIGHTWEIGHT_MODEL_NAME", "LIGHTWEIGHT_MODEL_OPTIONS", "REASONING_MODEL_NAME", "REASONING_MODEL_OPTIONS"],

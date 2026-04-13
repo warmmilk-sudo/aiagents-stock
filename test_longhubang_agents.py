@@ -24,7 +24,7 @@ class LonghubangAgentsTests(unittest.TestCase):
             captured["tier"] = tier
             return "游资分析结果"
 
-        agent.deepseek_client = types.SimpleNamespace(call_api=fake_call_api)
+        agent.llm_client = types.SimpleNamespace(call_api=fake_call_api)
 
         result = agent.youzi_behavior_analyst(
             "92科比 | 四川黄金(001337) | 买入:1000000 卖出:0 净流入:1000000",

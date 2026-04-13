@@ -29,7 +29,7 @@ class MainForceAnalyzer:
             lightweight_model=lightweight_model,
             reasoning_model=reasoning_model,
         )
-        self.deepseek_client = self.agents.deepseek_client
+        self.llm_client = self.agents.llm_client
         self.raw_stocks = None
         self.final_recommendations = []
     
@@ -232,7 +232,7 @@ class MainForceAnalyzer:
             {"role": "user", "content": prompt}
         ]
         
-        analysis = self.deepseek_client.call_api(
+        analysis = self.llm_client.call_api(
             messages,
             max_tokens=4000,
             tier=ModelTier.LIGHTWEIGHT,
@@ -290,7 +290,7 @@ class MainForceAnalyzer:
             {"role": "user", "content": prompt}
         ]
         
-        analysis = self.deepseek_client.call_api(
+        analysis = self.llm_client.call_api(
             messages,
             max_tokens=4000,
             tier=ModelTier.LIGHTWEIGHT,
@@ -348,7 +348,7 @@ class MainForceAnalyzer:
             {"role": "user", "content": prompt}
         ]
         
-        analysis = self.deepseek_client.call_api(
+        analysis = self.llm_client.call_api(
             messages,
             max_tokens=4000,
             tier=ModelTier.LIGHTWEIGHT,
@@ -496,7 +496,7 @@ class MainForceAnalyzer:
                 {"role": "user", "content": prompt}
             ]
             
-            response = self.deepseek_client.call_api(
+            response = self.llm_client.call_api(
                 messages,
                 max_tokens=4000,
                 tier=ModelTier.REASONING,
