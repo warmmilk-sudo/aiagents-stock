@@ -40,9 +40,19 @@ const REPORT_START_PATTERNS = [
   /^\*\*(?:核心判断|核心结论|总体判断).*\*\*$/m,
 ];
 
+const PLAIN_REPORT_TITLE_PATTERNS = [
+  /^(?!.*[：:]).{0,48}(?:分析报告|深度分析报告|风险评估报告|技术面分析报告|技术分析报告|基本面分析报告|基本面深度分析报告|资金面分析报告|市场情绪分析报告|新闻分析报告)\s*$/m,
+];
+
 const REPORT_BODY_MARKERS = [
   /^\s*(?:以下|下面)是(?:最终)?(?:正式)?(?:分析)?报告[:：]?\s*$/m,
   /[\[【]?(?:报告正文|正文内容|分析正文|最终报告|正式报告)[\]】]?[:：]?\s*/m,
+];
+
+const REPORT_TRANSITION_PATTERNS = [
+  /^\s*(?:现在|接下来)?(?:重新)?(?:整理|输出|生成|给出)?(?:成)?(?:一份)?(?:正式|专业|结构化|清晰)?(?:的)?(?:分析报告|报告)(?:如下)?[:：]?\s*$/m,
+  /^\s*(?:现在|接下来)(?:把(?:这些|以上)?内容)?(?:重新)?整理成(?:正式|专业|结构化|清晰)?(?:的)?(?:分析报告|报告)[:：]?\s*$/m,
+  /^\s*(?:下面|以下)(?:给出|整理为)?(?:正式|专业|结构化)?(?:的)?(?:分析报告|报告)[:：]?\s*$/m,
 ];
 
 const PREAMBLE_LINE_PATTERNS = [
@@ -175,7 +185,7 @@ function removeInlineFormatting(text: string): string {
 }
 
 function findReportBodyStart(text: string): number | null {
-  const positions = REPORT_START_PATTERNS
+  const positions = [...REPORT_START_PATTERNS, ...PLAIN_REPORT_TITLE_PATTERNS]
     .map((pattern) => text.search(pattern))
     .filter((position) => position >= 0);
   return positions.length ? Math.min(...positions) : null;
@@ -197,6 +207,16 @@ function cleanBodyLabel(text: string): string {
 
 function findBodyMarker(text: string): RegExpMatchArray | null {
   for (const pattern of REPORT_BODY_MARKERS) {
+    const match = text.match(pattern);
+    if (match && match.index !== undefined) {
+      return match;
+    }
+  }
+  return null;
+}
+
+function findReportTransition(text: string): RegExpMatchArray | null {
+  for (const pattern of REPORT_TRANSITION_PATTERNS) {
     const match = text.match(pattern);
     if (match && match.index !== undefined) {
       return match;
@@ -290,6 +310,23 @@ export function splitReportSections(value: unknown): SplitReportSections {
     body = beforeMarker;
     reasoning = afterMarker;
   } else {
+    const transitionMatch = findReportTransition(afterMarker);
+    if (transitionMatch && transitionMatch.index !== undefined) {
+      const beforeTransition = afterMarker.slice(0, transitionMatch.index).trim();
+      const afterTransition = cleanBodyLabel(
+        afterMarker.slice(transitionMatch.index + transitionMatch[0].length),
+      );
+      const { body: transitionedBody, preamble } = splitLeadingPreamble(afterTransition);
+      return {
+        body: cleanExtractedBody(transitionedBody || afterTransition),
+        reasoning: combineReasoningParts(
+          reasoningParts.join("\n\n"),
+          cleanReasoningLabel(beforeTransition),
+          preamble,
+        ),
+      };
+    }
+
     const reportStart = findReportBodyStart(afterMarker);
     if (reportStart !== null && reportStart > 0) {
       body = afterMarker.slice(reportStart).trim();

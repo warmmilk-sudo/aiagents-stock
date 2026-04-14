@@ -197,6 +197,7 @@ export function LonghubangReportDetailView({
           title: key === "chief" ? "首席策略师综合研判" : label,
           role: report?.agent_role || "",
           timestamp: report?.timestamp || result?.timestamp || "",
+          rawContent: String(report?.analysis || "").trim(),
           body: sections.body || report?.analysis || "",
           reasoning: sections.reasoning,
         };

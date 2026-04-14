@@ -740,9 +740,13 @@ def submit_main_force_batch_task(
                 for completed_count, future in enumerate(concurrent.futures.as_completed(future_to_symbol), start=1):
                     symbol = future_to_symbol[future]
                     try:
-                        results_by_symbol[symbol] = future.result(timeout=300)
+                        results_by_symbol[symbol] = future.result(timeout=config.ANALYSIS_TASK_TIMEOUT_SECONDS)
                     except concurrent.futures.TimeoutError:
-                        results_by_symbol[symbol] = {"symbol": symbol, "success": False, "error": "分析超时（5分钟）"}
+                        results_by_symbol[symbol] = {
+                            "symbol": symbol,
+                            "success": False,
+                            "error": f"分析超时（{config.ANALYSIS_TASK_TIMEOUT_SECONDS}秒）",
+                        }
                     except Exception as exc:
                         results_by_symbol[symbol] = {"symbol": symbol, "success": False, "error": str(exc)}
                     current_result = results_by_symbol[symbol]
@@ -1206,9 +1210,13 @@ def submit_longhubang_batch_task(
                 for completed_count, future in enumerate(concurrent.futures.as_completed(future_to_symbol), start=1):
                     symbol = future_to_symbol[future]
                     try:
-                        results_by_symbol[symbol] = future.result(timeout=300)
+                        results_by_symbol[symbol] = future.result(timeout=config.ANALYSIS_TASK_TIMEOUT_SECONDS)
                     except concurrent.futures.TimeoutError:
-                        results_by_symbol[symbol] = {"symbol": symbol, "success": False, "error": "分析超时（5分钟）"}
+                        results_by_symbol[symbol] = {
+                            "symbol": symbol,
+                            "success": False,
+                            "error": f"分析超时（{config.ANALYSIS_TASK_TIMEOUT_SECONDS}秒）",
+                        }
                     except Exception as exc:
                         results_by_symbol[symbol] = {"symbol": symbol, "success": False, "error": str(exc)}
                     current_result = results_by_symbol[symbol]
@@ -2972,9 +2980,9 @@ def submit_smart_monitor_baseline_refresh_task(
                 for completed_count, future in enumerate(concurrent.futures.as_completed(future_to_symbol), start=1):
                     symbol = future_to_symbol[future]
                     try:
-                        result = future.result(timeout=300)
+                        result = future.result(timeout=config.ANALYSIS_TASK_TIMEOUT_SECONDS)
                     except concurrent.futures.TimeoutError:
-                        result = {"success": False, "error": "分析超时（5分钟）"}
+                        result = {"success": False, "error": f"分析超时（{config.ANALYSIS_TASK_TIMEOUT_SECONDS}秒）"}
                     except Exception as exc:
                         result = {"success": False, "error": str(exc)}
 

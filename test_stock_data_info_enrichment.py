@@ -58,7 +58,12 @@ class _FakeDataSourceManager:
         return f"{symbol}.SH"
 
     def get_stock_basic_info(self, symbol):
-        return {"symbol": symbol, "name": "贵州茅台", "industry": "白酒"}
+        return {
+            "symbol": symbol,
+            "name": "贵州茅台",
+            "industry": "白酒",
+            "business_summary": "高端白酒生产与销售。",
+        }
 
     def get_stock_hist_data(self, symbol, **kwargs):
         dates = pd.date_range("2025-04-01", periods=260, freq="B")
@@ -80,6 +85,13 @@ class _FakeDataSourceManager:
             "name": "贵州茅台",
             "price": 1688.0,
             "change_percent": 1.23,
+            "turnover_rate": 0.82,
+            "volume_ratio": 1.18,
+            "order_book": {
+                "summary": "买盘最优 1687.8/120，卖盘最优 1688.0/95",
+                "bids": [{"level": "买一", "price": 1687.8, "volume": 120}],
+                "asks": [{"level": "卖一", "price": 1688.0, "volume": 95}],
+            },
         }
 
 
@@ -97,6 +109,7 @@ class StockDataInfoEnrichmentTests(unittest.TestCase):
         self.assertEqual(info["name"], "贵州茅台")
         self.assertEqual(info["industry"], "白酒")
         self.assertEqual(info["sector"], "白酒")
+        self.assertEqual(info["business_summary"], "高端白酒生产与销售。")
         self.assertEqual(info["pe_ratio"], 25.6)
         self.assertEqual(info["pb_ratio"], 8.4)
         self.assertEqual(info["ps_ratio"], 10.2)
@@ -105,6 +118,21 @@ class StockDataInfoEnrichmentTests(unittest.TestCase):
         self.assertIsNotNone(info["52_week_high"])
         self.assertIsNotNone(info["52_week_low"])
         self.assertIsNotNone(info["beta"])
+
+    def test_realtime_quote_keeps_turnover_and_order_book(self):
+        fetcher = StockDataFetcher.__new__(StockDataFetcher)
+        fetcher.data = None
+        fetcher.info = None
+        fetcher.financial_data = None
+        fetcher.data_source_manager = _FakeDataSourceManager()
+        fetcher.cache_service = SimpleNamespace()
+
+        quote = fetcher.get_realtime_quote("600519")
+
+        self.assertEqual(quote["turnover_rate"], 0.82)
+        self.assertEqual(quote["volume_ratio"], 1.18)
+        self.assertEqual(quote["order_book"]["summary"], "买盘最优 1687.8/120，卖盘最优 1688.0/95")
+        self.assertEqual(quote["order_book"]["bids"][0]["level"], "买一")
 
 
 if __name__ == "__main__":

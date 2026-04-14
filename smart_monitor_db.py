@@ -154,15 +154,14 @@ class SmartMonitorDB:
     @staticmethod
     def _extract_decision_context_snapshot(payload: Dict) -> Dict:
         explicit_context = payload.get("decision_context")
-        if isinstance(explicit_context, dict) and explicit_context:
-            return dict(explicit_context)
+        merged_context: Dict[str, object] = dict(explicit_context) if isinstance(explicit_context, dict) and explicit_context else {}
 
         market_data = payload.get("market_data")
         if not isinstance(market_data, dict):
-            return {}
+            return merged_context
         intraday_context = market_data.get("intraday_context")
         if not isinstance(intraday_context, dict) or not intraday_context:
-            return {}
+            return merged_context
 
         snapshot = {
             "intraday_bias": intraday_context.get("intraday_bias"),
@@ -177,7 +176,13 @@ class SmartMonitorDB:
             "intraday_vwap": intraday_context.get("intraday_vwap"),
             "latest_trade_time": intraday_context.get("latest_trade_time"),
         }
-        return {key: value for key, value in snapshot.items() if value not in (None, [], {}, "")}
+        for key, value in snapshot.items():
+            if key in merged_context:
+                continue
+            if value in (None, [], {}, ""):
+                continue
+            merged_context[key] = value
+        return merged_context
 
     @staticmethod
     def _query_asset_binding_by_id(cursor: sqlite3.Cursor, asset_id: int) -> Optional[Dict]:
@@ -1192,6 +1197,12 @@ class SmartMonitorDB:
                 decision["intraday_bias_text"] = decision_context.get("intraday_bias_text")
                 decision["intraday_signal_labels"] = decision_context.get("intraday_signal_labels") or []
                 decision["intraday_observations"] = decision_context.get("intraday_observations") or []
+                decision["previous_action"] = decision_context.get("previous_action")
+                decision["decision_changed"] = decision_context.get("decision_changed")
+                decision["action_changed"] = decision_context.get("action_changed")
+                decision["thresholds_changed"] = decision_context.get("thresholds_changed")
+                decision["delta_summary"] = decision_context.get("delta_summary")
+                decision["new_intraday_signal_labels"] = decision_context.get("new_intraday_signal_labels") or []
             decisions.append(decision)
         return decisions
 

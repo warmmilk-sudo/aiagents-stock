@@ -418,6 +418,37 @@ class SmartMonitorTDXDataFetcher:
             )
             self.logger.debug(f"✅ TDX成功获取 {stock_code} ({stock_name}) 实时行情")
 
+            order_book_bids = []
+            order_book_asks = []
+            for level in range(1, 6):
+                bid_price = quote_data.get(f"Buy{level}", quote_data.get(f"buy{level}", quote_data.get(f"B{level}")))
+                bid_volume = quote_data.get(
+                    f"BuyVol{level}",
+                    quote_data.get(f"buy_vol{level}", quote_data.get(f"B{level}V")),
+                )
+                ask_price = quote_data.get(f"Sell{level}", quote_data.get(f"sell{level}", quote_data.get(f"S{level}")))
+                ask_volume = quote_data.get(
+                    f"SellVol{level}",
+                    quote_data.get(f"sell_vol{level}", quote_data.get(f"S{level}V")),
+                )
+                if bid_price not in (None, "") or bid_volume not in (None, ""):
+                    order_book_bids.append({"level": f"买{level}", "price": bid_price, "volume": bid_volume})
+                if ask_price not in (None, "") or ask_volume not in (None, ""):
+                    order_book_asks.append({"level": f"卖{level}", "price": ask_price, "volume": ask_volume})
+
+            order_book = None
+            if order_book_bids or order_book_asks:
+                summary_parts = []
+                if order_book_bids:
+                    summary_parts.append(f"买盘最优 {order_book_bids[0].get('price')}/{order_book_bids[0].get('volume')}")
+                if order_book_asks:
+                    summary_parts.append(f"卖盘最优 {order_book_asks[0].get('price')}/{order_book_asks[0].get('volume')}")
+                order_book = {
+                    "bids": order_book_bids,
+                    "asks": order_book_asks,
+                    "summary": "，".join(summary_parts) if summary_parts else None,
+                }
+
             return {
                 'code': stock_code,
                 'name': stock_name,
@@ -432,6 +463,7 @@ class SmartMonitorTDXDataFetcher:
                 'pre_close': pre_close,
                 'turnover_rate': turnover_rate,
                 'volume_ratio': volume_ratio,
+                'order_book': order_book,
                 'update_time': self._normalize_response_time(response.headers.get("Date")),
                 'data_source': 'tdx',
                 'precision_status': 'validated',

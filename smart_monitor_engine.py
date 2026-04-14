@@ -7,7 +7,7 @@ import logging
 import time
 import inspect
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from datetime import datetime
 import threading
 
@@ -331,6 +331,223 @@ class SmartMonitorEngine:
             "decision_changed": action_changed or thresholds_changed,
         }
 
+    @staticmethod
+    def _build_decision_context_delta(
+        *,
+        latest_decision: Optional[Dict],
+        current_decision: Dict,
+        market_data: Dict,
+        change_flags: Dict[str, bool],
+    ) -> Dict[str, object]:
+        latest_decision = latest_decision or {}
+        current_intraday = market_data.get("intraday_context") if isinstance(market_data.get("intraday_context"), dict) else {}
+        previous_intraday = latest_decision.get("decision_context") if isinstance(latest_decision.get("decision_context"), dict) else {}
+
+        def _to_float(value: object) -> Optional[float]:
+            try:
+                return float(value) if value not in (None, "") else None
+            except (TypeError, ValueError):
+                return None
+
+        def _round_delta(value: Optional[float]) -> Optional[float]:
+            if value is None:
+                return None
+            return round(value, 4)
+
+        delta_payload: Dict[str, object] = {
+            "previous_action": str(latest_decision.get("action") or "").upper() or None,
+            "previous_confidence": latest_decision.get("confidence"),
+            "previous_risk_level": latest_decision.get("risk_level"),
+            "previous_decision_time": latest_decision.get("decision_time"),
+            "action_changed": bool(change_flags.get("action_changed")),
+            "thresholds_changed": bool(change_flags.get("thresholds_changed")),
+            "decision_changed": bool(change_flags.get("decision_changed")),
+        }
+
+        previous_bias_text = str(previous_intraday.get("intraday_bias_text") or "").strip()
+        current_bias_text = str(current_intraday.get("intraday_bias_text") or "").strip()
+        if previous_bias_text or current_bias_text:
+            delta_payload["previous_intraday_bias_text"] = previous_bias_text or None
+            delta_payload["intraday_bias_changed"] = previous_bias_text != current_bias_text
+
+        previous_last_5m = _to_float(previous_intraday.get("last_5m_change_pct"))
+        current_last_5m = _to_float(current_intraday.get("last_5m_change_pct"))
+        if previous_last_5m is not None and current_last_5m is not None:
+            delta_payload["last_5m_change_delta"] = _round_delta(current_last_5m - previous_last_5m)
+
+        previous_position_pct = _to_float(previous_intraday.get("price_position_pct"))
+        current_position_pct = _to_float(current_intraday.get("price_position_pct"))
+        if previous_position_pct is not None and current_position_pct is not None:
+            delta_payload["price_position_pct_delta"] = _round_delta(current_position_pct - previous_position_pct)
+
+        previous_volume_acc = _to_float(previous_intraday.get("volume_acceleration_ratio"))
+        current_volume_acc = _to_float(current_intraday.get("volume_acceleration_ratio"))
+        if previous_volume_acc is not None and current_volume_acc is not None:
+            delta_payload["volume_acceleration_ratio_delta"] = _round_delta(current_volume_acc - previous_volume_acc)
+
+        previous_labels = previous_intraday.get("intraday_signal_labels")
+        previous_labels = previous_labels if isinstance(previous_labels, list) else []
+        current_labels = current_intraday.get("intraday_signal_labels")
+        current_labels = current_labels if isinstance(current_labels, list) else []
+        new_labels = [str(label).strip() for label in current_labels if str(label).strip() and str(label).strip() not in previous_labels]
+        if new_labels:
+            delta_payload["new_intraday_signal_labels"] = new_labels[:3]
+
+        summary_parts: List[str] = []
+        previous_action = str(latest_decision.get("action") or "").upper()
+        current_action = str(current_decision.get("action") or "").upper()
+        if previous_action and previous_action != current_action:
+            summary_parts.append(f"动作由{previous_action}变为{current_action}")
+        if delta_payload.get("intraday_bias_changed"):
+            summary_parts.append(f"盘中偏向由“{previous_bias_text or '未记录'}”变为“{current_bias_text or '未记录'}”")
+        if delta_payload.get("thresholds_changed"):
+            summary_parts.append("预警价格区间已更新")
+        if new_labels:
+            summary_parts.append(f"新增盘中标签：{' / '.join(new_labels[:2])}")
+        if not summary_parts:
+            summary_parts.append("与上一轮相比未出现足以改变结论的显著新变化")
+        delta_payload["delta_summary"] = "；".join(summary_parts)
+
+        return {key: value for key, value in delta_payload.items() if value not in (None, [], {}, "")}
+
+    @staticmethod
+    def _parse_decision_time(value: object) -> Optional[datetime]:
+        text = str(value or "").strip()
+        if not text:
+            return None
+        for candidate in (text.replace("Z", "+00:00"), text):
+            try:
+                return datetime.fromisoformat(candidate)
+            except ValueError:
+                continue
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"):
+            try:
+                return datetime.strptime(text, fmt)
+            except ValueError:
+                continue
+        return None
+
+    @staticmethod
+    def _same_trading_day(left: object, right: object) -> bool:
+        left_dt = SmartMonitorEngine._parse_decision_time(left)
+        right_dt = SmartMonitorEngine._parse_decision_time(right)
+        if left_dt and right_dt:
+            return left_dt.date() == right_dt.date()
+        if left_dt:
+            return left_dt.date() == datetime.now().date()
+        if right_dt:
+            return right_dt.date() == datetime.now().date()
+        return False
+
+    @staticmethod
+    def _float_or_none(value: object) -> Optional[float]:
+        try:
+            return float(value) if value not in (None, "") else None
+        except (TypeError, ValueError):
+            return None
+
+    def _should_reuse_previous_hold_decision(
+        self,
+        *,
+        latest_decision: Optional[Dict],
+        market_data: Dict,
+        strategy_context: Optional[Dict],
+    ) -> bool:
+        latest_decision = latest_decision or {}
+        if str(latest_decision.get("action") or "").upper() != "HOLD":
+            return False
+
+        latest_decision_time = latest_decision.get("decision_time")
+        current_reference_time = (
+            ((market_data.get("realtime_freshness") or {}).get("asof_time"))
+            or market_data.get("update_time")
+            or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        )
+        if not self._same_trading_day(latest_decision_time, current_reference_time):
+            return False
+
+        latest_origin = latest_decision.get("origin_analysis_id")
+        current_origin = (strategy_context or {}).get("origin_analysis_id")
+        if current_origin and latest_origin and str(current_origin) != str(latest_origin):
+            return False
+
+        previous_context = latest_decision.get("decision_context")
+        previous_context = previous_context if isinstance(previous_context, dict) else {}
+        current_intraday = market_data.get("intraday_context")
+        current_intraday = current_intraday if isinstance(current_intraday, dict) else {}
+        if not previous_context or not current_intraday:
+            return False
+
+        previous_bias = str(previous_context.get("intraday_bias") or "").strip()
+        current_bias = str(current_intraday.get("intraday_bias") or "").strip()
+        if previous_bias and current_bias and previous_bias != current_bias:
+            return False
+
+        delta_checks = (
+            ("last_5m_change_pct", 0.5),
+            ("price_position_pct", 15.0),
+            ("volume_acceleration_ratio", 0.5),
+        )
+        for field, threshold in delta_checks:
+            previous_value = self._float_or_none(previous_context.get(field))
+            current_value = self._float_or_none(current_intraday.get(field))
+            if previous_value is None or current_value is None:
+                continue
+            if abs(current_value - previous_value) >= threshold:
+                return False
+
+        previous_labels = previous_context.get("intraday_signal_labels")
+        previous_labels = set(str(label).strip() for label in previous_labels or [] if str(label).strip())
+        current_labels = current_intraday.get("intraday_signal_labels")
+        current_labels = set(str(label).strip() for label in current_labels or [] if str(label).strip())
+        if current_labels - previous_labels:
+            return False
+
+        previous_price = self._float_or_none((latest_decision.get("market_data") or {}).get("current_price"))
+        current_price = self._float_or_none(market_data.get("current_price"))
+        if previous_price and current_price and previous_price > 0:
+            if abs((current_price - previous_price) / previous_price) >= 0.02:
+                return False
+
+        return True
+
+    def _build_reused_hold_decision(
+        self,
+        *,
+        latest_decision: Dict,
+        market_data: Dict,
+        risk_profile: Optional[Dict[str, int]],
+    ) -> Dict:
+        decision = {
+            "action": "HOLD",
+            "confidence": int(latest_decision.get("confidence") or 68),
+            "reasoning": str(latest_decision.get("reasoning") or "").strip(),
+            "position_size_pct": latest_decision.get("position_size_pct"),
+            "stop_loss_pct": latest_decision.get("stop_loss_pct"),
+            "take_profit_pct": latest_decision.get("take_profit_pct"),
+            "risk_level": latest_decision.get("risk_level") or "medium",
+            "key_price_levels": dict(latest_decision.get("key_price_levels") or {}),
+            "monitor_levels": dict(latest_decision.get("monitor_levels") or {}),
+        }
+        delta_context = self._build_decision_context_delta(
+            latest_decision=latest_decision,
+            current_decision=decision,
+            market_data=market_data,
+            change_flags={
+                "action_changed": False,
+                "thresholds_changed": False,
+                "decision_changed": False,
+            },
+        )
+        current_bias_text = str(((market_data.get("intraday_context") or {}).get("intraday_bias_text")) or "").strip()
+        summary = str(delta_context.get("delta_summary") or "与上一轮相比未出现足以改变结论的显著新变化").strip()
+        reasoning_parts = [summary]
+        if current_bias_text:
+            reasoning_parts.append(f"当前盘中结构仍表现为{current_bias_text}")
+        reasoning_parts.append("因此沿用上一轮 HOLD 判断，继续观察，不重复放大相同证据。")
+        decision["reasoning"] = " ".join(reasoning_parts)
+        return decision
+
     def _resolve_latest_strategy_context(
         self,
         *,
@@ -644,24 +861,47 @@ class SmartMonitorEngine:
                     strategy_context.get("analysis_scope"),
                     strategy_context.get("analysis_date"),
                 )
-
-            # 5. 调用 LLM AI 决策
-            ai_result = self._run_with_timeout(
-                self.llm_client.analyze_stock_and_decide,
-                self.ai_decision_timeout_seconds,
+            latest_decision = self.db.get_latest_ai_decision_for_context(
                 stock_code=stock_code,
-                market_data=market_data,
-                account_info=account_info,
-                has_position=has_position,
-                position_cost=position_cost,
-                position_quantity=position_quantity,
                 account_name=account_name,
                 asset_id=asset_id,
                 portfolio_stock_id=portfolio_stock_id,
-                strategy_context=strategy_context,
-                risk_profile=risk_profile,
             )
-            
+
+            if self._should_reuse_previous_hold_decision(
+                latest_decision=latest_decision,
+                market_data=market_data,
+                strategy_context=strategy_context,
+            ):
+                self.logger.info("[%s] 与上一轮相比未出现实质新变化，直接沿用上一轮 HOLD 结论", stock_code)
+                ai_result = {
+                    "success": True,
+                    "decision": self._build_reused_hold_decision(
+                        latest_decision=latest_decision,
+                        market_data=market_data,
+                        risk_profile=risk_profile,
+                    ),
+                    "reused_previous_decision": True,
+                }
+            else:
+                # 5. 调用 LLM AI 决策
+                ai_result = self._run_with_timeout(
+                    self.llm_client.analyze_stock_and_decide,
+                    self.ai_decision_timeout_seconds,
+                    stock_code=stock_code,
+                    market_data=market_data,
+                    account_info=account_info,
+                    has_position=has_position,
+                    position_cost=position_cost,
+                    position_quantity=position_quantity,
+                    account_name=account_name,
+                    asset_id=asset_id,
+                    portfolio_stock_id=portfolio_stock_id,
+                    strategy_context=strategy_context,
+                    previous_decision=latest_decision,
+                    risk_profile=risk_profile,
+                )
+
             if not ai_result['success']:
                 return {
                     'success': False,
@@ -689,13 +929,6 @@ class SmartMonitorEngine:
             self.logger.info(f"[{stock_code}] AI决策: {decision['action']} "
                            f"(信心度: {decision['confidence']}%)")
             self.logger.info(f"[{stock_code}] 决策理由: {decision['reasoning'][:100]}...")
-            
-            latest_decision = self.db.get_latest_ai_decision_for_context(
-                stock_code=stock_code,
-                account_name=account_name,
-                asset_id=asset_id,
-                portfolio_stock_id=portfolio_stock_id,
-            )
             change_flags = self._classify_decision_change(
                 latest_decision=latest_decision,
                 current_decision=decision,
@@ -723,6 +956,12 @@ class SmartMonitorEngine:
                 'risk_level': decision.get('risk_level'),
                 'key_price_levels': decision.get('key_price_levels', {}),
                 'monitor_levels': decision.get('monitor_levels', {}),
+                'decision_context': self._build_decision_context_delta(
+                    latest_decision=latest_decision,
+                    current_decision=decision,
+                    market_data=market_data,
+                    change_flags=change_flags,
+                ),
                 'market_data': market_data,
                 'account_info': account_info,
                 'execution_mode': 'manual_only',
@@ -790,6 +1029,7 @@ class SmartMonitorEngine:
                 'asset_id': asset_id,
                 'portfolio_stock_id': portfolio_stock_id,
                 'strategy_context': strategy_context or {},
+                'reused_previous_decision': bool(ai_result.get('reused_previous_decision')),
             }
             
         except Exception as e:

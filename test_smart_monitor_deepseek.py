@@ -159,6 +159,32 @@ class SmartMonitorDeepSeekTests(unittest.TestCase):
             self.assertEqual(call.kwargs["timeout"], (10, 31))
             self.assertEqual(call.kwargs["json"]["max_tokens"], 3200)
 
+    @patch("smart_monitor_deepseek.time_module.sleep", return_value=None)
+    @patch("smart_monitor_deepseek.requests.post")
+    def test_chat_completion_retries_http_500(self, mock_post, _mock_sleep):
+        first_response = MagicMock()
+        first_response.status_code = 500
+        first_response.raise_for_status.side_effect = requests.exceptions.HTTPError(
+            "500 Server Error",
+            response=first_response,
+        )
+        second_response = MagicMock()
+        second_response.raise_for_status.return_value = None
+        second_response.json.return_value = {"choices": [{"message": {"content": "{}"}}]}
+        mock_post.side_effect = [first_response, second_response]
+
+        client = SmartMonitorDeepSeek(api_key="test-key")
+        client.http_timeout_seconds = 31
+        client.http_retry_count = 1
+
+        result = client.chat_completion(
+            messages=[{"role": "user", "content": "test"}],
+            model="gemini-3-flash",
+        )
+
+        self.assertEqual(result, {"choices": [{"message": {"content": "{}"}}]})
+        self.assertEqual(mock_post.call_count, 2)
+
     @patch("smart_monitor_deepseek.requests.post")
     def test_chat_completion_keeps_explicit_higher_max_tokens(self, mock_post):
         response = MagicMock()
@@ -255,6 +281,65 @@ class SmartMonitorDeepSeekTests(unittest.TestCase):
         self.assertIn("盘中累计成交量不能直接与历史全天均量比较", prompt)
         self.assertIn("实时量比: 1.35 (放量)", prompt)
         self.assertIn("折算全天成交量/5日均量: 2.00 (放量)", prompt)
+
+    def test_build_prompt_condenses_long_strategy_summary(self):
+        client = SmartMonitorDeepSeek(api_key="test-key")
+
+        prompt = client._build_a_stock_prompt(
+            stock_code="600519",
+            market_data={
+                "name": "贵州茅台",
+                "current_price": 1650.0,
+                "volume": 120000,
+                "realtime_freshness": {
+                    "asof_time": "2026-04-10 10:30:00",
+                    "is_trading_now": True,
+                    "intraday_decision_ready": True,
+                    "overall_status": "ready",
+                    "summary": "TDX 分时/逐笔时间戳足够新鲜，且分时覆盖质量可接受，可用于盘中执行判断。",
+                    "quote": {"timestamp": "2026-04-10 10:30:00", "status": "same_day_service_time"},
+                    "minute": {"timestamp": "2026-04-10 10:29:00", "status": "fresh"},
+                    "trade": {"timestamp": "2026-04-10 10:29:58", "status": "fresh"},
+                    "minute_quality": {"coverage_ratio": 1.0, "max_gap": 0, "label": "分时覆盖完整"},
+                },
+            },
+            account_info={
+                "available_cash": 100000.0,
+                "total_value": 300000.0,
+                "total_market_value": 200000.0,
+                "position_usage_pct": 0.66,
+                "positions_count": 3,
+            },
+            has_position=False,
+            session_info={
+                "session": "上午盘",
+                "volatility": "high",
+                "recommendation": "交易活跃，波动较大",
+                "beijing_hour": 10,
+                "beijing_time": "10:30",
+                "can_trade": True,
+            },
+            strategy_context={
+                "analysis_date": "2026-04-10 09:30:00",
+                "analysis_source": "research",
+                "rating": "买入",
+                "summary": (
+                    "1. 当前不追高，优先等回踩确认。"
+                    "2. 若回踩到支撑区并缩量企稳，可分批考虑。"
+                    "3. 若放量跌破止损位，盘中不继续硬扛。"
+                    "4. 其余细节属于盘后研究展开内容，不需要原样搬到盘中执行。"
+                ) * 20,
+                "entry_min": 1610.0,
+                "entry_max": 1660.0,
+                "take_profit": 1720.0,
+                "stop_loss": 1570.0,
+            },
+        )
+
+        self.assertIn("当前不追高，优先等回踩确认", prompt)
+        self.assertIn("若回踩到支撑区并缩量企稳，可分批考虑", prompt)
+        self.assertNotIn("盘后研究展开内容，不需要原样搬到盘中执行", prompt)
+        self.assertLess(len(prompt), 12000)
 
     def test_build_prompt_messages_uses_template_registry_layout(self):
         client = SmartMonitorDeepSeek(api_key="test-key")
@@ -409,6 +494,78 @@ class SmartMonitorDeepSeekTests(unittest.TestCase):
         self.assertIn("若 `action = \"SELL\"`，默认不应低于 70", messages[0]["content"])
         self.assertIn("若 `action = \"SELL\"`，若由止损、破位、放量转弱或基线失效主导，通常应为 `medium` 或 `high`", messages[0]["content"])
         self.assertIn("本次决策不讨论加仓", messages[1]["content"])
+
+    def test_build_prompt_includes_previous_decision_baseline(self):
+        client = SmartMonitorDeepSeek(api_key="test-key")
+
+        messages = client._build_prompt_messages(
+            stock_code="600519",
+            market_data={
+                "name": "贵州茅台",
+                "current_price": 1650.0,
+                "volume": 120000,
+                "realtime_freshness": {
+                    "asof_time": "2026-04-10 10:30:00",
+                    "is_trading_now": True,
+                    "intraday_decision_ready": True,
+                    "overall_status": "ready",
+                    "summary": "TDX 分时/逐笔时间戳足够新鲜。",
+                    "quote": {"timestamp": "2026-04-10 10:30:00", "status": "same_day_service_time"},
+                    "minute": {"timestamp": "2026-04-10 10:29:00", "status": "fresh"},
+                    "trade": {"timestamp": "2026-04-10 10:29:58", "status": "fresh"},
+                    "minute_quality": {"coverage_ratio": 1.0, "max_gap": 0, "label": "分时覆盖完整"},
+                },
+                "intraday_context": {
+                    "intraday_bias_text": "价格回到分时均价上方",
+                    "last_5m_change_pct": 0.45,
+                    "price_position_pct": 72.0,
+                    "volume_acceleration_ratio": 1.32,
+                    "intraday_signal_labels": ["价格运行在分时均价上方", "量能回升"],
+                },
+            },
+            account_info={
+                "available_cash": 100000.0,
+                "total_value": 300000.0,
+                "total_market_value": 200000.0,
+                "position_usage_pct": 0.66,
+                "positions_count": 3,
+            },
+            has_position=False,
+            session_info={
+                "session": "上午盘",
+                "volatility": "high",
+                "recommendation": "交易活跃，波动较大",
+                "beijing_hour": 10,
+                "beijing_time": "10:30",
+                "can_trade": True,
+            },
+            previous_decision={
+                "decision_time": "2026-04-10 10:00:00",
+                "action": "HOLD",
+                "confidence": 71,
+                "risk_level": "medium",
+                "reasoning": "上一轮主要因为分时偏弱，先观察。",
+                "monitor_levels": {
+                    "entry_min": 1610.0,
+                    "entry_max": 1660.0,
+                    "take_profit": 1720.0,
+                    "stop_loss": 1570.0,
+                },
+                "decision_context": {
+                    "intraday_bias_text": "价格在分时均价下方震荡",
+                    "last_5m_change_pct": -0.10,
+                    "price_position_pct": 56.0,
+                    "volume_acceleration_ratio": 0.82,
+                    "intraday_signal_labels": ["价格运行在分时均价下方"],
+                },
+            },
+        )
+
+        self.assertIn("若提供了上一轮盘中决策基准", messages[0]["content"])
+        self.assertIn("[PREVIOUS_DECISION] 上一轮盘中决策基准", messages[1]["content"])
+        self.assertIn("上一轮动作: HOLD", messages[1]["content"])
+        self.assertIn("盘中偏向从“价格在分时均价下方震荡”变为“价格回到分时均价上方”", messages[1]["content"])
+        self.assertIn("新增盘中标签：价格运行在分时均价上方 / 量能回升", messages[1]["content"])
 
     def test_build_prompt_includes_realtime_freshness_context(self):
         client = SmartMonitorDeepSeek(api_key="test-key")

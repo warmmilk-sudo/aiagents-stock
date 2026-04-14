@@ -71,6 +71,9 @@ class StockDataFetcher:
                         "low": quote.get("low"),
                         "open": quote.get("open"),
                         "pre_close": quote.get("pre_close"),
+                        "turnover_rate": quote.get("turnover_rate"),
+                        "volume_ratio": quote.get("volume_ratio"),
+                        "order_book": quote.get("order_book"),
                         "data_source": quote.get("data_source"),
                     }
             except Exception as e:
@@ -141,6 +144,128 @@ class StockDataFetcher:
         if symbol.isdigit() and 1 <= len(symbol) <= 5:
             return True
         return False
+
+    @staticmethod
+    def _normalize_order_book_side(raw_side, side_label):
+        normalized = []
+        if isinstance(raw_side, dict):
+            iterable = raw_side.items()
+        elif isinstance(raw_side, list):
+            iterable = enumerate(raw_side, start=1)
+        else:
+            iterable = []
+
+        for index, item in iterable:
+            level = None
+            price = None
+            volume = None
+
+            if isinstance(item, dict):
+                level = item.get("level") or item.get("name") or f"{side_label}{index}"
+                price = item.get("price")
+                volume = item.get("volume") or item.get("qty") or item.get("amount")
+            elif isinstance(item, (list, tuple)) and len(item) >= 2:
+                level = f"{side_label}{index}"
+                price = item[0]
+                volume = item[1]
+            elif isinstance(item, tuple) and len(item) == 2 and isinstance(item[1], dict):
+                level = item[1].get("level") or item[0]
+                price = item[1].get("price")
+                volume = item[1].get("volume") or item[1].get("qty") or item[1].get("amount")
+
+            if price in (None, "") and volume in (None, ""):
+                continue
+            normalized.append({
+                "level": level or f"{side_label}{index}",
+                "price": price,
+                "volume": volume,
+            })
+        return normalized
+
+    @classmethod
+    def _extract_order_book(cls, quote_data):
+        if not isinstance(quote_data, dict):
+            return None
+
+        raw_book = quote_data.get("order_book") or quote_data.get("OrderBook")
+        bids = []
+        asks = []
+
+        if isinstance(raw_book, dict):
+            bids = cls._normalize_order_book_side(raw_book.get("bids"), "买")
+            asks = cls._normalize_order_book_side(raw_book.get("asks"), "卖")
+
+        level_candidates = [
+            ("买一", ("Buy1", "buy1", "bid1", "B1")),
+            ("买二", ("Buy2", "buy2", "bid2", "B2")),
+            ("买三", ("Buy3", "buy3", "bid3", "B3")),
+            ("买四", ("Buy4", "buy4", "bid4", "B4")),
+            ("买五", ("Buy5", "buy5", "bid5", "B5")),
+        ]
+        volume_candidates = [
+            ("买一量", ("BuyVol1", "buy_vol1", "bid_vol1", "B1V")),
+            ("买二量", ("BuyVol2", "buy_vol2", "bid_vol2", "B2V")),
+            ("买三量", ("BuyVol3", "buy_vol3", "bid_vol3", "B3V")),
+            ("买四量", ("BuyVol4", "buy_vol4", "bid_vol4", "B4V")),
+            ("买五量", ("BuyVol5", "buy_vol5", "bid_vol5", "B5V")),
+        ]
+        ask_level_candidates = [
+            ("卖一", ("Sell1", "sell1", "ask1", "S1")),
+            ("卖二", ("Sell2", "sell2", "ask2", "S2")),
+            ("卖三", ("Sell3", "sell3", "ask3", "S3")),
+            ("卖四", ("Sell4", "sell4", "ask4", "S4")),
+            ("卖五", ("Sell5", "sell5", "ask5", "S5")),
+        ]
+        ask_volume_candidates = [
+            ("卖一量", ("SellVol1", "sell_vol1", "ask_vol1", "S1V")),
+            ("卖二量", ("SellVol2", "sell_vol2", "ask_vol2", "S2V")),
+            ("卖三量", ("SellVol3", "sell_vol3", "ask_vol3", "S3V")),
+            ("卖四量", ("SellVol4", "sell_vol4", "ask_vol4", "S4V")),
+            ("卖五量", ("SellVol5", "sell_vol5", "ask_vol5", "S5V")),
+        ]
+
+        def _first_value(source, keys):
+            for key in keys:
+                if source.get(key) not in (None, ""):
+                    return source.get(key)
+            return None
+
+        if not bids:
+            for (label, price_keys), (_, volume_keys) in zip(level_candidates, volume_candidates):
+                price = _first_value(quote_data, price_keys)
+                volume = _first_value(quote_data, volume_keys)
+                if price in (None, "") and volume in (None, ""):
+                    continue
+                bids.append({"level": label, "price": price, "volume": volume})
+
+        if not asks:
+            for (label, price_keys), (_, volume_keys) in zip(ask_level_candidates, ask_volume_candidates):
+                price = _first_value(quote_data, price_keys)
+                volume = _first_value(quote_data, volume_keys)
+                if price in (None, "") and volume in (None, ""):
+                    continue
+                asks.append({"level": label, "price": price, "volume": volume})
+
+        if not bids and not asks:
+            return None
+
+        summary_parts = []
+        if bids:
+            summary_parts.append(
+                "买盘最优"
+                f" {bids[0].get('price')}/{bids[0].get('volume')}"
+            )
+        if asks:
+            summary_parts.append(
+                "卖盘最优"
+                f" {asks[0].get('price')}/{asks[0].get('volume')}"
+            )
+
+        return {
+            "bids": bids[:5],
+            "asks": asks[:5],
+            "summary": "，".join(summary_parts) if summary_parts else None,
+        }
     
     def _normalize_hk_code(self, symbol):
         """规范化港股代码为5位格式（如700 -> 00700）"""

@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { formatDateTime } from "../../lib/datetime";
-import { FormattedReport, splitReportSections } from "./FormattedReport";
+import { MarkdownReport } from "./MarkdownReport";
+import { splitReportSections } from "./FormattedReport";
 import styles from "./ResearchPanels.module.scss";
 
 interface ReportEntry {
@@ -10,6 +11,7 @@ interface ReportEntry {
   role: string;
   focusAreas: string[];
   timestamp: string;
+  rawContent: string;
   body: unknown;
   reasoning: string;
   summary: string;
@@ -29,6 +31,13 @@ function buildSummary(value: unknown): string {
   return text || "暂无摘要";
 }
 
+function sanitizeDiscussionSpeakers(value: unknown): string {
+  return String(value || "").replace(
+    /【(投资总监（主持）|技术分析师|基本面分析师|资金面分析师|风险管理师|市场情绪分析师|新闻分析师)(?:\s+[^\]】:：]{1,12})?】(?=[:：])/g,
+    "【$1】",
+  );
+}
+
 function toEntries(agentsResults: Record<string, unknown>, discussionResult?: unknown): ReportEntry[] {
   const entries = Object.entries(agentsResults).map(([name, payload]) => {
     const normalizedPayload = asRecord(payload);
@@ -45,6 +54,7 @@ function toEntries(agentsResults: Record<string, unknown>, discussionResult?: un
       role: String(normalizedPayload.agent_role || ""),
       focusAreas,
       timestamp: formatDateTime(normalizedPayload.timestamp, ""),
+      rawContent: String(normalizedPayload.analysis || normalizedPayload.report || payload || "").trim(),
       body,
       reasoning: reportSections.reasoning,
       summary: buildSummary(reportSections.body || normalizedPayload.analysis || normalizedPayload.report || payload),
@@ -52,14 +62,16 @@ function toEntries(agentsResults: Record<string, unknown>, discussionResult?: un
   });
 
   if (discussionResult) {
-    const sections = splitReportSections(discussionResult);
-    const body = sections.body || (sections.reasoning ? "" : discussionResult);
+    const normalizedDiscussion = sanitizeDiscussionSpeakers(discussionResult);
+    const sections = splitReportSections(normalizedDiscussion);
+    const body = normalizedDiscussion || (sections.body || (sections.reasoning ? "" : normalizedDiscussion));
     entries.push({
       key: "__discussion__",
       title: "团队讨论",
       role: "",
       focusAreas: [],
       timestamp: "",
+      rawContent: String(normalizedDiscussion || "").trim(),
       body,
       reasoning: sections.reasoning,
       summary: buildSummary(body),
@@ -123,25 +135,10 @@ export function AgentReportBrowser({
 
       {activeEntry ? (
         <div className={styles.reportSection}>
-          <div className={styles.reportSectionHeader}>
-            <h3>{activeEntry.title}</h3>
-            {activeEntry.role || activeEntry.focusAreas.length || activeEntry.timestamp ? (
-              <div className={styles.reportMeta}>
-                {activeEntry.role ? <span>职责: {activeEntry.role}</span> : null}
-                {activeEntry.focusAreas.length ? <span>关注点: {activeEntry.focusAreas.join(" / ")}</span> : null}
-                {activeEntry.timestamp ? <span>生成时间: {activeEntry.timestamp}</span> : null}
-              </div>
-            ) : null}
-          </div>
-          <FormattedReport content={activeEntry.body} />
-          {activeEntry.reasoning ? (
-            <details className={styles.details}>
-              <summary className={styles.reportReasoningSummary}>推理过程</summary>
-              <div className={styles.detailsContent}>
-                <FormattedReport content={activeEntry.reasoning} emptyText="暂无推理过程" />
-              </div>
-            </details>
-          ) : null}
+          <MarkdownReport
+            className={styles.rawReportText}
+            content={activeEntry.rawContent || String(activeEntry.body || "暂无正文")}
+          />
         </div>
       ) : null}
     </section>

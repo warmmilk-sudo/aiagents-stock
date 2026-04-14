@@ -1,16 +1,18 @@
 import concurrent.futures
+import os
+import time
+from typing import Any, Dict
+
 from deepseek_client import DeepSeekClient
 from model_routing import ModelTier
 from prompt_registry import build_messages
-from typing import Any, Dict
-import time
 
 
 class StockAnalysisAgents:
     """股票分析AI智能体集合"""
 
-    _PER_REPORT_LIMIT = 2000
-    _DISCUSSION_INPUT_LIMIT = 9000
+    _PER_REPORT_LIMIT = max(4000, int(os.getenv("ANALYSIS_DISCUSSION_PER_REPORT_LIMIT", "12000") or 12000))
+    _DISCUSSION_INPUT_LIMIT = max(12000, int(os.getenv("ANALYSIS_DISCUSSION_INPUT_LIMIT", "48000") or 48000))
 
     def __init__(self, model=None, lightweight_model=None, reasoning_model=None):
         self.model = model
@@ -140,7 +142,108 @@ class StockAnalysisAgents:
             "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
         }
     
-    def risk_management_agent(self, stock_info: Dict, indicators: Dict, risk_data: Dict = None) -> Dict[str, Any]:
+    @staticmethod
+    def _build_risk_fundamental_context(
+        stock_info: Dict,
+        financial_data: Dict | None = None,
+        quarterly_data: Dict | None = None,
+    ) -> str:
+        lines = ["", "【核心基本面风险上下文】"]
+
+        ratios = financial_data.get("financial_ratios", {}) if isinstance(financial_data, dict) else {}
+        report_period = ratios.get("报告期")
+        if report_period:
+            lines.append(f"- 最新财务指标报告期：{report_period}")
+
+        ratio_mapping = (
+            ("营收增速", ratios.get("营业收入同比增长", ratios.get("收入增长"))),
+            ("净利润增速", ratios.get("净利润同比增长", ratios.get("盈利增长"))),
+            ("毛利率", ratios.get("销售毛利率", ratios.get("毛利率"))),
+            ("净利率", ratios.get("销售净利率", ratios.get("净利率"))),
+            ("ROE", ratios.get("净资产收益率ROE", ratios.get("ROE"))),
+            ("ROA", ratios.get("总资产收益率ROA", ratios.get("ROA"))),
+            ("资产负债率", ratios.get("资产负债率")),
+            ("流动比率", ratios.get("流动比率")),
+            ("速动比率", ratios.get("速动比率")),
+        )
+        for label, value in ratio_mapping:
+            if value not in (None, "", "N/A"):
+                lines.append(f"- {label}：{value}")
+
+        business_profile = (
+            stock_info.get("business_summary")
+            or stock_info.get("主营业务")
+            or stock_info.get("主营构成")
+            or stock_info.get("business_structure")
+        )
+        if business_profile:
+            lines.append(f"- 业务结构/主营概况：{business_profile}")
+
+        if isinstance(quarterly_data, dict) and quarterly_data.get("data_success"):
+            income_statement = quarterly_data.get("income_statement") or {}
+            key_metrics = income_statement.get("key_metrics") or {}
+            latest_metrics = key_metrics.get("latest") if isinstance(key_metrics, dict) else {}
+            if isinstance(latest_metrics, dict):
+                if latest_metrics.get("营业收入") not in (None, "", "N/A"):
+                    lines.append(f"- 最新已披露财报营业收入：{latest_metrics.get('营业收入')}")
+                if latest_metrics.get("净利润") not in (None, "", "N/A"):
+                    lines.append(f"- 最新已披露财报净利润：{latest_metrics.get('净利润')}")
+                if latest_metrics.get("营业收入同比") not in (None, "", "N/A"):
+                    lines.append(f"- 最新已披露财报营收同比：{latest_metrics.get('营业收入同比')}")
+                if latest_metrics.get("净利润同比") not in (None, "", "N/A"):
+                    lines.append(f"- 最新已披露财报净利润同比：{latest_metrics.get('净利润同比')}")
+
+        if len(lines) == 2:
+            lines.append("- 暂无额外基本面风险上下文。")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _build_risk_liquidity_context(stock_info: Dict, indicators: Dict) -> str:
+        lines = ["", "【流动性与盘口上下文】"]
+
+        for label, key in (
+            ("实时成交量(手)", "volume"),
+            ("实时成交额(元)", "amount"),
+            ("换手率", "turnover_rate"),
+            ("量比", "volume_ratio"),
+            ("近5日均量比", "volume_ratio"),
+            ("当日最高价", "high"),
+            ("当日最低价", "low"),
+            ("当日开盘价", "open"),
+            ("昨收价", "pre_close"),
+        ):
+            value = stock_info.get(key)
+            if value not in (None, "", "N/A"):
+                lines.append(f"- {label}：{value}")
+
+        order_book = stock_info.get("order_book")
+        if isinstance(order_book, dict):
+            summary = order_book.get("summary")
+            if summary:
+                lines.append(f"- 买卖盘深度摘要：{summary}")
+            bids = order_book.get("bids") or []
+            asks = order_book.get("asks") or []
+            if bids:
+                lines.append("- 买盘五档：" + "；".join(f"{item.get('level')} {item.get('price')}/{item.get('volume')}" for item in bids))
+            if asks:
+                lines.append("- 卖盘五档：" + "；".join(f"{item.get('level')} {item.get('price')}/{item.get('volume')}" for item in asks))
+
+        rsi = indicators.get("rsi")
+        if rsi not in (None, "", "N/A"):
+            lines.append(f"- RSI：{rsi}")
+
+        if len(lines) == 2:
+            lines.append("- 暂无额外流动性或盘口数据。")
+        return "\n".join(lines)
+
+    def risk_management_agent(
+        self,
+        stock_info: Dict,
+        indicators: Dict,
+        risk_data: Dict = None,
+        financial_data: Dict = None,
+        quarterly_data: Dict = None,
+    ) -> Dict[str, Any]:
         """风险管理智能体（增强版）"""
         print("⚠️ 风险管理师正在评估中...")
         
@@ -163,6 +266,8 @@ class StockAnalysisAgents:
 
 以上是通过问财（pywencai）获取的实际风险数据，请重点关注这些数据进行深度风险分析。
 """
+        risk_fundamental_text = self._build_risk_fundamental_context(stock_info, financial_data, quarterly_data)
+        risk_liquidity_text = self._build_risk_liquidity_context(stock_info, indicators)
         messages = build_messages(
             "stock_analysis/risk.system.txt",
             "stock_analysis/risk.user.txt",
@@ -179,11 +284,13 @@ class StockAnalysisAgents:
             low_52_week=stock_info.get("52_week_low", "N/A"),
             rsi=indicators.get("rsi", "N/A"),
             risk_data_text=risk_data_text,
+            risk_fundamental_text=risk_fundamental_text,
+            risk_liquidity_text=risk_liquidity_text,
         )
 
         analysis = self.llm_client.call_api(
             messages,
-            max_tokens=6000,
+            max_tokens=max(12000, int(os.getenv("RISK_ANALYSIS_MAX_TOKENS", "16000") or 16000)),
             tier=ModelTier.REASONING,
         )
 
@@ -337,7 +444,7 @@ class StockAnalysisAgents:
         if enabled_analysts.get('fund_flow', True):
             tasks.append(("fund_flow", lambda: self.fund_flow_analyst_agent(stock_info, indicators, fund_flow_data)))
         if enabled_analysts.get('risk', True):
-            tasks.append(("risk", lambda: self.risk_management_agent(stock_info, indicators, risk_data)))
+            tasks.append(("risk", lambda: self.risk_management_agent(stock_info, indicators, risk_data, financial_data, quarterly_data)))
         if enabled_analysts.get('sentiment', False):
             tasks.append(("market_sentiment", lambda: self.market_sentiment_agent(stock_info, sentiment_data)))
         if enabled_analysts.get('news', False):
@@ -406,7 +513,7 @@ class StockAnalysisAgents:
         
         discussion_result = self.llm_client.call_api(
             messages,
-            max_tokens=6000,
+            max_tokens=max(8000, int(os.getenv("TEAM_DISCUSSION_MAX_TOKENS", "12000") or 12000)),
             tier=ModelTier.REASONING,
         )
 

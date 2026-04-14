@@ -129,6 +129,9 @@ class DataSourceManager:
             'low': self._coerce_quote_number(quote.get('low')),
             'open': self._coerce_quote_number(quote.get('open')),
             'pre_close': self._coerce_quote_number(quote.get('pre_close')),
+            'turnover_rate': self._coerce_quote_number(quote.get('turnover_rate')),
+            'volume_ratio': self._coerce_quote_number(quote.get('volume_ratio')),
+            'order_book': quote.get('order_book'),
             'update_time': self._clean_text_value(quote.get('update_time')),
             'data_source': 'tdx',
         }
@@ -337,7 +340,8 @@ class DataSourceManager:
             "symbol": symbol,
             "name": None,
             "industry": None,
-            "market": None
+            "market": None,
+            "business_summary": None,
         }
         
         if self.tushare_available:
@@ -370,6 +374,25 @@ class DataSourceManager:
                     info['market'] = self._clean_text_value(row.get('market')) or info['market']
                     info['list_date'] = self._clean_text_value(row.get('list_date')) or info.get('list_date')
                     
+                    print(f"[Tushare] 成功获取基本信息")
+                try:
+                    company_df = self.call_tushare_api(
+                        'stock_company',
+                        ts_code=ts_code,
+                        fields='ts_code,business_scope,main_business,introduction',
+                    )
+                    if company_df is not None and not company_df.empty:
+                        company_row = company_df.iloc[0]
+                        info['business_summary'] = (
+                            self._clean_text_value(company_row.get('main_business'))
+                            or self._clean_text_value(company_row.get('business_scope'))
+                            or self._clean_text_value(company_row.get('introduction'))
+                            or info.get('business_summary')
+                        )
+                except Exception as company_exc:
+                    print(f"[Tushare] 获取主营业务概况失败: {company_exc}")
+
+                if info.get('name') or info.get('industry') or info.get('business_summary'):
                     print(f"[Tushare] 成功获取基本信息")
                     return info
             except Exception as e:

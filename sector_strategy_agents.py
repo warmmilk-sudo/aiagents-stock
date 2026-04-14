@@ -85,14 +85,11 @@ class SectorStrategyAgents:
             max_tokens=4000,
             tier=ModelTier.REASONING,
         )
-        analysis = self._enforce_generic_time_freshness(
+        analysis = self._enforce_time_freshness_guard(
             analysis=analysis,
             reference_date=reference_date,
-            context_sections={
-                "market_summary": market_summary,
-                "news_summary": news_summary,
-            },
             agent_label="宏观策略师",
+            fallback_text="当前输入未提供相关数据，已移除与分析基准日期不一致的年度表述，请仅基于当次新闻和市场信息理解本次宏观判断。",
         )
         
         print("  ✓ 宏观策略师分析完成")
@@ -169,12 +166,11 @@ class SectorStrategyAgents:
             max_tokens=4000,
             tier=ModelTier.REASONING,
         )
-        analysis = self._enforce_time_freshness(
+        analysis = self._enforce_time_freshness_guard(
             analysis=analysis,
             reference_date=reference_date,
-            market_overview=self._format_market_overview(market_data),
-            sector_summary=sector_summary,
-            concept_summary=concept_summary,
+            agent_label="板块诊断师",
+            fallback_text="当前输入未提供相关估值或业绩数据，已移除与分析基准日期不一致的年度表述，请仅基于当日板块表现做定性判断。",
         )
         
         print("  ✓ 板块诊断师分析完成")
@@ -200,71 +196,38 @@ class SectorStrategyAgents:
         stale_years = {year for year in analysis_years if year not in allowed_years}
         return bool(stale_years)
 
-    def _enforce_time_freshness(
+    def _drop_stale_year_lines(self, text: str, reference_date: str) -> str:
+        lines = [line.rstrip() for line in str(text or "").splitlines()]
+        filtered_lines = [
+            line for line in lines
+            if line.strip() and not self._contains_stale_year_reference(line, reference_date)
+        ]
+        if filtered_lines:
+            return "\n".join(filtered_lines).strip()
+
+        sentences = re.split(r"(?<=[。！？；])", str(text or ""))
+        filtered_sentences = [
+            sentence for sentence in sentences
+            if sentence.strip() and not self._contains_stale_year_reference(sentence, reference_date)
+        ]
+        return "".join(filtered_sentences).strip()
+
+    def _enforce_time_freshness_guard(
         self,
         *,
         analysis: str,
         reference_date: str,
-        market_overview: str,
-        sector_summary: str,
-        concept_summary: str,
-    ) -> str:
-        if not self._contains_stale_year_reference(analysis, reference_date):
-            return analysis
-
-        print(f"  ⚠ 板块诊断报告出现过期年份引用，按 {reference_date} 重新修正")
-        repair_messages = build_messages(
-            "sector_strategy/repair_time_freshness.system.txt",
-            "sector_strategy/repair_time_freshness.user.txt",
-            reference_date=reference_date,
-            market_overview=market_overview,
-            sector_summary=sector_summary,
-            concept_summary=concept_summary,
-            raw_analysis=analysis,
-        )
-        repaired = self.llm_client.call_api(
-            repair_messages,
-            temperature=0.1,
-            max_tokens=4000,
-            tier=ModelTier.REASONING,
-        )
-        if self._contains_stale_year_reference(repaired, reference_date):
-            print("  ⚠ 修正后仍含过期年份，返回原始内容并记录问题")
-            return analysis
-        return repaired
-
-    def _enforce_generic_time_freshness(
-        self,
-        *,
-        analysis: str,
-        reference_date: str,
-        context_sections: Dict[str, str],
+        fallback_text: str,
         agent_label: str,
     ) -> str:
         if not self._contains_stale_year_reference(analysis, reference_date):
             return analysis
 
-        print(f"  ⚠ {agent_label}报告出现过期年份引用，按 {reference_date} 重新修正")
-        repair_messages = build_messages(
-            "sector_strategy/repair_time_freshness_generic.system.txt",
-            "sector_strategy/repair_time_freshness_generic.user.txt",
-            agent_label=agent_label,
-            reference_date=reference_date,
-            context_text="\n\n".join(
-                section for section in context_sections.values() if str(section or "").strip()
-            ) or "暂无额外上下文",
-            raw_analysis=analysis,
-        )
-        repaired = self.llm_client.call_api(
-            repair_messages,
-            temperature=0.1,
-            max_tokens=4000,
-            tier=ModelTier.REASONING,
-        )
-        if self._contains_stale_year_reference(repaired, reference_date):
-            print(f"  ⚠ {agent_label}修正后仍含过期年份，返回原始内容并记录问题")
-            return analysis
-        return repaired
+        print(f"  ⚠ {agent_label}报告出现过期年份引用，执行本地清理兜底")
+        cleaned = self._drop_stale_year_lines(analysis, reference_date)
+        if cleaned and not self._contains_stale_year_reference(cleaned, reference_date):
+            return cleaned
+        return fallback_text
     
     def fund_flow_analyst_agent(
         self,
@@ -341,14 +304,11 @@ class SectorStrategyAgents:
             max_tokens=4000,
             tier=ModelTier.LIGHTWEIGHT,
         )
-        analysis = self._enforce_generic_time_freshness(
+        analysis = self._enforce_time_freshness_guard(
             analysis=analysis,
             reference_date=reference_date,
-            context_sections={
-                "fund_flow_summary": fund_flow_summary,
-                "north_summary": north_summary,
-            },
             agent_label="资金流向分析师",
+            fallback_text="当前输入未提供相关数据，已移除与分析基准日期不一致的年度表述，请仅基于当次资金流与近端历史数据理解本次判断。",
         )
         
         print("  ✓ 资金流向分析师分析完成")
@@ -448,15 +408,11 @@ class SectorStrategyAgents:
             max_tokens=4000,
             tier=ModelTier.LIGHTWEIGHT,
         )
-        analysis = self._enforce_generic_time_freshness(
+        analysis = self._enforce_time_freshness_guard(
             analysis=analysis,
             reference_date=reference_date,
-            context_sections={
-                "sentiment_summary": sentiment_summary,
-                "hot_sectors": hot_sectors,
-                "hot_concepts": hot_concepts,
-            },
             agent_label="市场情绪解码员",
+            fallback_text="当前输入未提供相关数据，已移除与分析基准日期不一致的年度表述，请仅基于当次情绪和热点数据理解本次判断。",
         )
         
         print("  ✓ 市场情绪解码员分析完成")

@@ -2,6 +2,7 @@ import sys
 import types
 import unittest
 from unittest.mock import MagicMock
+from unittest.mock import patch
 
 sys.modules.setdefault(
     "openai",
@@ -72,6 +73,59 @@ class DeepSeekClientTests(unittest.TestCase):
         result = client.call_api([{"role": "user", "content": "hello"}])
 
         self.assertEqual(result, "最终正文")
+
+    def test_call_api_retries_transient_failure_then_succeeds(self):
+        client = DeepSeekClient.__new__(DeepSeekClient)
+        client.model = None
+        client.lightweight_model = None
+        client.reasoning_model = None
+        client.api_retry_count = 2
+        client.api_retry_base_delay_seconds = 0.01
+        transient_error = RuntimeError("Error code: 500 - {'error': {'message': 'auth_unavailable: no auth available'}}")
+        message = types.SimpleNamespace(reasoning_content=None, content="恢复成功")
+        response = types.SimpleNamespace(choices=[types.SimpleNamespace(message=message)])
+        create = MagicMock(side_effect=[transient_error, response])
+        client.client = types.SimpleNamespace(
+            chat=types.SimpleNamespace(
+                completions=types.SimpleNamespace(
+                    create=create
+                )
+            )
+        )
+
+        with patch("deepseek_client.time.sleep", return_value=None) as mocked_sleep:
+            result = client.call_api([{"role": "user", "content": "hello"}])
+
+        self.assertEqual(result, "恢复成功")
+        self.assertEqual(create.call_count, 2)
+        mocked_sleep.assert_called_once()
+
+    def test_call_api_retries_empty_response_then_succeeds(self):
+        client = DeepSeekClient.__new__(DeepSeekClient)
+        client.model = None
+        client.lightweight_model = None
+        client.reasoning_model = None
+        client.api_retry_count = 2
+        client.api_retry_base_delay_seconds = 0.01
+        empty_message = types.SimpleNamespace(reasoning_content=None, content="")
+        success_message = types.SimpleNamespace(reasoning_content=None, content="团队讨论恢复成功")
+        empty_response = types.SimpleNamespace(choices=[types.SimpleNamespace(message=empty_message)])
+        success_response = types.SimpleNamespace(choices=[types.SimpleNamespace(message=success_message)])
+        create = MagicMock(side_effect=[empty_response, success_response])
+        client.client = types.SimpleNamespace(
+            chat=types.SimpleNamespace(
+                completions=types.SimpleNamespace(
+                    create=create
+                )
+            )
+        )
+
+        with patch("deepseek_client.time.sleep", return_value=None) as mocked_sleep:
+            result = client.call_api([{"role": "user", "content": "hello"}])
+
+        self.assertEqual(result, "团队讨论恢复成功")
+        self.assertEqual(create.call_count, 2)
+        mocked_sleep.assert_called_once()
 
     def test_build_messages_renders_external_prompt_templates(self):
         messages = build_messages(
@@ -214,6 +268,54 @@ class DeepSeekClientTests(unittest.TestCase):
         self.assertIn("当前状态：已持仓", captured["messages"][1]["content"])
         self.assertIn("加仓 / 持有 / 减仓 / 卖出", captured["messages"][1]["content"])
         self.assertEqual(result["rating"], "加仓")
+
+    def test_fundamental_analysis_uses_expanded_token_budget_and_business_summary(self):
+        captured = {}
+        client = DeepSeekClient.__new__(DeepSeekClient)
+
+        def fake_call_api(
+            self,
+            messages,
+            model=None,
+            temperature=0.7,
+            max_tokens=2000,
+            tier=None,
+            include_reasoning=True,
+        ):
+            captured["messages"] = messages
+            captured["max_tokens"] = max_tokens
+            captured["tier"] = tier
+            return "基本面分析结果"
+
+        client.call_api = types.MethodType(fake_call_api, client)
+
+        result = client.fundamental_analysis(
+            stock_info={
+                "symbol": "002050",
+                "name": "三花智控",
+                "current_price": 22.5,
+                "market_cap": 80000000000,
+                "sector": "汽车热管理",
+                "industry": "家电零部件",
+                "pe_ratio": 28.1,
+                "pb_ratio": 5.2,
+                "ps_ratio": 3.5,
+                "business_summary": "制冷空调电器零部件与汽车热管理系统零部件双主业。",
+            },
+            financial_data={
+                "financial_ratios": {
+                    "销售毛利率": "27.1%",
+                    "净利润同比增长": "24.3%",
+                }
+            },
+            quarterly_data=None,
+        )
+
+        self.assertEqual(result, "基本面分析结果")
+        self.assertEqual(captured["tier"], ModelTier.REASONING)
+        self.assertGreaterEqual(captured["max_tokens"], 12000)
+        self.assertIn("主营业务/业务结构概况", captured["messages"][1]["content"])
+        self.assertIn("制冷空调电器零部件与汽车热管理系统零部件双主业。", captured["messages"][1]["content"])
 
     def test_final_decision_extracts_json_from_wrapped_text(self):
         client = DeepSeekClient.__new__(DeepSeekClient)

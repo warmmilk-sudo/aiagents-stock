@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 
+import { MarkdownReport } from "./MarkdownReport";
 import styles from "../../pages/ConsolePage.module.scss";
-import { FormattedReport, extractReportKeyMetrics } from "./FormattedReport";
 
 export type FixedReportCategory = "macro" | "sector" | "fund" | "sentiment" | "team";
 
@@ -10,6 +10,7 @@ export interface FixedReportEntry {
   role?: string;
   focus_areas?: string[];
   timestamp?: string;
+  rawContent?: string;
   body?: unknown;
   reasoning?: string;
   summary?: string;
@@ -49,7 +50,6 @@ export function FixedReportWorkspace({ reports }: FixedReportWorkspaceProps) {
   }, [activeKey, entries]);
 
   const activeEntry = entries[activeKey] ?? null;
-  const activeMetrics = useMemo(() => extractReportKeyMetrics(activeEntry?.body, 6), [activeEntry?.body]);
   const activeTab = reportTabs.find((item) => item.key === activeKey) ?? reportTabs[0];
   const tabsStyle = { "--nested-tab-count": reportTabs.length } as CSSProperties;
 
@@ -76,43 +76,13 @@ export function FixedReportWorkspace({ reports }: FixedReportWorkspaceProps) {
 
       {activeEntry ? (
         <div className={styles.reportWorkbenchPanel}>
-          <div className={styles.reportWorkbenchHeader}>
-            <div className={styles.reportWorkbenchHeading}>
-              <h3>{activeEntry.title || activeTab.label}</h3>
-              {activeEntry.role || activeEntry.focus_areas?.length ? (
-                <p className={styles.helperText}>
-                  {[activeEntry.role, activeEntry.focus_areas?.join(" / ")].filter(Boolean).join(" | ")}
-                </p>
-              ) : null}
-              {activeEntry.summary ? <p className={styles.helperText}>{activeEntry.summary}</p> : null}
-            </div>
-            {activeEntry.timestamp ? (
-              <span className={`${styles.historyMeta} ${styles.reportWorkbenchTimestamp}`}>{activeEntry.timestamp}</span>
-            ) : null}
-          </div>
-
           <div className={styles.reportWorkbenchContent}>
-            {activeMetrics.length ? (
-              <div className={styles.reportWorkbenchMetricGrid}>
-                {activeMetrics.map((metric, index) => (
-                  <div className={styles.reportWorkbenchMetricCard} key={`${metric.label}-${metric.value}-${index}`}>
-                    <span>{metric.label}</span>
-                    <strong>{metric.value}</strong>
-                  </div>
-                ))}
-              </div>
-            ) : null}
-            <FormattedReport content={activeEntry.body} emptyText={activeTab.emptyText} />
+            <MarkdownReport
+              className={styles.rawReportText}
+              content={activeEntry.rawContent || String(activeEntry.body || activeTab.emptyText)}
+              emptyText={activeTab.emptyText}
+            />
           </div>
-
-          {activeEntry.reasoning ? (
-            <details className={styles.historyDetailPanel}>
-              <summary className={styles.historyDetailSummary}>推理过程</summary>
-              <div className={styles.historyDetailPanelBody}>
-                <FormattedReport content={activeEntry.reasoning} emptyText="暂无推理过程" />
-              </div>
-            </details>
-          ) : null}
         </div>
       ) : (
         <div className={styles.muted}>{activeTab.emptyText}</div>

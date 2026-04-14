@@ -24,6 +24,10 @@ from prompt_registry import build_messages, render_prompt
 class SmartMonitorDeepSeek:
     """A股智能盯盘 - DeepSeek AI决策引擎"""
 
+    MAX_STRATEGY_SUMMARY_CHARS = 240
+    MAX_SEMANTIC_LABELS = 8
+    PROMPT_SIZE_WARNING_CHARS = 12000
+
     SYSTEM_TEMPLATE = "smart_monitor/intraday_decision.system.txt"
     USER_TEMPLATE = "smart_monitor/intraday_decision.user.txt"
     SECTION_TIMER_TEMPLATE = "smart_monitor/sections/timer.txt"
@@ -34,6 +38,7 @@ class SmartMonitorDeepSeek:
     SECTION_VOLUME_TEMPLATE = "smart_monitor/sections/volume.txt"
     SECTION_EXECUTION_CONTEXT_TEMPLATE = "smart_monitor/sections/execution_context.txt"
     SECTION_ACCOUNT_RISK_PROFILE_TEMPLATE = "smart_monitor/sections/account_risk_profile.txt"
+    SECTION_PREVIOUS_DECISION_TEMPLATE = "smart_monitor/sections/previous_decision.txt"
     SECTION_INTRADAY_FLOW_TEMPLATE = "smart_monitor/sections/intraday_flow.txt"
     SECTION_STRATEGY_CONTEXT_TEMPLATE = "smart_monitor/sections/strategy_context.txt"
     SECTION_AI_PATTERN_RECOGNITION_TEMPLATE = "smart_monitor/sections/ai_pattern_recognition.txt"
@@ -78,6 +83,161 @@ class SmartMonitorDeepSeek:
         self.model = model
         self.lightweight_model = lightweight_model
         self.reasoning_model = reasoning_model
+
+    @staticmethod
+    def _truncate_prompt_text(value: object, limit: int, suffix: str = "…（已截断）") -> str:
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        if len(text) <= limit:
+            return text
+        if limit <= len(suffix):
+            return suffix[:limit]
+        return text[: limit - len(suffix)].rstrip() + suffix
+
+    def _build_strategy_summary_brief(self, strategy_context: Dict[str, Any]) -> str:
+        def _clean_text(value: object) -> str:
+            text = str(value or "").strip()
+            if not text:
+                return ""
+            text = re.sub(r"<p[^>]*>", " ", text, flags=re.IGNORECASE)
+            text = re.sub(r"</p>", " ", text, flags=re.IGNORECASE)
+            text = re.sub(r"<[^>]+>", " ", text)
+            text = re.sub(r"<think>.*?</think>", " ", text, flags=re.IGNORECASE | re.DOTALL)
+            text = re.sub(r"```.*?```", " ", text, flags=re.DOTALL)
+            text = re.sub(r"【推理过程】.*", " ", text, flags=re.DOTALL)
+            text = re.sub(r"推理过程[:：].*", " ", text, flags=re.DOTALL)
+            text = re.sub(r"\s+", " ", text).strip()
+            return text
+
+        final_decision = strategy_context.get("final_decision")
+        final_decision = final_decision if isinstance(final_decision, dict) else {}
+        candidates = [
+            strategy_context.get("summary"),
+            final_decision.get("operation_advice"),
+            final_decision.get("advice"),
+            final_decision.get("summary"),
+            final_decision.get("risk_warning"),
+        ]
+
+        for candidate in candidates:
+            cleaned = _clean_text(candidate)
+            if not cleaned:
+                continue
+            if len(cleaned) <= self.MAX_STRATEGY_SUMMARY_CHARS:
+                return cleaned
+
+            fragments = [
+                fragment.strip(" ；;，,")
+                for fragment in re.split(r"(?<=[。！？；;])|\s+\d+[.)、]\s*", cleaned)
+                if fragment and fragment.strip(" ；;，,")
+            ]
+            brief_parts: List[str] = []
+            current_length = 0
+            for fragment in fragments:
+                next_fragment = fragment
+                if current_length + len(next_fragment) > self.MAX_STRATEGY_SUMMARY_CHARS - 8:
+                    break
+                brief_parts.append(next_fragment)
+                current_length += len(next_fragment)
+                if len(brief_parts) >= 3:
+                    break
+            if brief_parts:
+                return " ".join(brief_parts).strip()
+            return self._truncate_prompt_text(cleaned, self.MAX_STRATEGY_SUMMARY_CHARS)
+
+        return "N/A"
+
+    def _build_previous_decision_brief(
+        self,
+        previous_decision: Dict[str, Any],
+        market_data: Dict[str, Any],
+    ) -> Optional[Dict[str, str]]:
+        if not isinstance(previous_decision, dict) or not previous_decision:
+            return None
+
+        def _decision_time_text(value: object) -> str:
+            text = str(value or "").strip()
+            if not text:
+                return "N/A"
+            try:
+                decision_dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+            except ValueError:
+                for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"):
+                    try:
+                        decision_dt = datetime.strptime(text, fmt)
+                        break
+                    except ValueError:
+                        decision_dt = None
+                if decision_dt is None:
+                    return text
+            now = datetime.now(decision_dt.tzinfo) if decision_dt.tzinfo else datetime.now()
+            elapsed_minutes = max(0, int((now - decision_dt).total_seconds() // 60))
+            if elapsed_minutes < 60:
+                return f"{text}（约{elapsed_minutes}分钟前）"
+            elapsed_hours = elapsed_minutes // 60
+            return f"{text}（约{elapsed_hours}小时前）"
+
+        def _clean_reasoning(value: object) -> str:
+            text = str(value or "").strip()
+            if not text:
+                return "N/A"
+            text = re.sub(r"\s+", " ", text).strip()
+            return self._truncate_prompt_text(text, 120, suffix="…")
+
+        previous_context = previous_decision.get("decision_context")
+        previous_context = previous_context if isinstance(previous_context, dict) else {}
+        current_context = market_data.get("intraday_context")
+        current_context = current_context if isinstance(current_context, dict) else {}
+
+        delta_parts: List[str] = []
+        prev_bias_text = str(previous_context.get("intraday_bias_text") or "").strip()
+        curr_bias_text = str(current_context.get("intraday_bias_text") or "").strip()
+        if curr_bias_text and curr_bias_text != prev_bias_text:
+            delta_parts.append(f"盘中偏向从“{prev_bias_text or '未记录'}”变为“{curr_bias_text}”")
+
+        def _float_or_none(value: object) -> Optional[float]:
+            try:
+                return float(value) if value not in (None, "") else None
+            except (TypeError, ValueError):
+                return None
+
+        prev_last_5m = _float_or_none(previous_context.get("last_5m_change_pct"))
+        curr_last_5m = _float_or_none(current_context.get("last_5m_change_pct"))
+        if prev_last_5m is not None and curr_last_5m is not None and abs(curr_last_5m - prev_last_5m) >= 0.3:
+            delta_parts.append(f"近5分钟涨跌由{prev_last_5m:+.2f}%变为{curr_last_5m:+.2f}%")
+
+        prev_position = _float_or_none(previous_context.get("price_position_pct"))
+        curr_position = _float_or_none(current_context.get("price_position_pct"))
+        if prev_position is not None and curr_position is not None and abs(curr_position - prev_position) >= 10:
+            delta_parts.append(f"日内位置由{prev_position:.1f}%移动到{curr_position:.1f}%")
+
+        prev_volume = _float_or_none(previous_context.get("volume_acceleration_ratio"))
+        curr_volume = _float_or_none(current_context.get("volume_acceleration_ratio"))
+        if prev_volume is not None and curr_volume is not None and abs(curr_volume - prev_volume) >= 0.3:
+            delta_parts.append(f"近5分钟量能加速度由{prev_volume:.2f}变为{curr_volume:.2f}")
+
+        previous_labels = previous_context.get("intraday_signal_labels")
+        previous_labels = previous_labels if isinstance(previous_labels, list) else []
+        current_labels = current_context.get("intraday_signal_labels")
+        current_labels = current_labels if isinstance(current_labels, list) else []
+        new_labels = [str(label).strip() for label in current_labels if str(label).strip() and str(label).strip() not in previous_labels]
+        if new_labels:
+            delta_parts.append(f"新增盘中标签：{' / '.join(new_labels[:2])}")
+
+        return {
+            "previous_decision_time": _decision_time_text(previous_decision.get("decision_time")),
+            "previous_action": str(previous_decision.get("action") or "N/A").upper(),
+            "previous_confidence": str(previous_decision.get("confidence") or "N/A"),
+            "previous_risk_level": str(previous_decision.get("risk_level") or "N/A"),
+            "previous_reasoning_summary": _clean_reasoning(previous_decision.get("reasoning")),
+            "previous_entry_min": str((previous_decision.get("monitor_levels") or {}).get("entry_min") or "N/A"),
+            "previous_entry_max": str((previous_decision.get("monitor_levels") or {}).get("entry_max") or "N/A"),
+            "previous_take_profit": str((previous_decision.get("monitor_levels") or {}).get("take_profit") or "N/A"),
+            "previous_stop_loss": str((previous_decision.get("monitor_levels") or {}).get("stop_loss") or "N/A"),
+            "previous_intraday_bias": prev_bias_text or "N/A",
+            "delta_summary": "；".join(delta_parts) if delta_parts else "未观察到足以推翻上一轮判断的明显新变化。",
+        }
 
     @staticmethod
     def _resolve_risk_profile(risk_profile: Optional[Dict[str, Any]] = None) -> Dict[str, int]:
@@ -288,6 +448,21 @@ class SmartMonitorDeepSeek:
             "temperature": temperature,
             "max_tokens": max_tokens
         }
+        payload_size = len(json.dumps(payload, ensure_ascii=False))
+        if payload_size >= self.PROMPT_SIZE_WARNING_CHARS:
+            self.logger.warning(
+                "LLM请求体较大，model=%s，payload_chars=%s，messages=%s",
+                model_to_use,
+                payload_size,
+                len(messages),
+            )
+        else:
+            self.logger.debug(
+                "LLM请求体大小，model=%s，payload_chars=%s，messages=%s",
+                model_to_use,
+                payload_size,
+                len(messages),
+            )
         
         endpoint = f"{self.base_url.rstrip('/')}/chat/completions"
         request_timeout = (10, self.http_timeout_seconds)
@@ -318,11 +493,36 @@ class SmartMonitorDeepSeek:
                     exc,
                 )
                 time_module.sleep(min(2, attempt_index + 1))
+            except requests.exceptions.HTTPError as exc:
+                status_code = getattr(getattr(exc, "response", None), "status_code", None)
+                if status_code is not None and 500 <= int(status_code) < 600 and attempt_index < self.http_retry_count:
+                    last_error = exc
+                    self.logger.warning(
+                        "LLM API返回%s，准备重试 (%s/%s)，model=%s，payload_chars=%s: %s",
+                        status_code,
+                        attempt_index + 1,
+                        total_attempts,
+                        model_to_use,
+                        payload_size,
+                        exc,
+                    )
+                    time_module.sleep(min(2, attempt_index + 1))
+                    continue
+                self.logger.error(
+                    "LLM API调用失败，model=%s，status=%s，timeout=%ss，payload_chars=%s: %s",
+                    model_to_use,
+                    status_code,
+                    self.http_timeout_seconds,
+                    payload_size,
+                    exc,
+                )
+                raise
             except Exception as exc:
                 self.logger.error(
-                    "LLM API调用失败，model=%s，timeout=%ss: %s",
+                    "LLM API调用失败，model=%s，timeout=%ss，payload_chars=%s: %s",
                     model_to_use,
                     self.http_timeout_seconds,
+                    payload_size,
                     exc,
                 )
                 raise
@@ -344,6 +544,7 @@ class SmartMonitorDeepSeek:
                                  asset_id: Optional[int] = None,
                                  portfolio_stock_id: Optional[int] = None,
                                  strategy_context: Optional[Dict] = None,
+                                 previous_decision: Optional[Dict] = None,
                                  risk_profile: Optional[Dict[str, Any]] = None) -> Dict:
         """
         分析股票并做出交易决策（A股T+1规则）
@@ -369,6 +570,7 @@ class SmartMonitorDeepSeek:
             asset_id=asset_id,
             portfolio_stock_id=portfolio_stock_id,
             strategy_context=strategy_context,
+            previous_decision=previous_decision,
             risk_profile=resolved_risk_profile,
         )
 
@@ -406,6 +608,7 @@ class SmartMonitorDeepSeek:
                               asset_id: Optional[int] = None,
                               portfolio_stock_id: Optional[int] = None,
                               strategy_context: Optional[Dict] = None,
+                              previous_decision: Optional[Dict] = None,
                               risk_profile: Optional[Dict[str, Any]] = None) -> Dict[str, str]:
         """Build template context for intraday decision prompts."""
         resolved_risk_profile = self._resolve_risk_profile(risk_profile)
@@ -624,6 +827,12 @@ class SmartMonitorDeepSeek:
             take_profit_pct=resolved_risk_profile["take_profit_pct"],
         )
         optional_sections: List[str] = []
+        previous_decision_brief = self._build_previous_decision_brief(previous_decision or {}, market_data)
+        if previous_decision_brief:
+            optional_sections.append(render_prompt(
+                self.SECTION_PREVIOUS_DECISION_TEMPLATE,
+                **previous_decision_brief,
+            ))
         if intraday_context:
             observations = intraday_context.get("intraday_observations") if isinstance(intraday_context.get("intraday_observations"), list) else []
             observation_text = " / ".join(str(item) for item in observations[:4] if item) or "N/A"
@@ -665,12 +874,13 @@ class SmartMonitorDeepSeek:
                 observation_text=observation_text,
             ))
         if strategy_context:
+            summary_text = self._build_strategy_summary_brief(strategy_context)
             optional_sections.append(render_prompt(
                 self.SECTION_STRATEGY_CONTEXT_TEMPLATE,
                 analysis_date=strategy_context.get("analysis_date", "N/A"),
                 analysis_source=strategy_context.get("analysis_source", "N/A"),
                 rating=strategy_context.get("rating", "N/A"),
-                summary=strategy_context.get("summary", "N/A"),
+                summary=summary_text or "N/A",
                 entry_min=strategy_context.get("entry_min", "N/A"),
                 entry_max=strategy_context.get("entry_max", "N/A"),
                 take_profit=strategy_context.get("take_profit", "N/A"),
@@ -679,9 +889,13 @@ class SmartMonitorDeepSeek:
         # --- 注入语义化标签分析 ---
         labels = market_data.get('semantic_labels', [])
         if labels:
+            normalized_labels = [str(label).strip() for label in labels if str(label).strip()]
+            limited_labels = normalized_labels[: self.MAX_SEMANTIC_LABELS]
+            if len(normalized_labels) > self.MAX_SEMANTIC_LABELS:
+                limited_labels.append(f"其余{len(normalized_labels) - self.MAX_SEMANTIC_LABELS}条标签已省略")
             optional_sections.append(render_prompt(
                 self.SECTION_AI_PATTERN_RECOGNITION_TEMPLATE,
-                labels_block="\n".join(f"- {label}" for label in labels if label),
+                labels_block="\n".join(f"- {label}" for label in limited_labels),
             ))
 
         # 如果已持有该股票
@@ -769,6 +983,7 @@ class SmartMonitorDeepSeek:
                                asset_id: Optional[int] = None,
                                portfolio_stock_id: Optional[int] = None,
                                strategy_context: Optional[Dict] = None,
+                               previous_decision: Optional[Dict] = None,
                                risk_profile: Optional[Dict[str, Any]] = None) -> List[Dict[str, str]]:
         context = self._build_prompt_context(
             stock_code, market_data, account_info,
@@ -777,6 +992,7 @@ class SmartMonitorDeepSeek:
             asset_id=asset_id,
             portfolio_stock_id=portfolio_stock_id,
             strategy_context=strategy_context,
+            previous_decision=previous_decision,
             risk_profile=risk_profile,
         )
         return build_messages(self.SYSTEM_TEMPLATE, self.USER_TEMPLATE, **context)
@@ -789,6 +1005,7 @@ class SmartMonitorDeepSeek:
                               asset_id: Optional[int] = None,
                               portfolio_stock_id: Optional[int] = None,
                               strategy_context: Optional[Dict] = None,
+                              previous_decision: Optional[Dict] = None,
                               risk_profile: Optional[Dict[str, Any]] = None) -> str:
         """构建A股分析提示词。"""
         return self._build_prompt_messages(
@@ -798,6 +1015,7 @@ class SmartMonitorDeepSeek:
             asset_id=asset_id,
             portfolio_stock_id=portfolio_stock_id,
             strategy_context=strategy_context,
+            previous_decision=previous_decision,
             risk_profile=risk_profile,
         )[1]["content"]
 

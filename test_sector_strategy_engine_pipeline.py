@@ -88,6 +88,10 @@ class SectorStrategyEnginePipelineTests(unittest.TestCase):
     def test_conduct_comprehensive_discussion_uses_external_prompt_templates(self):
         captured = {}
         engine = SectorStrategyEngine.__new__(SectorStrategyEngine)
+        engine._contains_stale_year_reference = SectorStrategyEngine._contains_stale_year_reference.__get__(engine, SectorStrategyEngine)
+        engine._extract_year_tokens = SectorStrategyEngine._extract_year_tokens.__get__(engine, SectorStrategyEngine)
+        engine._drop_stale_year_lines = SectorStrategyEngine._drop_stale_year_lines.__get__(engine, SectorStrategyEngine)
+        engine._enforce_text_time_freshness = SectorStrategyEngine._enforce_text_time_freshness.__get__(engine, SectorStrategyEngine)
 
         def fake_call_api(messages, max_tokens=None, tier=None):
             captured["messages"] = messages
@@ -142,6 +146,35 @@ class SectorStrategyEnginePipelineTests(unittest.TestCase):
         self.assertIn("分析基准日期", captured["messages"][1]["content"])
         self.assertIn("【原始输出】", captured["messages"][1]["content"])
         self.assertIn("错误输出", captured["messages"][1]["content"])
+
+    def test_conduct_comprehensive_discussion_drops_stale_year_references_without_second_llm_call(self):
+        call_count = 0
+        engine = SectorStrategyEngine.__new__(SectorStrategyEngine)
+        engine._contains_stale_year_reference = SectorStrategyEngine._contains_stale_year_reference.__get__(engine, SectorStrategyEngine)
+        engine._extract_year_tokens = SectorStrategyEngine._extract_year_tokens.__get__(engine, SectorStrategyEngine)
+        engine._drop_stale_year_lines = SectorStrategyEngine._drop_stale_year_lines.__get__(engine, SectorStrategyEngine)
+        engine._enforce_text_time_freshness = SectorStrategyEngine._enforce_text_time_freshness.__get__(engine, SectorStrategyEngine)
+
+        def fake_call_api(messages, max_tokens=None, tier=None):
+            nonlocal call_count
+            call_count += 1
+            return "综合结论延续2024年风格主线。"
+
+        engine.llm_client = types.SimpleNamespace(call_api=fake_call_api)
+
+        result = engine._conduct_comprehensive_discussion(
+            {
+                "macro": {"analysis": "宏观观点"},
+                "sector": {"analysis": "板块观点"},
+                "fund": {"analysis": "资金观点"},
+                "sentiment": {"analysis": "情绪观点"},
+                "_analysis_date": "2026-04-10 09:00:00",
+            }
+        )
+
+        self.assertEqual(call_count, 1)
+        self.assertNotIn("2024年", result)
+        self.assertIn("当前输入未提供相关数据", result)
 
     def test_generate_final_predictions_repairs_stale_year_json(self):
         responses = iter([

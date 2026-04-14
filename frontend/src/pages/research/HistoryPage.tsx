@@ -5,7 +5,7 @@ import { PageFeedback } from "../../components/common/PageFeedback";
 import { PageFrame } from "../../components/common/PageFrame";
 import { StatusBadge } from "../../components/common/StatusBadge";
 import { AnalysisActionButtons } from "../../components/research/AnalysisActionButtons";
-import { FormattedReport, splitReportSections } from "../../components/research/FormattedReport";
+import { MarkdownReport } from "../../components/research/MarkdownReport";
 import { usePageFeedback } from "../../hooks/usePageFeedback";
 import { apiFetch, buildQuery } from "../../lib/api";
 import { formatDateTime } from "../../lib/datetime";
@@ -51,13 +51,7 @@ interface AnalysisHistoryItem extends AnalysisRecordDetail {
 
 interface RawReportEntry {
   key: string;
-  title: string;
-  role: string;
-  focusAreas: string[];
-  timestamp: string;
-  body: unknown;
-  reasoning: string;
-  summary: string;
+  rawContent: string;
 }
 
 type ReportCategory = "technical" | "fundamental" | "fund_flow" | "market" | "news" | "risk" | "team";
@@ -76,14 +70,11 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
 
-function buildSummary(value: unknown): string {
-  const text = String(value || "")
-    .replace(/[#>*`]/g, " ")
-    .replace(/\*\*/g, "")
-    .split("\n")
-    .map((line) => line.trim())
-    .find(Boolean);
-  return text || "暂无摘要";
+function sanitizeDiscussionSpeakers(value: unknown): string {
+  return String(value || "").replace(
+    /【(投资总监（主持）|技术分析师|基本面分析师|资金面分析师|风险管理师|市场情绪分析师|新闻分析师)(?:\s+[^\]】:：]{1,12})?】(?=[:：])/g,
+    "【$1】",
+  );
 }
 
 function detectReportCategory(name: string, payload: Record<string, unknown>): ReportCategory | null {
@@ -145,23 +136,11 @@ function detectReportCategory(name: string, payload: Record<string, unknown>): R
 
 function buildRawReportEntry(name: string, payload: unknown): RawReportEntry {
   const normalizedPayload = asRecord(payload);
-  const reportSections = splitReportSections(
-    normalizedPayload.analysis || normalizedPayload.report || payload,
-  );
-  const body = reportSections.body || (reportSections.reasoning ? "" : normalizedPayload.analysis || normalizedPayload.report || payload);
-  const focusAreas = Array.isArray(normalizedPayload.focus_areas)
-    ? normalizedPayload.focus_areas.filter(Boolean).map(String)
-    : [];
+  const rawContent = String(normalizedPayload.analysis || normalizedPayload.report || payload || "").trim();
 
   return {
     key: name,
-    title: String(normalizedPayload.agent_name || name),
-    role: String(normalizedPayload.agent_role || ""),
-    focusAreas,
-    timestamp: formatDateTime(normalizedPayload.timestamp, ""),
-    body,
-    reasoning: reportSections.reasoning,
-    summary: buildSummary(body),
+    rawContent,
   };
 }
 
@@ -191,17 +170,10 @@ function buildRawReportEntries(
   });
 
   if (discussionResult) {
-    const sections = splitReportSections(discussionResult);
-    const body = sections.body || (sections.reasoning ? "" : discussionResult);
+    const normalizedDiscussion = sanitizeDiscussionSpeakers(discussionResult);
     entries.team.push({
       key: "__discussion__",
-      title: "团队讨论",
-      role: "",
-      focusAreas: [],
-      timestamp: "",
-      body,
-      reasoning: sections.reasoning,
-      summary: buildSummary(body),
+      rawContent: String(normalizedDiscussion || "").trim(),
     });
   }
 
@@ -241,6 +213,17 @@ function toOrderedItems(value: unknown): string[] {
   const text = String(value || "").replace(/\r\n/g, "\n").trim();
   if (!text) {
     return [];
+  }
+
+  const inlineNumberedMatches = Array.from(
+    text.matchAll(
+      /(?:^|[；;\n]\s*)((?:\d+[.)、]?|[①②③④⑤⑥⑦⑧⑨⑩]|[一二三四五六七八九十]+[、.]))\s*(.*?)(?=(?:[；;\n]\s*(?:\d+[.)、]?|[①②③④⑤⑥⑦⑧⑨⑩]|[一二三四五六七八九十]+[、.])\s*)|$)/gu,
+    ),
+  )
+    .map((match) => cleanOrderedItem(`${match[1]} ${match[2]}`))
+    .filter(Boolean);
+  if (inlineNumberedMatches.length > 1) {
+    return inlineNumberedMatches;
   }
 
   const numberedMatches = text.match(/(?:^|\n)\s*(?:\d+[.)、]?|[①②③④⑤⑥⑦⑧⑨⑩]|[一二三四五六七八九十]+[、.])\s*.+/gu);
@@ -346,29 +329,13 @@ function RawReportWorkspace({
         <div className={styles.historyDetailContentStack}>
           {activeEntries.map((activeEntry) => (
             <div className={styles.reportWorkbenchPanel} key={`${activeKey}-${activeEntry.key}`}>
-              <div className={styles.reportWorkbenchHeader}>
-                <div className={styles.reportWorkbenchHeading}>
-                  <h3>{activeEntry.title}</h3>
-                  {activeEntry.role || activeEntry.focusAreas.length ? (
-                    <p className={styles.helperText}>
-                      {[activeEntry.role, activeEntry.focusAreas.join(" / ")].filter(Boolean).join(" | ")}
-                    </p>
-                  ) : null}
-                  {activeEntry.summary ? <p className={styles.helperText}>{activeEntry.summary}</p> : null}
-                </div>
-                {activeEntry.timestamp ? <span className={styles.historyMeta}>{activeEntry.timestamp}</span> : null}
-              </div>
               <div className={styles.reportWorkbenchContent}>
-                <FormattedReport content={activeEntry.body} emptyText={activeTab?.emptyText || "暂无正文"} />
+                <MarkdownReport
+                  className={styles.rawReportText}
+                  content={activeEntry.rawContent || activeTab?.emptyText || "暂无正文"}
+                  emptyText={activeTab?.emptyText || "暂无正文"}
+                />
               </div>
-              {activeEntry.reasoning ? (
-                <details className={styles.historyDetailPanel}>
-                  <summary className={styles.historyDetailSummary}>推理过程</summary>
-                  <div className={styles.historyDetailPanelBody}>
-                    <FormattedReport content={activeEntry.reasoning} emptyText="暂无推理过程" />
-                  </div>
-                </details>
-              ) : null}
             </div>
           ))}
         </div>

@@ -1,5 +1,8 @@
 import json
+import os
+import time
 from typing import Any, Dict, List, Optional
+from datetime import datetime
 
 import openai
 
@@ -19,13 +22,19 @@ class DeepSeekClient:
         self.reasoning_model = reasoning_model
         self.client = openai.OpenAI(
             api_key=config.LLM_API_KEY,
-            base_url=config.LLM_BASE_URL
+            base_url=config.LLM_BASE_URL,
+            timeout=config.LLM_API_TIMEOUT_SECONDS,
         )
+        self.api_retry_count = max(0, int(os.getenv("LLM_API_RETRY_COUNT", "2") or 2))
+        self.api_retry_base_delay_seconds = max(0.2, float(os.getenv("LLM_API_RETRY_BASE_DELAY_SECONDS", "0.8") or 0.8))
         self.model_selection = describe_model_selection(
             forced_model=self.model,
             lightweight_model=self.lightweight_model,
             reasoning_model=self.reasoning_model,
         )
+
+    class EmptyResponseError(RuntimeError):
+        """Raised when the upstream model returns no usable content."""
 
     @staticmethod
     def _extract_json_object(text: str) -> Dict[str, Any]:
@@ -117,33 +126,96 @@ class DeepSeekClient:
         if "reasoner" in model_to_use.lower() and max_tokens <= 2000:
             max_tokens = 8000  # reasoner 模型需要更多 tokens 来输出推理过程
 
-        try:
-            response = self.client.chat.completions.create(
-                model=model_to_use,
-                messages=messages,
-                temperature=temperature,
-                max_tokens=max_tokens
-            )
+        total_attempts = max(1, int(getattr(self, "api_retry_count", 2)) + 1)
+        base_delay = max(0.2, float(getattr(self, "api_retry_base_delay_seconds", 0.8)))
+        last_error: Exception | None = None
 
-            # 处理 reasoner 模型的响应
-            message = response.choices[0].message
+        for attempt in range(1, total_attempts + 1):
+            try:
+                response = self.client.chat.completions.create(
+                    model=model_to_use,
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens
+                )
 
-            # reasoner 模型可能包含 reasoning_content（推理过程）和 content（最终答案）
-            # 我们返回完整内容，包括推理过程（如果有的话）
-            result = ""
+                # 处理 reasoner 模型的响应
+                message = response.choices[0].message
 
-            # 检查是否有推理内容
-            if include_reasoning and hasattr(message, 'reasoning_content') and message.reasoning_content:
-                result += f"【推理过程】\n{message.reasoning_content}\n\n"
+                # reasoner 模型可能包含 reasoning_content（推理过程）和 content（最终答案）
+                # 我们返回完整内容，包括推理过程（如果有的话）
+                result = ""
 
-            # 添加最终内容
-            if message.content:
-                result += message.content
+                # 检查是否有推理内容
+                if include_reasoning and hasattr(message, 'reasoning_content') and message.reasoning_content:
+                    result += f"【推理过程】\n{message.reasoning_content}\n\n"
 
-            return result if result else "API返回空响应"
+                # 添加最终内容
+                if message.content:
+                    result += message.content
 
-        except Exception as e:
-            raise RuntimeError(f"LLM API调用失败: {str(e)}") from e
+                if result.strip():
+                    return result
+                raise self.EmptyResponseError("llm_empty_response")
+            except Exception as e:
+                last_error = e
+                if attempt >= total_attempts or not self._is_retryable_llm_error(e):
+                    break
+                delay_seconds = base_delay * (2 ** (attempt - 1))
+                print(
+                    f"[LLM] 调用失败，正在重试 ({attempt}/{total_attempts - 1})，"
+                    f"model={model_to_use}，{delay_seconds:.1f}s 后重试：{self._format_error_message(e)}"
+                )
+                time.sleep(delay_seconds)
+
+        raise RuntimeError(f"LLM API调用失败: {self._format_error_message(last_error)}") from last_error
+
+    @staticmethod
+    def _retryable_exception_types() -> tuple[type[BaseException], ...]:
+        candidates = []
+        for name in ("APIConnectionError", "APITimeoutError", "InternalServerError", "RateLimitError", "APIStatusError"):
+            candidate = getattr(openai, name, None)
+            if isinstance(candidate, type) and issubclass(candidate, BaseException):
+                candidates.append(candidate)
+        return tuple(candidates)
+
+    @classmethod
+    def _format_error_message(cls, error: Exception | None) -> str:
+        if error is None:
+            return "unknown_request_error"
+        return str(error)
+
+    @classmethod
+    def _is_retryable_llm_error(cls, error: Exception) -> bool:
+        retryable_types = cls._retryable_exception_types()
+        if retryable_types and isinstance(error, retryable_types):
+            status_code = getattr(error, "status_code", None)
+            response = getattr(error, "response", None)
+            if status_code is None and response is not None:
+                status_code = getattr(response, "status_code", None)
+            if status_code in {408, 409, 429}:
+                return True
+            if status_code is not None:
+                try:
+                    return int(status_code) >= 500
+                except (TypeError, ValueError):
+                    pass
+
+        message = str(error).lower()
+        transient_markers = (
+            "llm_empty_response",
+            "auth_unavailable",
+            "server_error",
+            "internal_server_error",
+            "rate limit",
+            "timeout",
+            "timed out",
+            "connection error",
+            "connection reset",
+            "temporarily unavailable",
+            "try again",
+        )
+        return any(marker in message for marker in transient_markers)
 
     def technical_analysis(self, stock_info: Dict, stock_data: Any, indicators: Dict) -> str:
         """技术面分析"""
@@ -192,10 +264,19 @@ class DeepSeekClient:
         
         # 构建财务数据部分
         financial_section = ""
+        business_profile = (
+            stock_info.get("business_summary")
+            or stock_info.get("主营业务")
+            or stock_info.get("主营构成")
+            or stock_info.get("business_structure")
+        )
         if financial_data and not financial_data.get('error'):
             ratios = financial_data.get('financial_ratios', {})
             if ratios:
                 financial_section = f"""
+主营业务/业务结构概况：
+- {business_profile or 'N/A'}
+
 详细财务指标：
 【盈利能力】
 - 净资产收益率(ROE)：{ratios.get('净资产收益率ROE', ratios.get('ROE', 'N/A'))}
@@ -223,10 +304,15 @@ class DeepSeekClient:
 - 股息率：{ratios.get('股息率', stock_info.get('dividend_yield', 'N/A'))}
 - 派息率：{ratios.get('派息率', 'N/A')}
 """
+        elif business_profile:
+            financial_section = f"""
+主营业务/业务结构概况：
+- {business_profile}
+"""
             
             # 添加报告期信息
             if ratios.get('报告期'):
-                financial_section = f"\n财务数据报告期：{ratios.get('报告期')}\n" + financial_section
+                financial_section = f"\n最新财务指标报告期（非当前分析日期）：{ratios.get('报告期')}\n" + financial_section
         
         # 构建季报数据部分
         quarterly_section = ""
@@ -245,6 +331,7 @@ class DeepSeekClient:
         messages = build_messages(
             "stock_analysis/fundamental.system.txt",
             "stock_analysis/fundamental.user.txt",
+            market_date=datetime.now().strftime("%Y-%m-%d"),
             symbol=stock_info.get("symbol", "N/A"),
             name=stock_info.get("name", "N/A"),
             current_price=stock_info.get("current_price", "N/A"),
@@ -261,7 +348,11 @@ class DeepSeekClient:
             quarterly_section=quarterly_section,
         )
         
-        return self.call_api(messages, tier=ModelTier.REASONING)
+        return self.call_api(
+            messages,
+            max_tokens=max(12000, int(os.getenv("FUNDAMENTAL_ANALYSIS_MAX_TOKENS", "24000") or 24000)),
+            tier=ModelTier.REASONING,
+        )
     
     def fund_flow_analysis(self, stock_info: Dict, indicators: Dict, fund_flow_data: Dict = None) -> str:
         """资金面分析"""

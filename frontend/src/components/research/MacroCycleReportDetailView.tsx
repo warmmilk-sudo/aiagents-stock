@@ -57,6 +57,7 @@ export function MacroCycleReportDetailView({
         label,
         title,
         timestamp: formatDateTime(result?.timestamp, ""),
+        rawContent: String(analysis || "").trim(),
         body: sections.body || analysis || "",
         reasoning: sections.reasoning,
         summary: key === "chief" ? headline : undefined,

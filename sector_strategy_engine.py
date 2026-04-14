@@ -224,9 +224,7 @@ class SectorStrategyEngine:
             text=report,
             reference_date=analysis_date,
             label="综合研判",
-            context_text="\n\n".join(
-                part for part in (macro_analysis, sector_analysis, fund_analysis, sentiment_analysis) if str(part or "").strip()
-            ),
+            fallback_text="当前输入未提供相关数据，已移除与分析基准日期不一致的年度表述，请仅基于四位分析师当次报告理解本次综合结论。",
         )
         
         print("  ✓ 综合研判完成")
@@ -330,28 +328,30 @@ class SectorStrategyEngine:
             return self._contains_stale_year_reference(payload, reference_date)
         return False
 
-    def _enforce_text_time_freshness(self, *, text: str, reference_date: str, label: str, context_text: str) -> str:
+    def _drop_stale_year_lines(self, text: str, reference_date: str) -> str:
+        lines = [line.rstrip() for line in str(text or "").splitlines()]
+        filtered_lines = [
+            line for line in lines
+            if line.strip() and not self._contains_stale_year_reference(line, reference_date)
+        ]
+        if filtered_lines:
+            return "\n".join(filtered_lines).strip()
+
+        sentences = re.split(r"(?<=[。！？；])", str(text or ""))
+        filtered_sentences = [
+            sentence for sentence in sentences
+            if sentence.strip() and not self._contains_stale_year_reference(sentence, reference_date)
+        ]
+        return "".join(filtered_sentences).strip()
+
+    def _enforce_text_time_freshness(self, *, text: str, reference_date: str, label: str, fallback_text: str) -> str:
         if not self._contains_stale_year_reference(text, reference_date):
             return text
-        print(f"  ⚠ {label}出现过期年份引用，按 {reference_date} 重新修正")
-        messages = build_messages(
-            "sector_strategy/repair_time_freshness_generic.system.txt",
-            "sector_strategy/repair_time_freshness_generic.user.txt",
-            agent_label=label,
-            reference_date=reference_date,
-            context_text=context_text or "暂无额外上下文",
-            raw_analysis=text,
-        )
-        repaired = self.llm_client.call_api(
-            messages,
-            temperature=0.1,
-            max_tokens=5000,
-            tier=ModelTier.REASONING,
-        )
-        if self._contains_stale_year_reference(repaired, reference_date):
-            print(f"  ⚠ {label}修正后仍含过期年份，保留原始输出")
-            return text
-        return repaired
+        print(f"  ⚠ {label}出现过期年份引用，执行本地清理兜底")
+        cleaned = self._drop_stale_year_lines(text, reference_date)
+        if cleaned and not self._contains_stale_year_reference(cleaned, reference_date):
+            return cleaned
+        return fallback_text
 
     def _repair_prediction_response(self, raw_response: str, comprehensive_report: str, sectors_str: str, analysis_date: str) -> str:
         messages = build_messages(

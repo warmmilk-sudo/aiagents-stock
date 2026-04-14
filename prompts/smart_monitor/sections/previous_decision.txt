@@ -1,0 +1,16 @@
+[PREVIOUS_DECISION] 上一轮盘中决策基准
+═══════════════════════════════════════════════════════════
+上一轮时间: $previous_decision_time
+上一轮动作: $previous_action
+上一轮信心度: $previous_confidence
+上一轮风险等级: $previous_risk_level
+上一轮盘中偏向: $previous_intraday_bias
+上一轮决策摘要: $previous_reasoning_summary
+上一轮预警价格区间: $previous_entry_min - $previous_entry_max，止盈 $previous_take_profit，止损 $previous_stop_loss
+
+本轮相对上一轮的主要变化:
+$delta_summary
+
+使用建议:
+- 若新增变化不足以推翻上一轮判断，优先沿用上一轮方向，不要把重复信息重新当成新证据
+- 只有当实时结构、风险状态或基线关系出现实质变化时，才调整动作或预警价格区间

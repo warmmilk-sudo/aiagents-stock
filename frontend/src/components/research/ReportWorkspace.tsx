@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 
+import { MarkdownReport } from "./MarkdownReport";
 import styles from "../../pages/ConsolePage.module.scss";
-import { FormattedReport, extractReportKeyMetrics } from "./FormattedReport";
 
 export interface ReportWorkspaceEntry {
   key: string;
@@ -10,28 +10,23 @@ export interface ReportWorkspaceEntry {
   role?: string;
   focusAreas?: string[];
   timestamp?: string;
+  rawContent?: string;
   body?: unknown;
   reasoning?: string;
   summary?: string;
+}
+
+function sanitizeDiscussionSpeakers(value: unknown): string {
+  return String(value || "").replace(
+    /【(投资总监（主持）|技术分析师|基本面分析师|资金面分析师|风险管理师|市场情绪分析师|新闻分析师)(?:\s+[^\]】:：]{1,12})?】(?=[:：])/g,
+    "【$1】",
+  );
 }
 
 interface ReportWorkspaceProps {
   entries?: ReportWorkspaceEntry[];
   emptyText?: string;
   ariaLabel?: string;
-}
-
-function summaryText(entry: ReportWorkspaceEntry): string {
-  if (entry.summary) {
-    return entry.summary;
-  }
-  const text = String(entry.body || "")
-    .replace(/[#>*`]/g, " ")
-    .replace(/\*\*/g, "")
-    .split("\n")
-    .map((line) => line.trim())
-    .find(Boolean);
-  return text || "暂无摘要";
 }
 
 export function ReportWorkspace({
@@ -53,7 +48,6 @@ export function ReportWorkspace({
   }, [activeKey, visibleEntries]);
 
   const activeEntry = visibleEntries.find((item) => item.key === activeKey) ?? visibleEntries[0] ?? null;
-  const activeMetrics = useMemo(() => extractReportKeyMetrics(activeEntry?.body, 6), [activeEntry?.body]);
   const tabsStyle = { "--nested-tab-count": visibleEntries.length } as CSSProperties;
 
   if (!visibleEntries.length) {
@@ -79,43 +73,17 @@ export function ReportWorkspace({
 
       {activeEntry ? (
         <div className={styles.reportWorkbenchPanel}>
-          <div className={styles.reportWorkbenchHeader}>
-            <div className={styles.reportWorkbenchHeading}>
-              <h3>{activeEntry.title || activeEntry.label}</h3>
-              {activeEntry.role || activeEntry.focusAreas?.length ? (
-                <p className={styles.helperText}>
-                  {[activeEntry.role, activeEntry.focusAreas?.join(" / ")].filter(Boolean).join(" | ")}
-                </p>
-              ) : null}
-              <p className={styles.helperText}>{summaryText(activeEntry)}</p>
-            </div>
-            {activeEntry.timestamp ? (
-              <span className={`${styles.helperText} ${styles.reportWorkbenchTimestamp}`}>{activeEntry.timestamp}</span>
-            ) : null}
-          </div>
-
           <div className={styles.reportWorkbenchContent}>
-            {activeMetrics.length ? (
-              <div className={styles.reportWorkbenchMetricGrid}>
-                {activeMetrics.map((metric, index) => (
-                  <div className={styles.reportWorkbenchMetricCard} key={`${metric.label}-${metric.value}-${index}`}>
-                    <span>{metric.label}</span>
-                    <strong>{metric.value}</strong>
-                  </div>
-                ))}
-              </div>
-            ) : null}
-            <FormattedReport content={activeEntry.body} emptyText={emptyText} />
+            <MarkdownReport
+              className={styles.rawReportText}
+              content={
+                activeEntry.key === "__discussion__"
+                  ? sanitizeDiscussionSpeakers(activeEntry.rawContent || String(activeEntry.body || ""))
+                  : (activeEntry.rawContent || String(activeEntry.body || emptyText))
+              }
+              emptyText={emptyText}
+            />
           </div>
-
-          {activeEntry.reasoning ? (
-            <details className={styles.historyDetailPanel}>
-              <summary className={styles.historyDetailSummary}>推理过程</summary>
-              <div className={styles.historyDetailPanelBody}>
-                <FormattedReport content={activeEntry.reasoning} emptyText="暂无推理过程" />
-              </div>
-            </details>
-          ) : null}
         </div>
       ) : null}
     </div>

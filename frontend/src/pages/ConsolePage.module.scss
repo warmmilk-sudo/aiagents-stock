@@ -1752,6 +1752,127 @@ details > .historyDetailSummary:hover {
   color: color-mix(in srgb, var(--text-main) 92%, var(--text-muted));
 }
 
+.rawReportText {
+  display: grid;
+  gap: 10px;
+  word-break: break-word;
+  line-height: 1.75;
+  color: var(--text-main);
+  font-size: 14px;
+
+  p,
+  h1,
+  h2,
+  h3,
+  ul,
+  ol,
+  table,
+  pre,
+  blockquote,
+  hr {
+    margin: 0;
+  }
+
+  ul,
+  ol {
+    padding-left: 22px;
+  }
+
+  li + li {
+    margin-top: 6px;
+  }
+
+  h1 {
+    font-size: 20px;
+    line-height: 1.4;
+    font-weight: 800;
+  }
+
+  h2 {
+    font-size: 18px;
+    line-height: 1.45;
+    font-weight: 700;
+  }
+
+  h3 {
+    font-size: 16px;
+    line-height: 1.5;
+    font-weight: 700;
+  }
+
+  strong {
+    font-weight: 700;
+    color: var(--text-main);
+  }
+
+  :global(.markdown-table) {
+    overflow-x: auto;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    line-height: 1.6;
+  }
+
+  pre {
+    overflow-x: auto;
+    padding: 12px 14px;
+    border-radius: 12px;
+    background: color-mix(in srgb, var(--panel-bg-elevated) 82%, black 8%);
+    border: 1px solid color-mix(in srgb, var(--border-color) 88%, transparent);
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 12px;
+    line-height: 1.65;
+    white-space: pre-wrap;
+  }
+
+  code {
+    font-family: inherit;
+  }
+
+  p code,
+  li code,
+  blockquote code,
+  td code,
+  th code {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--panel-bg-elevated) 78%, black 6%);
+    border: 1px solid color-mix(in srgb, var(--border-color) 82%, transparent);
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 12px;
+    line-height: 1.5;
+  }
+
+  blockquote {
+    padding: 10px 14px;
+    border-left: 3px solid color-mix(in srgb, var(--accent-color) 72%, transparent);
+    background: color-mix(in srgb, var(--panel-bg-elevated) 72%, transparent);
+    border-radius: 0 12px 12px 0;
+  }
+
+  hr {
+    border: 0;
+    border-top: 1px solid color-mix(in srgb, var(--border-color) 88%, transparent);
+  }
+
+  th,
+  td {
+    padding: 8px 10px;
+    border: 1px solid color-mix(in srgb, var(--border-color) 88%, transparent);
+    text-align: left;
+    vertical-align: top;
+  }
+
+  th {
+    font-weight: 700;
+    background: color-mix(in srgb, var(--panel-bg-elevated) 82%, var(--panel-bg));
+  }
+}
+
 .muted {
   color: var(--text-muted);
 }

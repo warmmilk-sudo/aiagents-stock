@@ -136,6 +136,76 @@ class StockAnalysisAgentsPipelineTests(unittest.TestCase):
         self.assertIn("所属行业：白酒", captured["prompt"])
         self.assertIn("所属板块：食品饮料", captured["prompt"])
 
+    def test_risk_management_agent_includes_fundamental_and_liquidity_context(self):
+        captured = {}
+        agent = StockAnalysisAgents.__new__(StockAnalysisAgents)
+
+        def fake_call_api(messages, max_tokens=None, tier=None):
+            captured["prompt"] = messages[1]["content"]
+            captured["max_tokens"] = max_tokens
+            return "增强风险分析"
+
+        agent.llm_client = types.SimpleNamespace(call_api=fake_call_api)
+
+        result = agent.risk_management_agent(
+            stock_info={
+                "symbol": "002050",
+                "name": "三花智控",
+                "current_price": 22.5,
+                "pe_ratio": 28.1,
+                "pb_ratio": 5.2,
+                "market_cap": 80000000000,
+                "industry": "家电零部件",
+                "sector": "汽车热管理",
+                "business_summary": "制冷空调电器零部件与汽车热管理系统零部件双主业。",
+                "volume": 356000,
+                "amount": 785000000,
+                "turnover_rate": 3.28,
+                "volume_ratio": 1.46,
+                "order_book": {
+                    "summary": "买盘最优 22.49/1260，卖盘最优 22.50/980",
+                    "bids": [{"level": "买一", "price": 22.49, "volume": 1260}],
+                    "asks": [{"level": "卖一", "price": 22.50, "volume": 980}],
+                },
+            },
+            indicators={"rsi": 58.2},
+            risk_data=None,
+            financial_data={
+                "financial_ratios": {
+                    "营业收入同比增长": "18.6%",
+                    "净利润同比增长": "24.3%",
+                    "销售毛利率": "27.1%",
+                    "销售净利率": "12.4%",
+                    "资产负债率": "43.2%",
+                }
+            },
+            quarterly_data={
+                "data_success": True,
+                "income_statement": {
+                    "key_metrics": {
+                        "latest": {
+                            "营业收入": "68.2亿元",
+                            "净利润": "8.4亿元",
+                            "营业收入同比": "18.6%",
+                            "净利润同比": "24.3%",
+                        }
+                    }
+                }
+            },
+        )
+
+        self.assertEqual(result["analysis"], "增强风险分析")
+        self.assertGreaterEqual(captured["max_tokens"], 12000)
+        self.assertIn("营收增速：18.6%", captured["prompt"])
+        self.assertIn("净利润增速：24.3%", captured["prompt"])
+        self.assertIn("毛利率：27.1%", captured["prompt"])
+        self.assertIn("业务结构/主营概况：制冷空调电器零部件与汽车热管理系统零部件双主业。", captured["prompt"])
+        self.assertIn("换手率：3.28", captured["prompt"])
+        self.assertIn("量比：1.46", captured["prompt"])
+        self.assertIn("买卖盘深度摘要：买盘最优 22.49/1260，卖盘最优 22.50/980", captured["prompt"])
+        self.assertIn("买盘五档：买一 22.49/1260", captured["prompt"])
+        self.assertIn("卖盘五档：卖一 22.5/980", captured["prompt"])
+
 
 if __name__ == "__main__":
     unittest.main()

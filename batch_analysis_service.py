@@ -49,6 +49,19 @@ def _get_stock_data(symbol: str, period: str):
                 stock_info.pop("realtime_data_source", None)
                 if realtime_quote.get("change_percent") not in (None, ""):
                     stock_info["change_percent"] = realtime_quote.get("change_percent")
+                for field in (
+                    "volume",
+                    "amount",
+                    "high",
+                    "low",
+                    "open",
+                    "pre_close",
+                    "turnover_rate",
+                    "volume_ratio",
+                    "order_book",
+                ):
+                    if realtime_quote.get(field) not in (None, ""):
+                        stock_info[field] = realtime_quote.get(field)
                 if realtime_quote.get("data_source"):
                     stock_info["realtime_data_source"] = realtime_quote.get("data_source")
             else:

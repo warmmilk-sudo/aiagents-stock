@@ -112,6 +112,42 @@ class SmartMonitorDBTests(unittest.TestCase):
         self.assertEqual(decisions[0]["intraday_signal_labels"], ["价格运行在分时均价上方", "高位量能衰减"])
         self.assertEqual(decisions[0]["intraday_observations"], ["当前价格接近日内高位"])
 
+    def test_get_ai_decisions_exposes_delta_fields_from_decision_context(self):
+        decision_id = self.db.save_ai_decision(
+            {
+                "stock_code": "600519",
+                "stock_name": "贵州茅台",
+                "account_name": "默认账户",
+                "decision_time": "2026-04-10 11:00:00",
+                "trading_session": "上午盘",
+                "action": "BUY",
+                "confidence": 82,
+                "reasoning": "相对上一轮转强。",
+                "decision_context": {
+                    "previous_action": "HOLD",
+                    "decision_changed": True,
+                    "action_changed": True,
+                    "thresholds_changed": False,
+                    "delta_summary": "动作由HOLD变为BUY；新增盘中标签：量能回升",
+                    "new_intraday_signal_labels": ["量能回升"],
+                    "intraday_bias": "trend_continuation",
+                    "intraday_bias_text": "价格回到分时均价上方",
+                },
+                "market_data": {"current_price": 1450.0},
+                "account_info": {"account_name": "默认账户"},
+            }
+        )
+
+        decisions = self.db.get_ai_decisions(stock_code="600519", limit=5)
+
+        self.assertEqual(decisions[0]["id"], decision_id)
+        self.assertEqual(decisions[0]["previous_action"], "HOLD")
+        self.assertTrue(decisions[0]["decision_changed"])
+        self.assertTrue(decisions[0]["action_changed"])
+        self.assertFalse(decisions[0]["thresholds_changed"])
+        self.assertEqual(decisions[0]["delta_summary"], "动作由HOLD变为BUY；新增盘中标签：量能回升")
+        self.assertEqual(decisions[0]["new_intraday_signal_labels"], ["量能回升"])
+
     def test_get_ai_decision_intraday_summary_groups_actions_and_biases(self):
         self.db.save_ai_decision(
             {

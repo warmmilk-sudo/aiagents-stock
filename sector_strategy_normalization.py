@@ -443,6 +443,10 @@ def normalize_sector_strategy_reports(
             "role": _normalize_text(payload.get("agent_role"), allow_english_only=True),
             "focus_areas": [str(item).strip() for item in _as_list(payload.get("focus_areas")) if str(item).strip()],
             "timestamp": _normalize_text(payload.get("timestamp"), fallback="", allow_english_only=True),
+            "rawContent": _normalize_text(
+                _first_non_empty(payload.get("analysis"), payload.get("report"), value),
+                allow_english_only=True,
+            ),
             "body": raw_body,
             "reasoning": reasoning,
             "summary": _build_summary(raw_body),
@@ -455,6 +459,7 @@ def normalize_sector_strategy_reports(
             "role": "首席策略官综合判断",
             "focus_areas": ["宏观", "板块", "资金", "情绪"],
             "timestamp": "",
+            "rawContent": _normalize_text(comprehensive_report, allow_english_only=True),
             "body": team_body or _normalize_text(comprehensive_report, allow_english_only=True),
             "reasoning": team_reasoning,
             "summary": _build_summary(team_body or comprehensive_report),

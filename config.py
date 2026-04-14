@@ -58,6 +58,11 @@ def _parse_model_options_env(key: str, fallback_model: str) -> list[str]:
 
 LLM_API_KEY = _safe_str_env("LLM_API_KEY")
 LLM_BASE_URL = _safe_str_env("LLM_BASE_URL", "https://api.deepseek.com/v1")
+LLM_API_TIMEOUT_SECONDS = max(30, _safe_int_env("LLM_API_TIMEOUT_SECONDS", 180))
+ANALYSIS_TASK_TIMEOUT_SECONDS = max(
+    LLM_API_TIMEOUT_SECONDS + 120,
+    _safe_int_env("ANALYSIS_TASK_TIMEOUT_SECONDS", 600),
+)
 
 LIGHTWEIGHT_MODEL_NAME = _safe_str_env("LIGHTWEIGHT_MODEL_NAME", "deepseek-chat")
 REASONING_MODEL_NAME = _safe_str_env("REASONING_MODEL_NAME", "deepseek-reasoner")

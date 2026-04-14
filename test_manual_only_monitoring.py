@@ -347,6 +347,91 @@ class ManualOnlyMonitoringTests(unittest.TestCase):
         self.assertEqual(len(fake_db.pending_actions), 0)
         self.assertEqual(notifications, [])
         self.assertEqual(fake_db.saved_decisions[0]["action_status"], "suggested")
+        self.assertEqual(fake_db.saved_decisions[0]["decision_context"]["previous_action"], "HOLD")
+        self.assertTrue(fake_db.saved_decisions[0]["decision_context"]["thresholds_changed"])
+        self.assertIn("预警价格区间已更新", fake_db.saved_decisions[0]["decision_context"]["delta_summary"])
+
+    def test_same_day_hold_without_material_change_reuses_previous_decision(self):
+        fake_db = FakeSmartMonitorDB()
+        fake_db.latest_decision = {
+            "action": "HOLD",
+            "confidence": 74,
+            "reasoning": "上一轮结论：继续观察。",
+            "risk_level": "medium",
+            "decision_time": "2026-04-13 10:00:00",
+            "origin_analysis_id": 99,
+            "monitor_levels": {
+                "entry_min": 1498.0,
+                "entry_max": 1506.0,
+                "take_profit": 1588.0,
+                "stop_loss": 1452.0,
+            },
+            "decision_context": {
+                "intraday_bias": "range_balance",
+                "intraday_bias_text": "价格围绕分时均价震荡",
+                "intraday_signal_labels": ["价格运行在分时均价附近"],
+                "last_5m_change_pct": 0.05,
+                "price_position_pct": 52.0,
+                "volume_acceleration_ratio": 0.98,
+            },
+            "market_data": {
+                "current_price": 1520.0,
+            },
+        }
+
+        with patch.object(smart_monitor_engine_module, "SmartMonitorDB", return_value=fake_db), patch.object(
+            smart_monitor_engine_module.event_bus,
+            "subscribe",
+            return_value=None,
+        ):
+            engine = smart_monitor_engine_module.SmartMonitorEngine(llm_api_key="stub")
+        engine.lifecycle_service.asset_service = fake_db.asset_service
+
+        engine.llm_client.get_trading_session = lambda: {
+            "session": "上午盘",
+            "can_trade": True,
+            "recommendation": "",
+        }
+        engine.data_fetcher.get_comprehensive_data = lambda stock_code: {
+            "name": "贵州茅台",
+            "current_price": 1520.6,
+            "change_pct": 1.25,
+            "change_amount": 18.8,
+            "volume": 123456,
+            "turnover_rate": 0.75,
+            "update_time": "2026-04-13 10:30:00",
+            "intraday_context": {
+                "intraday_bias": "range_balance",
+                "intraday_bias_text": "价格围绕分时均价震荡",
+                "intraday_signal_labels": ["价格运行在分时均价附近"],
+                "last_5m_change_pct": 0.12,
+                "price_position_pct": 56.0,
+                "volume_acceleration_ratio": 1.08,
+            },
+            "realtime_freshness": {
+                "asof_time": "2026-04-13 10:30:00",
+            },
+        }
+        engine.llm_client.analyze_stock_and_decide = lambda **kwargs: self.fail("should reuse previous HOLD without calling llm")
+        engine._send_notification = lambda **kwargs: self.fail("reused hold should not notify")
+        engine._sync_runtime_thresholds = lambda **kwargs: self.fail("reused hold without threshold change should not sync")
+
+        result = engine.analyze_stock(
+            "600519",
+            notify=True,
+            account_name="测试账户",
+            strategy_context={"origin_analysis_id": 99},
+        )
+
+        self.assertTrue(result["success"])
+        self.assertTrue(result["reused_previous_decision"])
+        self.assertFalse(result["decision_changed"])
+        self.assertFalse(result["action_changed"])
+        self.assertFalse(result["thresholds_changed"])
+        self.assertEqual(result["decision"]["action"], "HOLD")
+        self.assertEqual(len(fake_db.saved_decisions), 1)
+        self.assertEqual(fake_db.saved_decisions[0]["decision_context"]["previous_action"], "HOLD")
+        self.assertIn("未出现足以改变结论的显著新变化", fake_db.saved_decisions[0]["decision_context"]["delta_summary"])
 
     def test_intraday_analysis_refreshes_latest_strategy_context_before_decision(self):
         fake_db = FakeSmartMonitorDB()
