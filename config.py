@@ -75,6 +75,11 @@ REASONING_MODEL_OPTIONS = _parse_model_options_env(
     REASONING_MODEL_NAME,
 )
 
+# Embedding model for memory module (e.g. SiliconFlow BGE-m3)
+EMBEDDING_API_KEY = _safe_str_env("EMBEDDING_API_KEY")
+EMBEDDING_BASE_URL = _safe_str_env("EMBEDDING_BASE_URL", "https://api.siliconflow.cn/v1")
+EMBEDDING_MODEL_NAME = _safe_str_env("EMBEDDING_MODEL_NAME", "BAAI/bge-m3")
+
 # Backward compatible alias for older callers.
 DEFAULT_MODEL_NAME = LIGHTWEIGHT_MODEL_NAME
 

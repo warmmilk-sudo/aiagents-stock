@@ -175,6 +175,31 @@ class AnalysisHistoryServiceTests(unittest.TestCase):
         self.assertEqual(remaining[0]["id"], self.research_id)
         self.assertIsNone(self.service.get_record(self.portfolio_id))
 
+    def test_stock_summaries_include_latest_summary_and_scope_breakdown(self):
+        self.repository.save_record(
+            symbol="600519",
+            stock_name="贵州茅台",
+            period="1y",
+            summary="最新一份研究摘要。",
+            final_decision={"rating": "持有", "operation_advice": "继续观察。"},
+            account_name="账户A",
+            analysis_scope="research",
+            analysis_source="home_single_analysis",
+            analysis_date="2099-04-01 12:00:00",
+            has_full_report=True,
+        )
+
+        summaries = {item["symbol"]: item for item in self.service.list_stock_summaries()}
+        summary = summaries["600519"]
+        self.assertEqual(summary["report_count"], 2)
+        self.assertEqual(summary["research_report_count"], 2)
+        self.assertEqual(summary["portfolio_report_count"], 0)
+        self.assertEqual(summary["latest_summary"], "最新一份研究摘要。")
+        self.assertEqual(summary["latest_analysis_scope_label"], "深度分析")
+        self.assertEqual(summary["latest_source_label"], "单股深度分析")
+        self.assertEqual(summary["latest_analysis_date"], "2099-04-01 12:00:00")
+        self.assertEqual(summary["first_analysis_date"], self.service.get_record(self.research_id)["analysis_time_text"])
+
     def test_normalizes_legacy_final_decision_threshold_strings(self):
         legacy_id = self.repository.save_record(
             symbol="300308",

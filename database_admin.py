@@ -248,17 +248,18 @@ class DatabaseAdmin:
             "restored_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         }
 
-    def cleanup_history(self, days: int) -> dict[str, Any]:
+    def cleanup_history(self, days: int, *, include_analysis_history: bool = False) -> dict[str, Any]:
         days = max(1, int(days))
         self._cleanup_cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
         deleted_summary: list[dict[str, Any]] = []
 
         cleanup_plans: dict[str, list[tuple[str, str]]] = {
-            "stock_analysis.db": [("analysis_records", "created_at")],
             "macro_cycle.db": [("macro_cycle_reports", "created_at")],
             "sector_strategy.db": [("sector_analysis_reports", "created_at")],
             "longhubang.db": [("longhubang_analysis", "created_at")],
             "main_force_batch.db": [("batch_analysis_history", "created_at")],
+            "investment.db": [("analysis_records", "created_at")] if include_analysis_history else [],
+            "stock_analysis.db": [("analysis_records", "created_at")] if include_analysis_history else [],
             "smart_monitor.db": [
                 ("ai_decisions", "created_at"),
                 ("notifications", "created_at"),
@@ -296,6 +297,7 @@ class DatabaseAdmin:
         return {
             "days": days,
             "cutoff": self._cleanup_cutoff,
+            "include_analysis_history": include_analysis_history,
             "cleaned": deleted_summary,
             "total_deleted_rows": sum(item["deleted_rows"] for item in deleted_summary),
         }

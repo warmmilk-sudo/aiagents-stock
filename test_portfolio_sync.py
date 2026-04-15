@@ -466,6 +466,10 @@ class PortfolioIntegrationTests(unittest.TestCase):
         self.assertEqual(decisions[0]["asset_id"], asset_id)
         self.assertEqual(decisions[0]["execution_mode"], "manual_only")
         self.assertEqual(decisions[0]["action_status"], "pending")
+        self.assertIn("action_detail", decisions[0])
+        self.assertIn("action_ratio_pct", decisions[0])
+        self.assertIn("trade_intent", decisions[0])
+        self.assertIn("target_position_pct", decisions[0])
         self.assertEqual(decisions[0]["decision_context"], {})
 
     def test_save_ai_decision_derives_decision_context_from_market_data_intraday_context(self):

@@ -220,6 +220,55 @@ class BackendSplitApiTests(unittest.TestCase):
         self.assertEqual(response.json()["data"]["task_id"], "task-news-flow")
         mocked.assert_called_once()
 
+    def test_run_smart_monitor_tasks_once_retries_each_task_sequentially(self):
+        tasks = [
+            {
+                "id": 101,
+                "stock_code": "600519",
+                "account_name": "默认账户",
+                "asset_id": 1,
+                "portfolio_stock_id": 1,
+            },
+            {
+                "id": 102,
+                "stock_code": "000001",
+                "account_name": "默认账户",
+                "asset_id": 2,
+                "portfolio_stock_id": 2,
+            },
+        ]
+        call_order: list[int] = []
+
+        def run_item_once(item_id: int) -> bool:
+            call_order.append(item_id)
+            return len(call_order) != 1
+
+        with patch.object(services.smart_monitor_db, "get_monitor_tasks", return_value=tasks), patch.object(
+            services.smart_monitor_db.monitoring_repository,
+            "get_item_by_symbol",
+            return_value=None,
+        ), patch.object(
+            services.monitor_service.orchestrator,
+            "run_item_once",
+            side_effect=run_item_once,
+        ), patch.object(
+            services.monitor_service,
+            "get_status",
+            return_value={"running": False},
+        ), patch.object(
+            services.monitor_service,
+            "get_scheduler",
+            return_value=None,
+        ), patch("backend.services.time.sleep", return_value=None):
+            result = services.run_smart_monitor_tasks_once()
+
+        self.assertEqual(call_order, [101, 101, 102])
+        self.assertEqual(result["task_total"], 2)
+        self.assertEqual(result["task_success"], 2)
+        self.assertEqual(result["task_failed"], 0)
+        self.assertEqual(result["task_retry_total"], 1)
+        self.assertEqual(result["price_alert_total"], 0)
+
     def test_sector_strategy_scheduler_status_requires_auth_and_returns_payload(self):
         self.login()
         with patch(

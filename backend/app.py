@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 
 from backend.api import register_exception_handlers, success_payload
 from backend.routers import (
+    agent_memory,
     analysis,
     analysis_history,
     auth_router,
@@ -79,6 +80,7 @@ def create_app() -> FastAPI:
     app.include_router(tasks.router)
     app.include_router(analysis.router)
     app.include_router(analysis_history.router)
+    app.include_router(agent_memory.router)
     app.include_router(followup_assets.router)
     app.include_router(exports.router)
     app.include_router(portfolio.router)

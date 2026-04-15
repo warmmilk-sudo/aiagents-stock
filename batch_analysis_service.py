@@ -242,6 +242,27 @@ def analyze_single_stock_for_batch(
         context_data = _collect_optional_context_data(symbol, stock_data, enabled_analysts_config)
         logger.info("[%s] optional context data prepared in %.2fs", symbol, time.perf_counter() - context_started_at)
 
+        # --- Memory module: load historical context for this stock ---
+        memory_context = None
+        try:
+            from agent_memory_service import agent_memory_service
+            memory_context = agent_memory_service.assemble_memory_context(
+                stock_code=symbol,
+                current_summary=stock_info.get("name", "") + " " + symbol,
+                stock_name=stock_info.get("name", ""),
+            )
+            if memory_context and any(memory_context.get(k) for k in ("long_term_profile", "working_memories", "recalled_facts")):
+                logger.info("[%s] Memory context loaded: profile=%s, working=%d, recalled=%d",
+                            symbol,
+                            bool(memory_context.get("long_term_profile")),
+                            len(memory_context.get("working_memories", [])),
+                            len(memory_context.get("recalled_facts", [])))
+            else:
+                memory_context = None
+        except Exception as mem_exc:
+            logger.warning("[%s] Memory context loading skipped: %s", symbol, mem_exc)
+            memory_context = None
+
         agents = StockAnalysisAgents(
             model=forced_model,
             lightweight_model=selected_lightweight_model,
@@ -266,7 +287,7 @@ def analyze_single_stock_for_batch(
 
         _report_stage_progress(progress_callback, 75, 100, f"AI 团队正在讨论 {symbol} 的综合结论...")
         discussion_started_at = time.perf_counter()
-        discussion_result = agents.conduct_team_discussion(agents_results, stock_info, indicators)
+        discussion_result = agents.conduct_team_discussion(agents_results, stock_info, indicators, memory_context=memory_context)
         logger.info("[%s] team discussion completed in %.2fs", symbol, time.perf_counter() - discussion_started_at)
 
         _report_stage_progress(progress_callback, 90, 100, f"正在生成 {symbol} 的最终决策...")
@@ -291,6 +312,24 @@ def analyze_single_stock_for_batch(
                 saved_to_db = True
                 logger.info("%s saved to global history (record_id=%s)", symbol, record_id)
                 _sync_managed_monitors_for_symbol(symbol)
+
+                # --- Memory daemon: fire event for background processing ---
+                try:
+                    from agent_memory_daemon import publish_analysis_completed, start_memory_daemon
+                    start_memory_daemon()
+                    publish_analysis_completed(
+                        stock_code=symbol,
+                        stock_name=stock_info.get("name", ""),
+                        analysis_date=time.strftime("%Y-%m-%d %H:%M:%S"),
+                        rating=str((final_decision or {}).get("rating", "")),
+                        summary=str((final_decision or {}).get("operation_advice", "")),
+                        discussion_summary=str(discussion_result or "")[:4000],
+                        final_decision=final_decision,
+                        source_analysis_id=record_id,
+                    )
+                except Exception as mem_evt_exc:
+                    logger.warning("[%s] Memory event publish skipped: %s", symbol, mem_evt_exc)
+
             except (sqlite3.DatabaseError, OSError, RuntimeError, TypeError, ValueError) as exc:
                 db_error = str(exc)
                 logger.warning("%s failed saving to global history: %s", symbol, db_error)
@@ -311,7 +350,9 @@ def analyze_single_stock_for_batch(
             "record_id": record_id,
             "saved_to_db": saved_to_db,
             "db_error": db_error,
+            "recalled_fact_ids": (memory_context or {}).get("recalled_fact_ids", []),
         }
     except Exception as exc:
         logger.exception("%s batch analysis failed", symbol)
         return {"symbol": symbol, "error": str(exc), "success": False}
+

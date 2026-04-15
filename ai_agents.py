@@ -462,7 +462,7 @@ class StockAnalysisAgents:
         
         return agents_results
     
-    def conduct_team_discussion(self, agents_results: Dict[str, Any], stock_info: Dict, indicators: Dict = None) -> str:
+    def conduct_team_discussion(self, agents_results: Dict[str, Any], stock_info: Dict, indicators: Dict = None, memory_context: Dict = None) -> str:
         """进行团队讨论"""
         print("🤝 分析团队正在进行综合讨论...")
         if not agents_results:
@@ -496,9 +496,23 @@ class StockAnalysisAgents:
             participants.append("新闻分析师")
             reports.append(self._trim_report_for_discussion("新闻分析师报告", agents_results['news'].get('analysis', '')))
 
+        # Inject memory context before all reports if available
+        memory_block = ""
+        if memory_context:
+            from agent_memory_service import agent_memory_service
+            memory_block = agent_memory_service.format_memory_prompt_block(memory_context)
+
         # 组合所有报告
         all_reports = "\n\n".join(reports)
-        if len(all_reports) > self._DISCUSSION_INPUT_LIMIT:
+        if memory_block:
+            memory_limit = min(4000, max(1200, self._DISCUSSION_INPUT_LIMIT // 5))
+            if len(memory_block) > memory_limit:
+                memory_block = f"{memory_block[:memory_limit].rstrip()}\n\n[历史记忆已截断]"
+            remaining_reports_limit = max(0, self._DISCUSSION_INPUT_LIMIT - len(memory_block) - 2)
+            if len(all_reports) > remaining_reports_limit:
+                all_reports = f"{all_reports[:remaining_reports_limit].rstrip()}\n\n[讨论材料已截断]"
+            all_reports = f"{memory_block}\n\n{all_reports}"
+        elif len(all_reports) > self._DISCUSSION_INPUT_LIMIT:
             all_reports = f"{all_reports[:self._DISCUSSION_INPUT_LIMIT].rstrip()}\n\n[讨论材料已截断]"
         
         messages = build_messages(

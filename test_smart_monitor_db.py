@@ -121,14 +121,22 @@ class SmartMonitorDBTests(unittest.TestCase):
                 "decision_time": "2026-04-10 11:00:00",
                 "trading_session": "上午盘",
                 "action": "BUY",
+                "action_detail": "建仓",
+                "action_ratio_pct": 20,
+                "trade_intent": "open",
+                "current_position_pct": 0,
+                "target_position_pct": 20,
+                "position_delta_pct": 20,
                 "confidence": 82,
                 "reasoning": "相对上一轮转强。",
                 "decision_context": {
                     "previous_action": "HOLD",
+                    "previous_action_detail": "观望",
+                    "previous_action_ratio_pct": None,
                     "decision_changed": True,
                     "action_changed": True,
                     "thresholds_changed": False,
-                    "delta_summary": "动作由HOLD变为BUY；新增盘中标签：量能回升",
+                    "delta_summary": "动作由观望变为建仓20%；新增盘中标签：量能回升",
                     "new_intraday_signal_labels": ["量能回升"],
                     "intraday_bias": "trend_continuation",
                     "intraday_bias_text": "价格回到分时均价上方",
@@ -142,10 +150,18 @@ class SmartMonitorDBTests(unittest.TestCase):
 
         self.assertEqual(decisions[0]["id"], decision_id)
         self.assertEqual(decisions[0]["previous_action"], "HOLD")
+        self.assertEqual(decisions[0]["previous_action_detail"], "观望")
+        self.assertIsNone(decisions[0]["previous_action_ratio_pct"])
+        self.assertEqual(decisions[0]["action_detail"], "建仓")
+        self.assertEqual(decisions[0]["action_ratio_pct"], 20)
+        self.assertEqual(decisions[0]["trade_intent"], "open")
+        self.assertEqual(decisions[0]["current_position_pct"], 0)
+        self.assertEqual(decisions[0]["target_position_pct"], 20)
+        self.assertEqual(decisions[0]["position_delta_pct"], 20)
         self.assertTrue(decisions[0]["decision_changed"])
         self.assertTrue(decisions[0]["action_changed"])
         self.assertFalse(decisions[0]["thresholds_changed"])
-        self.assertEqual(decisions[0]["delta_summary"], "动作由HOLD变为BUY；新增盘中标签：量能回升")
+        self.assertEqual(decisions[0]["delta_summary"], "动作由观望变为建仓20%；新增盘中标签：量能回升")
         self.assertEqual(decisions[0]["new_intraday_signal_labels"], ["量能回升"])
 
     def test_get_ai_decision_intraday_summary_groups_actions_and_biases(self):

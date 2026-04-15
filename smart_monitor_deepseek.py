@@ -27,6 +27,10 @@ class SmartMonitorDeepSeek:
     MAX_STRATEGY_SUMMARY_CHARS = 240
     MAX_SEMANTIC_LABELS = 8
     PROMPT_SIZE_WARNING_CHARS = 12000
+    PROMPT_SIZE_SAFETY_MARGIN_CHARS = 160
+    MAX_OPTIONAL_SECTION_REASONING_CHARS = 180
+    MAX_OPTIONAL_SECTION_SUMMARY_CHARS = 120
+    MAX_OPTIONAL_SECTION_DELTA_CHARS = 120
 
     SYSTEM_TEMPLATE = "smart_monitor/intraday_decision.system.txt"
     USER_TEMPLATE = "smart_monitor/intraday_decision.user.txt"
@@ -38,9 +42,9 @@ class SmartMonitorDeepSeek:
     SECTION_VOLUME_TEMPLATE = "smart_monitor/sections/volume.txt"
     SECTION_EXECUTION_CONTEXT_TEMPLATE = "smart_monitor/sections/execution_context.txt"
     SECTION_ACCOUNT_RISK_PROFILE_TEMPLATE = "smart_monitor/sections/account_risk_profile.txt"
-    SECTION_PREVIOUS_DECISION_TEMPLATE = "smart_monitor/sections/previous_decision.txt"
     SECTION_INTRADAY_FLOW_TEMPLATE = "smart_monitor/sections/intraday_flow.txt"
     SECTION_STRATEGY_CONTEXT_TEMPLATE = "smart_monitor/sections/strategy_context.txt"
+    SECTION_EVIDENCE_SUMMARY_TEMPLATE = "smart_monitor/sections/evidence_summary.txt"
     SECTION_AI_PATTERN_RECOGNITION_TEMPLATE = "smart_monitor/sections/ai_pattern_recognition.txt"
     SECTION_POSITION_HOLDING_TEMPLATE = "smart_monitor/sections/position_holding.txt"
     SECTION_POSITION_EMPTY_TEMPLATE = "smart_monitor/sections/position_empty.txt"
@@ -148,95 +152,734 @@ class SmartMonitorDeepSeek:
 
         return "N/A"
 
-    def _build_previous_decision_brief(
-        self,
-        previous_decision: Dict[str, Any],
-        market_data: Dict[str, Any],
-    ) -> Optional[Dict[str, str]]:
-        if not isinstance(previous_decision, dict) or not previous_decision:
-            return None
+    @staticmethod
+    def _estimate_messages_payload_chars(messages: List[Dict[str, str]]) -> int:
+        return len(json.dumps(messages, ensure_ascii=False))
 
-        def _decision_time_text(value: object) -> str:
-            text = str(value or "").strip()
+    @classmethod
+    def _fit_optional_sections_to_budget(cls, sections: List[str], max_chars: int) -> str:
+        if max_chars <= 0:
+            return ""
+
+        kept_sections: List[str] = []
+        current_length = 0
+        for raw_section in sections:
+            section = str(raw_section or "").strip()
+            if not section:
+                continue
+
+            delimiter_length = 2 if kept_sections else 0
+            available = max_chars - current_length - delimiter_length
+            if available <= 0:
+                break
+
+            if len(section) > available:
+                lines = section.splitlines()
+                if len(lines) > 1:
+                    header = lines[0].strip()
+                    body = "\n".join(lines[1:]).strip()
+                    body_budget = max(0, available - len(header) - 1)
+                    if body_budget <= 0:
+                        section = cls._truncate_prompt_text(header, available, suffix="…")
+                    else:
+                        section = f"{header}\n{cls._truncate_prompt_text(body, body_budget, suffix='…')}".strip()
+                else:
+                    section = cls._truncate_prompt_text(section, available, suffix="…")
+
+            if not section:
+                continue
+
+            kept_sections.append(section)
+            current_length += len(section) + delimiter_length
+
+            if current_length >= max_chars:
+                break
+
+        return "\n\n".join(kept_sections)
+
+    @staticmethod
+    def _normalize_evidence_text(value: object) -> str:
+        return re.sub(r"\s+", " ", str(value or "")).strip()
+
+    @classmethod
+    def _classify_intraday_evidence(cls, value: object) -> Dict[str, bool]:
+        text = cls._normalize_evidence_text(value)
+        flags = {
+            "bullish": False,
+            "bearish": False,
+            "risk": False,
+            "timing": False,
+            "volume": False,
+            "trend": False,
+            "neutral": False,
+        }
+        if not text:
+            return flags
+
+        bullish_keywords = ("放量回升", "均价上方", "承接", "企稳", "突破", "延续", "走强", "拉升", "修复", "回升", "强势")
+        bearish_keywords = ("均价下方", "破位", "跌破", "回落", "抛压", "走弱", "分歧", "冲高回落", "转弱", "失守", "弱势")
+        risk_keywords = ("高位", "追高", "冲高", "回落", "抛压", "分歧", "失真", "过热", "风险")
+        timing_keywords = ("回踩", "均价", "高位", "低位", "日内", "突破", "承接", "企稳", "震荡")
+        volume_keywords = ("放量", "缩量", "量能", "成交", "量比", "加速度")
+        trend_keywords = ("趋势", "多头", "空头", "延续", "走强", "走弱", "修复", "破位")
+        neutral_keywords = ("横盘", "震荡", "整理", "观望", "蓄势", "中位")
+
+        flags["bullish"] = any(keyword in text for keyword in bullish_keywords)
+        flags["bearish"] = any(keyword in text for keyword in bearish_keywords)
+        flags["risk"] = any(keyword in text for keyword in risk_keywords)
+        flags["timing"] = any(keyword in text for keyword in timing_keywords)
+        flags["volume"] = any(keyword in text for keyword in volume_keywords)
+        flags["trend"] = any(keyword in text for keyword in trend_keywords)
+        flags["neutral"] = any(keyword in text for keyword in neutral_keywords)
+        return flags
+
+    @classmethod
+    def _score_intraday_evidence(
+        cls,
+        value: object,
+        *,
+        kind: str,
+        has_position: bool,
+        freshness_status: str,
+        previous_items: set[str],
+        current_bias_text: str,
+    ) -> tuple[float, str]:
+        text = cls._normalize_evidence_text(value)
+        flags = cls._classify_intraday_evidence(text)
+        normalized_bias = cls._normalize_evidence_text(current_bias_text)
+        score = 0.0
+
+        score += 5.0 if kind == "label" else 3.0
+        if freshness_status == "ready":
+            score += 2.0
+        elif freshness_status == "degraded":
+            score += 0.5
+        else:
+            score -= 1.5
+
+        if text and text not in previous_items:
+            score += 4.0
+        elif text:
+            score -= 1.0
+
+        if has_position:
+            if flags["bearish"]:
+                score += 5.0
+            if flags["risk"]:
+                score += 4.0
+            if flags["trend"]:
+                score += 2.0
+            if flags["bullish"]:
+                score += 1.0
+            if flags["bearish"] and flags["volume"]:
+                score += 2.0
+        else:
+            if flags["bullish"]:
+                score += 5.0
+            if flags["timing"]:
+                score += 3.0
+            if flags["trend"]:
+                score += 2.0
+            if flags["risk"]:
+                score += 2.5
+            if flags["bearish"]:
+                score += 1.5
+            if flags["bullish"] and flags["volume"]:
+                score += 2.5
+
+        if flags["volume"]:
+            score += 1.5
+        if flags["neutral"]:
+            score -= 0.5
+
+        if normalized_bias and normalized_bias != "N/A":
+            if flags["bullish"] and any(keyword in normalized_bias for keyword in ("上方", "偏强", "延续", "放量", "回升")):
+                score += 1.5
+            if flags["bearish"] and any(keyword in normalized_bias for keyword in ("下方", "转弱", "回落", "破位")):
+                score += 1.5
+
+        if flags["risk"]:
+            category = "risk"
+        elif flags["bearish"]:
+            category = "bearish"
+        elif flags["bullish"]:
+            category = "bullish"
+        elif flags["timing"]:
+            category = "timing"
+        elif flags["volume"]:
+            category = "volume"
+        else:
+            category = "neutral"
+        return score, category
+
+    @staticmethod
+    def _category_to_polarity(category: str) -> str:
+        normalized = str(category or "").strip().lower()
+        if normalized in {"bullish", "timing", "trend", "volume"}:
+            return "positive"
+        if normalized in {"bearish", "risk"}:
+            return "negative"
+        return "neutral"
+
+    @staticmethod
+    def _intraday_reliability_from_freshness(freshness_status: str) -> float:
+        normalized = str(freshness_status or "").strip().lower()
+        if normalized == "ready":
+            return 1.0
+        if normalized == "degraded":
+            return 0.72
+        return 0.45
+
+    @classmethod
+    def _intraday_role_from_category(cls, category: str, has_position: bool) -> str:
+        normalized = str(category or "").strip().lower()
+        if has_position:
+            if normalized in {"bearish", "risk"}:
+                return "constraint"
+            if normalized in {"bullish", "trend", "timing", "volume"}:
+                return "support"
+            return "context"
+        if normalized in {"bearish", "risk"}:
+            return "constraint"
+        if normalized in {"bullish", "timing", "trend", "volume"}:
+            return "support"
+        return "context"
+
+    @classmethod
+    def _action_relevance_from_category(cls, category: str, has_position: bool) -> float:
+        normalized = str(category or "").strip().lower()
+        if has_position:
+            if normalized in {"bearish", "risk"}:
+                return 1.0
+            if normalized in {"trend", "volume"}:
+                return 0.75
+            return 0.45
+        if normalized in {"bullish", "timing"}:
+            return 1.0
+        if normalized in {"trend", "volume"}:
+            return 0.8
+        if normalized in {"bearish", "risk"}:
+            return 0.7
+        return 0.4
+
+    @classmethod
+    def _build_evidence_item(
+        cls,
+        *,
+        text: str,
+        layer: str,
+        source_kind: str,
+        category: str,
+        role: str,
+        novelty: bool,
+        reliability: float,
+        action_relevance: float,
+        score: float,
+        polarity: str | None = None,
+        horizon: str = "intraday",
+    ) -> Dict[str, object]:
+        normalized_text = cls._normalize_evidence_text(text)
+        return {
+            "text": normalized_text,
+            "layer": str(layer),
+            "source_kind": str(source_kind),
+            "category": str(category),
+            "role": str(role),
+            "novelty": bool(novelty),
+            "reliability": float(reliability),
+            "action_relevance": float(action_relevance),
+            "score": float(score),
+            "polarity": str(polarity or cls._category_to_polarity(category)),
+            "horizon": str(horizon),
+        }
+
+    @classmethod
+    def _rank_intraday_evidence_candidates(
+        cls,
+        items: List[object],
+        *,
+        kind: str,
+        has_position: bool,
+        freshness_status: str,
+        previous_items: List[object] | None = None,
+        current_bias_text: str = "",
+    ) -> List[dict[str, object]]:
+        normalized_previous = {
+            cls._normalize_evidence_text(item)
+            for item in (previous_items or [])
+            if cls._normalize_evidence_text(item)
+        }
+        candidates: List[dict[str, object]] = []
+        for raw_item in items:
+            text = cls._normalize_evidence_text(raw_item)
             if not text:
-                return "N/A"
-            try:
-                decision_dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
-            except ValueError:
-                for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"):
-                    try:
-                        decision_dt = datetime.strptime(text, fmt)
-                        break
-                    except ValueError:
-                        decision_dt = None
-                if decision_dt is None:
-                    return text
-            now = datetime.now(decision_dt.tzinfo) if decision_dt.tzinfo else datetime.now()
-            elapsed_minutes = max(0, int((now - decision_dt).total_seconds() // 60))
-            if elapsed_minutes < 60:
-                return f"{text}（约{elapsed_minutes}分钟前）"
-            elapsed_hours = elapsed_minutes // 60
-            return f"{text}（约{elapsed_hours}小时前）"
+                continue
+            score, category = cls._score_intraday_evidence(
+                text,
+                kind=kind,
+                has_position=has_position,
+                freshness_status=freshness_status,
+                previous_items=normalized_previous,
+                current_bias_text=current_bias_text,
+            )
+            candidates.append(cls._build_evidence_item(
+                text=text,
+                layer="intraday",
+                source_kind=kind,
+                category=category,
+                role=cls._intraday_role_from_category(category, has_position),
+                novelty=text not in normalized_previous,
+                reliability=cls._intraday_reliability_from_freshness(freshness_status),
+                action_relevance=cls._action_relevance_from_category(category, has_position),
+                score=score,
+            ))
+        candidates.sort(key=lambda item: (-float(item["score"]), len(str(item["text"]))))
+        return candidates
 
-        def _clean_reasoning(value: object) -> str:
-            text = str(value or "").strip()
-            if not text:
-                return "N/A"
-            text = re.sub(r"\s+", " ", text).strip()
-            return self._truncate_prompt_text(text, 120, suffix="…")
+    @classmethod
+    def _select_intraday_evidence_items(
+        cls,
+        items: List[object],
+        *,
+        kind: str,
+        has_position: bool,
+        freshness_status: str,
+        previous_items: List[object] | None = None,
+        current_bias_text: str = "",
+    ) -> str:
+        normalized_previous = {
+            cls._normalize_evidence_text(item)
+            for item in (previous_items or [])
+            if cls._normalize_evidence_text(item)
+        }
 
-        previous_context = previous_decision.get("decision_context")
-        previous_context = previous_context if isinstance(previous_context, dict) else {}
-        current_context = market_data.get("intraday_context")
-        current_context = current_context if isinstance(current_context, dict) else {}
+        budget_map = {
+            "ready": {"label": 90, "observation": 100},
+            "degraded": {"label": 72, "observation": 84},
+            "stale": {"label": 56, "observation": 64},
+        }
+        freshness_key = freshness_status if freshness_status in budget_map else "degraded"
+        char_budget = budget_map[freshness_key]["label" if kind == "label" else "observation"]
+        min_score = 6.5 if freshness_key == "ready" else 5.5 if freshness_key == "degraded" else 4.5
+        separator = " / "
+        candidates = cls._rank_intraday_evidence_candidates(
+            items,
+            kind=kind,
+            has_position=has_position,
+            freshness_status=freshness_key,
+            previous_items=list(normalized_previous),
+            current_bias_text=current_bias_text,
+        )
+        if not candidates:
+            return "N/A"
+        score_floor = max(min_score, float(candidates[0]["score"]) - 3.0)
 
-        delta_parts: List[str] = []
-        prev_bias_text = str(previous_context.get("intraday_bias_text") or "").strip()
-        curr_bias_text = str(current_context.get("intraday_bias_text") or "").strip()
-        if curr_bias_text and curr_bias_text != prev_bias_text:
-            delta_parts.append(f"盘中偏向从“{prev_bias_text or '未记录'}”变为“{curr_bias_text}”")
+        selected: List[str] = []
+        selected_categories: set[str] = set()
+        used_chars = 0
 
-        def _float_or_none(value: object) -> Optional[float]:
-            try:
-                return float(value) if value not in (None, "") else None
-            except (TypeError, ValueError):
-                return None
+        for candidate in candidates:
+            score = float(candidate["score"])
+            category = str(candidate["category"])
+            text = str(candidate["text"])
+            if selected and score < score_floor:
+                continue
+            extra_chars = len(text) + (len(separator) if selected else 0)
+            if used_chars + extra_chars > char_budget:
+                continue
+            if category in selected_categories and score < float(candidates[0]["score"]) - 1.5:
+                continue
+            selected.append(text)
+            selected_categories.add(category)
+            used_chars += extra_chars
 
-        prev_last_5m = _float_or_none(previous_context.get("last_5m_change_pct"))
-        curr_last_5m = _float_or_none(current_context.get("last_5m_change_pct"))
-        if prev_last_5m is not None and curr_last_5m is not None and abs(curr_last_5m - prev_last_5m) >= 0.3:
-            delta_parts.append(f"近5分钟涨跌由{prev_last_5m:+.2f}%变为{curr_last_5m:+.2f}%")
+        if not selected:
+            top_text = cls._truncate_prompt_text(str(candidates[0]["text"]), char_budget, suffix="…")
+            return top_text or "N/A"
 
-        prev_position = _float_or_none(previous_context.get("price_position_pct"))
-        curr_position = _float_or_none(current_context.get("price_position_pct"))
-        if prev_position is not None and curr_position is not None and abs(curr_position - prev_position) >= 10:
-            delta_parts.append(f"日内位置由{prev_position:.1f}%移动到{curr_position:.1f}%")
+        return separator.join(selected)
 
-        prev_volume = _float_or_none(previous_context.get("volume_acceleration_ratio"))
-        curr_volume = _float_or_none(current_context.get("volume_acceleration_ratio"))
-        if prev_volume is not None and curr_volume is not None and abs(curr_volume - prev_volume) >= 0.3:
-            delta_parts.append(f"近5分钟量能加速度由{prev_volume:.2f}变为{curr_volume:.2f}")
+    @classmethod
+    def _route_intraday_evidence(
+        cls,
+        *,
+        labels: List[object],
+        observations: List[object],
+        has_position: bool,
+        freshness_status: str,
+        previous_labels: List[object] | None = None,
+        current_bias_text: str = "",
+    ) -> Dict[str, str]:
+        freshness_key = freshness_status if freshness_status in {"ready", "degraded", "stale"} else "degraded"
+        candidates = cls._rank_intraday_evidence_candidates(
+            labels,
+            kind="label",
+            has_position=has_position,
+            freshness_status=freshness_key,
+            previous_items=previous_labels,
+            current_bias_text=current_bias_text,
+        ) + cls._rank_intraday_evidence_candidates(
+            observations,
+            kind="observation",
+            has_position=has_position,
+            freshness_status=freshness_key,
+            previous_items=[],
+            current_bias_text=current_bias_text,
+        )
+        if not candidates:
+            return {
+                "primary_evidence": "N/A",
+                "counter_evidence": "N/A",
+                "delta_evidence": "N/A",
+            }
 
-        previous_labels = previous_context.get("intraday_signal_labels")
-        previous_labels = previous_labels if isinstance(previous_labels, list) else []
-        current_labels = current_context.get("intraday_signal_labels")
-        current_labels = current_labels if isinstance(current_labels, list) else []
-        new_labels = [str(label).strip() for label in current_labels if str(label).strip() and str(label).strip() not in previous_labels]
-        if new_labels:
-            delta_parts.append(f"新增盘中标签：{' / '.join(new_labels[:2])}")
+        primary_role = "constraint" if has_position else "support"
+        counter_role = "support" if has_position else "constraint"
+        primary_target = {"bearish", "risk"} if has_position else {"bullish", "timing", "trend", "volume"}
+        counter_target = {"bullish", "timing", "trend", "volume"} if has_position else {"bearish", "risk"}
+
+        def _candidate_rank(item: Dict[str, object]) -> tuple[float, int, int, int]:
+            return (
+                float(item.get("score", 0.0)) + float(item.get("action_relevance", 0.0)) * 2 + float(item.get("reliability", 0.0)),
+                int(bool(item.get("novelty"))),
+                1 if str(item.get("source_kind")) == "label" else 0,
+                -len(str(item.get("text") or "")),
+            )
+
+        def _pick(predicate) -> str:
+            ranked = [
+                candidate for candidate in candidates
+                if predicate(candidate) and str(candidate["text"]) != "N/A"
+            ]
+            if ranked:
+                ranked.sort(key=_candidate_rank, reverse=True)
+                return str(ranked[0]["text"])
+            return "N/A"
+
+        primary = _pick(
+            lambda item: str(item.get("role")) == primary_role and str(item.get("category")) in primary_target
+        )
+        if primary == "N/A":
+            primary = _pick(lambda item: str(item.get("role")) == primary_role)
+        if primary == "N/A":
+            primary = str(candidates[0]["text"])
+
+        counter = _pick(
+            lambda item: (
+                str(item.get("role")) == counter_role
+                and str(item.get("category")) in counter_target
+                and str(item["text"]) != primary
+            )
+        )
+        if counter == "N/A":
+            counter = _pick(lambda item: str(item.get("role")) == counter_role and str(item["text"]) != primary)
+        delta = _pick(
+            lambda item: (
+                bool(item.get("novelty"))
+                and str(item.get("source_kind")) == "label"
+                and str(item["text"]) != primary
+                and str(item["text"]) != counter
+            )
+        )
+        if delta == "N/A" and counter == "N/A":
+            delta = _pick(
+                lambda item: (
+                    bool(item.get("novelty"))
+                    and str(item.get("source_kind")) == "label"
+                    and str(item["text"]) != primary
+                )
+            )
+        if delta == "N/A":
+            delta = _pick(
+            lambda item: (
+                bool(item.get("novelty"))
+                and str(item["text"]) != primary
+                and str(item["text"]) != counter
+            )
+            )
+        if delta == "N/A":
+            delta = _pick(
+                lambda item: (
+                    bool(item.get("novelty"))
+                    and str(item["text"]) != primary
+                    and str(item["text"]) != counter
+                )
+            )
 
         return {
-            "previous_decision_time": _decision_time_text(previous_decision.get("decision_time")),
-            "previous_action": str(previous_decision.get("action") or "N/A").upper(),
-            "previous_confidence": str(previous_decision.get("confidence") or "N/A"),
-            "previous_risk_level": str(previous_decision.get("risk_level") or "N/A"),
-            "previous_reasoning_summary": _clean_reasoning(previous_decision.get("reasoning")),
-            "previous_entry_min": str((previous_decision.get("monitor_levels") or {}).get("entry_min") or "N/A"),
-            "previous_entry_max": str((previous_decision.get("monitor_levels") or {}).get("entry_max") or "N/A"),
-            "previous_take_profit": str((previous_decision.get("monitor_levels") or {}).get("take_profit") or "N/A"),
-            "previous_stop_loss": str((previous_decision.get("monitor_levels") or {}).get("stop_loss") or "N/A"),
-            "previous_intraday_bias": prev_bias_text or "N/A",
-            "delta_summary": "；".join(delta_parts) if delta_parts else "未观察到足以推翻上一轮判断的明显新变化。",
+            "primary_evidence": cls._truncate_prompt_text(primary, 80, suffix="…") if primary != "N/A" else "N/A",
+            "counter_evidence": cls._truncate_prompt_text(counter, 70, suffix="…") if counter != "N/A" else "N/A",
+            "delta_evidence": cls._truncate_prompt_text(delta, 70, suffix="…") if delta != "N/A" else "N/A",
+            "primary_category": next((str(item["category"]) for item in candidates if str(item["text"]) == primary), "neutral") if primary != "N/A" else "neutral",
+            "counter_category": next((str(item["category"]) for item in candidates if str(item["text"]) == counter), "neutral") if counter != "N/A" else "neutral",
+            "delta_category": next((str(item["category"]) for item in candidates if str(item["text"]) == delta), "neutral") if delta != "N/A" else "neutral",
+        }
+
+    @classmethod
+    def _infer_strategy_bias(cls, strategy_context: Optional[Dict[str, Any]]) -> str:
+        if not isinstance(strategy_context, dict):
+            return "neutral"
+        text = " ".join(
+            cls._normalize_evidence_text(strategy_context.get(key))
+            for key in ("rating", "summary")
+        )
+        if any(keyword in text for keyword in ("买入", "增持", "做多", "看多", "突破", "上行")):
+            return "bullish"
+        if any(keyword in text for keyword in ("卖出", "减持", "做空", "看空", "止盈", "止损", "回避")):
+            return "bearish"
+        return "neutral"
+
+    @classmethod
+    def _infer_evidence_category(cls, text: object, default: str = "neutral") -> str:
+        normalized = cls._normalize_evidence_text(text)
+        if not normalized:
+            return default
+        flags = cls._classify_intraday_evidence(normalized)
+        if flags["risk"]:
+            return "risk"
+        if flags["bearish"]:
+            return "bearish"
+        if flags["bullish"]:
+            return "bullish"
+        if flags["timing"]:
+            return "timing"
+        if flags["volume"]:
+            return "volume"
+        if flags["trend"]:
+            return "trend"
+        return default
+
+    @staticmethod
+    def _strategy_role_from_bias(strategy_bias: str) -> str:
+        normalized = str(strategy_bias or "").strip().lower()
+        if normalized == "bullish":
+            return "support"
+        if normalized == "bearish":
+            return "constraint"
+        return "context"
+
+    def _build_strategy_evidence_items(
+        self,
+        strategy_context: Optional[Dict[str, Any]],
+        *,
+        has_position: bool,
+    ) -> List[Dict[str, object]]:
+        if not isinstance(strategy_context, dict):
+            return []
+
+        strategy_bias = self._infer_strategy_bias(strategy_context)
+        strategy_role = self._strategy_role_from_bias(strategy_bias)
+        items: List[Dict[str, object]] = []
+
+        items.append(self._build_evidence_item(
+            text=(
+                f"战略基线偏{strategy_context.get('rating', 'N/A')}，阈值 "
+                f"{strategy_context.get('entry_min', 'N/A')} - {strategy_context.get('entry_max', 'N/A')}"
+            ),
+            layer="strategy",
+            source_kind="strategy_context",
+            category=strategy_bias if strategy_bias != "neutral" else "neutral",
+            role=strategy_role,
+            novelty=False,
+            reliability=0.95,
+            action_relevance=0.95 if strategy_role != "context" else 0.6,
+            score=6.0,
+            horizon="swing",
+        ))
+
+        strategy_summary = self._build_strategy_summary_brief(strategy_context)
+        if strategy_summary and strategy_summary != "N/A":
+            items.append(self._build_evidence_item(
+                text=strategy_summary,
+                layer="strategy",
+                source_kind="strategy_summary",
+                category=self._infer_evidence_category(strategy_summary, default=strategy_bias),
+                role=strategy_role if strategy_role != "context" else "context",
+                novelty=False,
+                reliability=0.92,
+                action_relevance=0.88 if strategy_role != "context" else 0.58,
+                score=6.4,
+                horizon="swing",
+            ))
+
+        if has_position and strategy_context.get("take_profit") not in (None, "") and strategy_context.get("stop_loss") not in (None, ""):
+            items.append(self._build_evidence_item(
+                text=f"持仓风控参考：止盈 {strategy_context.get('take_profit', 'N/A')} / 止损 {strategy_context.get('stop_loss', 'N/A')}",
+                layer="strategy",
+                source_kind="strategy_risk_bounds",
+                category="risk",
+                role="constraint",
+                novelty=False,
+                reliability=0.96,
+                action_relevance=0.98,
+                score=6.8,
+                horizon="swing",
+            ))
+        elif not has_position and strategy_context.get("entry_min") not in (None, "") and strategy_context.get("entry_max") not in (None, ""):
+            items.append(self._build_evidence_item(
+                text=f"计划进场区间：{strategy_context.get('entry_min', 'N/A')} - {strategy_context.get('entry_max', 'N/A')}",
+                layer="strategy",
+                source_kind="strategy_entry_bounds",
+                category="timing",
+                role="support",
+                novelty=False,
+                reliability=0.94,
+                action_relevance=0.98,
+                score=6.9,
+                horizon="swing",
+            ))
+
+        return items
+
+    @classmethod
+    def _build_intraday_cross_layer_items(
+        cls,
+        evidence_summary: Optional[Dict[str, str]],
+        *,
+        has_position: bool,
+    ) -> List[Dict[str, object]]:
+        if not evidence_summary:
+            return []
+
+        items: List[Dict[str, object]] = []
+        primary_category = str(evidence_summary.get("primary_category") or "neutral")
+        primary_role = "constraint" if has_position and primary_category in {"bearish", "risk"} else "support"
+        if not has_position and primary_category in {"risk", "bearish"}:
+            primary_role = "constraint"
+
+        items.append(cls._build_evidence_item(
+            text=str(evidence_summary.get("primary_evidence") or "N/A"),
+            layer="intraday",
+            source_kind="intraday_primary",
+            category=primary_category,
+            role=primary_role,
+            novelty=False,
+            reliability=0.92,
+            action_relevance=1.0,
+            score=8.0,
+            horizon="intraday",
+        ))
+        if str(evidence_summary.get("counter_evidence") or "N/A") != "N/A":
+            items.append(cls._build_evidence_item(
+                text=str(evidence_summary.get("counter_evidence") or "N/A"),
+                layer="intraday",
+                source_kind="intraday_counter",
+                category=str(evidence_summary.get("counter_category") or "neutral"),
+                role="constraint",
+                novelty=False,
+                reliability=0.9,
+                action_relevance=0.95,
+                score=7.0,
+                horizon="intraday",
+            ))
+        if str(evidence_summary.get("delta_evidence") or "N/A") != "N/A":
+            items.append(cls._build_evidence_item(
+                text=str(evidence_summary.get("delta_evidence") or "N/A"),
+                layer="intraday",
+                source_kind="intraday_delta",
+                category=str(evidence_summary.get("delta_category") or "neutral"),
+                role="change",
+                novelty=True,
+                reliability=0.9,
+                action_relevance=0.92,
+                score=7.5,
+                horizon="intraday",
+            ))
+        return items
+
+    @staticmethod
+    def _cross_layer_priority(layer: str, role: str, has_position: bool) -> float:
+        normalized_layer = str(layer or "").strip().lower()
+        normalized_role = str(role or "").strip().lower()
+        priority_map = {
+            "support": {
+                "intraday": 1.0,
+                "strategy": 0.94 if not has_position else 0.9,
+                "previous": 0.72,
+            },
+            "constraint": {
+                "intraday": 1.0,
+                "strategy": 0.96,
+                "previous": 0.74,
+            },
+            "change": {
+                "intraday": 1.0,
+                "previous": 0.96,
+                "strategy": 0.45,
+            },
+            "context": {
+                "strategy": 0.7,
+                "previous": 0.68,
+                "intraday": 0.66,
+            },
+        }
+        return priority_map.get(normalized_role, priority_map["context"]).get(normalized_layer, 0.4)
+
+    def _build_cross_layer_evidence_summary(
+        self,
+        *,
+        has_position: bool,
+        strategy_context: Optional[Dict[str, Any]],
+        evidence_summary: Optional[Dict[str, str]],
+    ) -> Dict[str, str]:
+        strategy_bias = self._infer_strategy_bias(strategy_context)
+        primary_category = str((evidence_summary or {}).get("primary_category") or "neutral")
+
+        if isinstance(strategy_context, dict):
+            baseline_anchor = self._truncate_prompt_text(
+                f"{strategy_context.get('rating', 'N/A')} | 进场 {strategy_context.get('entry_min', 'N/A')} - {strategy_context.get('entry_max', 'N/A')} | "
+                f"止盈 {strategy_context.get('take_profit', 'N/A')} | 止损 {strategy_context.get('stop_loss', 'N/A')}",
+                100,
+                suffix="…",
+            )
+        else:
+            baseline_anchor = "无战略基线"
+
+        if has_position:
+            execution_focus = "已有持仓，先检查是否触发止盈/止损/破位，再决定继续持有还是退出。"
+        elif isinstance(strategy_context, dict):
+            execution_focus = "无持仓，先看盘中证据是否支持沿用基线阈值执行，而不是临盘追价。"
+        else:
+            execution_focus = "无持仓，只有在盘中证据足够清晰时才允许考虑执行买点。"
+
+        if strategy_bias == "bullish" and primary_category in {"bullish", "timing", "volume", "trend"}:
+            alignment = "盘中主导证据与战略基线基本一致。"
+        elif strategy_bias == "bearish" and primary_category in {"bearish", "risk"}:
+            alignment = "盘中主导证据与战略基线一致，偏向防守或退出。"
+        elif strategy_bias == "neutral":
+            alignment = "当前缺少明确战略方向，盘中证据权重更高。"
+        else:
+            alignment = "盘中主导证据与战略基线存在偏离，需要提高对反向约束的权重。"
+
+        evidence_pool: List[Dict[str, object]] = []
+        evidence_pool.extend(self._build_strategy_evidence_items(strategy_context, has_position=has_position))
+        evidence_pool.extend(self._build_intraday_cross_layer_items(evidence_summary, has_position=has_position))
+
+        def _pick_cross_layer(role: str, fallback: str) -> str:
+            candidates = [item for item in evidence_pool if str(item["role"]) == role and str(item["text"]) != "N/A"]
+            if not candidates:
+                return fallback
+            candidates.sort(
+                key=lambda item: (
+                    -(
+                        float(item["score"])
+                        + float(item["action_relevance"]) * 2
+                        + float(item["reliability"])
+                        + self._cross_layer_priority(str(item["layer"]), role, has_position) * 2
+                    ),
+                    -int(bool(item["novelty"])),
+                    len(str(item["text"])),
+                )
+            )
+            return self._truncate_prompt_text(str(candidates[0]["text"]), 96, suffix="…")
+
+        return {
+            "baseline_anchor": baseline_anchor,
+            "execution_focus": execution_focus,
+            "alignment_summary": alignment,
+            "execution_support": _pick_cross_layer("support", "N/A"),
+            "execution_constraint": _pick_cross_layer("constraint", "N/A"),
+            "change_trigger": _pick_cross_layer("change", "N/A"),
         }
 
     @staticmethod
@@ -540,11 +1183,12 @@ class SmartMonitorDeepSeek:
     def analyze_stock_and_decide(self, stock_code: str, market_data: Dict,
                                  account_info: Dict, has_position: bool = False,
                                  position_cost: float = 0, position_quantity: int = 0,
+                                 position_date: Optional[str] = None,
+                                 can_sell_today: bool = True,
                                  account_name: str = DEFAULT_ACCOUNT_NAME,
                                  asset_id: Optional[int] = None,
                                  portfolio_stock_id: Optional[int] = None,
                                  strategy_context: Optional[Dict] = None,
-                                 previous_decision: Optional[Dict] = None,
                                  risk_profile: Optional[Dict[str, Any]] = None) -> Dict:
         """
         分析股票并做出交易决策（A股T+1规则）
@@ -556,6 +1200,8 @@ class SmartMonitorDeepSeek:
             has_position: 是否已持有该股票
             position_cost: 持仓成本价格
             position_quantity: 持仓数量
+            position_date: 持仓日期
+            can_sell_today: 今日是否允许卖出
             
         Returns:
             交易决策
@@ -563,14 +1209,19 @@ class SmartMonitorDeepSeek:
         # 获取交易时段
         session_info = self.get_trading_session()
         resolved_risk_profile = self._resolve_risk_profile(risk_profile)
+        reasoning_context = self._build_reasoning_context(
+            has_position=has_position,
+            market_data=market_data,
+            strategy_context=strategy_context,
+        )
         messages = self._build_prompt_messages(
             stock_code, market_data, account_info,
             has_position, session_info, position_cost, position_quantity,
+            position_date=position_date,
             account_name=account_name,
             asset_id=asset_id,
             portfolio_stock_id=portfolio_stock_id,
             strategy_context=strategy_context,
-            previous_decision=previous_decision,
             risk_profile=resolved_risk_profile,
         )
 
@@ -585,7 +1236,22 @@ class SmartMonitorDeepSeek:
             
             # 解析JSON决策
             decision = self._parse_decision(ai_response, risk_profile=resolved_risk_profile)
-            decision = self._enforce_action_policy(decision, has_position=has_position)
+            decision = self._enforce_action_policy(
+                decision,
+                has_position=has_position,
+                can_sell_today=can_sell_today,
+            )
+            decision = self._attach_execution_targets(
+                decision,
+                account_info=account_info,
+                risk_profile=resolved_risk_profile,
+            )
+            decision["reasoning"] = self._normalize_reasoning_output(
+                decision,
+                reasoning_context=reasoning_context,
+                strategy_context=strategy_context,
+                has_position=has_position,
+            )
             
             return {
                 'success': True,
@@ -600,15 +1266,291 @@ class SmartMonitorDeepSeek:
                 'error': str(e)
             }
 
+    def _build_reasoning_context(
+        self,
+        *,
+        has_position: bool,
+        market_data: Dict[str, Any],
+        strategy_context: Optional[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        intraday_context = market_data.get("intraday_context") if isinstance(market_data.get("intraday_context"), dict) else {}
+        realtime_freshness = market_data.get("realtime_freshness") if isinstance(market_data.get("realtime_freshness"), dict) else {}
+        evidence_summary: Optional[Dict[str, str]] = None
+        if intraday_context:
+            evidence_summary = self._route_intraday_evidence(
+                labels=intraday_context.get("intraday_signal_labels") if isinstance(intraday_context.get("intraday_signal_labels"), list) else [],
+                observations=intraday_context.get("intraday_observations") if isinstance(intraday_context.get("intraday_observations"), list) else [],
+                has_position=has_position,
+                freshness_status=str(realtime_freshness.get("overall_status") or "").strip().lower(),
+                previous_labels=[],
+                current_bias_text=str(intraday_context.get("intraday_bias_text") or ""),
+            )
+        return {
+            "intraday_context": intraday_context,
+            "freshness_status": str(realtime_freshness.get("overall_status") or "").strip().lower() or "unknown",
+            "has_strategy": bool(strategy_context),
+            "cross_layer_summary": self._build_cross_layer_evidence_summary(
+                has_position=has_position,
+                strategy_context=strategy_context,
+                evidence_summary=evidence_summary,
+            ),
+        }
+
+    @staticmethod
+    def _risk_level_text(value: str) -> str:
+        mapping = {
+            "low": "低",
+            "medium": "中",
+            "high": "高",
+        }
+        return mapping.get(str(value or "").strip().lower(), "中")
+
+    @staticmethod
+    def _truncate_reasoning_sentence(text: str, limit: int = 220) -> str:
+        normalized = str(text or "").strip()
+        if not normalized:
+            return ""
+        normalized = normalized.rstrip("；;，,。.")
+        if len(normalized) <= limit:
+            return normalized + "。"
+        shortened = normalized[:limit].rstrip("；;，,。.")
+        return shortened + "。"
+
+    def _threshold_origin_text(
+        self,
+        decision: Dict[str, Any],
+        strategy_context: Optional[Dict[str, Any]],
+    ) -> str:
+        monitor_levels = decision.get("monitor_levels") if isinstance(decision.get("monitor_levels"), dict) else {}
+        if not monitor_levels:
+            return "预警阈值未完整返回"
+        if not isinstance(strategy_context, dict):
+            return "预警阈值基于当前盘中结构设置"
+
+        def _same(a: Any, b: Any) -> bool:
+            try:
+                return abs(float(a) - float(b)) <= 1e-6
+            except (TypeError, ValueError):
+                return False
+
+        strategy_pairs = {
+            "entry_min": strategy_context.get("entry_min"),
+            "entry_max": strategy_context.get("entry_max"),
+            "take_profit": strategy_context.get("take_profit"),
+            "stop_loss": strategy_context.get("stop_loss"),
+        }
+        if all(
+            strategy_pairs.get(key) not in (None, "")
+            and monitor_levels.get(key) not in (None, "")
+            and _same(monitor_levels.get(key), strategy_pairs.get(key))
+            for key in ("entry_min", "entry_max", "take_profit", "stop_loss")
+        ):
+            return "预警阈值沿用基线区间"
+        return "预警阈值按盘中结构重算"
+
+    def _build_intraday_feature_summary(self, intraday_context: Dict[str, Any]) -> str:
+        if not isinstance(intraday_context, dict) or not intraday_context:
+            return "无分时证据"
+
+        features: List[str] = []
+        bias_text = self._normalize_evidence_text(intraday_context.get("intraday_bias_text"))
+        if bias_text and bias_text != "N/A":
+            features.append(f"盘中偏向{bias_text}")
+        last_5m = intraday_context.get("last_5m_change_pct")
+        try:
+            if last_5m not in (None, ""):
+                features.append(f"近5分钟涨跌{float(last_5m):+.2f}%")
+        except (TypeError, ValueError):
+            pass
+        volume_accel = intraday_context.get("volume_acceleration_ratio")
+        try:
+            if volume_accel not in (None, ""):
+                features.append(f"量能加速度{float(volume_accel):.2f}")
+        except (TypeError, ValueError):
+            pass
+        price_position = intraday_context.get("price_position_pct")
+        try:
+            if price_position not in (None, ""):
+                features.append(f"日内位置{float(price_position):.1f}%")
+        except (TypeError, ValueError):
+            pass
+
+        if not features:
+            return "无分时证据"
+        return "，".join(features[:2])
+
+    @staticmethod
+    def _format_action_ratio_text(action_ratio_pct: Any) -> str:
+        if action_ratio_pct in (None, "", 0, 0.0):
+            return ""
+        try:
+            numeric = float(action_ratio_pct)
+        except (TypeError, ValueError):
+            return ""
+        if numeric <= 0:
+            return ""
+        if abs(numeric - round(numeric)) < 1e-6:
+            return f"{int(round(numeric))}%"
+        return f"{numeric:.1f}%"
+
+    def _format_action_signature(self, action: str, action_detail: str, action_ratio_pct: Any) -> str:
+        detail = str(action_detail or "").strip()
+        if not detail:
+            detail = self._resolve_action_detail(None, action=action, has_position=action == "SELL")
+        ratio_text = self._format_action_ratio_text(action_ratio_pct)
+        if ratio_text and str(action or "").strip().upper() in {"BUY", "SELL"}:
+            return f"{detail}{ratio_text}"
+        return detail
+
+    @staticmethod
+    def _round_position_pct(value: Any) -> float:
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            return 0.0
+        if not math.isfinite(numeric):
+            return 0.0
+        return round(max(0.0, min(100.0, numeric)), 1)
+
+    @classmethod
+    def _extract_current_position_pct(cls, account_info: Optional[Dict[str, Any]]) -> float:
+        current_position = (account_info or {}).get("current_position") if isinstance(account_info, dict) else {}
+        if not isinstance(current_position, dict):
+            return 0.0
+        raw_value = current_position.get("position_pct")
+        try:
+            numeric = float(raw_value)
+        except (TypeError, ValueError):
+            return 0.0
+        if not math.isfinite(numeric):
+            return 0.0
+        if 0 <= numeric <= 1.5:
+            numeric *= 100.0
+        return cls._round_position_pct(numeric)
+
+    def _attach_execution_targets(
+        self,
+        decision: Dict[str, Any],
+        *,
+        account_info: Optional[Dict[str, Any]],
+        risk_profile: Optional[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        resolved_risk_profile = self._resolve_risk_profile(risk_profile)
+        current_position_pct = self._extract_current_position_pct(account_info)
+        single_position_cap = self._round_position_pct(resolved_risk_profile.get("position_size_pct"))
+        total_position_cap = self._round_position_pct(resolved_risk_profile.get("total_position_pct"))
+        effective_buy_cap = max(current_position_pct, min(single_position_cap, total_position_cap or single_position_cap))
+
+        action = str(decision.get("action") or "").strip().upper()
+        action_detail = str(decision.get("action_detail") or "").strip()
+        try:
+            action_ratio_pct = float(decision.get("action_ratio_pct")) if decision.get("action_ratio_pct") not in (None, "") else None
+        except (TypeError, ValueError):
+            action_ratio_pct = None
+
+        target_position_pct = current_position_pct
+        if action == "BUY":
+            planned_delta = action_ratio_pct if action_ratio_pct is not None and action_ratio_pct > 0 else single_position_cap
+            target_position_pct = min(effective_buy_cap, current_position_pct + planned_delta)
+        elif action == "SELL":
+            if action_detail == "清仓":
+                target_position_pct = 0.0
+            else:
+                sell_fraction = action_ratio_pct if action_ratio_pct is not None and action_ratio_pct > 0 else 50.0
+                target_position_pct = current_position_pct * max(0.0, 1 - sell_fraction / 100.0)
+
+        if action == "BUY":
+            trade_intent = "add" if current_position_pct > 0 else "open"
+        elif action == "SELL":
+            trade_intent = "exit" if action_detail == "清仓" or self._round_position_pct(target_position_pct) <= 0 else "reduce"
+        else:
+            trade_intent = "hold" if current_position_pct > 0 else "watch"
+
+        decision["trade_intent"] = trade_intent
+        decision["current_position_pct"] = self._round_position_pct(current_position_pct)
+        decision["target_position_pct"] = self._round_position_pct(target_position_pct)
+        decision["position_delta_pct"] = round(decision["target_position_pct"] - decision["current_position_pct"], 1)
+        return decision
+
+    def _compose_reasoning_body(
+        self,
+        *,
+        baseline_clause: str,
+        execution_support: str,
+        execution_constraint: str,
+        change_trigger: str,
+        feature_summary: str,
+        threshold_clause: str,
+    ) -> str:
+        segments: List[str] = []
+        segments.append(baseline_clause.rstrip("。"))
+
+        evidence_parts: List[str] = []
+        if execution_support != "N/A":
+            evidence_parts.append(execution_support)
+        if execution_constraint != "N/A":
+            evidence_parts.append(f"但需留意{execution_constraint}")
+        if change_trigger != "N/A":
+            evidence_parts.append(f"盘中新出现{change_trigger}")
+        if feature_summary != "无分时证据":
+            evidence_parts.append(feature_summary)
+
+        if evidence_parts:
+            segments.append("，".join(evidence_parts))
+        else:
+            segments.append("当前缺少足够分时证据")
+
+        segments.append(threshold_clause)
+        return "；".join(segment for segment in segments if segment)
+
+    def _normalize_reasoning_output(
+        self,
+        decision: Dict[str, Any],
+        *,
+        reasoning_context: Dict[str, Any],
+        strategy_context: Optional[Dict[str, Any]],
+        has_position: bool,
+    ) -> str:
+        original_reasoning = str(decision.get("reasoning") or "").strip()
+        if not original_reasoning or original_reasoning.startswith("AI响应解析失败:"):
+            return original_reasoning
+
+        cross_layer_summary = reasoning_context.get("cross_layer_summary") if isinstance(reasoning_context.get("cross_layer_summary"), dict) else {}
+        intraday_context = reasoning_context.get("intraday_context") if isinstance(reasoning_context.get("intraday_context"), dict) else {}
+        freshness_status = str(reasoning_context.get("freshness_status") or "").strip().lower()
+
+        if reasoning_context.get("has_strategy"):
+            baseline_clause = str(cross_layer_summary.get("alignment_summary") or "与战略基线的关系需结合实时证据判断").rstrip("。")
+        else:
+            baseline_clause = "当前无战略基线，主要依据盘中证据判断"
+        if freshness_status and freshness_status != "ready":
+            baseline_clause = f"{baseline_clause}，实时数据仅作保守参考"
+
+        execution_support = str(cross_layer_summary.get("execution_support") or "N/A")
+        execution_constraint = str(cross_layer_summary.get("execution_constraint") or "N/A")
+        change_trigger = str(cross_layer_summary.get("change_trigger") or "N/A")
+        feature_summary = self._build_intraday_feature_summary(intraday_context)
+        threshold_clause = self._threshold_origin_text(decision, strategy_context)
+        normalized_reasoning = self._compose_reasoning_body(
+            baseline_clause=baseline_clause,
+            execution_support=execution_support,
+            execution_constraint=execution_constraint,
+            change_trigger=change_trigger,
+            feature_summary=feature_summary,
+            threshold_clause=threshold_clause,
+        )
+        return self._truncate_reasoning_sentence(normalized_reasoning, 220)
+
     def _build_prompt_context(self, stock_code: str, market_data: Dict,
                               account_info: Dict, has_position: bool,
                               session_info: Dict, position_cost: float = 0,
                               position_quantity: int = 0,
+                              position_date: Optional[str] = None,
+                              can_sell_today: bool = True,
                               account_name: str = DEFAULT_ACCOUNT_NAME,
                               asset_id: Optional[int] = None,
                               portfolio_stock_id: Optional[int] = None,
                               strategy_context: Optional[Dict] = None,
-                              previous_decision: Optional[Dict] = None,
                               risk_profile: Optional[Dict[str, Any]] = None) -> Dict[str, str]:
         """Build template context for intraday decision prompts."""
         resolved_risk_profile = self._resolve_risk_profile(risk_profile)
@@ -741,7 +1683,10 @@ class SmartMonitorDeepSeek:
                 else "N/A"
             ),
             minute_quality_text=minute_quality.get("label", "未提供分时质量"),
-            freshness_summary=realtime_freshness.get("summary", "未提供实时新鲜度校验结果"),
+            freshness_summary=self._truncate_prompt_text(
+                realtime_freshness.get("summary", "未提供实时新鲜度校验结果"),
+                self.MAX_OPTIONAL_SECTION_SUMMARY_CHARS,
+            ),
         )
 
         rsi6_value = _to_float(market_data.get("rsi6"))
@@ -827,21 +1772,27 @@ class SmartMonitorDeepSeek:
             take_profit_pct=resolved_risk_profile["take_profit_pct"],
         )
         optional_sections: List[str] = []
-        previous_decision_brief = self._build_previous_decision_brief(previous_decision or {}, market_data)
-        if previous_decision_brief:
-            optional_sections.append(render_prompt(
-                self.SECTION_PREVIOUS_DECISION_TEMPLATE,
-                **previous_decision_brief,
-            ))
+        evidence_summary: Optional[Dict[str, str]] = None
         if intraday_context:
-            observations = intraday_context.get("intraday_observations") if isinstance(intraday_context.get("intraday_observations"), list) else []
-            observation_text = " / ".join(str(item) for item in observations[:4] if item) or "N/A"
-            signal_labels = intraday_context.get("intraday_signal_labels") if isinstance(intraday_context.get("intraday_signal_labels"), list) else []
-            signal_label_text = " / ".join(str(item) for item in signal_labels[:4] if item) or "N/A"
+            evidence_summary = self._route_intraday_evidence(
+                labels=intraday_context.get("intraday_signal_labels") if isinstance(intraday_context.get("intraday_signal_labels"), list) else [],
+                observations=intraday_context.get("intraday_observations") if isinstance(intraday_context.get("intraday_observations"), list) else [],
+                has_position=has_position,
+                freshness_status=str(realtime_freshness.get("overall_status") or "").strip().lower(),
+                previous_labels=[],
+                current_bias_text=str(intraday_context.get("intraday_bias_text") or ""),
+            )
+        optional_sections.append(render_prompt(
+            self.SECTION_EVIDENCE_SUMMARY_TEMPLATE,
+            **self._build_cross_layer_evidence_summary(
+                has_position=has_position,
+                strategy_context=strategy_context,
+                evidence_summary=evidence_summary,
+            ),
+        ))
+        if intraday_context:
             optional_sections.append(render_prompt(
                 self.SECTION_INTRADAY_FLOW_TEMPLATE,
-                minute_point_count=intraday_context.get("minute_point_count", "N/A"),
-                filled_minute_point_count=intraday_context.get("filled_minute_point_count", "N/A"),
                 minute_coverage_ratio=(
                     f"{float(intraday_context.get('minute_coverage_ratio')) * 100:.1f}%"
                     if intraday_context.get("minute_coverage_ratio") is not None
@@ -852,26 +1803,21 @@ class SmartMonitorDeepSeek:
                     if intraday_context.get("max_minute_gap") is not None
                     else "N/A"
                 ),
-                intraday_high=_fmt_money(intraday_context.get("intraday_high")),
-                intraday_low=_fmt_money(intraday_context.get("intraday_low")),
-                intraday_range_pct=_fmt_pct(intraday_context.get("intraday_range_pct")),
                 intraday_vwap=_fmt_money(intraday_context.get("intraday_vwap")),
-                price_position_pct=_fmt_number(intraday_context.get("price_position_pct")),
-                intraday_position_label=_intraday_position_label(intraday_context.get("price_position_pct")),
+                price_position_summary=(
+                    f"{_fmt_number(intraday_context.get('price_position_pct'))}% ({_intraday_position_label(intraday_context.get('price_position_pct'))})"
+                    if _fmt_number(intraday_context.get("price_position_pct")) != "N/A"
+                    else "N/A"
+                ),
                 last_5m_change_pct=_fmt_pct(intraday_context.get("last_5m_change_pct")),
                 last_15m_change_pct=_fmt_pct(intraday_context.get("last_15m_change_pct")),
                 last_30m_change_pct=_fmt_pct(intraday_context.get("last_30m_change_pct")),
-                recent_5m_volume=_fmt_volume(intraday_context.get("recent_5m_volume")),
-                previous_5m_volume=_fmt_volume(intraday_context.get("previous_5m_volume")),
                 volume_acceleration_ratio=_fmt_number(intraday_context.get("volume_acceleration_ratio")),
                 volume_acceleration_state=_volume_state_label(intraday_context.get("volume_acceleration_ratio")),
-                trade_tick_count=intraday_context.get("trade_tick_count", "N/A"),
-                latest_trade_time=intraday_context.get("latest_trade_time", "N/A"),
-                avg_trade_volume=_fmt_volume(intraday_context.get("avg_trade_volume")),
-                largest_trade_volume=_fmt_volume(intraday_context.get("largest_trade_volume")),
-                intraday_bias_text=intraday_context.get("intraday_bias_text", "N/A"),
-                signal_label_text=signal_label_text,
-                observation_text=observation_text,
+                intraday_bias_text=self._truncate_prompt_text(intraday_context.get("intraday_bias_text", "N/A"), 90),
+                primary_evidence=(evidence_summary or {}).get("primary_evidence", "N/A"),
+                counter_evidence=(evidence_summary or {}).get("counter_evidence", "N/A"),
+                delta_evidence=(evidence_summary or {}).get("delta_evidence", "N/A"),
             ))
         if strategy_context:
             summary_text = self._build_strategy_summary_brief(strategy_context)
@@ -898,25 +1844,29 @@ class SmartMonitorDeepSeek:
                 labels_block="\n".join(f"- {label}" for label in limited_labels),
             ))
 
-        # 如果已持有该股票
-        if has_position and position_cost > 0 and position_quantity > 0:
-            cost_total = position_cost * position_quantity
+        # 如果已持有该股票：即使成本缺失，也要显式注入持仓段落，避免模型误判为“无持仓”
+        if has_position and position_quantity > 0:
             current_total = current_price * position_quantity if current_price is not None else None
-            profit_loss = (current_total - cost_total) if current_total is not None else None
-            profit_loss_pct = (profit_loss / cost_total * 100) if profit_loss is not None and cost_total > 0 else None
             current_total_text = f"¥{current_total:,.2f}" if current_total is not None else "N/A"
-            profit_loss_text = (
-                f"¥{profit_loss:,.2f} ({profit_loss_pct:+.2f}%)"
-                if profit_loss is not None and profit_loss_pct is not None
-                else "N/A"
-            )
             current_price_text = _fmt_money(current_price)
+
+            position_cost_text = "N/A"
+            profit_loss_text = "N/A"
+            if position_cost and position_cost > 0:
+                position_cost_text = f"¥{position_cost:.2f}"
+                cost_total = position_cost * position_quantity
+                profit_loss = (current_total - cost_total) if current_total is not None else None
+                profit_loss_pct = (profit_loss / cost_total * 100) if profit_loss is not None and cost_total > 0 else None
+                if profit_loss is not None and profit_loss_pct is not None:
+                    profit_loss_text = f"¥{profit_loss:,.2f} ({profit_loss_pct:+.2f}%)"
 
             position_section = render_prompt(
                 self.SECTION_POSITION_HOLDING_TEMPLATE,
                 stock_code=stock_code,
+                position_date=position_date or ((account_info.get("current_position") or {}).get("position_date")) or "N/A",
+                can_sell_today_text="是" if can_sell_today else "否（T+1限制）",
                 position_quantity=position_quantity,
-                position_cost=f"¥{position_cost:.2f}",
+                position_cost=position_cost_text,
                 current_price=current_price_text,
                 current_total=current_total_text,
                 profit_loss_text=profit_loss_text,
@@ -942,19 +1892,18 @@ class SmartMonitorDeepSeek:
         # 主力动向: {mf.get('trend', '观望')}
         # """
 
-        optional_sections_text = "\n\n".join(section.strip() for section in optional_sections if str(section).strip())
+        normalized_optional_sections = [section.strip() for section in optional_sections if str(section).strip()]
+        optional_sections_text = "\n\n".join(normalized_optional_sections)
         if has_position:
-            position_mode_rules = "\n".join([
-                "- 本次只允许在 SELL / HOLD 之间决策",
-                "- 不要讨论 BUY、加仓或重新开仓",
-                "- 先判断是否达到止盈/止损/破位条件，再判断是否继续持有",
-            ])
+            position_mode_label = "持仓退出模式"
+            position_mode_allowed_actions = "SELL / HOLD"
+            position_mode_forbidden_actions = "BUY、加仓、重新开仓"
+            position_mode_focus = "先判断止盈/止损/破位，再判断是否继续持有"
         else:
-            position_mode_rules = "\n".join([
-                "- 本次只允许在 BUY / HOLD 之间决策",
-                "- 不要讨论 SELL、减仓或止盈卖出",
-                "- 只有当战略基线支持且盘中信号足够清晰时，才允许给出 BUY",
-            ])
+            position_mode_label = "空仓建仓模式"
+            position_mode_allowed_actions = "BUY / HOLD"
+            position_mode_forbidden_actions = "SELL、减仓、止盈卖出"
+            position_mode_focus = "只有当战略基线支持且盘中信号足够清晰时，才允许 BUY"
         return {
             "position_size_pct": str(resolved_risk_profile["position_size_pct"]),
             "total_position_pct": str(resolved_risk_profile["total_position_pct"]),
@@ -962,7 +1911,10 @@ class SmartMonitorDeepSeek:
             "take_profit_pct": str(resolved_risk_profile["take_profit_pct"]),
             "stop_loss_pct_float": f"{float(resolved_risk_profile['stop_loss_pct']):.1f}",
             "take_profit_pct_float": f"{float(resolved_risk_profile['take_profit_pct']):.1f}",
-            "position_mode_rules": position_mode_rules,
+            "position_mode_label": position_mode_label,
+            "position_mode_allowed_actions": position_mode_allowed_actions,
+            "position_mode_forbidden_actions": position_mode_forbidden_actions,
+            "position_mode_focus": position_mode_focus,
             "timer_section": timer_section.strip(),
             "data_scope_section": data_scope_section,
             "realtime_freshness_section": realtime_freshness_section.strip(),
@@ -972,6 +1924,7 @@ class SmartMonitorDeepSeek:
             "execution_context_section": execution_context_section.strip(),
             "account_risk_profile_section": account_risk_profile_section.strip(),
             "optional_sections": optional_sections_text,
+            "_optional_sections_list": normalized_optional_sections,
             "position_section": position_section.strip(),
         }
 
@@ -979,43 +1932,59 @@ class SmartMonitorDeepSeek:
                                account_info: Dict, has_position: bool,
                                session_info: Dict, position_cost: float = 0,
                                position_quantity: int = 0,
+                               position_date: Optional[str] = None,
+                               can_sell_today: bool = True,
                                account_name: str = DEFAULT_ACCOUNT_NAME,
                                asset_id: Optional[int] = None,
                                portfolio_stock_id: Optional[int] = None,
                                strategy_context: Optional[Dict] = None,
-                               previous_decision: Optional[Dict] = None,
                                risk_profile: Optional[Dict[str, Any]] = None) -> List[Dict[str, str]]:
         context = self._build_prompt_context(
             stock_code, market_data, account_info,
             has_position, session_info, position_cost, position_quantity,
+            position_date=position_date,
+            can_sell_today=can_sell_today,
             account_name=account_name,
             asset_id=asset_id,
             portfolio_stock_id=portfolio_stock_id,
             strategy_context=strategy_context,
-            previous_decision=previous_decision,
             risk_profile=risk_profile,
         )
-        return build_messages(self.SYSTEM_TEMPLATE, self.USER_TEMPLATE, **context)
+        optional_sections = context.pop("_optional_sections_list", [])
+        messages = build_messages(self.SYSTEM_TEMPLATE, self.USER_TEMPLATE, **context)
+        messages_budget = max(0, self.PROMPT_SIZE_WARNING_CHARS - self.PROMPT_SIZE_SAFETY_MARGIN_CHARS)
+
+        if optional_sections and self._estimate_messages_payload_chars(messages) > messages_budget:
+            compact_context = dict(context)
+            compact_context["optional_sections"] = ""
+            base_messages = build_messages(self.SYSTEM_TEMPLATE, self.USER_TEMPLATE, **compact_context)
+            remaining_budget = max(0, messages_budget - self._estimate_messages_payload_chars(base_messages))
+            compact_context["optional_sections"] = self._fit_optional_sections_to_budget(optional_sections, remaining_budget)
+            messages = build_messages(self.SYSTEM_TEMPLATE, self.USER_TEMPLATE, **compact_context)
+
+        return messages
 
     def _build_a_stock_prompt(self, stock_code: str, market_data: Dict,
                               account_info: Dict, has_position: bool,
                               session_info: Dict, position_cost: float = 0,
                               position_quantity: int = 0,
+                              position_date: Optional[str] = None,
+                              can_sell_today: bool = True,
                               account_name: str = DEFAULT_ACCOUNT_NAME,
                               asset_id: Optional[int] = None,
                               portfolio_stock_id: Optional[int] = None,
                               strategy_context: Optional[Dict] = None,
-                              previous_decision: Optional[Dict] = None,
                               risk_profile: Optional[Dict[str, Any]] = None) -> str:
         """构建A股分析提示词。"""
         return self._build_prompt_messages(
             stock_code, market_data, account_info,
             has_position, session_info, position_cost, position_quantity,
+            position_date=position_date,
+            can_sell_today=can_sell_today,
             account_name=account_name,
             asset_id=asset_id,
             portfolio_stock_id=portfolio_stock_id,
             strategy_context=strategy_context,
-            previous_decision=previous_decision,
             risk_profile=risk_profile,
         )[1]["content"]
 
@@ -1128,6 +2097,7 @@ class SmartMonitorDeepSeek:
     def _quote_known_string_values(text: str) -> str:
         replacements = {
             "action": r"BUY|SELL|HOLD|买入|卖出|持有|观望|等待|加仓|减仓|止盈|止损",
+            "action_detail": r"建仓|加仓|买入|减仓|清仓|卖出|持有|观望|等待",
             "risk_level": r"low|medium|high|低|中|高",
         }
         normalized = text
@@ -1243,6 +2213,79 @@ class SmartMonitorDeepSeek:
         return mapping.get(text, "HOLD")
 
     @staticmethod
+    def _normalize_action_detail_value(value: Any) -> str:
+        text = str(value or "").strip()
+        mapping = {
+            "BUY": "买入",
+            "建仓": "建仓",
+            "买入": "买入",
+            "加仓": "加仓",
+            "SELL": "卖出",
+            "卖出": "卖出",
+            "减仓": "减仓",
+            "清仓": "清仓",
+            "止盈": "减仓",
+            "止损": "清仓",
+            "HOLD": "持有",
+            "持有": "持有",
+            "观望": "观望",
+            "等待": "观望",
+        }
+        return mapping.get(text, "")
+
+    @classmethod
+    def _resolve_action_detail(cls, value: Any, *, action: str, has_position: bool) -> str:
+        normalized_action = cls._normalize_action_value(action)
+        normalized_detail = cls._normalize_action_detail_value(value)
+        if normalized_action == "BUY":
+            if normalized_detail in {"建仓", "加仓", "买入"}:
+                return "加仓" if has_position and normalized_detail != "建仓" else "建仓" if not has_position else "加仓"
+            return "加仓" if has_position else "建仓"
+        if normalized_action == "SELL":
+            if normalized_detail in {"减仓", "清仓", "卖出"}:
+                return normalized_detail
+            return "卖出"
+        if normalized_detail in {"持有", "观望"}:
+            return normalized_detail
+        return "持有" if has_position else "观望"
+
+    @classmethod
+    def _resolve_action_ratio_pct(
+        cls,
+        value: Any,
+        *,
+        action: str,
+        action_detail: str,
+        has_position: bool,
+        position_size_pct: Any = None,
+    ) -> Optional[int]:
+        try:
+            numeric = int(round(cls._coerce_numeric(value, default=0.0)))
+        except (TypeError, ValueError):
+            numeric = 0
+
+        normalized_action = cls._normalize_action_value(action)
+        normalized_detail = cls._resolve_action_detail(action_detail, action=normalized_action, has_position=has_position)
+        try:
+            fallback_position_size = int(round(cls._coerce_numeric(position_size_pct, default=20.0)))
+        except (TypeError, ValueError):
+            fallback_position_size = 20
+
+        if normalized_action == "HOLD":
+            return None
+        if normalized_action == "SELL":
+            if normalized_detail == "清仓":
+                return 100
+            if numeric <= 0:
+                numeric = 50
+            return max(1, min(99, numeric))
+        if normalized_action == "BUY":
+            if numeric <= 0:
+                numeric = fallback_position_size if normalized_detail == "建仓" else min(fallback_position_size, 30)
+            return max(1, min(100, numeric))
+        return None
+
+    @staticmethod
     def _normalize_risk_level(value: Any) -> str:
         text = str(value or "").strip().lower()
         mapping = {
@@ -1287,6 +2330,7 @@ class SmartMonitorDeepSeek:
                 scale_fraction_to_pct=True,
             ))))),
             "reasoning": reasoning,
+            "action_detail": self._normalize_action_detail_value(decision.get("action_detail")),
             "position_size_pct": int(max(0, min(100, round(self._coerce_numeric(
                 decision.get("position_size_pct"),
                 default=resolved_risk_profile["position_size_pct"],
@@ -1302,6 +2346,13 @@ class SmartMonitorDeepSeek:
             "risk_level": self._normalize_risk_level(decision.get("risk_level")),
             "key_price_levels": self._normalize_key_price_levels(decision.get("key_price_levels")),
         }
+        normalized["action_ratio_pct"] = self._resolve_action_ratio_pct(
+            decision.get("action_ratio_pct"),
+            action=normalized["action"],
+            action_detail=normalized["action_detail"],
+            has_position=bool(decision.get("has_position")),
+            position_size_pct=normalized["position_size_pct"],
+        )
 
         monitor_levels = self._normalize_monitor_levels(decision)
         if monitor_levels:
@@ -1410,7 +2461,7 @@ class SmartMonitorDeepSeek:
                 return None
         return normalized
 
-    def _enforce_action_policy(self, decision: Dict, has_position: bool) -> Dict:
+    def _enforce_action_policy(self, decision: Dict, has_position: bool, can_sell_today: bool = True) -> Dict:
         def _append_constraint_reasoning(message: str) -> None:
             original_reasoning = str(decision.get("reasoning") or "").strip()
             if original_reasoning:
@@ -1426,13 +2477,37 @@ class SmartMonitorDeepSeek:
                 f"原始动作 {action} 不在允许集合 {sorted(allowed_actions)} 中，已降级为 HOLD。"
             )
             decision["risk_level"] = "high"
+            decision["action_detail"] = self._resolve_action_detail(decision.get("action_detail"), action="HOLD", has_position=has_position)
+            decision["action_ratio_pct"] = None
             return decision
 
         if not has_position and action == "SELL":
             decision["action"] = "HOLD"
             _append_constraint_reasoning("当前无持仓，SELL 不可执行，已降级为 HOLD。")
             decision["risk_level"] = "high"
+            decision["action_detail"] = self._resolve_action_detail(decision.get("action_detail"), action="HOLD", has_position=has_position)
+            decision["action_ratio_pct"] = None
+            return decision
+
+        if has_position and not can_sell_today and action == "SELL":
+            decision["action"] = "HOLD"
+            _append_constraint_reasoning("受A股T+1限制，今日新开仓位不可卖出，SELL 不可执行，已降级为 HOLD。")
+            decision["risk_level"] = "high"
+            decision["action_detail"] = self._resolve_action_detail(decision.get("action_detail"), action="HOLD", has_position=has_position)
+            decision["action_ratio_pct"] = None
             return decision
 
         decision["action"] = action
+        decision["action_detail"] = self._resolve_action_detail(
+            decision.get("action_detail"),
+            action=action,
+            has_position=has_position,
+        )
+        decision["action_ratio_pct"] = self._resolve_action_ratio_pct(
+            decision.get("action_ratio_pct"),
+            action=action,
+            action_detail=decision["action_detail"],
+            has_position=has_position,
+            position_size_pct=decision.get("position_size_pct"),
+        )
         return decision

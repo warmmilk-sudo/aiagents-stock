@@ -1,0 +1,9 @@
+股票：$stock_name ($stock_code)
+
+【现有宏观底色】
+$existing_profile
+
+【近期新增的重要事实记忆（按时间倒序）】
+$recent_facts
+
+请综合以上信息，输出一段新的宏观底色摘要（200-400字纯文本）。

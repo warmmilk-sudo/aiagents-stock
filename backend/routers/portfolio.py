@@ -135,7 +135,7 @@ def submit_portfolio_analysis_task(request: Request, payload: PortfolioAnalysisT
         )
     except ValueError as exc:
         raise ApiError(400, str(exc), error_code="portfolio_analysis_invalid_request") from exc
-    return success_payload({"task_id": task_id}, message="持仓分析任务已提交")
+    return success_payload({"task_id": task_id}, message="持仓总览任务已提交")
 
 
 @router.get("/scheduler")
@@ -182,7 +182,7 @@ def get_scheduler_task(request: Request, task_id: str) -> dict:
     require_session(request)
     task = services.get_portfolio_scheduler_task(task_id)
     if not task:
-        raise ApiError(404, "未找到持仓分析任务", error_code="portfolio_scheduler_task_not_found")
+        raise ApiError(404, "未找到持仓总览任务", error_code="portfolio_scheduler_task_not_found")
     return success_payload(task)
 
 
@@ -197,4 +197,4 @@ def run_scheduler_once(request: Request) -> dict:
             error_code="portfolio_scheduler_run_failed",
             details=result,
         )
-    return success_payload(result, message="已触发一次持仓分析")
+    return success_payload(result, message="已触发一次持仓总览")

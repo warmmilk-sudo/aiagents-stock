@@ -41,6 +41,7 @@ function fileSizeText(value: number) {
 export function DatabasePage() {
   const [status, setStatus] = useState<DatabaseStatusPayload>({ databases: [], backups: [] });
   const [cleanupDays, setCleanupDays] = useState("7");
+  const [includeAnalysisHistory, setIncludeAnalysisHistory] = useState(false);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -97,7 +98,7 @@ export function DatabasePage() {
 
         <section className={styles.card}>
           <h2>历史清理</h2>
-          <p className={styles.helperText}>按天数清理分析与监测历史，不会删除当前持仓、任务配置和系统参数。</p>
+          <p className={styles.helperText}>按天数清理分析与监测历史，不会删除当前持仓、任务配置和系统参数。分析历史默认不清理，需要单独勾选。</p>
           <div className={styles.responsiveActionGrid}>
             <div className={styles.field}>
               <label htmlFor="cleanupDays">清理多少天前的数据</label>
@@ -109,6 +110,18 @@ export function DatabasePage() {
                 ))}
               </select>
             </div>
+            <label className={styles.switchField}>
+              <span className={styles.switchBody}>
+                <span className={styles.switchLabel}>同时清理分析历史库内容</span>
+                <span className={styles.switchDescription}>勾选后会清理投资总库中的股票档案/分析历史记录。</span>
+              </span>
+              <input
+                checked={includeAnalysisHistory}
+                disabled={loading}
+                onChange={(event) => setIncludeAnalysisHistory(event.target.checked)}
+                type="checkbox"
+              />
+            </label>
             <button
               className={styles.primaryButton}
               disabled={loading}
@@ -116,7 +129,10 @@ export function DatabasePage() {
                 void withAction(async () => {
                   const result = await apiFetch<{ total_deleted_rows: number; cutoff: string }>("/api/system/database/cleanup", {
                     method: "POST",
-                    body: JSON.stringify({ days: Number(cleanupDays) || 7 }),
+                    body: JSON.stringify({
+                      days: Number(cleanupDays) || 7,
+                      include_analysis_history: includeAnalysisHistory,
+                    }),
                   });
                   setMessage(`历史数据已清理，共删除 ${result.total_deleted_rows} 条，截止时间 ${result.cutoff}`);
                 })

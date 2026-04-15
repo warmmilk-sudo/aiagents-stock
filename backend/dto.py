@@ -356,6 +356,7 @@ class ConfigUpdateRequest(BaseModel):
 
 class DatabaseCleanupRequest(BaseModel):
     days: int = 7
+    include_analysis_history: bool = False
 
 
 class DatabaseRestoreRequest(BaseModel):

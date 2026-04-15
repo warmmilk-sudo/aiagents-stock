@@ -82,6 +82,12 @@ class SmartMonitorDB:
                 decision_time TEXT NOT NULL,
                 trading_session TEXT,
                 action TEXT NOT NULL,
+                action_detail TEXT,
+                action_ratio_pct REAL,
+                trade_intent TEXT,
+                current_position_pct REAL,
+                target_position_pct REAL,
+                position_delta_pct REAL,
                 confidence INTEGER,
                 reasoning TEXT,
                 position_size_pct REAL,
@@ -125,6 +131,12 @@ class SmartMonitorDB:
         self._ensure_column(cursor, "ai_decisions", "action_status", "TEXT DEFAULT 'suggested'")
         self._ensure_column(cursor, "ai_decisions", "monitor_levels", "TEXT")
         self._ensure_column(cursor, "ai_decisions", "decision_context", "TEXT")
+        self._ensure_column(cursor, "ai_decisions", "action_detail", "TEXT")
+        self._ensure_column(cursor, "ai_decisions", "action_ratio_pct", "REAL")
+        self._ensure_column(cursor, "ai_decisions", "trade_intent", "TEXT")
+        self._ensure_column(cursor, "ai_decisions", "current_position_pct", "REAL")
+        self._ensure_column(cursor, "ai_decisions", "target_position_pct", "REAL")
+        self._ensure_column(cursor, "ai_decisions", "position_delta_pct", "REAL")
         conn.commit()
         conn.close()
 
@@ -336,11 +348,12 @@ class SmartMonitorDB:
             """
             INSERT INTO ai_decisions (
                 stock_code, stock_name, account_name, asset_id, portfolio_stock_id, origin_analysis_id,
-                decision_time, trading_session, action, confidence, reasoning, position_size_pct,
+                decision_time, trading_session, action, action_detail, action_ratio_pct, trade_intent, current_position_pct, target_position_pct, position_delta_pct,
+                confidence, reasoning, position_size_pct,
                 stop_loss_pct, take_profit_pct, risk_level, key_price_levels, monitor_levels, decision_context, market_data,
                 account_info, execution_mode, action_status, executed, execution_result, created_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 payload.get("stock_code"),
@@ -352,6 +365,12 @@ class SmartMonitorDB:
                 payload.get("decision_time", local_now_str()),
                 payload.get("trading_session"),
                 payload.get("action"),
+                payload.get("action_detail"),
+                payload.get("action_ratio_pct"),
+                payload.get("trade_intent"),
+                payload.get("current_position_pct"),
+                payload.get("target_position_pct"),
+                payload.get("position_delta_pct"),
                 payload.get("confidence"),
                 payload.get("reasoning"),
                 payload.get("position_size_pct"),
@@ -397,6 +416,12 @@ class SmartMonitorDB:
             "decision_time",
             "trading_session",
             "action",
+            "action_detail",
+            "action_ratio_pct",
+            "trade_intent",
+            "current_position_pct",
+            "target_position_pct",
+            "position_delta_pct",
             "confidence",
             "reasoning",
             "position_size_pct",
@@ -1147,7 +1172,17 @@ class SmartMonitorDB:
         )
         latest_action = str((latest or {}).get("action") or "").upper()
         current_action = str(decision_data.get("action") or "").upper()
-        if latest and latest_action and latest_action == current_action:
+        latest_action_detail = str((latest or {}).get("action_detail") or "").strip()
+        current_action_detail = str(decision_data.get("action_detail") or "").strip()
+        latest_action_ratio_pct = (latest or {}).get("action_ratio_pct")
+        current_action_ratio_pct = decision_data.get("action_ratio_pct")
+        if (
+            latest
+            and latest_action
+            and latest_action == current_action
+            and latest_action_detail == current_action_detail
+            and latest_action_ratio_pct == current_action_ratio_pct
+        ):
             return self.save_ai_decision(decision_data), False
         return self.save_ai_decision(decision_data), True
 
@@ -1198,6 +1233,8 @@ class SmartMonitorDB:
                 decision["intraday_signal_labels"] = decision_context.get("intraday_signal_labels") or []
                 decision["intraday_observations"] = decision_context.get("intraday_observations") or []
                 decision["previous_action"] = decision_context.get("previous_action")
+                decision["previous_action_detail"] = decision_context.get("previous_action_detail")
+                decision["previous_action_ratio_pct"] = decision_context.get("previous_action_ratio_pct")
                 decision["decision_changed"] = decision_context.get("decision_changed")
                 decision["action_changed"] = decision_context.get("action_changed")
                 decision["thresholds_changed"] = decision_context.get("thresholds_changed")

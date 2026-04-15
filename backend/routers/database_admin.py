@@ -36,4 +36,10 @@ def restore_backup(request: Request, payload: DatabaseRestoreRequest) -> dict:
 @router.post("/cleanup")
 def cleanup_history(request: Request, payload: DatabaseCleanupRequest) -> dict:
     require_session(request)
-    return success_payload(services.cleanup_database_history(payload.days), message="历史数据清理完成")
+    return success_payload(
+        services.cleanup_database_history(
+            payload.days,
+            include_analysis_history=payload.include_analysis_history,
+        ),
+        message="历史数据清理完成",
+    )

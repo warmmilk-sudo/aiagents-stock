@@ -117,6 +117,118 @@ class SmartMonitorEngine:
         except (TypeError, ValueError):
             return 0
 
+    @staticmethod
+    def _normalize_position_date(value: object) -> Optional[str]:
+        text = str(value or "").strip()
+        if not text:
+            return None
+        return text[:10] if len(text) >= 10 else text
+
+    def _resolve_position_snapshot(
+        self,
+        *,
+        stock_code: str,
+        account_name: str,
+        task_context: Optional[Dict],
+        asset: Optional[Dict],
+        has_position: bool,
+        position_cost: float,
+        position_quantity: int,
+        position_date: Optional[str],
+    ) -> Dict[str, object]:
+        resolved_has_position = bool(has_position)
+        resolved_position_cost = float(position_cost or 0)
+        resolved_position_quantity = int(position_quantity or 0)
+        resolved_position_date = self._normalize_position_date(position_date) or self._normalize_position_date((task_context or {}).get("position_date"))
+
+        if asset:
+            resolved_has_position = asset.get("status") == STATUS_PORTFOLIO and int(asset.get("quantity") or 0) > 0
+            resolved_position_cost = float(asset.get("cost_price") or 0)
+            resolved_position_quantity = int(asset.get("quantity") or 0)
+            resolved_position_date = (
+                self._normalize_position_date((task_context or {}).get("position_date"))
+                or self._normalize_position_date(asset.get("created_at"))
+            )
+
+        self.logger.info(
+            "[%s] 决策前持仓快照: has_position=%s cost=%.2f quantity=%s position_date=%s",
+            stock_code,
+            resolved_has_position,
+            resolved_position_cost,
+            resolved_position_quantity,
+            resolved_position_date or "N/A",
+        )
+        return {
+            "has_position": resolved_has_position,
+            "position_cost": resolved_position_cost,
+            "position_quantity": resolved_position_quantity,
+            "position_date": resolved_position_date,
+        }
+
+    @staticmethod
+    def _resolve_reference_trading_date(market_data: Optional[Dict[str, object]] = None) -> datetime.date:
+        freshness = (market_data or {}).get("realtime_freshness") if isinstance(market_data, dict) else {}
+        candidates = []
+        if isinstance(freshness, dict):
+            candidates.append(freshness.get("asof_time"))
+        if isinstance(market_data, dict):
+            candidates.append(market_data.get("update_time"))
+        for candidate in candidates:
+            parsed = SmartMonitorEngine._parse_decision_time(candidate)
+            if parsed:
+                return parsed.date()
+        return datetime.now().date()
+
+    def _can_sell_today(
+        self,
+        *,
+        has_position: bool,
+        position_date: Optional[str],
+        market_data: Optional[Dict[str, object]] = None,
+    ) -> bool:
+        if not has_position:
+            return False
+        parsed_position_date = self._parse_decision_time(position_date)
+        if not parsed_position_date:
+            return True
+        reference_date = self._resolve_reference_trading_date(market_data)
+        return parsed_position_date.date() < reference_date
+
+    def _enforce_t1_sell_constraint(
+        self,
+        *,
+        decision: Dict[str, object],
+        has_position: bool,
+        can_sell_today: bool,
+        account_info: Dict[str, object],
+        risk_profile: Optional[Dict[str, int]],
+    ) -> Dict[str, object]:
+        normalized_action = str(decision.get("action") or "").upper()
+        if normalized_action != "SELL" or not has_position or can_sell_today:
+            return decision
+
+        original_reasoning = str(decision.get("reasoning") or "").strip()
+        blocked_reason = "受A股T+1限制，今日新开仓位不可卖出，已降级为 HOLD。"
+        decision["action"] = "HOLD"
+        if hasattr(self.llm_client, "_resolve_action_detail"):
+            decision["action_detail"] = self.llm_client._resolve_action_detail(
+                decision.get("action_detail"),
+                action="HOLD",
+                has_position=has_position,
+            )
+        else:
+            decision["action_detail"] = "持有" if has_position else "观望"
+        decision["action_ratio_pct"] = None
+        decision["risk_level"] = "high"
+        decision["reasoning"] = f"{original_reasoning}\n\n补充说明：{blocked_reason}" if original_reasoning else f"补充说明：{blocked_reason}"
+        if hasattr(self.llm_client, "_attach_execution_targets"):
+            return self.llm_client._attach_execution_targets(
+                decision,
+                account_info=account_info,
+                risk_profile=risk_profile,
+            )
+        return decision
+
     def _resolve_account_holding_price(
         self,
         stock: Dict,
@@ -151,6 +263,7 @@ class SmartMonitorEngine:
         has_position: bool,
         position_cost: float,
         position_quantity: int,
+        position_date: Optional[str],
         current_market_price: float,
     ) -> Dict:
         normalized_account_name = normalize_account_name(account_name) or DEFAULT_ACCOUNT_NAME
@@ -197,6 +310,7 @@ class SmartMonitorEngine:
                     "cost_price": cost_price,
                     "current_price": latest_price,
                     "market_value": market_value,
+                    "position_date": position_date,
                     "status": stock.get("status") or (asset or {}).get("status"),
                 }
 
@@ -222,6 +336,7 @@ class SmartMonitorEngine:
                 "cost_price": position_cost,
                 "current_price": latest_price,
                 "market_value": current_market_value,
+                "position_date": position_date,
                 "status": (asset or {}).get("status"),
             }
             total_market_value += current_market_value
@@ -311,7 +426,21 @@ class SmartMonitorEngine:
     ) -> Dict[str, bool]:
         latest_action = str((latest_decision or {}).get("action") or "").upper()
         current_action = str(current_decision.get("action") or "").upper()
-        action_changed = not latest_action or latest_action != current_action
+        latest_action_detail = str((latest_decision or {}).get("action_detail") or "").strip()
+        current_action_detail = str(current_decision.get("action_detail") or "").strip()
+        latest_action_ratio_pct = cls._float_or_none((latest_decision or {}).get("action_ratio_pct"))
+        current_action_ratio_pct = cls._float_or_none(current_decision.get("action_ratio_pct"))
+        action_changed = (
+            not latest_action
+            or latest_action != current_action
+            or (current_action_detail and latest_action_detail != current_action_detail)
+            or (
+                current_action_ratio_pct is not None
+                and latest_action_ratio_pct is not None
+                and abs(current_action_ratio_pct - latest_action_ratio_pct) > 0.01
+            )
+            or (current_action_ratio_pct is not None and latest_action_ratio_pct is None)
+        )
 
         latest_levels = cls._normalize_monitor_levels_payload((latest_decision or {}).get("monitor_levels"))
         current_levels = cls._normalize_monitor_levels(current_decision)
@@ -354,8 +483,22 @@ class SmartMonitorEngine:
                 return None
             return round(value, 4)
 
+        def _format_action_signature(action: object, detail: object, ratio_pct: object) -> str:
+            detail_text = str(detail or action or "").strip()
+            try:
+                numeric = float(ratio_pct) if ratio_pct not in (None, "") else None
+            except (TypeError, ValueError):
+                numeric = None
+            if numeric is not None and str(action or "").strip().upper() in {"BUY", "SELL"} and numeric > 0:
+                if abs(numeric - round(numeric)) < 1e-6:
+                    return f"{detail_text}{int(round(numeric))}%"
+                return f"{detail_text}{numeric:.1f}%"
+            return detail_text
+
         delta_payload: Dict[str, object] = {
             "previous_action": str(latest_decision.get("action") or "").upper() or None,
+            "previous_action_detail": str(latest_decision.get("action_detail") or "").strip() or None,
+            "previous_action_ratio_pct": latest_decision.get("action_ratio_pct"),
             "previous_confidence": latest_decision.get("confidence"),
             "previous_risk_level": latest_decision.get("risk_level"),
             "previous_decision_time": latest_decision.get("decision_time"),
@@ -395,9 +538,23 @@ class SmartMonitorEngine:
 
         summary_parts: List[str] = []
         previous_action = str(latest_decision.get("action") or "").upper()
+        previous_action_detail = str(latest_decision.get("action_detail") or "").strip()
+        previous_action_ratio_pct = latest_decision.get("action_ratio_pct")
         current_action = str(current_decision.get("action") or "").upper()
-        if previous_action and previous_action != current_action:
-            summary_parts.append(f"动作由{previous_action}变为{current_action}")
+        current_action_detail = str(current_decision.get("action_detail") or "").strip()
+        current_action_ratio_pct = current_decision.get("action_ratio_pct")
+        if previous_action and (
+            previous_action != current_action
+            or (current_action_detail and previous_action_detail != current_action_detail)
+            or (
+                _to_float(previous_action_ratio_pct) is not None
+                and _to_float(current_action_ratio_pct) is not None
+                and abs(float(previous_action_ratio_pct) - float(current_action_ratio_pct)) > 0.01
+            )
+        ):
+            previous_action_text = _format_action_signature(previous_action, previous_action_detail, previous_action_ratio_pct)
+            current_action_text = _format_action_signature(current_action, current_action_detail, current_action_ratio_pct)
+            summary_parts.append(f"动作由{previous_action_text}变为{current_action_text}")
         if delta_payload.get("intraday_bias_changed"):
             summary_parts.append(f"盘中偏向由“{previous_bias_text or '未记录'}”变为“{current_bias_text or '未记录'}”")
         if delta_payload.get("thresholds_changed"):
@@ -445,108 +602,6 @@ class SmartMonitorEngine:
             return float(value) if value not in (None, "") else None
         except (TypeError, ValueError):
             return None
-
-    def _should_reuse_previous_hold_decision(
-        self,
-        *,
-        latest_decision: Optional[Dict],
-        market_data: Dict,
-        strategy_context: Optional[Dict],
-    ) -> bool:
-        latest_decision = latest_decision or {}
-        if str(latest_decision.get("action") or "").upper() != "HOLD":
-            return False
-
-        latest_decision_time = latest_decision.get("decision_time")
-        current_reference_time = (
-            ((market_data.get("realtime_freshness") or {}).get("asof_time"))
-            or market_data.get("update_time")
-            or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        )
-        if not self._same_trading_day(latest_decision_time, current_reference_time):
-            return False
-
-        latest_origin = latest_decision.get("origin_analysis_id")
-        current_origin = (strategy_context or {}).get("origin_analysis_id")
-        if current_origin and latest_origin and str(current_origin) != str(latest_origin):
-            return False
-
-        previous_context = latest_decision.get("decision_context")
-        previous_context = previous_context if isinstance(previous_context, dict) else {}
-        current_intraday = market_data.get("intraday_context")
-        current_intraday = current_intraday if isinstance(current_intraday, dict) else {}
-        if not previous_context or not current_intraday:
-            return False
-
-        previous_bias = str(previous_context.get("intraday_bias") or "").strip()
-        current_bias = str(current_intraday.get("intraday_bias") or "").strip()
-        if previous_bias and current_bias and previous_bias != current_bias:
-            return False
-
-        delta_checks = (
-            ("last_5m_change_pct", 0.5),
-            ("price_position_pct", 15.0),
-            ("volume_acceleration_ratio", 0.5),
-        )
-        for field, threshold in delta_checks:
-            previous_value = self._float_or_none(previous_context.get(field))
-            current_value = self._float_or_none(current_intraday.get(field))
-            if previous_value is None or current_value is None:
-                continue
-            if abs(current_value - previous_value) >= threshold:
-                return False
-
-        previous_labels = previous_context.get("intraday_signal_labels")
-        previous_labels = set(str(label).strip() for label in previous_labels or [] if str(label).strip())
-        current_labels = current_intraday.get("intraday_signal_labels")
-        current_labels = set(str(label).strip() for label in current_labels or [] if str(label).strip())
-        if current_labels - previous_labels:
-            return False
-
-        previous_price = self._float_or_none((latest_decision.get("market_data") or {}).get("current_price"))
-        current_price = self._float_or_none(market_data.get("current_price"))
-        if previous_price and current_price and previous_price > 0:
-            if abs((current_price - previous_price) / previous_price) >= 0.02:
-                return False
-
-        return True
-
-    def _build_reused_hold_decision(
-        self,
-        *,
-        latest_decision: Dict,
-        market_data: Dict,
-        risk_profile: Optional[Dict[str, int]],
-    ) -> Dict:
-        decision = {
-            "action": "HOLD",
-            "confidence": int(latest_decision.get("confidence") or 68),
-            "reasoning": str(latest_decision.get("reasoning") or "").strip(),
-            "position_size_pct": latest_decision.get("position_size_pct"),
-            "stop_loss_pct": latest_decision.get("stop_loss_pct"),
-            "take_profit_pct": latest_decision.get("take_profit_pct"),
-            "risk_level": latest_decision.get("risk_level") or "medium",
-            "key_price_levels": dict(latest_decision.get("key_price_levels") or {}),
-            "monitor_levels": dict(latest_decision.get("monitor_levels") or {}),
-        }
-        delta_context = self._build_decision_context_delta(
-            latest_decision=latest_decision,
-            current_decision=decision,
-            market_data=market_data,
-            change_flags={
-                "action_changed": False,
-                "thresholds_changed": False,
-                "decision_changed": False,
-            },
-        )
-        current_bias_text = str(((market_data.get("intraday_context") or {}).get("intraday_bias_text")) or "").strip()
-        summary = str(delta_context.get("delta_summary") or "与上一轮相比未出现足以改变结论的显著新变化").strip()
-        reasoning_parts = [summary]
-        if current_bias_text:
-            reasoning_parts.append(f"当前盘中结构仍表现为{current_bias_text}")
-        reasoning_parts.append("因此沿用上一轮 HOLD 判断，继续观察，不重复放大相同证据。")
-        decision["reasoning"] = " ".join(reasoning_parts)
-        return decision
 
     def _resolve_latest_strategy_context(
         self,
@@ -719,6 +774,7 @@ class SmartMonitorEngine:
     
     def analyze_stock(self, stock_code: str, notify: bool = True, has_position: bool = False,
                       position_cost: float = 0, position_quantity: int = 0,
+                      position_date: Optional[str] = None,
                       trading_hours_only: bool = True,
                       account_name: str = DEFAULT_ACCOUNT_NAME,
                       asset_id: Optional[int] = None,
@@ -734,6 +790,7 @@ class SmartMonitorEngine:
             has_position: 是否已持仓（可选）
             position_cost: 持仓成本（可选）
             position_quantity: 持仓数量（可选）
+            position_date: 持仓日期（可选）
             trading_hours_only: 是否仅在交易时段分析（可选，默认True）
             
         Returns:
@@ -815,9 +872,36 @@ class SmartMonitorEngine:
                 if asset:
                     asset_id = asset.get("id")
             if asset:
-                has_position = asset.get("status") == STATUS_PORTFOLIO and int(asset.get("quantity") or 0) > 0
-                position_cost = float(asset.get("cost_price") or 0)
-                position_quantity = int(asset.get("quantity") or 0)
+                position_snapshot = self._resolve_position_snapshot(
+                    stock_code=stock_code,
+                    account_name=account_name,
+                    task_context=task_context,
+                    asset=asset,
+                    has_position=has_position,
+                    position_cost=position_cost,
+                    position_quantity=position_quantity,
+                    position_date=position_date,
+                )
+            else:
+                position_snapshot = self._resolve_position_snapshot(
+                    stock_code=stock_code,
+                    account_name=account_name,
+                    task_context=task_context,
+                    asset=None,
+                    has_position=has_position,
+                    position_cost=position_cost,
+                    position_quantity=position_quantity,
+                    position_date=position_date,
+                )
+            has_position = bool(position_snapshot["has_position"])
+            position_cost = float(position_snapshot["position_cost"] or 0)
+            position_quantity = int(position_snapshot["position_quantity"] or 0)
+            position_date = self._normalize_position_date(position_snapshot.get("position_date"))
+            can_sell_today = self._can_sell_today(
+                has_position=has_position,
+                position_date=position_date,
+                market_data=market_data,
+            )
             account_info = self._build_account_info(
                 account_name=account_name,
                 asset=asset,
@@ -827,6 +911,7 @@ class SmartMonitorEngine:
                 has_position=has_position,
                 position_cost=position_cost,
                 position_quantity=position_quantity,
+                position_date=position_date,
                 current_market_price=self._safe_float(market_data.get("current_price")),
             )
             portfolio_stock_id = portfolio_stock_id or task_context.get("portfolio_stock_id") or (
@@ -868,39 +953,24 @@ class SmartMonitorEngine:
                 portfolio_stock_id=portfolio_stock_id,
             )
 
-            if self._should_reuse_previous_hold_decision(
-                latest_decision=latest_decision,
+            # 5. 调用 LLM AI 决策
+            ai_result = self._run_with_timeout(
+                self.llm_client.analyze_stock_and_decide,
+                self.ai_decision_timeout_seconds,
+                stock_code=stock_code,
                 market_data=market_data,
+                account_info=account_info,
+                has_position=has_position,
+                position_cost=position_cost,
+                position_quantity=position_quantity,
+                position_date=position_date,
+                can_sell_today=can_sell_today,
+                account_name=account_name,
+                asset_id=asset_id,
+                portfolio_stock_id=portfolio_stock_id,
                 strategy_context=strategy_context,
-            ):
-                self.logger.info("[%s] 与上一轮相比未出现实质新变化，直接沿用上一轮 HOLD 结论", stock_code)
-                ai_result = {
-                    "success": True,
-                    "decision": self._build_reused_hold_decision(
-                        latest_decision=latest_decision,
-                        market_data=market_data,
-                        risk_profile=risk_profile,
-                    ),
-                    "reused_previous_decision": True,
-                }
-            else:
-                # 5. 调用 LLM AI 决策
-                ai_result = self._run_with_timeout(
-                    self.llm_client.analyze_stock_and_decide,
-                    self.ai_decision_timeout_seconds,
-                    stock_code=stock_code,
-                    market_data=market_data,
-                    account_info=account_info,
-                    has_position=has_position,
-                    position_cost=position_cost,
-                    position_quantity=position_quantity,
-                    account_name=account_name,
-                    asset_id=asset_id,
-                    portfolio_stock_id=portfolio_stock_id,
-                    strategy_context=strategy_context,
-                    previous_decision=latest_decision,
-                    risk_profile=risk_profile,
-                )
+                risk_profile=risk_profile,
+            )
 
             if not ai_result['success']:
                 return {
@@ -924,7 +994,16 @@ class SmartMonitorEngine:
                         "error": "task_deleted"
                     }
             
+            original_action = str((ai_result.get("decision") or {}).get("action") or "").upper()
             decision = ai_result['decision']
+            decision = self._enforce_t1_sell_constraint(
+                decision=decision,
+                has_position=has_position,
+                can_sell_today=can_sell_today,
+                account_info=account_info,
+                risk_profile=risk_profile,
+            )
+            t1_sell_blocked = original_action == "SELL" and str(decision.get("action") or "").upper() != "SELL"
             
             self.logger.info(f"[{stock_code}] AI决策: {decision['action']} "
                            f"(信心度: {decision['confidence']}%)")
@@ -948,6 +1027,12 @@ class SmartMonitorEngine:
                 'origin_analysis_id': strategy_context.get('origin_analysis_id') if strategy_context else None,
                 'trading_session': session_info['session'],
                 'action': decision['action'],
+                'action_detail': decision.get('action_detail'),
+                'action_ratio_pct': decision.get('action_ratio_pct'),
+                'trade_intent': decision.get('trade_intent'),
+                'current_position_pct': decision.get('current_position_pct'),
+                'target_position_pct': decision.get('target_position_pct'),
+                'position_delta_pct': decision.get('position_delta_pct'),
                 'confidence': decision['confidence'],
                 'reasoning': decision['reasoning'],
                 'position_size_pct': decision.get('position_size_pct'),
@@ -996,7 +1081,7 @@ class SmartMonitorEngine:
                 execution_result = pending_action
 
             # 8. 发送通知
-            if notify and action_changed:
+            if notify and action_changed and not t1_sell_blocked:
                 self._send_notification(
                     stock_code=stock_code,
                     stock_name=market_data.get('name'),
@@ -1006,6 +1091,8 @@ class SmartMonitorEngine:
                     has_position=has_position,
                     position_cost=position_cost,
                     position_quantity=position_quantity,
+                    position_date=position_date,
+                    can_sell_today=can_sell_today,
                     session_info=session_info,
                     account_name=account_name,
                     asset_id=asset_id,
@@ -1029,7 +1116,6 @@ class SmartMonitorEngine:
                 'asset_id': asset_id,
                 'portfolio_stock_id': portfolio_stock_id,
                 'strategy_context': strategy_context or {},
-                'reused_previous_decision': bool(ai_result.get('reused_previous_decision')),
             }
             
         except Exception as e:
@@ -1099,6 +1185,8 @@ class SmartMonitorEngine:
         has_position: Optional[bool] = None,
         position_cost: Optional[float] = None,
         position_quantity: Optional[int] = None,
+        position_date: Optional[str] = None,
+        can_sell_today: Optional[bool] = None,
         session_info: Optional[Dict] = None,
         account_name: str = DEFAULT_ACCOUNT_NAME,
         asset_id: Optional[int] = None,
@@ -1151,8 +1239,19 @@ class SmartMonitorEngine:
                 position_cost = float(task_config.get('position_cost', 0) or 0)
             if position_quantity is None:
                 position_quantity = int(task_config.get('position_quantity', 0) or 0)
+            if position_date is None:
+                position_date = self._normalize_position_date(task_config.get('position_date'))
             if session_info is None:
                 session_info = self.llm_client.get_trading_session()
+            if can_sell_today is None:
+                can_sell_today = self._can_sell_today(
+                    has_position=bool(has_position),
+                    position_date=position_date,
+                    market_data=market_data,
+                )
+            if action == "SELL" and has_position and not can_sell_today:
+                self.logger.info("[%s] 当天买入受T+1限制，跳过卖出通知", stock_code)
+                return
 
             current_price = _to_float(market_data.get('current_price'))
             profit_loss_pct = None

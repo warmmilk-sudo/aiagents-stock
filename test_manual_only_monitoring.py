@@ -211,6 +211,72 @@ class ManualOnlyMonitoringTests(unittest.TestCase):
         self.assertEqual(fake_db.saved_decisions[0]["execution_mode"], "manual_only")
         self.assertEqual(fake_db.saved_decisions[0]["action_status"], "pending")
 
+    def test_same_day_buy_position_does_not_create_sell_pending_action_or_notification(self):
+        fake_db = FakeSmartMonitorDB()
+        notifications = []
+
+        with patch.object(smart_monitor_engine_module, "SmartMonitorDB", return_value=fake_db), patch.object(
+            smart_monitor_engine_module.event_bus,
+            "subscribe",
+            return_value=None,
+        ):
+            engine = smart_monitor_engine_module.SmartMonitorEngine(llm_api_key="stub")
+        engine.lifecycle_service.asset_service = fake_db.asset_service
+
+        engine.llm_client.get_trading_session = lambda: {
+            "session": "上午盘",
+            "can_trade": True,
+            "recommendation": "",
+        }
+        engine.data_fetcher.get_comprehensive_data = lambda stock_code: {
+            "name": "贵州茅台",
+            "current_price": 1520.0,
+            "change_pct": -0.85,
+            "change_amount": -13.0,
+            "volume": 123456,
+            "turnover_rate": 0.75,
+            "realtime_freshness": {"asof_time": "2026-04-15 10:30:00"},
+        }
+        engine.llm_client.analyze_stock_and_decide = lambda **kwargs: {
+            "success": True,
+            "decision": {
+                "action": "SELL",
+                "action_detail": "减仓",
+                "action_ratio_pct": 50,
+                "confidence": 82,
+                "reasoning": "盘中转弱，尝试减仓。",
+                "position_size_pct": 20,
+                "stop_loss_pct": 5,
+                "take_profit_pct": 12,
+                "risk_level": "中",
+                "key_price_levels": {"support": 1500, "resistance": 1560},
+                "monitor_levels": {
+                    "entry_min": 1505,
+                    "entry_max": 1515,
+                    "take_profit": 1702.4,
+                    "stop_loss": 1444.0,
+                },
+            },
+        }
+        engine._send_notification = lambda **kwargs: notifications.append(kwargs)
+        engine._sync_runtime_thresholds = lambda **kwargs: True
+
+        result = engine.analyze_stock(
+            "600519",
+            notify=True,
+            has_position=True,
+            position_cost=1500,
+            position_quantity=100,
+            position_date="2026-04-15",
+            account_name="测试账户",
+        )
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["decision"]["action"], "HOLD")
+        self.assertIsNone(result["pending_action"])
+        self.assertEqual(fake_db.pending_actions, [])
+        self.assertEqual(notifications, [])
+
     def test_same_action_as_latest_decision_does_not_create_new_message(self):
         fake_db = FakeSmartMonitorDB()
         notifications = []
@@ -351,7 +417,7 @@ class ManualOnlyMonitoringTests(unittest.TestCase):
         self.assertTrue(fake_db.saved_decisions[0]["decision_context"]["thresholds_changed"])
         self.assertIn("预警价格区间已更新", fake_db.saved_decisions[0]["decision_context"]["delta_summary"])
 
-    def test_same_day_hold_without_material_change_reuses_previous_decision(self):
+    def test_same_day_hold_without_material_change_still_calls_llm(self):
         fake_db = FakeSmartMonitorDB()
         fake_db.latest_decision = {
             "action": "HOLD",
@@ -412,9 +478,35 @@ class ManualOnlyMonitoringTests(unittest.TestCase):
                 "asof_time": "2026-04-13 10:30:00",
             },
         }
-        engine.llm_client.analyze_stock_and_decide = lambda **kwargs: self.fail("should reuse previous HOLD without calling llm")
-        engine._send_notification = lambda **kwargs: self.fail("reused hold should not notify")
-        engine._sync_runtime_thresholds = lambda **kwargs: self.fail("reused hold without threshold change should not sync")
+        llm_calls = []
+
+        def analyze_stock_and_decide(**kwargs):
+            llm_calls.append(kwargs)
+            return {
+                "success": True,
+                "decision": {
+                    "action": "HOLD",
+                    "action_detail": "持有",
+                    "action_ratio_pct": None,
+                    "confidence": 72,
+                    "reasoning": "盘中结构未见明确破位，继续观察。",
+                    "position_size_pct": 20,
+                    "stop_loss_pct": 5,
+                    "take_profit_pct": 10,
+                    "risk_level": "medium",
+                    "key_price_levels": {"support": 1498.0, "resistance": 1588.0, "stop_loss": 1452.0},
+                    "monitor_levels": {
+                        "entry_min": 1498.0,
+                        "entry_max": 1506.0,
+                        "take_profit": 1588.0,
+                        "stop_loss": 1452.0,
+                    },
+                },
+            }
+
+        engine.llm_client.analyze_stock_and_decide = analyze_stock_and_decide
+        engine._send_notification = lambda **kwargs: self.fail("hold without decision change should not notify")
+        engine._sync_runtime_thresholds = lambda **kwargs: self.fail("hold without threshold change should not sync")
 
         result = engine.analyze_stock(
             "600519",
@@ -424,7 +516,7 @@ class ManualOnlyMonitoringTests(unittest.TestCase):
         )
 
         self.assertTrue(result["success"])
-        self.assertTrue(result["reused_previous_decision"])
+        self.assertEqual(len(llm_calls), 1)
         self.assertFalse(result["decision_changed"])
         self.assertFalse(result["action_changed"])
         self.assertFalse(result["thresholds_changed"])

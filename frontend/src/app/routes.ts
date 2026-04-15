@@ -7,8 +7,8 @@ export interface AppRouteItem {
 
 export const routeItems: AppRouteItem[] = [
   { path: "/research/deep-analysis", title: "深度分析", group: "投资管理" },
-  { path: "/investment/portfolio", title: "持仓分析", group: "投资管理" },
-  { path: "/research/history", title: "分析历史", group: "投资管理" },
+  { path: "/investment/portfolio", title: "持仓总览", group: "投资管理" },
+  { path: "/research/history", title: "股票档案", group: "投资管理" },
   { path: "/investment/smart-monitor", title: "智能盯盘", group: "投资管理" },
   {
     path: "/investment/price-alerts",

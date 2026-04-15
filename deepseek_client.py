@@ -449,3 +449,64 @@ class DeepSeekClient:
             stock_info=stock_info,
             has_position=has_position,
         )
+
+
+class EmbeddingClient:
+    """Lightweight client for text embedding via an OpenAI-compatible API.
+
+    By default uses the SiliconFlow BGE-m3 endpoint configured through
+    ``EMBEDDING_*`` env vars in ``config.py``.
+    """
+
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
+        model: Optional[str] = None,
+    ):
+        self.api_key = api_key or config.EMBEDDING_API_KEY
+        self.base_url = base_url or config.EMBEDDING_BASE_URL
+        self.model = model or config.EMBEDDING_MODEL_NAME
+        self._client: Optional[openai.OpenAI] = None
+
+    def _get_client(self) -> openai.OpenAI:
+        if self._client is None:
+            if not self.api_key:
+                raise RuntimeError("EMBEDDING_API_KEY is not configured")
+            self._client = openai.OpenAI(
+                api_key=self.api_key,
+                base_url=self.base_url,
+                timeout=30,
+            )
+        return self._client
+
+    @property
+    def is_available(self) -> bool:
+        return bool(self.api_key and self.base_url and self.model)
+
+    def get_embedding(self, text: str) -> List[float]:
+        """Return the embedding vector for *text*.
+
+        Raises ``RuntimeError`` when the API key is missing or the
+        upstream request fails.
+        """
+        client = self._get_client()
+        response = client.embeddings.create(
+            model=self.model,
+            input=text,
+        )
+        return response.data[0].embedding
+
+    def get_embeddings(self, texts: List[str]) -> List[List[float]]:
+        """Batch variant — returns one vector per input text."""
+        if not texts:
+            return []
+        client = self._get_client()
+        response = client.embeddings.create(
+            model=self.model,
+            input=texts,
+        )
+        # Sort by index to guarantee order matches input
+        sorted_data = sorted(response.data, key=lambda d: d.index)
+        return [item.embedding for item in sorted_data]
+

@@ -12,7 +12,7 @@ from investment_action_utils import extract_first_number, resolve_entry_range
 
 SCOPE_LABELS = {
     "research": "深度分析",
-    "portfolio": "持仓分析",
+    "portfolio": "持仓总览",
 }
 
 SOURCE_LABELS = {
@@ -326,7 +326,7 @@ class AnalysisHistoryService:
         return any(lowered in item for item in haystacks)
 
     def list_scope_options(self) -> List[str]:
-        return ["全部", "深度分析", "持仓分析"]
+        return ["全部", "深度分析", "持仓总览"]
 
     def list_portfolio_state_options(self) -> List[str]:
         return ["全部", "在持仓", "未持仓"]
@@ -349,7 +349,7 @@ class AnalysisHistoryService:
         normalized_scope = {
             "全部": "all",
             "深度分析": "research",
-            "持仓分析": "portfolio",
+            "持仓总览": "portfolio",
         }.get(scope, scope)
         normalized_scope = normalized_scope if normalized_scope in {"all", "research", "portfolio"} else "all"
         normalized_portfolio_state = {
@@ -412,6 +412,68 @@ class AnalysisHistoryService:
 
     def delete_record(self, record_id: int) -> bool:
         return self.repository.delete_record(record_id)
+
+    def list_stock_summaries(
+        self,
+        *,
+        portfolio_state: str = "全部",
+        account_name: Optional[str] = None,
+        search_term: str = "",
+    ) -> List[Dict]:
+        """
+        Group all analysis history by stock symbol.
+        Returns one entry per stock with aggregate info.
+        """
+        records = self.list_records(
+            portfolio_state=portfolio_state,
+            account_name=account_name,
+            search_term=search_term,
+        )
+        stock_map: Dict[str, Dict] = {}
+        for record in records:
+            symbol = record.get("symbol", "")
+            if not symbol:
+                continue
+            if symbol not in stock_map:
+                stock_map[symbol] = {
+                    "symbol": symbol,
+                    "stock_name": record.get("stock_name", ""),
+                    "latest_analysis_date": record.get("analysis_time_text", ""),
+                    "latest_decision_label": record.get("decision_label", ""),
+                    "latest_analysis_scope": record.get("analysis_scope", ""),
+                    "latest_analysis_scope_label": record.get("analysis_scope_label", ""),
+                    "latest_source_label": record.get("analysis_source_label", ""),
+                    "latest_summary": record.get("summary", ""),
+                    "portfolio_state_label": record.get("portfolio_state_label", ""),
+                    "is_in_portfolio": record.get("is_in_portfolio", False),
+                    "linked_asset_status_label": record.get("linked_asset_status_label", ""),
+                    "report_count": 0,
+                    "account_name": record.get("account_name", ""),
+                    "first_analysis_date": record.get("analysis_time_text", ""),
+                    "research_report_count": 0,
+                    "portfolio_report_count": 0,
+                }
+            stock_map[symbol]["report_count"] += 1
+            stock_map[symbol]["first_analysis_date"] = record.get("analysis_time_text", "")
+            if record.get("analysis_scope") == "portfolio":
+                stock_map[symbol]["portfolio_report_count"] += 1
+            else:
+                stock_map[symbol]["research_report_count"] += 1
+        return list(stock_map.values())
+
+    def list_records_by_symbol(
+        self,
+        symbol: str,
+        *,
+        portfolio_state: str = "全部",
+        account_name: Optional[str] = None,
+    ) -> List[Dict]:
+        """Return all analysis records for a specific stock symbol."""
+        records = self.list_records(
+            portfolio_state=portfolio_state,
+            account_name=account_name,
+        )
+        return [r for r in records if r.get("symbol", "").upper() == symbol.upper()]
 
 
 analysis_history_service = AnalysisHistoryService()

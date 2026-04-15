@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import concurrent.futures
 import logging
+import threading
 import time
 from datetime import date, datetime, timedelta
 from functools import lru_cache
@@ -84,6 +85,9 @@ PORTFOLIO_SCHEDULER_TASK_TYPE = "batch"
 SMART_MONITOR_BASELINE_REFRESH_TASK_TYPE = "smart_monitor_baseline_refresh"
 SMART_MONITOR_INTRADAY_INTERVAL_KEY = "smart_monitor_intraday_decision_interval_minutes"
 SMART_MONITOR_REALTIME_INTERVAL_KEY = "smart_monitor_realtime_monitor_interval_minutes"
+SMART_MONITOR_RUN_ONCE_RETRY_LIMIT = 2
+SMART_MONITOR_RUN_ONCE_RETRY_DELAY_SECONDS = 1.0
+_SMART_MONITOR_RUN_ONCE_LOCK = threading.Lock()
 
 
 def _clamp_int(value: Any, minimum: int, maximum: int, default: int) -> int:
@@ -469,7 +473,7 @@ def submit_portfolio_analysis_task(
             current=0,
             total=0,
             step_status="analyzing",
-            message=f"正在准备 {account_label} 的持仓分析任务...",
+            message=f"正在准备 {account_label} 的持仓总览任务...",
         )
 
         def progress_callback(current, total, code, status):
@@ -510,7 +514,7 @@ def submit_portfolio_analysis_task(
             account_name=normalized_account,
         )
         if not analysis_results.get("success"):
-            raise RuntimeError(str(analysis_results.get("error") or "持仓分析失败"))
+            raise RuntimeError(str(analysis_results.get("error") or "持仓总览失败"))
 
         success_rows = [
             {
@@ -536,7 +540,7 @@ def submit_portfolio_analysis_task(
             current=total,
             total=total or 1,
             step_status="success",
-            message=f"{account_label} 持仓分析完成：成功 {success_count}，失败 {failed_count}，已写入 {len(saved_ids)} 条历史",
+            message=f"{account_label} 持仓总览完成：成功 {success_count}，失败 {failed_count}，已写入 {len(saved_ids)} 条历史",
         )
         return {
             "mode": "batch",
@@ -2241,6 +2245,50 @@ def delete_analysis_record(record_id: int) -> bool:
     return analysis_repository.delete_record(record_id)
 
 
+def list_analysis_history_grouped(
+    *,
+    portfolio_state: str = "全部",
+    account_name: Optional[str] = None,
+    search_term: str = "",
+) -> list[dict[str, Any]]:
+    """Return analysis history grouped by stock symbol."""
+    summaries = analysis_history_service.list_stock_summaries(
+        portfolio_state=portfolio_state,
+        account_name=account_name,
+        search_term=search_term,
+    )
+    # Enrich with memory availability info
+    try:
+        from agent_memory_db import agent_memory_db
+        stocks_with_memory = set(agent_memory_db.list_stocks_with_memory())
+    except Exception:
+        stocks_with_memory = set()
+
+    for item in summaries:
+        item["has_memory"] = item.get("symbol", "") in stocks_with_memory
+    return summaries
+
+
+def list_analysis_history_by_symbol(
+    symbol: str,
+    *,
+    portfolio_state: str = "全部",
+    account_name: Optional[str] = None,
+) -> list[dict[str, Any]]:
+    """Return all analysis records for a specific stock symbol."""
+    records = analysis_history_service.list_records_by_symbol(
+        symbol,
+        portfolio_state=portfolio_state,
+        account_name=account_name,
+    )
+    result: list[dict[str, Any]] = []
+    for record in records:
+        item = dict(record)
+        item["action_payload"] = build_action_payload_for_record(item, item.get("analysis_source") or "history")
+        result.append(item)
+    return result
+
+
 def list_followup_assets(*, status_filter: str = "全部", search_term: str = "") -> list[dict[str, Any]]:
     status_map = {
         "全部": (STATUS_WATCHLIST, STATUS_RESEARCH),
@@ -2712,6 +2760,40 @@ def run_manual_smart_monitor_analysis(payload: dict[str, Any]) -> dict[str, Any]
     )
 
 
+def _run_smart_monitor_item_once_with_retry(
+    orchestrator: Any,
+    item_id: int,
+    *,
+    item_label: str,
+    retry_limit: int = SMART_MONITOR_RUN_ONCE_RETRY_LIMIT,
+    retry_delay_seconds: float = SMART_MONITOR_RUN_ONCE_RETRY_DELAY_SECONDS,
+) -> tuple[bool, int]:
+    attempts = 0
+    last_error = ""
+    while attempts <= retry_limit:
+        attempts += 1
+        try:
+            if orchestrator.run_item_once(item_id):
+                if attempts > 1:
+                    logger.info("[%s] 第 %s 次执行成功", item_label, attempts)
+                return True, attempts
+            last_error = "执行返回失败"
+        except Exception as exc:
+            last_error = str(exc)
+        if attempts <= retry_limit:
+            logger.warning(
+                "[%s] 执行失败，准备重试 (%s/%s): %s",
+                item_label,
+                attempts,
+                retry_limit + 1,
+                last_error,
+            )
+            time.sleep(min(retry_delay_seconds * attempts, 2.0))
+
+    logger.error("[%s] 重试后仍执行失败: %s", item_label, last_error or "unknown_error")
+    return False, attempts
+
+
 def run_smart_monitor_tasks_once(
     *,
     enabled_only: bool = True,
@@ -2729,41 +2811,58 @@ def run_smart_monitor_tasks_once(
         "task_total": 0,
         "task_success": 0,
         "task_failed": 0,
+        "task_retry_total": 0,
         "price_alert_total": 0,
         "price_alert_success": 0,
         "price_alert_failed": 0,
+        "price_alert_retry_total": 0,
         "account_name": account_name or "",
         "has_position": has_position,
         "enabled_only": enabled_only,
     }
 
-    for task in tasks:
-        task_id = int(task.get("id") or 0)
-        if task_id <= 0:
-            continue
-        summary["task_total"] += 1
-        if orchestrator.run_item_once(task_id):
-            summary["task_success"] += 1
-        else:
-            summary["task_failed"] += 1
+    with _SMART_MONITOR_RUN_ONCE_LOCK:
+        for task in sorted(tasks, key=lambda item: int(item.get("id") or 0)):
+            task_id = int(task.get("id") or 0)
+            if task_id <= 0:
+                continue
+            summary["task_total"] += 1
+            task_code = str(task.get("stock_code") or task.get("symbol") or task_id)
+            task_success, task_attempts = _run_smart_monitor_item_once_with_retry(
+                orchestrator,
+                task_id,
+                item_label=f"盘中决策 {task_code}",
+            )
+            summary["task_retry_total"] += max(0, task_attempts - 1)
+            if task_success:
+                summary["task_success"] += 1
+            else:
+                summary["task_failed"] += 1
 
-        alert_item = smart_monitor_db.monitoring_repository.get_item_by_symbol(
-            task.get("stock_code") or "",
-            monitor_type="price_alert",
-            managed_only=True if task.get("managed_by_portfolio") else None,
-            account_name=task.get("account_name"),
-            asset_id=task.get("asset_id"),
-            portfolio_stock_id=task.get("portfolio_stock_id"),
-        )
-        alert_id = int((alert_item or {}).get("id") or 0)
-        if alert_id <= 0 or alert_id in processed_alert_ids:
-            continue
-        processed_alert_ids.add(alert_id)
-        summary["price_alert_total"] += 1
-        if orchestrator.run_item_once(alert_id):
-            summary["price_alert_success"] += 1
-        else:
-            summary["price_alert_failed"] += 1
+            alert_item = smart_monitor_db.monitoring_repository.get_item_by_symbol(
+                task.get("stock_code") or "",
+                monitor_type="price_alert",
+                managed_only=True if task.get("managed_by_portfolio") else None,
+                account_name=task.get("account_name"),
+                asset_id=task.get("asset_id"),
+                portfolio_stock_id=task.get("portfolio_stock_id"),
+            )
+            alert_id = int((alert_item or {}).get("id") or 0)
+            if alert_id <= 0 or alert_id in processed_alert_ids:
+                continue
+            processed_alert_ids.add(alert_id)
+            summary["price_alert_total"] += 1
+            alert_label = str(alert_item.get("symbol") or task.get("stock_code") or alert_id) if isinstance(alert_item, dict) else str(task.get("stock_code") or alert_id)
+            alert_success, alert_attempts = _run_smart_monitor_item_once_with_retry(
+                orchestrator,
+                alert_id,
+                item_label=f"价格监控 {alert_label}",
+            )
+            summary["price_alert_retry_total"] += max(0, alert_attempts - 1)
+            if alert_success:
+                summary["price_alert_success"] += 1
+            else:
+                summary["price_alert_failed"] += 1
 
     scheduler = monitor_service.get_scheduler()
     summary["service_status"] = monitor_service.get_status()
@@ -2776,7 +2875,11 @@ def run_smart_monitor_task_once(task_id: int) -> dict[str, Any]:
     if not item or item.get("monitor_type") != "ai_task":
         raise ValueError("未找到智能盯盘任务")
 
-    success = bool(monitor_service.orchestrator.run_item_once(task_id))
+    success, _attempts = _run_smart_monitor_item_once_with_retry(
+        monitor_service.orchestrator,
+        task_id,
+        item_label=f"盘中决策 {item.get('symbol') or task_id}",
+    )
     refreshed = smart_monitor_db.monitoring_repository.get_item(task_id) or item
     return {
         "task_id": task_id,
@@ -3105,8 +3208,8 @@ def restore_database_backup(backup_name: str) -> dict[str, Any]:
     return database_admin.restore_backup(backup_name)
 
 
-def cleanup_database_history(days: int) -> dict[str, Any]:
-    return database_admin.cleanup_history(days)
+def cleanup_database_history(days: int, *, include_analysis_history: bool = False) -> dict[str, Any]:
+    return database_admin.cleanup_history(days, include_analysis_history=include_analysis_history)
 
 
 def delete_price_alert(stock_id: int) -> bool:
@@ -3216,7 +3319,7 @@ def run_portfolio_scheduler_once() -> dict[str, Any]:
     if active_task:
         return {
             "success": False,
-            "message": "当前已有持仓分析任务正在执行或排队，请等待当前任务完成。",
+            "message": "当前已有持仓总览任务正在执行或排队，请等待当前任务完成。",
             "task": active_task,
             "status": get_portfolio_scheduler_status(),
         }

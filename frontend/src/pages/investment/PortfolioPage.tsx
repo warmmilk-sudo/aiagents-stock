@@ -1,19 +1,19 @@
 import { FormEvent, Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { AnalystSelector } from "../../components/common/AnalystSelector";
 import { ModuleCard } from "../../components/common/ModuleCard";
 import { DoughnutChart } from "../../components/common/DoughnutChart";
 import { PageFeedback } from "../../components/common/PageFeedback";
 import { PageFrame } from "../../components/common/PageFrame";
 import { SchedulerControl } from "../../components/common/SchedulerControl";
 import { TaskProgressBar } from "../../components/common/TaskProgressBar";
-import { analystKeysToConfig, normalizeAnalystKeys, type AnalystKey } from "../../constants/analysts";
+import { analystConfigToKeys, analystKeysToConfig, normalizeAnalystKeys } from "../../constants/analysts";
 import { DEFAULT_SCHEDULER_TIME } from "../../constants/scheduler";
 import { usePageFeedback } from "../../hooks/usePageFeedback";
 import { usePollingLoader } from "../../hooks/usePollingLoader";
 import { StatusBadge } from "../../components/common/StatusBadge";
 import { ApiRequestError, apiFetch, apiFetchCached } from "../../lib/api";
 import { decodeIntent } from "../../lib/intents";
+import { useDeepAnalysisStore } from "../../stores/deepAnalysisStore";
 import { usePortfolioStore, type PortfolioPageCache } from "../../stores/portfolioStore";
 import { useSmartMonitorStore } from "../../stores/smartMonitorStore";
 import styles from "../ConsolePage.module.scss";
@@ -140,7 +140,7 @@ const sectionTabs = [
 ];
 
 const UI = {
-  title: "持仓分析",
+  title: "持仓总览",
   addPosition: "新增持仓",
   deletePosition: "删除",
   noWarnings: "当前没有风险提醒。",
@@ -542,6 +542,7 @@ const PortfolioHoldingsTable = memo(function PortfolioHoldingsTable({
 export function PortfolioPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
+  const deepAnalysisAnalysts = useDeepAnalysisStore((state) => state.analysts);
   const holdingsAnalysisTaskId = usePortfolioStore((state) => state.holdingsAnalysisTaskId);
   const schedulerTaskId = usePortfolioStore((state) => state.schedulerTaskId);
   const setHoldingsAnalysisTaskId = usePortfolioStore((state) => state.setHoldingsAnalysisTaskId);
@@ -556,9 +557,6 @@ export function PortfolioPage() {
   const [positionForm, setPositionForm] = useState(defaultPositionForm);
   const [tradeForm, setTradeForm] = useState(defaultTradeForm);
   const [schedulerTimes, setSchedulerTimes] = useState(() => cachedPage?.schedulerTimes ?? DEFAULT_SCHEDULER_TIME);
-  const [schedulerAnalysts, setSchedulerAnalysts] = useState<AnalystKey[]>(
-    () => normalizeAnalystKeys((cachedPage?.scheduler as SchedulerStatus | null)?.selected_agents),
-  );
   const [activeEditor, setActiveEditor] = useState<EditorPanel>(null);
   const [editingStockId, setEditingStockId] = useState<number | null>(null);
   const [activeHoldingMenuId, setActiveHoldingMenuId] = useState<number | null>(null);
@@ -578,11 +576,14 @@ export function PortfolioPage() {
   const holdingsTerminalTaskRef = useRef<string>("");
   const schedulerTerminalTaskRef = useRef<string>("");
   const pageLoadRequestRef = useRef(0);
+  const deepAnalysisSelectedAnalysts = useMemo(
+    () => normalizeAnalystKeys(analystConfigToKeys(deepAnalysisAnalysts)),
+    [deepAnalysisAnalysts],
+  );
 
   const applySchedulerState = (schedulerData: SchedulerStatus | null) => {
     setScheduler(schedulerData);
     setSchedulerTimes((schedulerData?.schedule_times ?? [])[0] || DEFAULT_SCHEDULER_TIME);
-    setSchedulerAnalysts(normalizeAnalystKeys(schedulerData?.selected_agents));
   };
 
   const setSchedulerRunningOptimistically = (running: boolean) => {
@@ -884,7 +885,7 @@ export function PortfolioPage() {
         </div>
         <TaskProgressBar
           current={holdingsAnalysisTask?.current ?? 0}
-          message={holdingsAnalysisTask?.message || "等待持仓分析任务状态..."}
+          message={holdingsAnalysisTask?.message || "等待持仓总览任务状态..."}
           tone={taskProgressTone(holdingsAnalysisTask)}
           total={holdingsTaskSummary?.total || holdingsAnalysisTask?.total || 0}
         />
@@ -934,14 +935,14 @@ export function PortfolioPage() {
       <div className={styles.moduleSection}>
         <div className={styles.noticeMeta}>
           <div>
-            <strong>持仓分析任务进度</strong>
+            <strong>持仓总览任务进度</strong>
             <div className={styles.muted}>{schedulerTask?.label || "等待任务状态..."}</div>
           </div>
           <StatusBadge label={schedulerTaskStatus.label} tone={schedulerTaskStatus.tone} />
         </div>
         <TaskProgressBar
           current={schedulerTask?.current ?? 0}
-          message={schedulerTask?.message || "等待持仓分析任务状态..."}
+          message={schedulerTask?.message || "等待持仓总览任务状态..."}
           tone={taskProgressTone(schedulerTask)}
           total={schedulerTaskSummary?.total || schedulerTask?.total || 0}
         />
@@ -1062,7 +1063,7 @@ export function PortfolioPage() {
         body: JSON.stringify({
           batch_mode: "顺序分析",
           max_workers: 1,
-          analysts: analystKeysToConfig(normalizeAnalystKeys(scheduler?.selected_agents)),
+          analysts: deepAnalysisAnalysts,
         }),
       });
       setHoldingsAnalysisTaskId(taskData.task_id);
@@ -1278,7 +1279,7 @@ export function PortfolioPage() {
 
   const saveScheduler = async () => {
     clear();
-    if (!schedulerAnalysts.length) {
+    if (!deepAnalysisSelectedAnalysts.length) {
       showError("请至少选择一位分析师。");
       return;
     }
@@ -1288,7 +1289,7 @@ export function PortfolioPage() {
         method: "PUT",
         body: JSON.stringify({
           schedule_times: [schedulerTimes.trim() || DEFAULT_SCHEDULER_TIME],
-          selected_agents: schedulerAnalysts,
+          selected_agents: deepAnalysisSelectedAnalysts,
         }),
       });
       applySchedulerState(nextScheduler);
@@ -1699,7 +1700,7 @@ export function PortfolioPage() {
         ) : null}
 
         {section === "scheduler" ? (
-          <ModuleCard hideTitleOnMobile title="定时分析" summary="执行时间和分析师配置统一在这里维护；定时任务固定按顺序分析执行。">
+          <ModuleCard hideTitleOnMobile title="定时分析" summary="这里只维护执行时间；分析师配置直接跟随深度分析页面的选择。">
             <SchedulerControl
               enabled={Boolean(scheduler?.is_running)}
               label="启用定时分析"
@@ -1720,12 +1721,12 @@ export function PortfolioPage() {
                       />
                     </div>
                   </div>
-                  <div className={styles.field}>
-                    <label>分析师配置</label>
-                    <AnalystSelector
-                      onChange={(next) => setSchedulerAnalysts(normalizeAnalystKeys(next))}
-                      value={schedulerAnalysts}
-                    />
+                  <div className={styles.noticeCard}>
+                    <div className={styles.noticeMeta}>
+                      <strong>分析师配置</strong>
+                      <StatusBadge label="跟随深度分析" tone="default" />
+                    </div>
+                    <div>定时任务会直接使用深度分析页面里保存的分析师组合，不再单独维护一套持仓总览配置。</div>
                   </div>
                   <div className={styles.noticeCard}>
                     <div className={styles.noticeMeta}>

@@ -8,7 +8,6 @@ import { SchedulerControl } from "../../components/common/SchedulerControl";
 import { StatusBadge } from "../../components/common/StatusBadge";
 import { usePageFeedback } from "../../hooks/usePageFeedback";
 import { usePollingLoader } from "../../hooks/usePollingLoader";
-import { FormattedReport } from "../../components/research/FormattedReport";
 import { ApiRequestError, apiFetch, buildQuery } from "../../lib/api";
 import { DEFAULT_ACCOUNT_NAME } from "../../lib/accounts";
 import { formatDateTime } from "../../lib/datetime";
@@ -57,8 +56,19 @@ interface DecisionItem {
   asset_id?: number | null;
   portfolio_stock_id?: number | null;
   action?: string;
+  action_detail?: string;
+  action_ratio_pct?: number | null;
+  trade_intent?: string | null;
+  current_position_pct?: number | null;
+  target_position_pct?: number | null;
+  position_delta_pct?: number | null;
   decision_time?: string;
   reasoning?: string;
+  risk_level?: string;
+  previous_action?: string;
+  previous_action_detail?: string;
+  previous_action_ratio_pct?: number | null;
+  delta_summary?: string;
   monitor_levels?: {
     entry_min?: number;
     entry_max?: number;
@@ -182,13 +192,53 @@ const notificationToneClass: Record<NotificationTone, string> = {
 
 function decisionBadge(
   value?: string,
+  detail?: string,
+  actionRatioPct?: number | null,
+  riskLevel?: string,
   isHolding = false,
 ): { label: string; tone: "success" | "danger" | "warning" | "default" } {
   const normalized = String(value || "").toLowerCase();
-  if (normalized === "buy") return { label: isHolding ? "加仓" : "买入", tone: "success" };
-  if (normalized === "sell") return { label: isHolding ? "卖出" : "卖出信号", tone: "danger" };
-  if (normalized === "hold") return { label: isHolding ? "持有" : "观望", tone: "warning" };
-  return { label: value || "未知", tone: "default" };
+  const normalizedDetail = String(detail || "").trim();
+  const ratioText =
+    typeof actionRatioPct === "number" && Number.isFinite(actionRatioPct) && actionRatioPct > 0 && normalized !== "hold"
+      ? `${Number.isInteger(actionRatioPct) ? actionRatioPct : Number(actionRatioPct.toFixed(1))}%`
+      : "";
+  const riskText = (() => {
+    const normalizedRisk = String(riskLevel || "").trim().toLowerCase();
+    if (normalizedRisk === "low" || normalizedRisk === "低") return "低风险";
+    if (normalizedRisk === "medium" || normalizedRisk === "中") return "中风险";
+    if (normalizedRisk === "high" || normalizedRisk === "高") return "高风险";
+    return "";
+  })();
+  const baseLabel =
+    normalizedDetail
+    || (normalized === "buy" ? (isHolding ? "加仓" : "建仓") : "")
+    || (normalized === "sell" ? "卖出" : "")
+    || (normalized === "hold" ? (isHolding ? "持有" : "观望") : "")
+    || value
+    || "未知";
+  const actionText = ratioText ? `${baseLabel}${ratioText}` : baseLabel;
+  const label = riskText ? `${actionText} | ${riskText}` : actionText;
+  if (normalized === "buy") return { label, tone: "success" };
+  if (normalized === "sell") return { label, tone: "danger" };
+  if (normalized === "hold") return { label, tone: "warning" };
+  return { label, tone: "default" };
+}
+
+function formatDecisionSignature(detail?: string, action?: string, actionRatioPct?: number | null): string {
+  const label = String(detail || action || "").trim();
+  const ratioText =
+    typeof actionRatioPct === "number" && Number.isFinite(actionRatioPct) && actionRatioPct > 0 && String(action || "").toUpperCase() !== "HOLD"
+      ? `${Number.isInteger(actionRatioPct) ? actionRatioPct : Number(actionRatioPct.toFixed(1))}%`
+      : "";
+  return `${label}${ratioText}`.trim();
+}
+
+function formatDecisionReasoning(item: DecisionItem): string {
+  const value = item.reasoning;
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  if (!text) return "暂无盘中决策内容";
+  return text.replace(/…(?:（已截断）)?$/u, "。");
 }
 
 const formatThresholdValue = (value?: unknown): string => {
@@ -289,7 +339,13 @@ const isDecisionHolding = (decision: DecisionItem, tasks: SmartMonitorTask[]) =>
   return decision.portfolio_stock_id != null;
 };
 
-const isSellDecision = (decision: DecisionItem) => String(decision.action || "").toUpperCase() === "SELL";
+const isSellDecision = (decision: DecisionItem) => {
+  const tradeIntent = String(decision.trade_intent || "").toLowerCase();
+  if (tradeIntent === "reduce" || tradeIntent === "exit") {
+    return true;
+  }
+  return String(decision.action || "").toUpperCase() === "SELL";
+};
 
 const isVisibleDecision = (decision: DecisionItem, tasks: SmartMonitorTask[]) =>
   isDecisionHolding(decision, tasks) || !isSellDecision(decision);
@@ -962,7 +1018,7 @@ export function SmartMonitorPage() {
                 {activeResultPanel === "decisions"
                   ? (
                     visibleDecisions.map((item) => {
-                      const badge = decisionBadge(item.action, isDecisionHolding(item, tasks));
+                      const badge = decisionBadge(item.action, item.action_detail, item.action_ratio_pct, item.risk_level, isDecisionHolding(item, tasks));
                       const toneClass =
                         badge.tone === "success"
                           ? styles.noticeSuccess
@@ -978,7 +1034,7 @@ export function SmartMonitorPage() {
                           </div>
                           <strong>{stockDisplayName(item.stock_name, item.stock_code)}</strong>
                           <small className={styles.muted}>{formatDateTime(item.decision_time, "暂无时间")}</small>
-                          <FormattedReport content={item.reasoning || "暂无盘中决策内容"} />
+                          <div className={styles.decisionReasoning}>{formatDecisionReasoning(item)}</div>
                         </div>
                       );
                     })

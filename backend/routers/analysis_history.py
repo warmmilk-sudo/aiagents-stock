@@ -12,6 +12,42 @@ from backend import services
 router = APIRouter(prefix="/api/analysis-history", tags=["analysis-history"])
 
 
+@router.get("/stocks")
+def list_history_grouped(
+    request: Request,
+    portfolio_state: str = "全部",
+    account_name: Optional[str] = None,
+    search_term: str = "",
+) -> dict:
+    """Return analysis history grouped by stock (one entry per symbol)."""
+    require_session(request)
+    return success_payload(
+        services.list_analysis_history_grouped(
+            portfolio_state=portfolio_state,
+            account_name=account_name,
+            search_term=search_term,
+        )
+    )
+
+
+@router.get("/stocks/{symbol}")
+def list_history_by_symbol(
+    request: Request,
+    symbol: str,
+    portfolio_state: str = "全部",
+    account_name: Optional[str] = None,
+) -> dict:
+    """Return all analysis records for a specific stock symbol."""
+    require_session(request)
+    return success_payload(
+        services.list_analysis_history_by_symbol(
+            symbol=symbol,
+            portfolio_state=portfolio_state,
+            account_name=account_name,
+        )
+    )
+
+
 @router.get("")
 def list_history(
     request: Request,
