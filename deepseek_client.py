@@ -8,6 +8,7 @@ import openai
 
 import config
 from final_decision_calibration import calibrate_final_decision
+from investment_action_utils import build_holding_strategy_prompt_block
 from model_routing import ModelTier, describe_model_selection, resolve_model_name
 from prompt_registry import build_messages
 
@@ -401,8 +402,14 @@ class DeepSeekClient:
         
         return self.call_api(messages, max_tokens=6000, tier=ModelTier.REASONING)
     
-    def final_decision(self, comprehensive_discussion: str, stock_info: Dict, 
-                      indicators: Dict) -> Dict[str, Any]:
+    def final_decision(
+        self,
+        comprehensive_discussion: str,
+        stock_info: Dict,
+        indicators: Dict,
+        strategy_context: Optional[Dict[str, Any]] = None,
+        is_initial_holding_analysis: bool = False,
+    ) -> Dict[str, Any]:
         """最终投资决策"""
         has_position = bool(stock_info.get("has_position"))
         position_status = "已持仓" if has_position else "未持仓"
@@ -416,6 +423,11 @@ class DeepSeekClient:
             position_status=position_status,
             rating_options=rating_options,
             comprehensive_discussion=comprehensive_discussion,
+            holding_strategy_prompt_block=build_holding_strategy_prompt_block(
+                has_position=has_position,
+                strategy_context=strategy_context,
+                is_initial_holding_analysis=is_initial_holding_analysis,
+            ),
             ma20=indicators.get("ma20", "N/A"),
             bb_upper=indicators.get("bb_upper", "N/A"),
             bb_lower=indicators.get("bb_lower", "N/A"),
@@ -509,4 +521,3 @@ class EmbeddingClient:
         # Sort by index to guarantee order matches input
         sorted_data = sorted(response.data, key=lambda d: d.index)
         return [item.embedding for item in sorted_data]
-

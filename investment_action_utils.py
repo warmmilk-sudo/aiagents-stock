@@ -293,6 +293,52 @@ def normalize_strategy_context(strategy_context: Optional[Dict[str, Any]]) -> Di
     return normalized
 
 
+def build_holding_strategy_prompt_block(
+    *,
+    has_position: bool,
+    strategy_context: Optional[Dict[str, Any]] = None,
+    is_initial_holding_analysis: bool = False,
+) -> str:
+    if not has_position:
+        return "当前状态：未持仓。本轮无需为持仓锁定波段交易基线。"
+
+    normalized = normalize_strategy_context(strategy_context or {})
+    if is_initial_holding_analysis:
+        return (
+            "当前状态：已持仓。这是加入持仓后的首次深度分析。\n"
+            "- 必须在本轮明确确认后续执行的波段类型：微波段 或 标准波段。\n"
+            "- 同时说明执行口径更偏向突破跟随、回踩低吸，还是先持有等待确认。\n"
+            "- 本次确认结果会作为后续讨论和盘中决策的默认基线；后续若无充分证据，不要频繁更新。"
+        )
+
+    if normalized:
+        swing_type = str(normalized.get("swing_type") or "未明确").strip() or "未明确"
+        horizon = str(
+            normalized.get("swing_horizon_days_text")
+            or normalized.get("holding_period")
+            or "未明确"
+        ).strip() or "未明确"
+        style_summary = str(normalized.get("strategy_style_summary") or "未明确").strip() or "未明确"
+        execution_preference = str(
+            normalized.get("intraday_execution_preference")
+            or normalized.get("summary")
+            or "未明确"
+        ).strip() or "未明确"
+        return (
+            "当前状态：已持仓，历史持仓波段基线已确认。\n"
+            f"- 已确认波段类型：{swing_type}\n"
+            f"- 周期参考：{horizon}\n"
+            f"- 风格摘要：{style_summary}\n"
+            f"- 执行偏好：{execution_preference}\n"
+            "- 本轮默认沿用上述波段类型；只有在团队明确给出原基线失效的充分证据时，才允许调整。"
+        )
+
+    return (
+        "当前状态：已持仓，但尚无可复用的持仓波段基线。\n"
+        "- 若本轮能够形成清晰共识，请明确确认一次波段类型，后续默认沿用。"
+    )
+
+
 def build_strategy_context(
     final_decision: Optional[Dict[str, Any]],
     *,

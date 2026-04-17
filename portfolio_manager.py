@@ -2223,7 +2223,8 @@ class PortfolioManager:
                             selected_agents: List[str] = None,
                             model: str = None,
                             lightweight_model: str = None,
-                            reasoning_model: str = None) -> Dict:
+                            reasoning_model: str = None,
+                            account_name: Optional[str] = None) -> Dict:
         """
         分析单只股票（复用统一批量分析逻辑）
         
@@ -2281,6 +2282,8 @@ class PortfolioManager:
                         effective_reasoning_model = self.reasoning_model
 
             # 调用首页的分析函数
+            target_stocks = self._filter_stocks_for_account(self.db.get_stocks_by_code(stock_code), account_name)
+            portfolio_stock_id = target_stocks[0]["id"] if len(target_stocks) == 1 else None
             result = analyze_single_stock_for_batch(
                 symbol=stock_code,
                 period=period,
@@ -2290,6 +2293,8 @@ class PortfolioManager:
                 selected_reasoning_model=effective_reasoning_model,
                 save_to_global_history=False,
                 has_position=True,
+                account_name=account_name,
+                portfolio_stock_id=portfolio_stock_id,
             )
             
             # 检查结果
@@ -2318,7 +2323,8 @@ class PortfolioManager:
                                  result_callback: Optional[Callable[[str, Dict], None]] = None,
                                  model: str = None,
                                  lightweight_model: str = None,
-                                 reasoning_model: str = None) -> Dict:
+                                 reasoning_model: str = None,
+                                 account_name: Optional[str] = None) -> Dict:
         """
         顺序批量分析（逐只分析）
         
@@ -2353,6 +2359,7 @@ class PortfolioManager:
                     model=model,
                     lightweight_model=lightweight_model,
                     reasoning_model=reasoning_model,
+                    account_name=account_name,
                 )
                 
                 if result.get("success"):
@@ -2406,7 +2413,8 @@ class PortfolioManager:
                                result_callback: Optional[Callable[[str, Dict], None]] = None,
                                model: str = None,
                                lightweight_model: str = None,
-                               reasoning_model: str = None) -> Dict:
+                               reasoning_model: str = None,
+                               account_name: Optional[str] = None) -> Dict:
         """
         并行批量分析（多线程）
         
@@ -2440,6 +2448,7 @@ class PortfolioManager:
                     model,
                     lightweight_model,
                     reasoning_model,
+                    account_name,
                 ): code
                 for code in stock_codes
             }
@@ -2543,6 +2552,7 @@ class PortfolioManager:
                 model=model,
                 lightweight_model=lightweight_model,
                 reasoning_model=reasoning_model,
+                account_name=account_name,
             )
         else:
             return self.batch_analyze_sequential(
@@ -2554,6 +2564,7 @@ class PortfolioManager:
                 model=model,
                 lightweight_model=lightweight_model,
                 reasoning_model=reasoning_model,
+                account_name=account_name,
             )
     
     # ==================== 分析结果保存 ====================

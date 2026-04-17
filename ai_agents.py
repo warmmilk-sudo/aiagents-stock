@@ -1,9 +1,10 @@
 import concurrent.futures
 import os
 import time
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from deepseek_client import DeepSeekClient
+from investment_action_utils import build_holding_strategy_prompt_block
 from model_routing import ModelTier
 from prompt_registry import build_messages
 
@@ -462,7 +463,15 @@ class StockAnalysisAgents:
         
         return agents_results
     
-    def conduct_team_discussion(self, agents_results: Dict[str, Any], stock_info: Dict, indicators: Dict = None, memory_context: Dict = None) -> str:
+    def conduct_team_discussion(
+        self,
+        agents_results: Dict[str, Any],
+        stock_info: Dict,
+        indicators: Dict = None,
+        memory_context: Dict = None,
+        strategy_context: Optional[Dict[str, Any]] = None,
+        is_initial_holding_analysis: bool = False,
+    ) -> str:
         """进行团队讨论"""
         print("🤝 分析团队正在进行综合讨论...")
         if not agents_results:
@@ -521,7 +530,13 @@ class StockAnalysisAgents:
             participants=", ".join(participants),
             stock_name=stock_info.get("name", "N/A"),
             stock_symbol=stock_info.get("symbol", "N/A"),
+            position_status="已持仓" if stock_info.get("has_position") else "未持仓",
             chip_summary=self._build_chip_summary(indicators or {}),
+            holding_strategy_prompt_block=build_holding_strategy_prompt_block(
+                has_position=bool(stock_info.get("has_position")),
+                strategy_context=strategy_context,
+                is_initial_holding_analysis=is_initial_holding_analysis,
+            ),
             all_reports=all_reports,
         )
         
@@ -534,10 +549,23 @@ class StockAnalysisAgents:
         print("✅ 团队讨论完成")
         return discussion_result
 
-    def make_final_decision(self, discussion_result: str, stock_info: Dict, indicators: Dict) -> Dict[str, Any]:
+    def make_final_decision(
+        self,
+        discussion_result: str,
+        stock_info: Dict,
+        indicators: Dict,
+        strategy_context: Optional[Dict[str, Any]] = None,
+        is_initial_holding_analysis: bool = False,
+    ) -> Dict[str, Any]:
         """制定最终投资决策"""
         print("📋 正在制定最终投资决策...")
-        decision = self.llm_client.final_decision(discussion_result, stock_info, indicators)
+        decision = self.llm_client.final_decision(
+            discussion_result,
+            stock_info,
+            indicators,
+            strategy_context=strategy_context,
+            is_initial_holding_analysis=is_initial_holding_analysis,
+        )
 
         print("✅ 最终投资决策完成")
         return decision

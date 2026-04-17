@@ -131,6 +131,99 @@ class BatchAnalysisServiceTests(unittest.TestCase):
         self.assertIsNone(result["db_error"])
         mock_asset_service.sync_managed_monitors_for_symbol.assert_called_once_with("600519")
 
+    @patch("batch_analysis_service.StockAnalysisAgents")
+    @patch("batch_analysis_service.StockDataFetcher")
+    @patch("batch_analysis_service._get_stock_data")
+    def test_analyze_single_stock_for_batch_passes_existing_strategy_context_for_holdings(
+        self,
+        mock_get_stock_data,
+        mock_fetcher_cls,
+        mock_agents_cls,
+    ):
+        mock_get_stock_data.return_value = (
+            {"symbol": "600519", "name": "贵州茅台"},
+            [{"close": 1688.0}],
+            {"rsi": 55.0},
+        )
+
+        mock_fetcher = MagicMock()
+        mock_fetcher._is_chinese_stock.return_value = False
+        mock_fetcher_cls.return_value = mock_fetcher
+
+        mock_agents = MagicMock()
+        mock_agents.run_multi_agent_analysis.return_value = {"technical": {"analysis": "趋势向上"}}
+        mock_agents.conduct_team_discussion.return_value = "团队讨论结果"
+        mock_agents.make_final_decision.return_value = {"rating": "持有"}
+        mock_agents_cls.return_value = mock_agents
+
+        original_lookup = batch_analysis_service.db.repository.get_latest_strategy_context
+        batch_analysis_service.db.repository.get_latest_strategy_context = MagicMock(
+            return_value={"swing_type": "标准波段", "holding_period": "5-15个交易日"}
+        )
+        try:
+            result = batch_analysis_service.analyze_single_stock_for_batch(
+                symbol="600519",
+                period="1y",
+                save_to_global_history=False,
+                has_position=True,
+                account_name="默认账户",
+            )
+        finally:
+            batch_analysis_service.db.repository.get_latest_strategy_context = original_lookup
+
+        self.assertTrue(result["success"])
+        self.assertEqual(
+            mock_agents.conduct_team_discussion.call_args.kwargs["strategy_context"],
+            {"swing_type": "标准波段", "holding_period": "5-15个交易日"},
+        )
+        self.assertFalse(mock_agents.conduct_team_discussion.call_args.kwargs["is_initial_holding_analysis"])
+        self.assertEqual(
+            mock_agents.make_final_decision.call_args.kwargs["strategy_context"],
+            {"swing_type": "标准波段", "holding_period": "5-15个交易日"},
+        )
+
+    @patch("batch_analysis_service.StockAnalysisAgents")
+    @patch("batch_analysis_service.StockDataFetcher")
+    @patch("batch_analysis_service._get_stock_data")
+    def test_analyze_single_stock_for_batch_marks_first_holding_analysis_when_no_baseline(
+        self,
+        mock_get_stock_data,
+        mock_fetcher_cls,
+        mock_agents_cls,
+    ):
+        mock_get_stock_data.return_value = (
+            {"symbol": "600519", "name": "贵州茅台"},
+            [{"close": 1688.0}],
+            {"rsi": 55.0},
+        )
+
+        mock_fetcher = MagicMock()
+        mock_fetcher._is_chinese_stock.return_value = False
+        mock_fetcher_cls.return_value = mock_fetcher
+
+        mock_agents = MagicMock()
+        mock_agents.run_multi_agent_analysis.return_value = {"technical": {"analysis": "趋势向上"}}
+        mock_agents.conduct_team_discussion.return_value = "团队讨论结果"
+        mock_agents.make_final_decision.return_value = {"rating": "持有"}
+        mock_agents_cls.return_value = mock_agents
+
+        original_lookup = batch_analysis_service.db.repository.get_latest_strategy_context
+        batch_analysis_service.db.repository.get_latest_strategy_context = MagicMock(return_value=None)
+        try:
+            result = batch_analysis_service.analyze_single_stock_for_batch(
+                symbol="600519",
+                period="1y",
+                save_to_global_history=False,
+                has_position=True,
+                account_name="默认账户",
+            )
+        finally:
+            batch_analysis_service.db.repository.get_latest_strategy_context = original_lookup
+
+        self.assertTrue(result["success"])
+        self.assertTrue(mock_agents.conduct_team_discussion.call_args.kwargs["is_initial_holding_analysis"])
+        self.assertTrue(mock_agents.make_final_decision.call_args.kwargs["is_initial_holding_analysis"])
+
     def test_analyze_single_stock_for_batch_rejects_empty_analyst_config(self):
         result = batch_analysis_service.analyze_single_stock_for_batch(
             symbol="600519",

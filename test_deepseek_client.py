@@ -269,6 +269,41 @@ class DeepSeekClientTests(unittest.TestCase):
         self.assertIn("加仓 / 持有 / 减仓 / 卖出", captured["messages"][1]["content"])
         self.assertEqual(result["rating"], "加仓")
 
+    def test_final_decision_includes_existing_holding_swing_baseline_constraints(self):
+        captured = {}
+        client = DeepSeekClient.__new__(DeepSeekClient)
+
+        def fake_call_api(
+            self,
+            messages,
+            model=None,
+            temperature=0.7,
+            max_tokens=2000,
+            tier=None,
+            include_reasoning=True,
+        ):
+            captured["messages"] = messages
+            return '{"rating":"持有","target_price":"12","take_profit":"12","stop_loss":"9.2","confidence_level":"8","swing_type":"标准波段"}'
+
+        client.call_api = types.MethodType(fake_call_api, client)
+
+        result = client.final_decision(
+            comprehensive_discussion="继续按原节奏做波段管理。",
+            stock_info={"symbol": "000001", "name": "PingAn", "current_price": 10.0, "has_position": True},
+            indicators={"ma20": 9.8, "bb_upper": 10.8, "bb_lower": 9.2},
+            strategy_context={
+                "swing_type": "标准波段",
+                "holding_period": "5-15个交易日",
+                "strategy_style_summary": "动量突破 / 均值回归",
+                "intraday_execution_preference": "优先围绕阶段性主升或反弹主段执行",
+            },
+        )
+
+        self.assertIn("持仓波段基线约束", captured["messages"][1]["content"])
+        self.assertIn("已确认波段类型：标准波段", captured["messages"][1]["content"])
+        self.assertIn("默认输出同一 `swing_type`", captured["messages"][1]["content"])
+        self.assertEqual(result["rating"], "持有")
+
     def test_fundamental_analysis_uses_expanded_token_budget_and_business_summary(self):
         captured = {}
         client = DeepSeekClient.__new__(DeepSeekClient)

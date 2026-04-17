@@ -104,6 +104,53 @@ class StockAnalysisAgentsPipelineTests(unittest.TestCase):
         self.assertIn("70%成本区：1600-1720", captured["prompt"])
         self.assertIn("获利盘：61.2%", captured["prompt"])
 
+    def test_conduct_team_discussion_requires_initial_holding_swing_confirmation(self):
+        captured = {}
+        agent = StockAnalysisAgents.__new__(StockAnalysisAgents)
+
+        def fake_call_api(messages, max_tokens=None, tier=None):
+            captured["prompt"] = messages[1]["content"]
+            return "讨论结果"
+
+        agent.llm_client = types.SimpleNamespace(call_api=fake_call_api)
+
+        agent.conduct_team_discussion(
+            {"technical": {"analysis": "技术分析正文"}},
+            {"symbol": "600519", "name": "贵州茅台", "has_position": True},
+            strategy_context=None,
+            is_initial_holding_analysis=True,
+        )
+
+        self.assertIn("这是加入持仓后的首次深度分析", captured["prompt"])
+        self.assertIn("微波段 或 标准波段", captured["prompt"])
+        self.assertIn("后续若无充分证据，不要频繁更新", captured["prompt"])
+
+    def test_conduct_team_discussion_anchors_existing_holding_swing_baseline(self):
+        captured = {}
+        agent = StockAnalysisAgents.__new__(StockAnalysisAgents)
+
+        def fake_call_api(messages, max_tokens=None, tier=None):
+            captured["prompt"] = messages[1]["content"]
+            return "讨论结果"
+
+        agent.llm_client = types.SimpleNamespace(call_api=fake_call_api)
+
+        agent.conduct_team_discussion(
+            {"technical": {"analysis": "技术分析正文"}},
+            {"symbol": "600519", "name": "贵州茅台", "has_position": True},
+            strategy_context={
+                "swing_type": "标准波段",
+                "holding_period": "5-15个交易日",
+                "strategy_style_summary": "动量突破 / 均值回归",
+                "intraday_execution_preference": "优先围绕阶段性主升或反弹主段执行",
+            },
+            is_initial_holding_analysis=False,
+        )
+
+        self.assertIn("历史持仓波段基线已确认", captured["prompt"])
+        self.assertIn("已确认波段类型：标准波段", captured["prompt"])
+        self.assertIn("本轮默认沿用上述波段类型", captured["prompt"])
+
     def test_risk_management_agent_includes_pe_pb_context(self):
         captured = {}
         agent = StockAnalysisAgents.__new__(StockAnalysisAgents)

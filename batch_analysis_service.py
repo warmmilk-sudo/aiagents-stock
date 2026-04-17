@@ -196,6 +196,28 @@ def _report_stage_progress(
     progress_callback(current, total, message)
 
 
+def _load_latest_strategy_context(
+    *,
+    symbol: str,
+    has_position: bool,
+    account_name: Optional[str] = None,
+    asset_id: Optional[int] = None,
+    portfolio_stock_id: Optional[int] = None,
+) -> Optional[Dict]:
+    if not has_position:
+        return None
+    try:
+        return db.repository.get_latest_strategy_context(
+            asset_id=asset_id,
+            portfolio_stock_id=portfolio_stock_id,
+            symbol=symbol,
+            account_name=account_name,
+        )
+    except Exception as exc:
+        logger.warning("[%s] failed loading latest strategy context: %s", symbol, exc)
+        return None
+
+
 def analyze_single_stock_for_batch(
     symbol,
     period,
@@ -206,6 +228,9 @@ def analyze_single_stock_for_batch(
     save_to_global_history: bool = True,
     progress_callback: Optional[Callable[[int, int, str], None]] = None,
     has_position: Optional[bool] = None,
+    account_name: Optional[str] = None,
+    asset_id: Optional[int] = None,
+    portfolio_stock_id: Optional[int] = None,
 ):
     """Analyze one stock for batch mode via the shared backend analysis pipeline."""
     try:
@@ -238,6 +263,14 @@ def analyze_single_stock_for_batch(
         resolved_has_position = _resolve_position_state(symbol, has_position=has_position)
         stock_info["has_position"] = resolved_has_position
         stock_info["position_status"] = "已持仓" if resolved_has_position else "未持仓"
+        existing_strategy_context = _load_latest_strategy_context(
+            symbol=symbol,
+            has_position=resolved_has_position,
+            account_name=account_name,
+            asset_id=asset_id,
+            portfolio_stock_id=portfolio_stock_id,
+        )
+        is_initial_holding_analysis = bool(resolved_has_position and not existing_strategy_context)
         context_started_at = time.perf_counter()
         context_data = _collect_optional_context_data(symbol, stock_data, enabled_analysts_config)
         logger.info("[%s] optional context data prepared in %.2fs", symbol, time.perf_counter() - context_started_at)
@@ -287,12 +320,25 @@ def analyze_single_stock_for_batch(
 
         _report_stage_progress(progress_callback, 75, 100, f"AI 团队正在讨论 {symbol} 的综合结论...")
         discussion_started_at = time.perf_counter()
-        discussion_result = agents.conduct_team_discussion(agents_results, stock_info, indicators, memory_context=memory_context)
+        discussion_result = agents.conduct_team_discussion(
+            agents_results,
+            stock_info,
+            indicators,
+            memory_context=memory_context,
+            strategy_context=existing_strategy_context,
+            is_initial_holding_analysis=is_initial_holding_analysis,
+        )
         logger.info("[%s] team discussion completed in %.2fs", symbol, time.perf_counter() - discussion_started_at)
 
         _report_stage_progress(progress_callback, 90, 100, f"正在生成 {symbol} 的最终决策...")
         decision_started_at = time.perf_counter()
-        final_decision = agents.make_final_decision(discussion_result, stock_info, indicators)
+        final_decision = agents.make_final_decision(
+            discussion_result,
+            stock_info,
+            indicators,
+            strategy_context=existing_strategy_context,
+            is_initial_holding_analysis=is_initial_holding_analysis,
+        )
         logger.info("[%s] final decision completed in %.2fs", symbol, time.perf_counter() - decision_started_at)
 
         saved_to_db = False
@@ -355,4 +401,3 @@ def analyze_single_stock_for_batch(
     except Exception as exc:
         logger.exception("%s batch analysis failed", symbol)
         return {"symbol": symbol, "error": str(exc), "success": False}
-
