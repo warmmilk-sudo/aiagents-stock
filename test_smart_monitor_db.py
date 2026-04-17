@@ -112,6 +112,39 @@ class SmartMonitorDBTests(unittest.TestCase):
         self.assertEqual(decisions[0]["intraday_signal_labels"], ["价格运行在分时均价上方", "高位量能衰减"])
         self.assertEqual(decisions[0]["intraday_observations"], ["当前价格接近日内高位"])
 
+    def test_get_ai_decisions_exposes_unified_analysis_fields(self):
+        decision_id = self.db.save_ai_decision(
+            {
+                "stock_code": "600519",
+                "stock_name": "贵州茅台",
+                "account_name": "默认账户",
+                "decision_time": "2026-04-10 10:45:00",
+                "trading_session": "上午盘",
+                "action": "BUY",
+                "confidence": 84,
+                "reasoning": "回踩计划区间后企稳。",
+                "monitor_levels": {
+                    "entry_min": 1505.0,
+                    "entry_max": 1515.0,
+                    "take_profit": 1650.0,
+                    "stop_loss": 1460.0,
+                },
+                "market_data": {"current_price": 1510.0},
+                "account_info": {"account_name": "默认账户"},
+            }
+        )
+
+        decisions = self.db.get_ai_decisions(stock_code="600519", limit=5)
+
+        self.assertEqual(decisions[0]["id"], decision_id)
+        self.assertEqual(decisions[0]["rating"], "买入")
+        self.assertEqual(decisions[0]["confidence_level"], 84)
+        self.assertEqual(decisions[0]["entry_range"], "1505.000-1515.000")
+        self.assertEqual(decisions[0]["take_profit"], 1650.0)
+        self.assertEqual(decisions[0]["stop_loss"], 1460.0)
+        self.assertEqual(decisions[0]["final_decision"]["rating"], "买入")
+        self.assertEqual(decisions[0]["final_decision"]["entry_range"], "1505.000-1515.000")
+
     def test_get_ai_decisions_exposes_delta_fields_from_decision_context(self):
         decision_id = self.db.save_ai_decision(
             {

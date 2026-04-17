@@ -8,7 +8,7 @@ import time
 import inspect
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from typing import Any, Dict, List, Optional
-from datetime import datetime
+from datetime import date, datetime, timedelta
 import threading
 
 import config
@@ -29,6 +29,14 @@ class SmartMonitorEngine:
 
     DATA_FETCH_TIMEOUT_SECONDS = 45
     AI_DECISION_TIMEOUT_SECONDS = 25
+    BASELINE_ANALYSTS_CONFIG = {
+        "technical": True,
+        "fundamental": True,
+        "fund_flow": True,
+        "risk": True,
+        "sentiment": False,
+        "news": False,
+    }
     
     def __init__(self, llm_api_key: str = None, model: str = None,
                  lightweight_model: str = None, reasoning_model: str = None,
@@ -117,6 +125,25 @@ class SmartMonitorEngine:
             return int(value) if value not in (None, "") else 0
         except (TypeError, ValueError):
             return 0
+
+    @staticmethod
+    def _previous_trading_day(reference_day: date) -> date:
+        current = reference_day
+        if current.weekday() < 5:
+            current -= timedelta(days=1)
+        while current.weekday() >= 5:
+            current -= timedelta(days=1)
+        return current
+
+    @classmethod
+    def _is_strategy_context_stale(cls, strategy_context: Optional[Dict]) -> bool:
+        if not isinstance(strategy_context, dict) or not strategy_context:
+            return True
+        analysis_time = cls._parse_decision_time(strategy_context.get("analysis_date"))
+        if analysis_time is None:
+            return True
+        latest_allowed_day = cls._previous_trading_day(datetime.now().date())
+        return analysis_time.date() < latest_allowed_day
 
     @staticmethod
     def _normalize_position_date(value: object) -> Optional[str]:
@@ -399,6 +426,224 @@ class SmartMonitorEngine:
         return fallback or "持有"
 
     @staticmethod
+    def _build_entry_range_text(entry_min: Optional[float], entry_max: Optional[float]) -> str:
+        if entry_min is None and entry_max is None:
+            return "N/A"
+        if entry_min is None:
+            return f"{entry_max:.3f}"
+        if entry_max is None:
+            return f"{entry_min:.3f}"
+        return f"{entry_min:.3f}-{entry_max:.3f}"
+
+    @staticmethod
+    def _format_price_text(value: Optional[float]) -> str:
+        if value is None:
+            return "N/A"
+        return f"{float(value):.3f}"
+
+    @staticmethod
+    def _canonical_action_detail(action: object, detail: object) -> str:
+        normalized_action = str(action or "").strip().upper()
+        text = str(detail or "").strip()
+        if normalized_action == "HOLD":
+            return "持有" if text in {"", "持有", "观望", "等待"} else text
+        if normalized_action == "BUY":
+            return text or "买入"
+        if normalized_action == "SELL":
+            return text or "卖出"
+        return text
+
+    @staticmethod
+    def _reasoning_with_appendix(reasoning: object, appendix: str) -> str:
+        base = str(reasoning or "").strip()
+        appendix = str(appendix or "").strip()
+        if not appendix:
+            return base
+        if not base:
+            return appendix
+        return f"{base}\n\n补充说明：{appendix}"
+
+    @classmethod
+    def _extract_monitor_levels_from_strategy_context(cls, strategy_context: Optional[Dict]) -> Optional[Dict]:
+        if not isinstance(strategy_context, dict) or not strategy_context:
+            return None
+        raw_levels = {
+            "entry_min": strategy_context.get("entry_min"),
+            "entry_max": strategy_context.get("entry_max"),
+            "take_profit": strategy_context.get("take_profit"),
+            "stop_loss": strategy_context.get("stop_loss"),
+        }
+        return cls._normalize_monitor_levels_payload(raw_levels)
+
+    @staticmethod
+    def _rating_supports_buying(rating: object) -> bool:
+        text = str(rating or "").strip()
+        return any(keyword in text for keyword in ("买入", "强烈买入", "加仓"))
+
+    def _build_plan_signal(
+        self,
+        *,
+        strategy_context: Optional[Dict],
+        market_data: Dict,
+        has_position: bool,
+    ) -> Optional[Dict[str, object]]:
+        monitor_levels = self._extract_monitor_levels_from_strategy_context(strategy_context)
+        current_price = self._float_or_none((market_data or {}).get("current_price"))
+        if current_price is None or not monitor_levels:
+            return None
+
+        take_profit = self._float_or_none(monitor_levels.get("take_profit"))
+        stop_loss = self._float_or_none(monitor_levels.get("stop_loss"))
+        entry_min = self._float_or_none(monitor_levels.get("entry_min"))
+        entry_max = self._float_or_none(monitor_levels.get("entry_max"))
+        rating = (strategy_context or {}).get("rating")
+
+        if has_position and stop_loss is not None and current_price <= stop_loss:
+            return {
+                "action": "SELL",
+                "action_detail": "止损",
+                "reasoning": f"当前价格 {current_price:.3f} 已触发深度分析交易计划的止损位 {stop_loss:.3f}。",
+                "monitor_levels": monitor_levels,
+            }
+        if has_position and take_profit is not None and current_price >= take_profit:
+            return {
+                "action": "SELL",
+                "action_detail": "止盈",
+                "reasoning": f"当前价格 {current_price:.3f} 已触发深度分析交易计划的止盈位 {take_profit:.3f}。",
+                "monitor_levels": monitor_levels,
+            }
+        if (
+            entry_min is not None
+            and entry_max is not None
+            and entry_min <= current_price <= entry_max
+            and self._rating_supports_buying(rating)
+        ):
+            return {
+                "action": "BUY",
+                "action_detail": "加仓" if has_position else "买入",
+                "reasoning": (
+                    f"当前价格 {current_price:.3f} 落在深度分析交易计划进场区间 "
+                    f"{entry_min:.3f}-{entry_max:.3f} 内。"
+                ),
+                "monitor_levels": monitor_levels,
+            }
+        return None
+
+    def _apply_strategy_plan_guardrails(
+        self,
+        *,
+        decision: Dict[str, object],
+        strategy_context: Optional[Dict],
+        market_data: Dict,
+        has_position: bool,
+    ) -> Dict[str, object]:
+        decision_monitor_levels = self._normalize_monitor_levels(decision)
+        plan_monitor_levels = self._extract_monitor_levels_from_strategy_context(strategy_context)
+        if plan_monitor_levels and not decision_monitor_levels:
+            decision["monitor_levels"] = plan_monitor_levels
+
+        current_price = self._float_or_none((market_data or {}).get("current_price"))
+        plan_signal = self._build_plan_signal(
+            strategy_context=strategy_context,
+            market_data=market_data,
+            has_position=has_position,
+        )
+        action = str(decision.get("action") or "").upper()
+        rating = (strategy_context or {}).get("rating")
+
+        if plan_signal and action == "HOLD":
+            decision["action"] = str(plan_signal.get("action") or "HOLD")
+            decision["action_detail"] = str(plan_signal.get("action_detail") or decision.get("action_detail") or "").strip()
+            decision["reasoning"] = self._reasoning_with_appendix(
+                decision.get("reasoning"),
+                str(plan_signal.get("reasoning") or ""),
+            )
+            decision["monitor_levels"] = plan_signal.get("monitor_levels") or plan_monitor_levels or decision_monitor_levels or {}
+            action = str(decision.get("action") or "").upper()
+
+        if action == "BUY" and plan_monitor_levels:
+            if not self._rating_supports_buying(rating):
+                decision["action"] = "HOLD"
+                decision["action_detail"] = "观望" if not has_position else "持有"
+                decision["action_ratio_pct"] = None
+                decision["reasoning"] = self._reasoning_with_appendix(
+                    decision.get("reasoning"),
+                    "最新深度分析基线未给出买入/加仓评级，盘中规则禁止脱离交易计划追价买入。",
+                )
+            elif current_price is not None and plan_monitor_levels:
+                entry_min = self._float_or_none(plan_monitor_levels.get("entry_min"))
+                entry_max = self._float_or_none(plan_monitor_levels.get("entry_max"))
+                if (
+                    entry_min is not None
+                    and entry_max is not None
+                    and not (entry_min <= current_price <= entry_max)
+                ):
+                    decision["action"] = "HOLD"
+                    decision["action_detail"] = "观望" if not has_position else "持有"
+                    decision["action_ratio_pct"] = None
+                    decision["reasoning"] = self._reasoning_with_appendix(
+                        decision.get("reasoning"),
+                        (
+                            f"当前价格 {current_price:.3f} 不在深度分析交易计划进场区间 "
+                            f"{entry_min:.3f}-{entry_max:.3f} 内，已阻断追高/偏离计划买入。"
+                        ),
+                    )
+
+        if action == "SELL" and has_position and plan_monitor_levels and current_price is not None:
+            take_profit = self._float_or_none(plan_monitor_levels.get("take_profit"))
+            stop_loss = self._float_or_none(plan_monitor_levels.get("stop_loss"))
+            sell_triggered = (
+                (take_profit is not None and current_price >= take_profit)
+                or (stop_loss is not None and current_price <= stop_loss)
+            )
+            if not sell_triggered:
+                decision["action"] = "HOLD"
+                decision["action_detail"] = "持有"
+                decision["action_ratio_pct"] = None
+                decision["reasoning"] = self._reasoning_with_appendix(
+                    decision.get("reasoning"),
+                    "当前价格尚未触发深度分析交易计划的止盈/止损阈值，盘中规则不执行脱离计划的卖出动作。",
+                )
+
+        return decision
+
+    def _standardize_decision_schema(
+        self,
+        *,
+        decision: Dict[str, object],
+        strategy_context: Optional[Dict],
+    ) -> Dict[str, object]:
+        monitor_levels = self._normalize_monitor_levels(decision) or self._extract_monitor_levels_from_strategy_context(strategy_context)
+        if monitor_levels and not self._normalize_monitor_levels(decision):
+            decision["monitor_levels"] = monitor_levels
+
+        entry_min = self._float_or_none((monitor_levels or {}).get("entry_min"))
+        entry_max = self._float_or_none((monitor_levels or {}).get("entry_max"))
+        take_profit = self._float_or_none((monitor_levels or {}).get("take_profit"))
+        stop_loss = self._float_or_none((monitor_levels or {}).get("stop_loss"))
+        confidence_level = decision.get("confidence_level")
+        if confidence_level in (None, ""):
+            confidence_level = decision.get("confidence")
+
+        decision["rating"] = str(
+            decision.get("rating")
+            or self._map_action_to_rating(str(decision.get("action") or ""), fallback="持有")
+            or (strategy_context or {}).get("rating")
+            or "持有"
+        ).strip() or "持有"
+        decision["confidence_level"] = confidence_level
+        decision["entry_range"] = decision.get("entry_range") or self._build_entry_range_text(entry_min, entry_max)
+        decision["take_profit"] = decision.get("take_profit") if decision.get("take_profit") not in (None, "") else take_profit
+        decision["stop_loss"] = decision.get("stop_loss") if decision.get("stop_loss") not in (None, "") else stop_loss
+        decision["advice"] = str(
+            decision.get("advice")
+            or decision.get("reasoning")
+            or (strategy_context or {}).get("summary")
+            or ""
+        ).strip()
+        return decision
+
+    @staticmethod
     def _normalize_notification_class(value: object) -> str:
         normalized = str(value or "").strip().lower().replace("-", "_")
         aliases = {
@@ -522,8 +767,8 @@ class SmartMonitorEngine:
     ) -> Dict[str, bool]:
         latest_action = str((latest_decision or {}).get("action") or "").upper()
         current_action = str(current_decision.get("action") or "").upper()
-        latest_action_detail = str((latest_decision or {}).get("action_detail") or "").strip()
-        current_action_detail = str(current_decision.get("action_detail") or "").strip()
+        latest_action_detail = cls._canonical_action_detail(latest_action, (latest_decision or {}).get("action_detail"))
+        current_action_detail = cls._canonical_action_detail(current_action, current_decision.get("action_detail"))
         latest_swing_mode = str((latest_decision or {}).get("swing_execution_mode") or "").strip()
         current_swing_mode = str(current_decision.get("swing_execution_mode") or "").strip()
         latest_action_ratio_pct = cls._float_or_none((latest_decision or {}).get("action_ratio_pct"))
@@ -666,13 +911,13 @@ class SmartMonitorEngine:
 
         summary_parts: List[str] = []
         previous_action = str(latest_decision.get("action") or "").upper()
-        previous_action_detail = str(latest_decision.get("action_detail") or "").strip()
+        previous_action_detail = SmartMonitorEngine._canonical_action_detail(previous_action, latest_decision.get("action_detail"))
         previous_swing_execution_mode = str(
             latest_decision.get("swing_execution_mode") or previous_intraday.get("swing_execution_mode") or ""
         ).strip()
         previous_action_ratio_pct = latest_decision.get("action_ratio_pct")
         current_action = str(current_decision.get("action") or "").upper()
-        current_action_detail = str(current_decision.get("action_detail") or "").strip()
+        current_action_detail = SmartMonitorEngine._canonical_action_detail(current_action, current_decision.get("action_detail"))
         current_swing_execution_mode = str(current_decision.get("swing_execution_mode") or "").strip()
         current_action_ratio_pct = current_decision.get("action_ratio_pct")
         if previous_action and (
@@ -889,11 +1134,50 @@ class SmartMonitorEngine:
         *,
         stock_code: str,
         account_name: str,
+        strategy_context: Optional[Dict] = None,
+        has_position: bool = False,
+        asset_id: Optional[int] = None,
+        portfolio_stock_id: Optional[int] = None,
     ) -> bool:
         asset_service = getattr(self.lifecycle_service, "asset_service", None)
         sync_func = getattr(asset_service, "sync_managed_monitors_for_symbol", None)
+        refresh_performed = False
+
+        if self._is_strategy_context_stale(strategy_context):
+            try:
+                from batch_analysis_service import analyze_single_stock_for_batch
+
+                result = analyze_single_stock_for_batch(
+                    symbol=stock_code,
+                    period=getattr(config, "DATA_PERIOD", "1y"),
+                    enabled_analysts_config=dict(self.BASELINE_ANALYSTS_CONFIG),
+                    selected_model=self.model,
+                    selected_lightweight_model=self.lightweight_model,
+                    selected_reasoning_model=self.reasoning_model,
+                    save_to_global_history=True,
+                    has_position=has_position,
+                    account_name=account_name,
+                    asset_id=asset_id,
+                    portfolio_stock_id=portfolio_stock_id,
+                )
+                if result.get("success"):
+                    refresh_performed = True
+                    self.logger.info(
+                        "[%s] 缺失或过期的深度分析基线已通过统一分析入口刷新: analysis_id=%s",
+                        stock_code,
+                        result.get("record_id"),
+                    )
+                else:
+                    self.logger.warning(
+                        "[%s] 统一分析基线刷新失败: %s",
+                        stock_code,
+                        result.get("error") or "unknown_error",
+                    )
+            except Exception as exc:
+                self.logger.warning("[%s] 调用统一分析入口刷新基线失败: %s", stock_code, exc)
+
         if not callable(sync_func):
-            return False
+            return refresh_performed
 
         try:
             sync_result = sync_func(stock_code, account_name=account_name)
@@ -907,7 +1191,7 @@ class SmartMonitorEngine:
             return True
         except Exception as exc:
             self.logger.warning("[%s] 决策前同步最新分析基线失败: %s", stock_code, exc)
-            return False
+            return refresh_performed
     
     def analyze_stock(self, stock_code: str, notify: bool = True, has_position: bool = False,
                       position_cost: float = 0, position_quantity: int = 0,
@@ -1055,9 +1339,21 @@ class SmartMonitorEngine:
                 asset_id if asset and asset.get("status") == STATUS_PORTFOLIO else None
             )
 
+            initial_strategy_context = self._resolve_latest_strategy_context(
+                stock_code=stock_code,
+                account_name=account_name,
+                asset_id=asset_id,
+                portfolio_stock_id=portfolio_stock_id,
+                provided_strategy_context=strategy_context,
+                task_context=task_context,
+            )
             self._refresh_analysis_baseline_before_decision(
                 stock_code=stock_code,
                 account_name=account_name,
+                strategy_context=initial_strategy_context,
+                has_position=has_position,
+                asset_id=asset_id,
+                portfolio_stock_id=portfolio_stock_id,
             )
 
             task_context = self.db.get_monitor_task_by_code(
@@ -1133,6 +1429,12 @@ class SmartMonitorEngine:
             
             original_action = str((ai_result.get("decision") or {}).get("action") or "").upper()
             decision = ai_result['decision']
+            decision = self._apply_strategy_plan_guardrails(
+                decision=decision,
+                strategy_context=strategy_context,
+                market_data=market_data,
+                has_position=has_position,
+            )
             decision = self._enforce_t1_sell_constraint(
                 decision=decision,
                 has_position=has_position,
@@ -1140,10 +1442,14 @@ class SmartMonitorEngine:
                 account_info=account_info,
                 risk_profile=risk_profile,
             )
+            decision = self._standardize_decision_schema(
+                decision=decision,
+                strategy_context=strategy_context,
+            )
             t1_sell_blocked = original_action == "SELL" and str(decision.get("action") or "").upper() != "SELL"
             
             self.logger.info(f"[{stock_code}] AI决策: {decision['action']} "
-                           f"(信心度: {decision['confidence']}%)")
+                           f"(信心度: {decision.get('confidence_level', decision.get('confidence', 'N/A'))})")
             self.logger.info(f"[{stock_code}] 决策理由: {decision['reasoning'][:100]}...")
             change_flags = self._classify_decision_change(
                 latest_decision=latest_decision,
@@ -1172,6 +1478,12 @@ class SmartMonitorEngine:
                 'target_position_pct': decision.get('target_position_pct'),
                 'position_delta_pct': decision.get('position_delta_pct'),
                 'confidence': decision['confidence'],
+                'confidence_level': decision.get('confidence_level'),
+                'rating': decision.get('rating'),
+                'entry_range': decision.get('entry_range'),
+                'take_profit': decision.get('take_profit'),
+                'stop_loss': decision.get('stop_loss'),
+                'advice': decision.get('advice'),
                 'reasoning': decision['reasoning'],
                 'position_size_pct': decision.get('position_size_pct'),
                 'stop_loss_pct': decision.get('stop_loss_pct'),
@@ -1254,6 +1566,14 @@ class SmartMonitorEngine:
                 'asset_id': asset_id,
                 'portfolio_stock_id': portfolio_stock_id,
                 'strategy_context': strategy_context or {},
+                'final_decision': {
+                    'rating': decision.get('rating'),
+                    'confidence_level': decision.get('confidence_level'),
+                    'entry_range': decision.get('entry_range'),
+                    'take_profit': decision.get('take_profit'),
+                    'stop_loss': decision.get('stop_loss'),
+                    'advice': decision.get('advice'),
+                },
             }
             
         except Exception as e:
@@ -1463,29 +1783,6 @@ class SmartMonitorEngine:
                 trigger_summary = "出现新的价格信号"
             key_levels = decision.get('key_price_levels', {}) or {}
 
-            message = f"{notification_label} - {stock_name}({stock_code})：{trigger_summary}"
-            content = (
-                f"{notification_label}\n"
-                f"股票: {stock_name}({stock_code})\n"
-                f"动作: {action_text} / {action_detail}\n"
-                f"波段类型: {swing_execution_label or 'N/A'}\n"
-                f"当前价格: {current_price_text}\n"
-                f"涨跌幅: {_fmt_pct(market_data.get('change_pct'))}\n"
-                f"信心度: {decision.get('confidence', 'N/A')}%\n"
-                f"风险等级: {decision.get('risk_level', 'N/A')}\n"
-                f"支撑位: {key_levels.get('support', 'N/A')}\n"
-                f"压力位: {key_levels.get('resistance', 'N/A')}\n"
-                f"止盈: {decision.get('take_profit_pct', 'N/A')}%\n"
-                f"止损: {decision.get('stop_loss_pct', 'N/A')}%\n"
-                f"触发摘要: {trigger_summary}\n"
-                f"核心理由: {reasoning_summary}\n"
-                f"触发时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-            )
-            if execution_result and execution_result.get('pending_action_id'):
-                content += f"\n已生成待人工处理动作 #{execution_result.get('pending_action_id')}"
-            elif execution_result and not execution_result.get('success'):
-                content += f"\n动作创建失败: {execution_result.get('error', '未知错误')}"
-
             notification_data = {
                 'symbol': stock_code,
                 'name': stock_name,
@@ -1497,14 +1794,13 @@ class SmartMonitorEngine:
                 'trigger_summary': trigger_summary,
                 'notification_reason': reasoning,
                 'action': action,
+                'action_text': action_text,
                 'action_detail': action_detail,
                 'swing_execution_mode': swing_execution_mode,
                 'swing_execution_label': swing_execution_label,
-                'message': message,
-                'details': content,
                 'triggered_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                'current_price': f"{current_price:.2f}" if current_price is not None else 'N/A',
-                'change_pct': _fmt_pct(market_data.get('change_pct')),
+                'current_price': current_price,
+                'change_pct': market_data.get('change_pct'),
                 'change_amount': _fmt_money(market_data.get('change_amount'), signed=True),
                 'volume': _fmt_volume(market_data.get('volume')),
                 'turnover_rate': market_data.get('turnover_rate'),
@@ -1513,7 +1809,19 @@ class SmartMonitorEngine:
                 'position_quantity': position_quantity if has_position else 0,
                 'profit_loss_pct': f"{profit_loss_pct:+.2f}" if profit_loss_pct is not None else 'N/A',
                 'trading_session': session_info.get('session', '未知'),
+                'rating': decision.get('rating'),
+                'confidence_level': decision.get('confidence_level', decision.get('confidence')),
+                'entry_range': decision.get('entry_range'),
+                'take_profit': decision.get('take_profit'),
+                'stop_loss': decision.get('stop_loss'),
+                'pending_action_id': execution_result.get('pending_action_id') if execution_result else None,
+                'pending_action_error': execution_result.get('error') if execution_result and not execution_result.get('success') else None,
             }
+            rendered_notification = self.notification.build_smart_monitor_notification_message(notification_data)
+            message = rendered_notification["message"]
+            content = rendered_notification["content"]
+            notification_data['message'] = message
+            notification_data['details'] = content
 
             self.db.save_notification({
                 'stock_code': stock_code,

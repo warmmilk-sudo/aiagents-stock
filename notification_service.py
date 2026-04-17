@@ -65,6 +65,112 @@ class NotificationService:
             "other_alert": "其他提醒",
         }
         return labels.get(normalized, "提醒")
+
+    @staticmethod
+    def _format_notification_price(value) -> str:
+        try:
+            if value in (None, ""):
+                return "N/A"
+            return f"{float(value):.2f}"
+        except (TypeError, ValueError):
+            return str(value or "N/A")
+
+    @staticmethod
+    def _format_notification_percent(value, *, signed: bool = False) -> str:
+        try:
+            if value in (None, ""):
+                return "N/A"
+            numeric = float(value)
+        except (TypeError, ValueError):
+            return str(value or "N/A")
+        return f"{numeric:+.2f}%" if signed else f"{numeric:.2f}%"
+
+    @classmethod
+    def _stringify_entry_range(cls, value) -> str:
+        if isinstance(value, dict):
+            entry_min = cls._format_notification_price(value.get("min"))
+            entry_max = cls._format_notification_price(value.get("max"))
+            if entry_min == "N/A" and entry_max == "N/A":
+                return "N/A"
+            return f"{entry_min}-{entry_max}"
+        text = str(value or "").strip()
+        return text or "N/A"
+
+    @staticmethod
+    def _short_reason(value, limit: int = 150) -> str:
+        text = " ".join(str(value or "").split()).strip()
+        if not text:
+            return "盘中出现新的执行信号，请结合实时价格与阈值复核。"
+        if len(text) <= limit:
+            return text
+        return text[: limit - 1].rstrip("，,；;。.") + "…"
+
+    def build_smart_monitor_notification_message(self, notification: Dict) -> Dict[str, str]:
+        notification_class = self._normalize_notification_class(
+            notification.get("notification_class")
+            or notification.get("notification_category")
+            or notification.get("notification_label")
+            or notification.get("type")
+        )
+        notification_label = str(
+            notification.get("notification_label")
+            or notification.get("notification_class_label")
+            or self._notification_label_for_class(notification_class)
+            or notification.get("type")
+            or "提醒"
+        ).strip()
+        symbol = str(notification.get("symbol") or "").strip()
+        name = str(notification.get("name") or symbol).strip() or symbol
+        action_text = str(notification.get("action_text") or notification.get("action") or "").strip() or "观望"
+        action_detail = str(notification.get("action_detail") or action_text).strip() or action_text
+        trigger_summary = str(notification.get("trigger_summary") or notification.get("message") or "").strip()
+        rating = str(notification.get("rating") or "持有").strip() or "持有"
+        confidence = notification.get("confidence_level")
+        entry_range = self._stringify_entry_range(notification.get("entry_range"))
+        take_profit = self._format_notification_price(notification.get("take_profit"))
+        stop_loss = self._format_notification_price(notification.get("stop_loss"))
+        current_price = self._format_notification_price(notification.get("current_price"))
+        change_pct = self._format_notification_percent(notification.get("change_pct"), signed=True)
+        profit_loss_pct = notification.get("profit_loss_pct")
+        if str(profit_loss_pct or "").strip() not in {"", "N/A"}:
+            profit_loss_text = f"{profit_loss_pct}%"
+        else:
+            profit_loss_text = "N/A"
+        reasoning_summary = self._short_reason(
+            notification.get("notification_reason") or notification.get("details")
+        )
+
+        message = f"{notification_label} - {name}({symbol})"
+        if trigger_summary:
+            message = f"{message}：{trigger_summary}"
+
+        content_lines = [
+            notification_label,
+            f"股票: {name}({symbol})",
+            f"动作: {action_text} / {action_detail}",
+            f"评级: {rating}",
+            f"信心度: {confidence if confidence not in (None, '') else 'N/A'}",
+            f"当前价格: ¥{current_price}" if current_price != "N/A" else "当前价格: N/A",
+            f"涨跌幅: {change_pct}",
+            f"进场区间: {entry_range}",
+            f"止盈位: {take_profit}",
+            f"止损位: {stop_loss}",
+            f"持仓状态: {notification.get('position_status') or 'N/A'}",
+            f"浮动盈亏: {profit_loss_text}",
+            f"触发摘要: {trigger_summary or '盘中出现新的交易计划信号'}",
+            f"核心理由: {reasoning_summary}",
+            f"触发时间: {notification.get('triggered_at') or ''}",
+        ]
+        pending_action_id = notification.get("pending_action_id")
+        if pending_action_id:
+            content_lines.append(f"已生成待人工处理动作 #{pending_action_id}")
+        pending_error = str(notification.get("pending_action_error") or "").strip()
+        if pending_error:
+            content_lines.append(f"动作创建失败: {pending_error}")
+        return {
+            "message": message,
+            "content": "\n".join(content_lines),
+        }
     
     def _load_config(self) -> Dict:
         """加载通知配置"""

@@ -633,6 +633,133 @@ class ManualOnlyMonitoringTests(unittest.TestCase):
         self.assertEqual(captured_strategy_context["analysis_date"], "2026-03-13 10:30:00")
         self.assertEqual(result["strategy_context"]["origin_analysis_id"], 99)
 
+    def test_buy_signal_outside_entry_range_is_blocked_by_strategy_plan(self):
+        fake_db = FakeSmartMonitorDB()
+
+        with patch.object(smart_monitor_engine_module, "SmartMonitorDB", return_value=fake_db), patch.object(
+            smart_monitor_engine_module.event_bus,
+            "subscribe",
+            return_value=None,
+        ):
+            engine = smart_monitor_engine_module.SmartMonitorEngine(llm_api_key="stub")
+        engine.lifecycle_service.asset_service = fake_db.asset_service
+        engine._refresh_analysis_baseline_before_decision = lambda **kwargs: True
+
+        engine.llm_client.get_trading_session = lambda: {
+            "session": "上午盘",
+            "can_trade": True,
+            "recommendation": "",
+        }
+        engine.data_fetcher.get_comprehensive_data = lambda stock_code, intraday_strict=False: {
+            "name": "贵州茅台",
+            "current_price": 1520.0,
+            "change_pct": 1.25,
+            "change_amount": 18.8,
+            "volume": 123456,
+            "turnover_rate": 0.75,
+        }
+        engine.llm_client.analyze_stock_and_decide = lambda **kwargs: {
+            "success": True,
+            "decision": {
+                "action": "BUY",
+                "confidence": 82,
+                "reasoning": "盘中转强，准备追价。",
+                "position_size_pct": 20,
+                "stop_loss_pct": 5,
+                "take_profit_pct": 12,
+                "risk_level": "中",
+                "key_price_levels": {"support": 1500, "resistance": 1560},
+            },
+        }
+        engine._send_notification = lambda **kwargs: None
+        engine._sync_runtime_thresholds = lambda **kwargs: True
+
+        result = engine.analyze_stock(
+            "600519",
+            notify=False,
+            account_name="测试账户",
+            strategy_context={
+                "origin_analysis_id": 99,
+                "analysis_scope": "research",
+                "analysis_date": "2026-04-16 09:00:00",
+                "rating": "买入",
+                "entry_min": 1505.0,
+                "entry_max": 1515.0,
+                "take_profit": 1650.0,
+                "stop_loss": 1460.0,
+            },
+        )
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["decision"]["action"], "HOLD")
+        self.assertEqual(result["decision"]["rating"], "持有")
+        self.assertEqual(result["decision"]["entry_range"], "1505.000-1515.000")
+        self.assertIsNone(result["pending_action"])
+        self.assertEqual(fake_db.pending_actions, [])
+
+    def test_hold_can_be_promoted_to_plan_buy_signal_inside_entry_range(self):
+        fake_db = FakeSmartMonitorDB()
+
+        with patch.object(smart_monitor_engine_module, "SmartMonitorDB", return_value=fake_db), patch.object(
+            smart_monitor_engine_module.event_bus,
+            "subscribe",
+            return_value=None,
+        ):
+            engine = smart_monitor_engine_module.SmartMonitorEngine(llm_api_key="stub")
+        engine.lifecycle_service.asset_service = fake_db.asset_service
+        engine._refresh_analysis_baseline_before_decision = lambda **kwargs: True
+
+        engine.llm_client.get_trading_session = lambda: {
+            "session": "上午盘",
+            "can_trade": True,
+            "recommendation": "",
+        }
+        engine.data_fetcher.get_comprehensive_data = lambda stock_code, intraday_strict=False: {
+            "name": "贵州茅台",
+            "current_price": 1510.0,
+            "change_pct": 0.65,
+            "change_amount": 9.8,
+            "volume": 110000,
+            "turnover_rate": 0.68,
+        }
+        engine.llm_client.analyze_stock_and_decide = lambda **kwargs: {
+            "success": True,
+            "decision": {
+                "action": "HOLD",
+                "confidence": 74,
+                "reasoning": "暂时观察。",
+                "position_size_pct": 20,
+                "stop_loss_pct": 5,
+                "take_profit_pct": 12,
+                "risk_level": "中",
+                "key_price_levels": {"support": 1500, "resistance": 1560},
+            },
+        }
+        engine._send_notification = lambda **kwargs: None
+        engine._sync_runtime_thresholds = lambda **kwargs: True
+
+        result = engine.analyze_stock(
+            "600519",
+            notify=False,
+            account_name="测试账户",
+            strategy_context={
+                "origin_analysis_id": 99,
+                "analysis_scope": "research",
+                "analysis_date": "2026-04-16 09:00:00",
+                "rating": "买入",
+                "entry_min": 1505.0,
+                "entry_max": 1515.0,
+                "take_profit": 1650.0,
+                "stop_loss": 1460.0,
+            },
+        )
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["decision"]["action"], "BUY")
+        self.assertEqual(result["decision"]["rating"], "买入")
+        self.assertEqual(result["pending_action"]["pending_action_id"], 1)
+        self.assertEqual(fake_db.pending_actions[0]["action_type"], "buy")
+
     def test_price_alert_deleted_during_execution_does_not_continue_checking(self):
         temp_monitor_db = StockMonitorDatabase(str(self.base / "monitor.db"))
         stock_id = temp_monitor_db.add_monitored_stock(

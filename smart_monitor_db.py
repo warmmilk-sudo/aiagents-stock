@@ -164,6 +164,81 @@ class SmartMonitorDB:
         return json.dumps(value, ensure_ascii=False)
 
     @staticmethod
+    def _extract_first_number(value, allow_zero: bool = False) -> Optional[float]:
+        if value in (None, ""):
+            return None
+        if isinstance(value, (int, float)):
+            numeric = float(value)
+            return numeric if allow_zero or numeric != 0 else None
+        text = str(value)
+        digits: List[str] = []
+        current: List[str] = []
+        for char in text:
+            if char.isdigit() or char in {".", "-"}:
+                current.append(char)
+                continue
+            if current:
+                digits.append("".join(current))
+                current = []
+        if current:
+            digits.append("".join(current))
+        for candidate in digits:
+            try:
+                numeric = float(candidate)
+            except ValueError:
+                continue
+            if allow_zero or numeric != 0:
+                return numeric
+        return None
+
+    @staticmethod
+    def _format_entry_range_text(entry_min: Optional[float], entry_max: Optional[float]) -> str:
+        if entry_min is None and entry_max is None:
+            return "N/A"
+        if entry_min is None:
+            return f"{float(entry_max):.3f}"
+        if entry_max is None:
+            return f"{float(entry_min):.3f}"
+        return f"{float(entry_min):.3f}-{float(entry_max):.3f}"
+
+    @staticmethod
+    def _map_action_to_rating(action: object, fallback: str = "持有") -> str:
+        normalized = str(action or "").strip().upper()
+        if normalized == "BUY":
+            return "买入"
+        if normalized == "SELL":
+            return "卖出"
+        return fallback or "持有"
+
+    @classmethod
+    def _build_unified_decision_view(cls, decision: Dict) -> Dict[str, object]:
+        monitor_levels = decision.get("monitor_levels") if isinstance(decision.get("monitor_levels"), dict) else {}
+        entry_min = cls._extract_first_number(monitor_levels.get("entry_min"), allow_zero=True)
+        entry_max = cls._extract_first_number(monitor_levels.get("entry_max"), allow_zero=True)
+        take_profit = cls._extract_first_number(monitor_levels.get("take_profit"), allow_zero=True)
+        stop_loss = cls._extract_first_number(monitor_levels.get("stop_loss"), allow_zero=True)
+        rating = str(decision.get("rating") or "").strip() or cls._map_action_to_rating(
+            decision.get("action"),
+            fallback="持有",
+        )
+        confidence_level = decision.get("confidence_level")
+        if confidence_level in (None, ""):
+            confidence_level = decision.get("confidence")
+        advice = str(
+            decision.get("advice")
+            or decision.get("reasoning")
+            or ""
+        ).strip()
+        return {
+            "rating": rating,
+            "confidence_level": confidence_level,
+            "entry_range": decision.get("entry_range") or cls._format_entry_range_text(entry_min, entry_max),
+            "take_profit": decision.get("take_profit") if decision.get("take_profit") not in (None, "") else take_profit,
+            "stop_loss": decision.get("stop_loss") if decision.get("stop_loss") not in (None, "") else stop_loss,
+            "advice": advice,
+        }
+
+    @staticmethod
     def _extract_decision_context_snapshot(payload: Dict) -> Dict:
         explicit_context = payload.get("decision_context")
         merged_context: Dict[str, object] = dict(explicit_context) if isinstance(explicit_context, dict) and explicit_context else {}
@@ -1251,6 +1326,9 @@ class SmartMonitorDB:
                 decision["thresholds_changed"] = decision_context.get("thresholds_changed")
                 decision["delta_summary"] = decision_context.get("delta_summary")
                 decision["new_intraday_signal_labels"] = decision_context.get("new_intraday_signal_labels") or []
+            unified_view = self._build_unified_decision_view(decision)
+            decision.update(unified_view)
+            decision["final_decision"] = unified_view
             decisions.append(decision)
         return decisions
 
