@@ -156,6 +156,7 @@ class StockAnalysisAgentsPipelineTests(unittest.TestCase):
         agent = StockAnalysisAgents.__new__(StockAnalysisAgents)
 
         def fake_call_api(messages, max_tokens=None, tier=None):
+            captured["system"] = messages[0]["content"]
             captured["prompt"] = messages[1]["content"]
             return "风险分析"
 
@@ -182,12 +183,15 @@ class StockAnalysisAgentsPipelineTests(unittest.TestCase):
         self.assertIn("总市值：2100000000000", captured["prompt"])
         self.assertIn("所属行业：白酒", captured["prompt"])
         self.assertIn("所属板块：食品饮料", captured["prompt"])
+        self.assertIn("【通用约束】", captured["system"])
+        self.assertIn("【任务步骤】", captured["system"])
 
     def test_risk_management_agent_includes_fundamental_and_liquidity_context(self):
         captured = {}
         agent = StockAnalysisAgents.__new__(StockAnalysisAgents)
 
         def fake_call_api(messages, max_tokens=None, tier=None):
+            captured["system"] = messages[0]["content"]
             captured["prompt"] = messages[1]["content"]
             captured["max_tokens"] = max_tokens
             return "增强风险分析"
@@ -252,6 +256,28 @@ class StockAnalysisAgentsPipelineTests(unittest.TestCase):
         self.assertIn("买卖盘深度摘要：买盘最优 22.49/1260，卖盘最优 22.50/980", captured["prompt"])
         self.assertIn("买盘五档：买一 22.49/1260", captured["prompt"])
         self.assertIn("卖盘五档：卖一 22.5/980", captured["prompt"])
+        self.assertIn("【通用约束】", captured["system"])
+        self.assertIn("【任务步骤】", captured["system"])
+
+    def test_news_analyst_agent_includes_system_level_rules(self):
+        captured = {}
+        agent = StockAnalysisAgents.__new__(StockAnalysisAgents)
+
+        def fake_call_api(messages, max_tokens=None, tier=None):
+            captured["system"] = messages[0]["content"]
+            captured["prompt"] = messages[1]["content"]
+            return "新闻分析"
+
+        agent.llm_client = types.SimpleNamespace(call_api=fake_call_api)
+
+        result = agent.news_analyst_agent(
+            stock_info={"symbol": "600519", "name": "贵州茅台", "sector": "食品饮料", "industry": "白酒"},
+            news_data=None,
+        )
+
+        self.assertEqual(result["analysis"], "新闻分析")
+        self.assertIn("【通用约束】", captured["system"])
+        self.assertIn("【任务步骤】", captured["system"])
 
 
 if __name__ == "__main__":

@@ -8,3 +8,13 @@
 5. 为每条事实提取概念标签(concept_tags)：标注该事实涉及的板块、概念、产业链关键词，用于跨股票联想检索。
 
 你必须严格以如下JSON数组格式输出，不要添加任何多余文字：
+```json
+[
+  {
+    "fact_content": "一句话浓缩的客观事实",
+    "importance_score": 75,
+    "category": "fundamental",
+    "concept_tags": ["白酒", "消费升级"]
+  }
+]
+```

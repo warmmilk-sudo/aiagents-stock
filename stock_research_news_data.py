@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from email.utils import parsedate_to_datetime
 import os
 from typing import Any, Dict, List
 
@@ -32,6 +33,10 @@ class StockResearchNewsDataFetcher:
         self.rsshub_fetcher = NewsFlowDataFetcher()
         self.detail_fetcher = get_detail_fetcher()
         self.detail_item_limit = max(1, int(os.getenv("STOCK_RESEARCH_DETAIL_ITEM_LIMIT", "3")))
+        self.prompt_announcement_limit = max(1, int(os.getenv("STOCK_RESEARCH_PROMPT_ANNOUNCEMENT_LIMIT", "3")))
+        self.prompt_news_limit = max(1, int(os.getenv("STOCK_RESEARCH_PROMPT_NEWS_LIMIT", "4")))
+        self.prompt_supplemental_limit = max(1, int(os.getenv("STOCK_RESEARCH_PROMPT_SUPPLEMENTAL_LIMIT", "3")))
+        self.prompt_content_char_limit = max(80, int(os.getenv("STOCK_RESEARCH_PROMPT_CONTENT_CHAR_LIMIT", "220")))
 
     @staticmethod
     def _dedupe_news_items(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -225,92 +230,107 @@ class StockResearchNewsDataFetcher:
             "error": "；".join(errors) if errors and not (has_news or has_announcements or has_supplemental) else None,
         }
 
+    @staticmethod
+    def _compact_whitespace(text: Any) -> str:
+        return " ".join(str(text or "").replace("\r", " ").replace("\n", " ").split()).strip()
+
+    @classmethod
+    def _clean_prompt_text(cls, text: Any, *, limit: int) -> str:
+        normalized = cls._compact_whitespace(text)
+        if not normalized:
+            return ""
+        if len(normalized) > limit:
+            return normalized[:limit].rstrip() + "..."
+        return normalized
+
+    @staticmethod
+    def _normalize_prompt_time(value: Any) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return ""
+
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+            return parsed.strftime("%Y-%m-%d %H:%M")
+        except Exception:
+            pass
+
+        try:
+            parsed = parsedate_to_datetime(text)
+            return parsed.strftime("%Y-%m-%d %H:%M")
+        except Exception:
+            return text
+
+    def _format_prompt_item(
+        self,
+        item: Dict[str, Any],
+        *,
+        include_source: bool = True,
+    ) -> str:
+        title = self._clean_prompt_text(item.get("title"), limit=120)
+        publish_time = self._normalize_prompt_time(item.get("publish_time"))
+        source = self._clean_prompt_text(item.get("source"), limit=30)
+        summary = self._clean_prompt_text(item.get("content") or item.get("summary"), limit=self.prompt_content_char_limit)
+
+        parts = []
+        if publish_time:
+            parts.append(f"日期={publish_time}")
+        if include_source and source:
+            parts.append(f"来源={source}")
+        if title:
+            parts.append(f"标题={title}")
+
+        lines = []
+        if parts:
+            lines.append("- " + "；".join(parts))
+        if summary:
+            lines.append(f"  摘要={summary}")
+        return "\n".join(lines).strip()
+
     def format_news_for_ai(self, data: Dict[str, Any]) -> str:
         if not data or not data.get("data_success"):
             return "未能获取新闻公告数据"
 
-        text_parts = []
-        text_parts.append(
-            """
-【证据优先级说明】
-1. 巨潮资讯公告正文/摘录：法定披露，优先级最高，用于确认事实。
-2. 财经媒体正文摘录：来自详情页正文，用于补充背景、影响和风险。
-3. 聚合新闻摘要：用于补充线索和市场关注点，可信度低于前两者。
-若不同来源存在冲突，请优先相信巨潮资讯公告，其次相信正文媒体稿，再参考聚合摘要。
-""".strip()
-        )
-        text_parts.append("")
+        text_parts = [
+            "【证据优先级】",
+            "- 公告正文/摘录 > 媒体正文 > 聚合摘要",
+            "- 若来源冲突，优先采信更高等级证据",
+            "",
+        ]
 
         announcement_data = data.get("announcement_data") or {}
         if announcement_data.get("items"):
-            text_parts.append(
-                f"""
-【一级证据：法定公告（巨潮资讯）】
-股票：{announcement_data.get('stock_name', data.get('stock_name', data.get('symbol', 'N/A')))}
-查询时间：{announcement_data.get('query_time', 'N/A')}
-公告数量：{announcement_data.get('count', 0)}条
-
-"""
-            )
-            for idx, item in enumerate(announcement_data.get("items", [])[: min(self.max_items, 5)], 1):
-                text_parts.append(f"公告 {idx}:")
-                for field in ["title", "publish_time", "url"]:
-                    value = item.get(field)
-                    if value:
-                        text_parts.append(f"  {field}: {value}")
-                content = item.get("content")
-                if content:
-                    value = str(content)
-                    if len(value) > 1200:
-                        value = value[:1200] + "..."
-                    content_origin = str(item.get("content_origin") or "excerpt")
-                    text_parts.append(f"  content_origin: {content_origin}")
-                    text_parts.append(f"  content: {value}")
-                text_parts.append("")
+            item_limit = min(self.max_items, self.prompt_announcement_limit)
+            text_parts.append("【一级证据：法定公告】")
+            text_parts.append(f"- 数量：{announcement_data.get('count', 0)}，仅保留前 {item_limit} 条")
+            for item in announcement_data.get("items", [])[:item_limit]:
+                formatted = self._format_prompt_item(item, include_source=False)
+                if formatted:
+                    text_parts.append(formatted)
+            text_parts.append("")
 
         news_data = data.get("news_data") or {}
         if news_data.get("items"):
+            item_limit = min(self.max_items, self.prompt_news_limit)
+            text_parts.append("【三级证据：新闻线索】")
             text_parts.append(
-                f"""
-【三级证据：个股新闻线索（pywencai，过滤后）】
-查询时间：{news_data.get('query_time', 'N/A')}
-新闻数量：{news_data.get('count', 0)}条（原始 {news_data.get('raw_count', news_data.get('count', 0))} 条）
-
-"""
+                f"- 数量：{news_data.get('count', 0)}（原始 {news_data.get('raw_count', news_data.get('count', 0))}），仅保留前 {item_limit} 条"
             )
-            for idx, item in enumerate(news_data.get("items", [])[: min(self.max_items, 5)], 1):
-                text_parts.append(f"新闻 {idx}:")
-                for field in ["title", "publish_time", "source", "content", "url"]:
-                    value = item.get(field)
-                    if value:
-                        if field == "content" and len(str(value)) > 500:
-                            value = str(value)[:500] + "..."
-                        text_parts.append(f"  {field}: {value}")
-                text_parts.append("")
+            for item in news_data.get("items", [])[:item_limit]:
+                formatted = self._format_prompt_item(item)
+                if formatted:
+                    text_parts.append(formatted)
+            text_parts.append("")
 
         supplemental_news_data = data.get("supplemental_news_data") or {}
         if supplemental_news_data.get("items"):
-            text_parts.append(
-                f"""
-【二级证据：财经媒体正文/摘要（RSSHub）】
-查询时间：{supplemental_news_data.get('query_time', 'N/A')}
-命中数量：{supplemental_news_data.get('count', 0)}条
+            item_limit = min(self.max_items, self.prompt_supplemental_limit)
+            text_parts.append("【二级证据：财经媒体正文/摘要】")
+            text_parts.append(f"- 数量：{supplemental_news_data.get('count', 0)}，仅保留前 {item_limit} 条")
+            for item in supplemental_news_data.get("items", [])[:item_limit]:
+                formatted = self._format_prompt_item(item)
+                if formatted:
+                    text_parts.append(formatted)
+            text_parts.append("")
 
-"""
-            )
-            for idx, item in enumerate(supplemental_news_data.get("items", [])[: min(self.max_items, 4)], 1):
-                text_parts.append(f"补充 {idx}:")
-                for field in ["title", "publish_time", "source", "url"]:
-                    value = item.get(field)
-                    if value:
-                        text_parts.append(f"  {field}: {value}")
-                content = item.get("content")
-                if content:
-                    value = str(content)
-                    if len(value) > 1200:
-                        value = value[:1200] + "..."
-                    text_parts.append(f"  content_origin: {item.get('content_origin') or 'summary'}")
-                    text_parts.append(f"  content: {value}")
-                text_parts.append("")
-
-        return "\n".join(text_parts) if text_parts else "未能获取新闻公告数据"
+        return "\n".join(part for part in text_parts if part is not None).strip() if text_parts else "未能获取新闻公告数据"

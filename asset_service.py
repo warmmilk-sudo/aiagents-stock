@@ -413,6 +413,13 @@ class AssetService:
                 origin_analysis_id=origin_analysis_id,
                 last_trade_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             )
+        self.asset_repository.open_position_cycle(
+            asset_id,
+            opened_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            baseline_source="manual_portfolio_promotion",
+            baseline_analysis_id=origin_analysis_id,
+            overwrite_baseline=False,
+        )
         warning = ""
         try:
             self.sync_managed_monitors(asset_id)
@@ -422,17 +429,39 @@ class AssetService:
         return True, f"已设为持仓: {symbol}{warning}", asset_id
 
     def clear_position_to_watchlist(self, asset_id: int, *, note: str = "", last_trade_at: Optional[str] = None) -> bool:
+        effective_trade_at = last_trade_at or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         changed = self.asset_repository.transition_asset_status(
             asset_id,
             STATUS_RESEARCH,
             note=note,
             last_exit_reason=note,
-            last_exit_at=last_trade_at or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            last_trade_at=last_trade_at or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            last_exit_at=effective_trade_at,
+            last_trade_at=effective_trade_at,
         )
         if changed:
+            self.asset_repository.close_open_position_cycle(
+                asset_id,
+                closed_at=effective_trade_at,
+            )
             self.sync_managed_monitors(asset_id)
         return changed
+
+    @staticmethod
+    def _extract_pending_action_position_baseline(pending_action: Optional[Dict]) -> Dict[str, str]:
+        payload = pending_action.get("payload") if isinstance(pending_action, dict) else {}
+        if not isinstance(payload, dict):
+            return {}
+        baseline = payload.get("entry_strategy_baseline")
+        if not isinstance(baseline, dict):
+            return {}
+        return {
+            "swing_type": str(baseline.get("swing_type") or "").strip(),
+            "swing_type_reason": str(baseline.get("swing_type_reason") or "").strip(),
+            "holding_period": str(baseline.get("holding_period") or "").strip(),
+            "baseline_source": str(baseline.get("baseline_source") or "").strip(),
+            "baseline_analysis_id": baseline.get("baseline_analysis_id"),
+            "baseline_decision_id": baseline.get("baseline_decision_id"),
+        }
 
     def remove_from_watchlist(self, asset_id: int, *, note: str = "") -> bool:
         changed = self.asset_repository.transition_asset_status(asset_id, STATUS_RESEARCH, note=note)
@@ -470,6 +499,8 @@ class AssetService:
         effective_trade_date = trade_date or datetime.now().strftime("%Y-%m-%d")
         effective_trade_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         clear_requested = normalized_trade_type == "clear"
+        pending_action = self.asset_repository.get_pending_action(pending_action_id) if pending_action_id else None
+        pending_baseline = self._extract_pending_action_position_baseline(pending_action)
 
         if clear_requested:
             if current_quantity <= 0:
@@ -484,13 +515,14 @@ class AssetService:
             return False, f"{action_label}数量必须是100的整数倍", None
 
         if normalized_trade_type == "buy":
+            opened_from_flat = not (asset.get("status") == STATUS_HOLDING and current_quantity > 0 and current_cost > 0)
             if asset.get("status") == STATUS_HOLDING and current_quantity > 0 and current_cost > 0:
                 new_quantity = current_quantity + trade_quantity
                 new_cost = ((current_cost * current_quantity) + (trade_price * trade_quantity)) / new_quantity
             else:
                 new_quantity = trade_quantity
                 new_cost = trade_price
-            self.asset_repository.add_trade_history(
+            trade_id = self.asset_repository.add_trade_history(
                 asset_id,
                 trade_type="buy",
                 trade_date=effective_trade_date,
@@ -506,6 +538,35 @@ class AssetService:
                 quantity=new_quantity,
                 last_trade_at=effective_trade_time,
             )
+            if opened_from_flat:
+                self.asset_repository.open_position_cycle(
+                    asset_id,
+                    opened_at=effective_trade_time,
+                    opened_trade_date=effective_trade_date,
+                    opened_trade_id=trade_id,
+                    baseline_source=pending_baseline.get("baseline_source") or "manual_buy",
+                    baseline_analysis_id=pending_baseline.get("baseline_analysis_id"),
+                    baseline_decision_id=pending_baseline.get("baseline_decision_id"),
+                    swing_type=pending_baseline.get("swing_type"),
+                    swing_type_reason=pending_baseline.get("swing_type_reason"),
+                    baseline_snapshot=(
+                        {"holding_period": pending_baseline.get("holding_period")}
+                        if pending_baseline.get("holding_period")
+                        else None
+                    ),
+                    overwrite_baseline=True,
+                )
+            elif pending_baseline.get("swing_type"):
+                self.asset_repository.set_open_position_cycle_baseline(
+                    asset_id,
+                    swing_type=pending_baseline.get("swing_type"),
+                    swing_type_reason=pending_baseline.get("swing_type_reason"),
+                    holding_period=pending_baseline.get("holding_period"),
+                    baseline_source=pending_baseline.get("baseline_source") or "manual_buy",
+                    baseline_analysis_id=pending_baseline.get("baseline_analysis_id"),
+                    baseline_decision_id=pending_baseline.get("baseline_decision_id"),
+                    overwrite=False,
+                )
             if pending_action_id:
                 self.asset_repository.update_pending_action(
                     pending_action_id,
@@ -522,7 +583,7 @@ class AssetService:
             return False, "减仓数量不能超过当前持仓数量", None
 
         remaining_quantity = current_quantity - trade_quantity
-        self.asset_repository.add_trade_history(
+        trade_id = self.asset_repository.add_trade_history(
             asset_id,
             trade_type="sell",
             trade_date=effective_trade_date,
@@ -550,6 +611,12 @@ class AssetService:
                 last_exit_reason=note or asset.get("note"),
                 last_exit_at=effective_trade_time,
                 last_trade_at=effective_trade_time,
+            )
+            self.asset_repository.close_open_position_cycle(
+                asset_id,
+                closed_at=effective_trade_time,
+                closed_trade_date=effective_trade_date,
+                closed_trade_id=trade_id,
             )
         if pending_action_id:
             self.asset_repository.update_pending_action(

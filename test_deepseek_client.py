@@ -146,7 +146,7 @@ class DeepSeekClientTests(unittest.TestCase):
         self.assertEqual(messages[1]["role"], "user")
         self.assertIn("投资决策专家", messages[0]["content"])
         self.assertIn("股票代码：000001", messages[1]["content"])
-        self.assertIn("若当前状态为“未持仓”，只能输出：买入 / 强烈买入 / 观望", messages[1]["content"])
+        self.assertIn("若当前状态为“未持仓”，只能输出：买入 / 强烈买入 / 观望", messages[0]["content"])
 
     def test_technical_analysis_uses_external_prompt_template(self):
         captured = {}
@@ -266,7 +266,7 @@ class DeepSeekClientTests(unittest.TestCase):
         )
 
         self.assertIn("当前状态：已持仓", captured["messages"][1]["content"])
-        self.assertIn("加仓 / 持有 / 减仓 / 卖出", captured["messages"][1]["content"])
+        self.assertIn("加仓 / 持有 / 减仓 / 卖出", captured["messages"][0]["content"])
         self.assertEqual(result["rating"], "加仓")
 
     def test_final_decision_includes_existing_holding_swing_baseline_constraints(self):
@@ -301,7 +301,7 @@ class DeepSeekClientTests(unittest.TestCase):
 
         self.assertIn("持仓波段基线约束", captured["messages"][1]["content"])
         self.assertIn("已确认波段类型：标准波段", captured["messages"][1]["content"])
-        self.assertIn("默认输出同一 `swing_type`", captured["messages"][1]["content"])
+        self.assertIn("默认输出同一 `swing_type`", captured["messages"][0]["content"])
         self.assertEqual(result["rating"], "持有")
 
     def test_fundamental_analysis_uses_expanded_token_budget_and_business_summary(self):

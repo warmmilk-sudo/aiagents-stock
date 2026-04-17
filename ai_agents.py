@@ -288,7 +288,6 @@ class StockAnalysisAgents:
             risk_fundamental_text=risk_fundamental_text,
             risk_liquidity_text=risk_liquidity_text,
         )
-
         analysis = self.llm_client.call_api(
             messages,
             max_tokens=max(12000, int(os.getenv("RISK_ANALYSIS_MAX_TOKENS", "16000") or 16000)),
@@ -390,7 +389,6 @@ class StockAnalysisAgents:
             industry=stock_info.get("industry", "N/A"),
             news_text=news_text,
         )
-
         analysis = self.llm_client.call_api(
             messages,
             max_tokens=4000,

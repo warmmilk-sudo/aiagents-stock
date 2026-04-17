@@ -130,10 +130,62 @@ class StockResearchNewsDataFetcherTests(unittest.TestCase):
         self.assertEqual(result["source_breakdown"]["supplemental_news"]["count"], 1)
 
         formatted = fetcher.format_news_for_ai(result)
-        self.assertIn("一级证据：法定公告（巨潮资讯）", formatted)
-        self.assertIn("三级证据：个股新闻线索（pywencai，过滤后）", formatted)
-        self.assertIn("二级证据：财经媒体正文/摘要（RSSHub）", formatted)
-        self.assertIn("证据优先级说明", formatted)
+        self.assertIn("一级证据：法定公告", formatted)
+        self.assertIn("三级证据：新闻线索", formatted)
+        self.assertIn("二级证据：财经媒体正文/摘要", formatted)
+        self.assertIn("证据优先级", formatted)
+        self.assertNotIn("https://example.com/ann.pdf", formatted)
+        self.assertNotIn("https://example.com/news", formatted)
+        self.assertNotIn("https://example.com/rss", formatted)
+
+    def test_format_news_for_ai_limits_items_and_omits_urls(self):
+        fetcher = StockResearchNewsDataFetcher(max_items=10)
+
+        formatted = fetcher.format_news_for_ai(
+            {
+                "data_success": True,
+                "announcement_data": {
+                    "count": 4,
+                    "items": [
+                        {"title": "公告1", "publish_time": "2026-04-01 08:00:00", "content": "A" * 20, "url": "https://a/1"},
+                        {"title": "公告2", "publish_time": "2026-04-02 08:00:00", "content": "B" * 20, "url": "https://a/2"},
+                        {"title": "公告3", "publish_time": "2026-04-03 08:00:00", "content": "C" * 20, "url": "https://a/3"},
+                        {"title": "公告4", "publish_time": "2026-04-04 08:00:00", "content": "D" * 20, "url": "https://a/4"},
+                    ],
+                },
+                "news_data": {
+                    "count": 5,
+                    "raw_count": 8,
+                    "items": [
+                        {"title": "新闻1", "publish_time": "今天 09:00", "source": "源1", "content": "x" * 300, "url": "https://n/1"},
+                        {"title": "新闻2", "publish_time": "今天 09:10", "source": "源2", "content": "x" * 20, "url": "https://n/2"},
+                        {"title": "新闻3", "publish_time": "今天 09:20", "source": "源3", "content": "x" * 20, "url": "https://n/3"},
+                        {"title": "新闻4", "publish_time": "今天 09:30", "source": "源4", "content": "x" * 20, "url": "https://n/4"},
+                        {"title": "新闻5", "publish_time": "今天 09:40", "source": "源5", "content": "x" * 20, "url": "https://n/5"},
+                    ],
+                },
+                "supplemental_news_data": {
+                    "count": 4,
+                    "items": [
+                        {"title": "补充1", "publish_time": "Thu, 09 Apr 2026 10:02:00 GMT", "source": "媒体1", "content": "m" * 20, "url": "https://s/1"},
+                        {"title": "补充2", "publish_time": "Thu, 09 Apr 2026 10:03:00 GMT", "source": "媒体2", "content": "m" * 20, "url": "https://s/2"},
+                        {"title": "补充3", "publish_time": "Thu, 09 Apr 2026 10:04:00 GMT", "source": "媒体3", "content": "m" * 20, "url": "https://s/3"},
+                        {"title": "补充4", "publish_time": "Thu, 09 Apr 2026 10:05:00 GMT", "source": "媒体4", "content": "m" * 20, "url": "https://s/4"},
+                    ],
+                },
+            }
+        )
+
+        self.assertIn("公告1", formatted)
+        self.assertIn("公告3", formatted)
+        self.assertNotIn("公告4", formatted)
+        self.assertIn("新闻4", formatted)
+        self.assertNotIn("新闻5", formatted)
+        self.assertIn("补充3", formatted)
+        self.assertNotIn("补充4", formatted)
+        self.assertIn("2026-04-09 10:02", formatted)
+        self.assertIn("...", formatted)
+        self.assertNotIn("https://", formatted)
 
     def test_filter_pywencai_news_removes_obvious_noise(self):
         fetcher = StockResearchNewsDataFetcher(max_items=5)

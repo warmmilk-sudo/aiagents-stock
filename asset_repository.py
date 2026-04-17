@@ -140,6 +140,44 @@ class AssetRepository:
             ON asset_action_queue(asset_id, status, datetime(created_at) DESC, id DESC)
             """
         )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS asset_position_cycles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                asset_id INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'open'
+                    CHECK(status IN ('open', 'closed')),
+                opened_at TEXT NOT NULL,
+                opened_trade_date TEXT,
+                opened_trade_id INTEGER,
+                closed_at TEXT,
+                closed_trade_date TEXT,
+                closed_trade_id INTEGER,
+                baseline_source TEXT,
+                baseline_analysis_id INTEGER,
+                baseline_decision_id INTEGER,
+                swing_type TEXT,
+                swing_type_reason TEXT,
+                baseline_snapshot_json TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (asset_id) REFERENCES assets(id)
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_asset_position_cycles_asset_status
+            ON asset_position_cycles(asset_id, status, datetime(opened_at) DESC, id DESC)
+            """
+        )
+        cursor.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_asset_position_cycles_one_open
+            ON asset_position_cycles(asset_id)
+            WHERE status = 'open'
+            """
+        )
         conn.commit()
         conn.close()
 
@@ -516,6 +554,11 @@ class AssetRepository:
         action = dict(row)
         action["payload"] = self._safe_json_loads(action.pop("payload_json", None), {})
         return action
+
+    def _row_to_position_cycle(self, row: sqlite3.Row) -> Dict:
+        cycle = dict(row)
+        cycle["baseline_snapshot"] = self._safe_json_loads(cycle.pop("baseline_snapshot_json", None), {})
+        return cycle
 
     def _table_exists(self, conn: sqlite3.Connection, table_name: str) -> bool:
         cursor = conn.cursor()
@@ -2012,6 +2055,205 @@ class AssetRepository:
         rows = cursor.fetchall()
         conn.close()
         return [self._row_to_trade(row) for row in rows]
+
+    def get_open_position_cycle(self, asset_id: int) -> Optional[Dict]:
+        conn = self._connect()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT *
+            FROM asset_position_cycles
+            WHERE asset_id = ? AND status = 'open'
+            ORDER BY datetime(opened_at) DESC, id DESC
+            LIMIT 1
+            """,
+            (asset_id,),
+        )
+        row = cursor.fetchone()
+        conn.close()
+        return self._row_to_position_cycle(row) if row else None
+
+    def list_position_cycles(self, asset_id: int, limit: int = 20) -> List[Dict]:
+        conn = self._connect()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT *
+            FROM asset_position_cycles
+            WHERE asset_id = ?
+            ORDER BY datetime(opened_at) DESC, id DESC
+            LIMIT ?
+            """,
+            (asset_id, max(1, int(limit or 20))),
+        )
+        rows = cursor.fetchall()
+        conn.close()
+        return [self._row_to_position_cycle(row) for row in rows]
+
+    def open_position_cycle(
+        self,
+        asset_id: int,
+        *,
+        opened_at: Optional[str] = None,
+        opened_trade_date: Optional[str] = None,
+        opened_trade_id: Optional[int] = None,
+        baseline_source: Optional[str] = None,
+        baseline_analysis_id: Optional[int] = None,
+        baseline_decision_id: Optional[int] = None,
+        swing_type: Optional[str] = None,
+        swing_type_reason: Optional[str] = None,
+        baseline_snapshot: Optional[Dict[str, Any]] = None,
+        overwrite_baseline: bool = False,
+    ) -> int:
+        now_text = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        effective_opened_at = str(opened_at or now_text)
+        normalized_swing_type = str(swing_type or "").strip()
+        normalized_reason = str(swing_type_reason or "").strip()
+        serialized_snapshot = (
+            json.dumps(baseline_snapshot, ensure_ascii=False)
+            if isinstance(baseline_snapshot, dict) and baseline_snapshot
+            else None
+        )
+
+        conn = self._connect()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT *
+            FROM asset_position_cycles
+            WHERE asset_id = ? AND status = 'open'
+            ORDER BY datetime(opened_at) DESC, id DESC
+            LIMIT 1
+            """,
+            (asset_id,),
+        )
+        existing = cursor.fetchone()
+        if existing:
+            existing_cycle = dict(existing)
+            updates: Dict[str, Any] = {}
+            if opened_trade_id and existing_cycle.get("opened_trade_id") in (None, ""):
+                updates["opened_trade_id"] = opened_trade_id
+            if opened_trade_date and not existing_cycle.get("opened_trade_date"):
+                updates["opened_trade_date"] = opened_trade_date
+            if effective_opened_at and not existing_cycle.get("opened_at"):
+                updates["opened_at"] = effective_opened_at
+            can_write_baseline = overwrite_baseline or not str(existing_cycle.get("swing_type") or "").strip()
+            if can_write_baseline:
+                if normalized_swing_type:
+                    updates["swing_type"] = normalized_swing_type
+                if normalized_reason:
+                    updates["swing_type_reason"] = normalized_reason
+                if baseline_source:
+                    updates["baseline_source"] = baseline_source
+                if baseline_analysis_id not in (None, ""):
+                    updates["baseline_analysis_id"] = baseline_analysis_id
+                if baseline_decision_id not in (None, ""):
+                    updates["baseline_decision_id"] = baseline_decision_id
+                if serialized_snapshot:
+                    updates["baseline_snapshot_json"] = serialized_snapshot
+            if updates:
+                updates["updated_at"] = now_text
+                assignments = ", ".join(f"{column} = ?" for column in updates)
+                values = list(updates.values())
+                values.append(int(existing_cycle["id"]))
+                cursor.execute(
+                    f"UPDATE asset_position_cycles SET {assignments} WHERE id = ?",
+                    tuple(values),
+                )
+                conn.commit()
+            conn.close()
+            return int(existing_cycle["id"])
+
+        cursor.execute(
+            """
+            INSERT INTO asset_position_cycles (
+                asset_id, status, opened_at, opened_trade_date, opened_trade_id,
+                baseline_source, baseline_analysis_id, baseline_decision_id,
+                swing_type, swing_type_reason, baseline_snapshot_json, created_at, updated_at
+            )
+            VALUES (?, 'open', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                asset_id,
+                effective_opened_at,
+                opened_trade_date,
+                opened_trade_id,
+                baseline_source,
+                baseline_analysis_id,
+                baseline_decision_id,
+                normalized_swing_type or None,
+                normalized_reason or None,
+                serialized_snapshot,
+                now_text,
+                now_text,
+            ),
+        )
+        cycle_id = int(cursor.lastrowid)
+        conn.commit()
+        conn.close()
+        return cycle_id
+
+    def close_open_position_cycle(
+        self,
+        asset_id: int,
+        *,
+        closed_at: Optional[str] = None,
+        closed_trade_date: Optional[str] = None,
+        closed_trade_id: Optional[int] = None,
+    ) -> bool:
+        now_text = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        effective_closed_at = str(closed_at or now_text)
+        conn = self._connect()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            UPDATE asset_position_cycles
+            SET status = 'closed',
+                closed_at = ?,
+                closed_trade_date = COALESCE(?, closed_trade_date),
+                closed_trade_id = COALESCE(?, closed_trade_id),
+                updated_at = ?
+            WHERE asset_id = ? AND status = 'open'
+            """,
+            (
+                effective_closed_at,
+                closed_trade_date,
+                closed_trade_id,
+                now_text,
+                asset_id,
+            ),
+        )
+        changed = cursor.rowcount > 0
+        conn.commit()
+        conn.close()
+        return changed
+
+    def set_open_position_cycle_baseline(
+        self,
+        asset_id: int,
+        *,
+        swing_type: Optional[str],
+        swing_type_reason: Optional[str] = None,
+        holding_period: Optional[str] = None,
+        baseline_source: Optional[str] = None,
+        baseline_analysis_id: Optional[int] = None,
+        baseline_decision_id: Optional[int] = None,
+        overwrite: bool = False,
+    ) -> bool:
+        baseline_snapshot = {}
+        if holding_period not in (None, ""):
+            baseline_snapshot["holding_period"] = str(holding_period).strip()
+        cycle_id = self.open_position_cycle(
+            asset_id,
+            baseline_source=baseline_source,
+            baseline_analysis_id=baseline_analysis_id,
+            baseline_decision_id=baseline_decision_id,
+            swing_type=swing_type,
+            swing_type_reason=swing_type_reason,
+            baseline_snapshot=baseline_snapshot or None,
+            overwrite_baseline=overwrite,
+        )
+        return bool(cycle_id)
 
     def get_trade_summary_map(self, asset_ids: Optional[List[int]] = None) -> Dict[int, Dict]:
         conn = self._connect()

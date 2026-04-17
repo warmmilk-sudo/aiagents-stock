@@ -4,6 +4,7 @@ import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from investment_db_utils import DEFAULT_ACCOUNT_NAME
+from prompt_registry import render_prompt
 
 
 _SWING_TYPE_ALIASES = {
@@ -300,16 +301,11 @@ def build_holding_strategy_prompt_block(
     is_initial_holding_analysis: bool = False,
 ) -> str:
     if not has_position:
-        return "当前状态：未持仓。本轮无需为持仓锁定波段交易基线。"
+        return render_prompt("stock_analysis/sections/holding_strategy_no_position.txt")
 
     normalized = normalize_strategy_context(strategy_context or {})
     if is_initial_holding_analysis:
-        return (
-            "当前状态：已持仓。这是加入持仓后的首次深度分析。\n"
-            "- 必须在本轮明确确认后续执行的波段类型：微波段 或 标准波段。\n"
-            "- 同时说明执行口径更偏向突破跟随、回踩低吸，还是先持有等待确认。\n"
-            "- 本次确认结果会作为后续讨论和盘中决策的默认基线；后续若无充分证据，不要频繁更新。"
-        )
+        return render_prompt("stock_analysis/sections/holding_strategy_initial_position.txt")
 
     if normalized:
         swing_type = str(normalized.get("swing_type") or "未明确").strip() or "未明确"
@@ -324,19 +320,15 @@ def build_holding_strategy_prompt_block(
             or normalized.get("summary")
             or "未明确"
         ).strip() or "未明确"
-        return (
-            "当前状态：已持仓，历史持仓波段基线已确认。\n"
-            f"- 已确认波段类型：{swing_type}\n"
-            f"- 周期参考：{horizon}\n"
-            f"- 风格摘要：{style_summary}\n"
-            f"- 执行偏好：{execution_preference}\n"
-            "- 本轮默认沿用上述波段类型；只有在团队明确给出原基线失效的充分证据时，才允许调整。"
+        return render_prompt(
+            "stock_analysis/sections/holding_strategy_existing_baseline.txt",
+            swing_type=swing_type,
+            horizon=horizon,
+            style_summary=style_summary,
+            execution_preference=execution_preference,
         )
 
-    return (
-        "当前状态：已持仓，但尚无可复用的持仓波段基线。\n"
-        "- 若本轮能够形成清晰共识，请明确确认一次波段类型，后续默认沿用。"
-    )
+    return render_prompt("stock_analysis/sections/holding_strategy_missing_baseline.txt")
 
 
 def build_strategy_context(

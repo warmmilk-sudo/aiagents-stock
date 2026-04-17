@@ -285,6 +285,102 @@ class AnalysisRepository:
         record["has_full_report"] = bool(record.get("has_full_report"))
         return record
 
+    @staticmethod
+    def _clear_cycle_bound_strategy_fields(strategy_context: Dict[str, Any]) -> Dict[str, Any]:
+        cleaned = dict(strategy_context)
+        cleaned["holding_period"] = ""
+        cleaned["swing_type"] = ""
+        cleaned["swing_type_reason"] = ""
+        normalized = normalize_strategy_context(cleaned)
+        normalized["holding_period"] = ""
+        normalized["swing_type"] = ""
+        normalized["swing_type_code"] = ""
+        normalized["swing_type_reason"] = ""
+        normalized["swing_horizon_label"] = ""
+        normalized["swing_horizon_days_min"] = None
+        normalized["swing_horizon_days_max"] = None
+        normalized["swing_horizon_days_text"] = ""
+        return normalized
+
+    def _resolve_bound_asset(
+        self,
+        *,
+        asset_id: Optional[int],
+        symbol: Optional[str],
+        account_name: Optional[str],
+    ) -> Optional[Dict[str, Any]]:
+        from asset_repository import asset_repository
+
+        if asset_id is not None:
+            asset = asset_repository.get_asset(int(asset_id))
+            if asset:
+                return asset
+        if symbol:
+            return asset_repository.get_asset_by_symbol(symbol, account_name or DEFAULT_ACCOUNT_NAME)
+        return None
+
+    def _apply_position_cycle_overlay(
+        self,
+        strategy_context: Dict[str, Any],
+        *,
+        asset_id: Optional[int],
+        symbol: Optional[str],
+        account_name: Optional[str],
+    ) -> Dict[str, Any]:
+        from asset_repository import asset_repository
+
+        bound_asset = self._resolve_bound_asset(asset_id=asset_id, symbol=symbol, account_name=account_name)
+        if not bound_asset or str(bound_asset.get("status") or "").strip().lower() != "holding":
+            return self._clear_cycle_bound_strategy_fields(strategy_context)
+
+        open_cycle = asset_repository.get_open_position_cycle(int(bound_asset["id"]))
+        if not open_cycle:
+            return normalize_strategy_context(strategy_context)
+
+        merged = dict(strategy_context)
+        baseline_snapshot = open_cycle.get("baseline_snapshot") if isinstance(open_cycle.get("baseline_snapshot"), dict) else {}
+        merged["position_cycle_id"] = open_cycle.get("id")
+        merged["position_cycle_status"] = open_cycle.get("status")
+        merged["position_cycle_opened_at"] = open_cycle.get("opened_at")
+        merged["position_cycle_baseline_source"] = open_cycle.get("baseline_source")
+        merged["position_cycle_baseline_analysis_id"] = open_cycle.get("baseline_analysis_id")
+        merged["position_cycle_baseline_decision_id"] = open_cycle.get("baseline_decision_id")
+        merged["holding_period"] = str(baseline_snapshot.get("holding_period") or "").strip()
+        merged["swing_type"] = str(open_cycle.get("swing_type") or "").strip()
+        merged["swing_type_reason"] = str(open_cycle.get("swing_type_reason") or "").strip()
+        return normalize_strategy_context(merged)
+
+    def _sync_open_position_cycle_baseline(
+        self,
+        *,
+        asset_id: Optional[int],
+        final_decision: Optional[Dict[str, Any]],
+        analysis_source: Optional[str],
+        analysis_id: Optional[int],
+    ) -> None:
+        if asset_id is None or not isinstance(final_decision, dict):
+            return
+
+        swing_type = str(final_decision.get("swing_type") or final_decision.get("swing_strategy_type") or "").strip()
+        if not swing_type:
+            return
+
+        from asset_repository import asset_repository
+
+        asset = asset_repository.get_asset(int(asset_id))
+        if not asset or str(asset.get("status") or "").strip().lower() != "holding":
+            return
+
+        asset_repository.set_open_position_cycle_baseline(
+            int(asset_id),
+            swing_type=swing_type,
+            swing_type_reason=str(final_decision.get("swing_type_reason") or "").strip(),
+            holding_period=str(final_decision.get("holding_period") or "").strip(),
+            baseline_source=str(analysis_source or "analysis_record").strip() or "analysis_record",
+            baseline_analysis_id=analysis_id,
+            overwrite=False,
+        )
+
     def _find_duplicate_record_id(
         self,
         cursor: sqlite3.Cursor,
@@ -724,6 +820,12 @@ class AnalysisRepository:
                     pool_reason_source=analysis_source,
                     sector_tags_json=sector_tags,
                 )
+                self._sync_open_position_cycle_baseline(
+                    asset_id=asset_id,
+                    final_decision=final_decision,
+                    analysis_source=analysis_source,
+                    analysis_id=existing_record_id,
+                )
             return existing_record_id
         cursor.execute(
             """
@@ -781,6 +883,12 @@ class AnalysisRepository:
             if asset and not asset.get("origin_analysis_id"):
                 update_payload["origin_analysis_id"] = record_id
             asset_repository.update_asset(asset_id, **update_payload)
+            self._sync_open_position_cycle_baseline(
+                asset_id=asset_id,
+                final_decision=final_decision,
+                analysis_source=analysis_source,
+                analysis_id=record_id,
+            )
         return record_id
 
     def list_records(
@@ -934,7 +1042,7 @@ class AnalysisRepository:
         conn.close()
         if not record:
             return None
-        return normalize_strategy_context({
+        strategy_context = normalize_strategy_context({
             "origin_analysis_id": record["id"],
             "asset_id": record.get("asset_id"),
             "symbol": record["symbol"],
@@ -956,6 +1064,12 @@ class AnalysisRepository:
             "summary": record.get("summary"),
             "final_decision": record.get("final_decision", {}),
         })
+        return self._apply_position_cycle_overlay(
+            strategy_context,
+            asset_id=record.get("asset_id") or asset_id,
+            symbol=record.get("symbol") or symbol,
+            account_name=record.get("account_name") or account_name,
+        )
 
     def get_latest_portfolio_record(self, portfolio_stock_id: int) -> Optional[Dict]:
         records = self.list_records(

@@ -7,14 +7,4 @@
 【团队讨论摘要】
 $discussion_summary
 
-请从以上内容中提取3-5条最有价值的干货事实记忆。输出严格的JSON数组格式：
-```json
-[
-  {
-    "fact_content": "一句话浓缩的客观事实",
-    "importance_score": 75,
-    "category": "fundamental",
-    "concept_tags": ["白酒", "消费升级"]
-  }
-]
-```
+请从以上内容中提取 3-5 条最有价值的干货事实记忆。

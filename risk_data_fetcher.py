@@ -11,6 +11,7 @@ from typing import Dict, Any
 import time
 import warnings
 import os
+import re
 import threading
 from pywencai_runtime import setup_pywencai_runtime_env
 
@@ -35,6 +36,8 @@ class RiskDataFetcher:
         configured_timeout = query_timeout or RISK_QUERY_TIMEOUT_SECONDS
         self.query_timeout = max(1, int(configured_timeout))
         self.pause_seconds = max(0.0, float(pause_seconds))
+        self.ai_row_limit = max(1, int(os.getenv("RISK_PROMPT_ROW_LIMIT", "3") or 3))
+        self.ai_value_char_limit = max(40, int(os.getenv("RISK_PROMPT_VALUE_CHAR_LIMIT", "90") or 90))
     
     def get_risk_data(self, symbol: str) -> Dict[str, Any]:
         """
@@ -382,77 +385,191 @@ class RiskDataFetcher:
             return None
     
     def format_risk_data_for_ai(self, risk_data: Dict[str, Any]) -> str:
-        """格式化风险数据供AI分析使用 - 直接转换DataFrame为字符串"""
+        """格式化风险数据供AI分析使用，避免将原始 DataFrame 整表塞入提示词。"""
         if not risk_data or not risk_data.get('data_success'):
             return "未获取到风险数据"
-        
+
         formatted_text = []
-        
+
         try:
-            # 1. 限售解禁数据
-            lifting_ban = risk_data.get('lifting_ban')
-            if lifting_ban and lifting_ban.get('has_data') and lifting_ban.get('data') is not None:
-                formatted_text.append("=" * 80)
-                formatted_text.append("【限售解禁数据】")
-                formatted_text.append("=" * 80)
-                formatted_text.append(f"查询语句: {lifting_ban.get('query', '')}")
-                formatted_text.append("")
-                
-                # 直接将DataFrame转换为字符串（最多50行）
-                df = lifting_ban.get('data')
-                try:
-                    df_str = df.head(50).to_string(index=False, max_rows=50, max_cols=20)
-                    formatted_text.append(f"共 {len(df)} 条记录，显示前50条：")
-                    formatted_text.append(df_str)
-                except Exception as e:
-                    formatted_text.append(f"数据转换失败: {str(e)}")
-                formatted_text.append("")
-        
-            # 2. 大股东减持数据
-            reduction = risk_data.get('shareholder_reduction')
-            if reduction and reduction.get('has_data') and reduction.get('data') is not None:
-                formatted_text.append("=" * 80)
-                formatted_text.append("【大股东减持数据】")
-                formatted_text.append("=" * 80)
-                formatted_text.append(f"查询语句: {reduction.get('query', '')}")
-                formatted_text.append("")
-                
-                # 直接将DataFrame转换为字符串（最多50行）
-                df = reduction.get('data')
-                try:
-                    df_str = df.head(50).to_string(index=False, max_rows=50, max_cols=20)
-                    formatted_text.append(f"共 {len(df)} 条记录，显示前50条：")
-                    formatted_text.append(df_str)
-                except Exception as e:
-                    formatted_text.append(f"数据转换失败: {str(e)}")
-                formatted_text.append("")
-        
-            # 3. 重要事件数据
-            events = risk_data.get('important_events')
-            if events and events.get('has_data') and events.get('data') is not None:
-                formatted_text.append("=" * 80)
-                formatted_text.append("【重要事件数据】")
-                formatted_text.append("=" * 80)
-                formatted_text.append(f"查询语句: {events.get('query', '')}")
-                formatted_text.append("")
-                
-                # 直接将DataFrame转换为字符串（最多50行）
-                df = events.get('data')
-                try:
-                    df_str = df.head(50).to_string(index=False, max_rows=50, max_cols=20)
-                    formatted_text.append(f"共 {len(df)} 条记录，显示前50条：")
-                    formatted_text.append(df_str)
-                except Exception as e:
-                    formatted_text.append(f"数据转换失败: {str(e)}")
-                formatted_text.append("")
-            
+            sections = [
+                (
+                    "限售解禁",
+                    risk_data.get('lifting_ban'),
+                    (
+                        ("日期", "时间", "解禁日"),
+                        ("股东", "名称", "类型"),
+                        ("解禁股数", "股份", "数量"),
+                        ("解禁市值", "市值", "金额"),
+                        ("比例", "占比"),
+                    ),
+                ),
+                (
+                    "大股东减持",
+                    risk_data.get('shareholder_reduction'),
+                    (
+                        ("公告日期", "减持日期", "日期", "时间"),
+                        ("股东", "名称"),
+                        ("减持股数", "减持数量", "股份"),
+                        ("减持比例", "比例", "占比"),
+                        ("减持均价", "均价", "金额"),
+                        ("方式", "进度", "状态"),
+                    ),
+                ),
+                (
+                    "重要事件",
+                    risk_data.get('important_events'),
+                    (
+                        ("日期", "时间"),
+                        ("事件", "标题", "事项", "摘要"),
+                        ("类型", "分类"),
+                        ("影响", "风险", "进展", "状态"),
+                    ),
+                ),
+            ]
+
+            for section_name, section_data, keyword_groups in sections:
+                section_text = self._format_risk_section_for_ai(section_name, section_data, keyword_groups)
+                if section_text:
+                    formatted_text.append(section_text)
+
             return "\n".join(formatted_text) if formatted_text else "暂无风险数据"
-            
+
         except Exception as e:
             print(f"格式化风险数据时出错: {str(e)}")
             import traceback
             traceback.print_exc()
             return f"格式化风险数据时出错: {str(e)}"
+
+    @staticmethod
+    def _is_empty_ai_value(value: Any) -> bool:
+        if value is None:
+            return True
+        if isinstance(value, str) and not value.strip():
+            return True
+        try:
+            return bool(pd.isna(value))
+        except Exception:
+            return False
+
+    def _normalize_ai_value(self, value: Any, *, max_length: int | None = None) -> str:
+        if self._is_empty_ai_value(value):
+            return ""
+
+        if isinstance(value, pd.Timestamp):
+            text = value.strftime("%Y-%m-%d")
+        else:
+            text = str(value)
+
+        text = re.sub(r"\s+", " ", text).strip()
+        if not text:
+            return ""
+
+        limit = max_length or self.ai_value_char_limit
+        if len(text) > limit:
+            text = text[:limit].rstrip() + "..."
+        return text
+
+    @staticmethod
+    def _is_noise_column(column_name: str) -> bool:
+        text = str(column_name or "").strip().lower()
+        if not text:
+            return True
+        noise_keywords = (
+            "id",
+            "url",
+            "image",
+            "附件",
+            "pdf",
+            "html",
+            "链接",
+            "来源id",
+            "source_id",
+            "序号",
+            "index",
+        )
+        return any(keyword in text for keyword in noise_keywords)
+
+    @staticmethod
+    def _looks_like_date_column(column_name: str) -> bool:
+        text = str(column_name or "")
+        return any(keyword in text for keyword in ("日期", "时间", "日"))
+
+    def _normalize_ai_date(self, value: Any) -> str:
+        text = self._normalize_ai_value(value, max_length=40)
+        if not text:
+            return ""
+        try:
+            parsed = pd.to_datetime(text, errors="coerce")
+            if not pd.isna(parsed):
+                return parsed.strftime("%Y-%m-%d")
+        except Exception:
+            pass
+        return text
+
+    def _select_relevant_columns(self, df: pd.DataFrame, keyword_groups: tuple[tuple[str, ...], ...]) -> list[str]:
+        selected: list[str] = []
+        selected_set = set()
+
+        for keywords in keyword_groups:
+            for column in df.columns:
+                column_name = str(column or "").strip()
+                if column_name in selected_set or self._is_noise_column(column_name):
+                    continue
+                if any(keyword in column_name for keyword in keywords):
+                    selected.append(column_name)
+                    selected_set.add(column_name)
+
+        if selected:
+            return selected[:6]
+
+        for column in df.columns:
+            column_name = str(column or "").strip()
+            if column_name in selected_set or self._is_noise_column(column_name):
+                continue
+            selected.append(column_name)
+            selected_set.add(column_name)
+            if len(selected) >= 5:
+                break
+        return selected
+
+    def _format_risk_section_for_ai(
+        self,
+        section_name: str,
+        section_data: Dict[str, Any] | None,
+        keyword_groups: tuple[tuple[str, ...], ...],
+    ) -> str:
+        if not section_data or not section_data.get('has_data'):
+            return ""
+
+        df = section_data.get('data')
+        if df is None or getattr(df, "empty", True):
+            return ""
+
+        lines = [f"【{section_name}】"]
+        lines.append(f"- 记录数：{len(df)}，仅保留前 {min(len(df), self.ai_row_limit)} 条关键记录")
+
+        summary = self._normalize_ai_value(section_data.get("summary"), max_length=self.ai_value_char_limit * 2)
+        if summary:
+            lines.append(f"- 摘要：{summary}")
+
+        columns = self._select_relevant_columns(df, keyword_groups)
+        for index, (_, row) in enumerate(df.head(self.ai_row_limit).iterrows(), 1):
+            parts = []
+            for column in columns:
+                value = row.get(column)
+                if self._is_empty_ai_value(value):
+                    continue
+                value_text = self._normalize_ai_date(value) if self._looks_like_date_column(column) else self._normalize_ai_value(value)
+                if not value_text:
+                    continue
+                parts.append(f"{column}={value_text}")
+            if parts:
+                lines.append(f"- {index}. " + "；".join(parts))
+
+        if len(lines) == 2:
+            lines.append("- 无可用关键字段")
+        return "\n".join(lines)
     
     def _format_dataframe_for_ai(self, df: pd.DataFrame, data_type: str) -> str:
         """将DataFrame格式化为AI易读的文本格式"""
@@ -516,4 +633,3 @@ if __name__ == "__main__":
     if risk_data['data_success']:
         print("\n格式化的风险数据:")
         print(fetcher.format_risk_data_for_ai(risk_data))
-
