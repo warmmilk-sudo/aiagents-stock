@@ -176,6 +176,7 @@ class SmartMonitorDB:
             return merged_context
 
         snapshot = {
+            "swing_execution_mode": payload.get("swing_execution_mode"),
             "intraday_bias": intraday_context.get("intraday_bias"),
             "intraday_bias_text": intraday_context.get("intraday_bias_text"),
             "intraday_signal_labels": intraday_context.get("intraday_signal_labels") if isinstance(intraday_context.get("intraday_signal_labels"), list) else [],
@@ -248,7 +249,9 @@ class SmartMonitorDB:
             WHERE symbol = ? AND deleted_at IS NULL
             ORDER BY
                 CASE status
+                    WHEN 'holding' THEN 1
                     WHEN 'portfolio' THEN 1
+                    WHEN 'focus' THEN 2
                     WHEN 'watchlist' THEN 2
                     ELSE 3
                 END,
@@ -794,6 +797,7 @@ class SmartMonitorDB:
         interval_minutes = int(item.get("interval_minutes") or 1)
         asset = self.asset_repository.get_asset(item.get("asset_id")) if item.get("asset_id") else None
         has_position = bool(asset and asset.get("status") == STATUS_PORTFOLIO and (asset.get("quantity") or 0) > 0)
+        monitor_mode = config.get("monitor_mode") or ("exit" if has_position else "entry")
         config_strategy_context = config.get("strategy_context") if isinstance(config.get("strategy_context"), dict) else {}
         latest_strategy_context = self.analysis_repository.get_latest_strategy_context(
             asset_id=item.get("asset_id"),
@@ -817,6 +821,8 @@ class SmartMonitorDB:
             "notify_email": config.get("notify_email"),
             "notify_webhook": config.get("notify_webhook"),
             "has_position": 1 if has_position else 0,
+            "monitor_mode": monitor_mode,
+            "strategy_track_label": "防御模式" if monitor_mode == "exit" else "狩猎模式",
             "position_cost": asset.get("cost_price") if asset else 0,
             "position_quantity": asset.get("quantity") if asset else 0,
             "position_date": config.get("position_date"),
@@ -1174,6 +1180,8 @@ class SmartMonitorDB:
         current_action = str(decision_data.get("action") or "").upper()
         latest_action_detail = str((latest or {}).get("action_detail") or "").strip()
         current_action_detail = str(decision_data.get("action_detail") or "").strip()
+        latest_swing_execution_mode = str((latest or {}).get("swing_execution_mode") or "").strip()
+        current_swing_execution_mode = str(decision_data.get("swing_execution_mode") or "").strip()
         latest_action_ratio_pct = (latest or {}).get("action_ratio_pct")
         current_action_ratio_pct = decision_data.get("action_ratio_pct")
         if (
@@ -1181,6 +1189,7 @@ class SmartMonitorDB:
             and latest_action
             and latest_action == current_action
             and latest_action_detail == current_action_detail
+            and latest_swing_execution_mode == current_swing_execution_mode
             and latest_action_ratio_pct == current_action_ratio_pct
         ):
             return self.save_ai_decision(decision_data), False
@@ -1228,6 +1237,8 @@ class SmartMonitorDB:
                     decision["account_info"]["account_name"] = normalized_info_account
             decision_context = decision.get("decision_context") if isinstance(decision.get("decision_context"), dict) else {}
             if decision_context:
+                decision["swing_execution_mode"] = decision_context.get("swing_execution_mode")
+                decision["previous_swing_execution_mode"] = decision_context.get("previous_swing_execution_mode")
                 decision["intraday_bias"] = decision_context.get("intraday_bias")
                 decision["intraday_bias_text"] = decision_context.get("intraday_bias_text")
                 decision["intraday_signal_labels"] = decision_context.get("intraday_signal_labels") or []

@@ -1,9 +1,8 @@
 import { FormEvent, Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
 import { ModuleCard } from "../../components/common/ModuleCard";
 import { DoughnutChart } from "../../components/common/DoughnutChart";
 import { PageFeedback } from "../../components/common/PageFeedback";
-import { PageFrame } from "../../components/common/PageFrame";
 import { SchedulerControl } from "../../components/common/SchedulerControl";
 import { TaskProgressBar } from "../../components/common/TaskProgressBar";
 import { analystConfigToKeys, analystKeysToConfig, normalizeAnalystKeys } from "../../constants/analysts";
@@ -130,17 +129,10 @@ interface AnalysisTaskSummary {
 }
 
 type EditorPanel = "position" | "editPosition" | "trade" | null;
-type SectionKey = "overview" | "holdings" | "scheduler";
 type HoldingActionPanel = "edit" | "trade" | null;
 
-const sectionTabs = [
-  { key: "overview", label: "总览" },
-  { key: "holdings", label: "持仓列表" },
-  { key: "scheduler", label: "定时分析" },
-];
-
 const UI = {
-  title: "持仓总览",
+  title: "持仓列表",
   addPosition: "新增持仓",
   deletePosition: "删除",
   noWarnings: "当前没有风险提醒。",
@@ -241,15 +233,6 @@ function taskStatusMeta(task: AnalysisTaskSummary | null): { label: string; tone
   return { label: "进行中", tone: "warning" };
 }
 
-function taskCounterLabel(task: AnalysisTaskSummary | null) {
-  const current = Number(task?.current ?? 0);
-  const total = Number(task?.total ?? 0);
-  if (total > 0) {
-    return `${Math.max(0, current)}/${total}`;
-  }
-  return "进行中";
-}
-
 function summarizeHoldingsTask(task: AnalysisTaskSummary | null) {
   const result = task?.result;
   if (!result) {
@@ -344,6 +327,8 @@ interface PortfolioHoldingRowProps {
   isMenuOpen: boolean;
   activeHoldingPanel: HoldingActionPanel;
   currentTradeType: "buy" | "sell" | "clear";
+  singleAnalysisBusy: boolean;
+  pendingSingleAnalysisSymbol: string;
   isEditingRow: boolean;
   isTradingRow: boolean;
   inlineEditForm: ReactNode;
@@ -362,6 +347,8 @@ function areHoldingRowPropsEqual(prev: PortfolioHoldingRowProps, next: Portfolio
     || prev.isEditingRow !== next.isEditingRow
     || prev.isTradingRow !== next.isTradingRow
     || prev.currentTradeType !== next.currentTradeType
+    || prev.singleAnalysisBusy !== next.singleAnalysisBusy
+    || prev.pendingSingleAnalysisSymbol !== next.pendingSingleAnalysisSymbol
     || prev.inlineEditForm !== next.inlineEditForm
     || prev.inlineTradeForm !== next.inlineTradeForm
     || prev.onToggleHoldingMenu !== next.onToggleHoldingMenu
@@ -385,6 +372,8 @@ const PortfolioHoldingRow = memo(function PortfolioHoldingRow({
   isMenuOpen,
   activeHoldingPanel,
   currentTradeType,
+  singleAnalysisBusy,
+  pendingSingleAnalysisSymbol,
   isEditingRow,
   isTradingRow,
   inlineEditForm,
@@ -447,7 +436,13 @@ const PortfolioHoldingRow = memo(function PortfolioHoldingRow({
                 >
                   卖出
                 </button>
-                <button className={styles.holdingActionMenuButton} onClick={() => onOpenDeepAnalysis(stock)} type="button">深度分析</button>
+                <button
+                  className={styles.holdingActionMenuButton}
+                  onClick={() => onOpenDeepAnalysis(stock)}
+                  type="button"
+                >
+                  深度分析
+                </button>
               </div>
               <div className={styles.holdingActionContent}>
                 {isEditingRow ? inlineEditForm : null}
@@ -467,6 +462,8 @@ interface PortfolioHoldingsTableProps {
   activeHoldingMenuId: number | null;
   activeHoldingPanel: HoldingActionPanel;
   currentTradeType: "buy" | "sell" | "clear";
+  singleAnalysisBusy: boolean;
+  pendingSingleAnalysisSymbol: string;
   editingStockId: number | null;
   tradeStockId: string;
   inlineEditForm: ReactNode;
@@ -483,6 +480,8 @@ const PortfolioHoldingsTable = memo(function PortfolioHoldingsTable({
   activeHoldingMenuId,
   activeHoldingPanel,
   currentTradeType,
+  singleAnalysisBusy,
+  pendingSingleAnalysisSymbol,
   editingStockId,
   tradeStockId,
   inlineEditForm,
@@ -517,6 +516,8 @@ const PortfolioHoldingsTable = memo(function PortfolioHoldingsTable({
                 isMenuOpen={isMenuOpen}
                 activeHoldingPanel={activeHoldingPanel}
                 currentTradeType={currentTradeType}
+                singleAnalysisBusy={singleAnalysisBusy}
+                pendingSingleAnalysisSymbol={pendingSingleAnalysisSymbol}
                 isEditingRow={isEditingRow}
                 isTradingRow={isTradingRow}
                 inlineEditForm={isEditingRow ? inlineEditForm : null}
@@ -539,13 +540,14 @@ const PortfolioHoldingsTable = memo(function PortfolioHoldingsTable({
   );
 });
 
-export function PortfolioPage() {
-  const navigate = useNavigate();
+interface PortfolioPageProps {
+  embedded?: boolean;
+}
+
+export function PortfolioPage({ embedded = false }: PortfolioPageProps = {}) {
   const [searchParams, setSearchParams] = useSearchParams();
   const deepAnalysisAnalysts = useDeepAnalysisStore((state) => state.analysts);
-  const holdingsAnalysisTaskId = usePortfolioStore((state) => state.holdingsAnalysisTaskId);
   const schedulerTaskId = usePortfolioStore((state) => state.schedulerTaskId);
-  const setHoldingsAnalysisTaskId = usePortfolioStore((state) => state.setHoldingsAnalysisTaskId);
   const setSchedulerTaskId = usePortfolioStore((state) => state.setSchedulerTaskId);
   const cachedPage = usePortfolioStore((state) => state.pageCache ?? null);
   const setPageCache = usePortfolioStore((state) => state.setPageCache);
@@ -562,6 +564,8 @@ export function PortfolioPage() {
   const [activeHoldingMenuId, setActiveHoldingMenuId] = useState<number | null>(null);
   const [activeHoldingPanel, setActiveHoldingPanel] = useState<HoldingActionPanel>(null);
   const [isSubmittingHoldingsAnalysis, setIsSubmittingHoldingsAnalysis] = useState(false);
+  const [isSubmittingSingleAnalysis, setIsSubmittingSingleAnalysis] = useState(false);
+  const [pendingSingleAnalysisSymbol, setPendingSingleAnalysisSymbol] = useState("");
   const [isSubmittingPosition, setIsSubmittingPosition] = useState(false);
   const [isSubmittingTrade, setIsSubmittingTrade] = useState(false);
   const [isUpdatingPosition, setIsUpdatingPosition] = useState(false);
@@ -569,12 +573,12 @@ export function PortfolioPage() {
   const [isSavingScheduler, setIsSavingScheduler] = useState(false);
   const [isTogglingScheduler, setIsTogglingScheduler] = useState(false);
   const [isRefreshingPage, setIsRefreshingPage] = useState(false);
-  const [holdingsAnalysisTask, setHoldingsAnalysisTask] = useState<AnalysisTaskSummary | null>(null);
+  const [singleAnalysisTaskId, setSingleAnalysisTaskId] = useState<string | null>(null);
+  const [singleAnalysisTask, setSingleAnalysisTask] = useState<AnalysisTaskSummary | null>(null);
   const [schedulerTask, setSchedulerTask] = useState<AnalysisTaskSummary | null>(null);
-  const [section, setSection] = useState<SectionKey>("overview");
   const { message, error, clear, showError, showMessage } = usePageFeedback();
-  const holdingsTerminalTaskRef = useRef<string>("");
   const schedulerTerminalTaskRef = useRef<string>("");
+  const singleAnalysisTerminalTaskRef = useRef<string>("");
   const pageLoadRequestRef = useRef(0);
   const deepAnalysisSelectedAnalysts = useMemo(
     () => normalizeAnalystKeys(analystConfigToKeys(deepAnalysisAnalysts)),
@@ -679,17 +683,17 @@ export function PortfolioPage() {
       origin_analysis_id: payload.origin_analysis_id,
     }));
     setActiveEditor("position");
-    setSection("holdings");
 
     const nextParams = new URLSearchParams(searchParams);
     nextParams.delete("intent");
     setSearchParams(nextParams, { replace: true });
   }, [searchParams, setSearchParams]);
 
-  const clearHoldingsAnalysisTask = () => {
-    setHoldingsAnalysisTaskId(null);
-    setHoldingsAnalysisTask(null);
-    holdingsTerminalTaskRef.current = "";
+  const clearSingleAnalysisTask = () => {
+    setSingleAnalysisTaskId(null);
+    setSingleAnalysisTask(null);
+    setPendingSingleAnalysisSymbol("");
+    singleAnalysisTerminalTaskRef.current = "";
   };
 
   const clearSchedulerTask = () => {
@@ -698,18 +702,18 @@ export function PortfolioPage() {
     schedulerTerminalTaskRef.current = "";
   };
 
-  const loadHoldingsAnalysisTask = async (taskIdOverride?: string | null) => {
-    const taskId = taskIdOverride ?? holdingsAnalysisTaskId;
+  const loadSingleAnalysisTask = async (taskIdOverride?: string | null) => {
+    const taskId = taskIdOverride ?? singleAnalysisTaskId;
     if (!taskId) {
-      setHoldingsAnalysisTask(null);
+      setSingleAnalysisTask(null);
       return;
     }
     try {
       const task = await apiFetch<AnalysisTaskSummary>(`/api/tasks/${taskId}`);
-      setHoldingsAnalysisTask(task);
+      setSingleAnalysisTask(task);
     } catch (requestError) {
       if (requestError instanceof ApiRequestError && requestError.status === 404) {
-        clearHoldingsAnalysisTask();
+        clearSingleAnalysisTask();
       }
     }
   };
@@ -740,41 +744,25 @@ export function PortfolioPage() {
   const schedulerTaskPending = isPendingTaskStatus(schedulerTask?.status || "");
   const schedulerPollingIntervalMs = schedulerTaskId || schedulerTaskPending
     ? 2500
-    : section === "scheduler"
-      ? 15000
-      : null;
-
-  usePollingLoader({
-    load: loadHoldingsAnalysisTask,
-    intervalMs: 2000,
-    enabled: Boolean(holdingsAnalysisTaskId && isPendingTaskStatus(holdingsAnalysisTask?.status || "running")),
-    immediate: true,
-    dependencies: [holdingsAnalysisTaskId, holdingsAnalysisTask?.status],
-  });
+    : 15000;
 
   usePollingLoader({
     load: loadSchedulerTask,
     intervalMs: schedulerPollingIntervalMs,
     enabled:
       Boolean(schedulerTaskId)
-      || section === "scheduler"
       || schedulerTaskPending,
     immediate: true,
-    dependencies: [schedulerTaskId, schedulerTask?.status, section],
+    dependencies: [schedulerTaskId, schedulerTask?.status],
   });
 
-  useEffect(() => {
-    if (!holdingsAnalysisTask || isPendingTaskStatus(holdingsAnalysisTask.status)) {
-      return;
-    }
-    const terminalKey = `${holdingsAnalysisTask.id}:${holdingsAnalysisTask.status}`;
-    if (holdingsTerminalTaskRef.current === terminalKey) {
-      return;
-    }
-    holdingsTerminalTaskRef.current = terminalKey;
-    void loadAll(true).catch(() => undefined);
-    clearSmartMonitorPageCache();
-  }, [clearSmartMonitorPageCache, holdingsAnalysisTask?.id, holdingsAnalysisTask?.status]);
+  usePollingLoader({
+    load: loadSingleAnalysisTask,
+    intervalMs: 2000,
+    enabled: Boolean(singleAnalysisTaskId && isPendingTaskStatus(singleAnalysisTask?.status || "running")),
+    immediate: true,
+    dependencies: [singleAnalysisTaskId, singleAnalysisTask?.status],
+  });
 
   useEffect(() => {
     if (!schedulerTask || isPendingTaskStatus(schedulerTask.status)) {
@@ -788,6 +776,19 @@ export function PortfolioPage() {
     void loadAll(true).catch(() => undefined);
     clearSmartMonitorPageCache();
   }, [clearSmartMonitorPageCache, schedulerTask?.id, schedulerTask?.status]);
+
+  useEffect(() => {
+    if (!singleAnalysisTask || isPendingTaskStatus(singleAnalysisTask.status)) {
+      return;
+    }
+    const terminalKey = `${singleAnalysisTask.id}:${singleAnalysisTask.status}`;
+    if (singleAnalysisTerminalTaskRef.current === terminalKey) {
+      return;
+    }
+    singleAnalysisTerminalTaskRef.current = terminalKey;
+    void loadAll(true).catch(() => undefined);
+    clearSmartMonitorPageCache();
+  }, [clearSmartMonitorPageCache, singleAnalysisTask?.id, singleAnalysisTask?.status]);
 
   const handleManualRefresh = () => {
     clear();
@@ -845,80 +846,64 @@ export function PortfolioPage() {
     };
   }, [risk?.stock_distribution]);
 
-  const visibleHoldingSymbols = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          stocks
-            .map((item) => String(item.code || "").trim().toUpperCase())
-            .filter(Boolean),
-        ),
-      ),
-    [stocks],
-  );
-
-  const holdingsAnalysisBusy =
-    isSubmittingHoldingsAnalysis
-    || Boolean(holdingsAnalysisTaskId && !holdingsAnalysisTask)
-    || isPendingTaskStatus(holdingsAnalysisTask?.status);
-  const holdingsTaskStatus = taskStatusMeta(holdingsAnalysisTask);
+  const singleAnalysisBusy =
+    isSubmittingSingleAnalysis
+    || Boolean(singleAnalysisTaskId && !singleAnalysisTask)
+    || isPendingTaskStatus(singleAnalysisTask?.status);
+  const singleAnalysisTaskStatus = taskStatusMeta(singleAnalysisTask);
   const schedulerTaskStatus = taskStatusMeta(schedulerTask);
-  const holdingsTaskSummary = summarizeHoldingsTask(holdingsAnalysisTask);
+  const singleAnalysisTaskSummary = summarizeHoldingsTask(singleAnalysisTask);
   const schedulerTaskSummary = summarizeSchedulerTask(schedulerTask);
-  const holdingsRunLabel = isSubmittingHoldingsAnalysis
-    ? "提交中..."
-    : holdingsAnalysisBusy
-      ? `分析中 ${taskCounterLabel(holdingsAnalysisTask)}`
-      : "深度分析当前持仓";
-  const renderHoldingsAnalysisTask = () => {
-    if (!holdingsAnalysisTaskId && !holdingsAnalysisTask) {
+
+  const renderSingleAnalysisTask = () => {
+    if (!singleAnalysisTaskId && !singleAnalysisTask) {
       return null;
     }
     return (
       <div className={styles.moduleSection}>
         <div className={styles.noticeMeta}>
           <div>
-            <strong>持仓批量分析进度</strong>
-            <div className={styles.muted}>{holdingsAnalysisTask?.label || "等待任务状态..."}</div>
+            <strong>单股深度分析进度</strong>
+            <div className={styles.muted}>{singleAnalysisTask?.label || "等待任务状态..."}</div>
           </div>
-          <StatusBadge label={holdingsTaskStatus.label} tone={holdingsTaskStatus.tone} />
+          <StatusBadge label={singleAnalysisTaskStatus.label} tone={singleAnalysisTaskStatus.tone} />
         </div>
         <TaskProgressBar
-          current={holdingsAnalysisTask?.current ?? 0}
-          message={holdingsAnalysisTask?.message || "等待持仓总览任务状态..."}
-          tone={taskProgressTone(holdingsAnalysisTask)}
-          total={holdingsTaskSummary?.total || holdingsAnalysisTask?.total || 0}
+          current={singleAnalysisTask?.current ?? 0}
+          message={singleAnalysisTask?.message || "等待单股深度分析任务状态..."}
+          tone={taskProgressTone(singleAnalysisTask)}
+          total={singleAnalysisTaskSummary?.total || singleAnalysisTask?.total || 0}
         />
-        {holdingsTaskSummary ? (
+        {singleAnalysisTaskSummary ? (
           <div className={styles.summaryMetricGrid}>
             <div className={styles.metric}>
               <span className={styles.muted}>分析总数</span>
-              <strong>{holdingsTaskSummary.total}</strong>
+              <strong>{singleAnalysisTaskSummary.total}</strong>
             </div>
             <div className={styles.metric}>
               <span className={styles.muted}>成功</span>
-              <strong>{holdingsTaskSummary.success}</strong>
+              <strong>{singleAnalysisTaskSummary.success}</strong>
             </div>
             <div className={styles.metric}>
               <span className={styles.muted}>失败</span>
-              <strong>{holdingsTaskSummary.failed}</strong>
+              <strong>{singleAnalysisTaskSummary.failed}</strong>
             </div>
             <div className={styles.metric}>
               <span className={styles.muted}>已写入历史</span>
-              <strong>{holdingsTaskSummary.saved}</strong>
+              <strong>{singleAnalysisTaskSummary.saved}</strong>
             </div>
           </div>
         ) : null}
-        {holdingsTaskSummary?.failedSymbols?.length ? (
-          <p className={styles.dangerText}>失败股票：{holdingsTaskSummary.failedSymbols.join("、")}</p>
+        {singleAnalysisTaskSummary?.failedSymbols?.length ? (
+          <p className={styles.dangerText}>失败股票：{singleAnalysisTaskSummary.failedSymbols.join("、")}</p>
         ) : null}
-        {holdingsAnalysisTask?.error ? <p className={styles.dangerText}>{holdingsAnalysisTask.error}</p> : null}
+        {singleAnalysisTask?.error ? <p className={styles.dangerText}>{singleAnalysisTask.error}</p> : null}
         <div className={styles.actions}>
-          <button className={styles.secondaryButton} onClick={() => void loadHoldingsAnalysisTask()} type="button">
+          <button className={styles.secondaryButton} onClick={() => void loadSingleAnalysisTask()} type="button">
             刷新状态
           </button>
-          {!isPendingTaskStatus(holdingsAnalysisTask?.status) ? (
-            <button className={styles.secondaryButton} onClick={clearHoldingsAnalysisTask} type="button">
+          {!isPendingTaskStatus(singleAnalysisTask?.status) ? (
+            <button className={styles.secondaryButton} onClick={clearSingleAnalysisTask} type="button">
               清除状态
             </button>
           ) : null}
@@ -935,14 +920,14 @@ export function PortfolioPage() {
       <div className={styles.moduleSection}>
         <div className={styles.noticeMeta}>
           <div>
-            <strong>持仓总览任务进度</strong>
+            <strong>持仓列表任务进度</strong>
             <div className={styles.muted}>{schedulerTask?.label || "等待任务状态..."}</div>
           </div>
           <StatusBadge label={schedulerTaskStatus.label} tone={schedulerTaskStatus.tone} />
         </div>
         <TaskProgressBar
           current={schedulerTask?.current ?? 0}
-          message={schedulerTask?.message || "等待持仓总览任务状态..."}
+          message={schedulerTask?.message || "等待持仓列表任务状态..."}
           tone={taskProgressTone(schedulerTask)}
           total={schedulerTaskSummary?.total || schedulerTask?.total || 0}
         />
@@ -1030,11 +1015,6 @@ export function PortfolioPage() {
     setActiveHoldingPanel("trade");
   }, []);
 
-  const openDeepAnalysis = useCallback((stock: PortfolioStock) => {
-    closeHoldingPanel();
-    navigate(`/research/deep-analysis?symbol=${encodeURIComponent(stock.code)}`);
-  }, [closeHoldingPanel, navigate]);
-
   const toggleHoldingMenu = useCallback((stockId: number) => {
     setActiveHoldingMenuId((current) => {
       if (current === stockId) {
@@ -1049,12 +1029,53 @@ export function PortfolioPage() {
     });
   }, []);
 
-  const runSelectedAccountAnalysis = async () => {
-    if (!visibleHoldingSymbols.length) {
-      showError("当前没有可分析的持仓股。");
+  const handleOpenDeepAnalysis = useCallback(async (stock: PortfolioStock) => {
+    const symbol = String(stock.code || "").trim().toUpperCase();
+    if (!symbol) {
+      showError("无法找到该持仓代码。");
       return;
     }
 
+    clear();
+    setIsSubmittingSingleAnalysis(true);
+    setPendingSingleAnalysisSymbol(symbol);
+    closeHoldingPanel();
+    try {
+      const result = await apiFetch<{ task_id: string }>("/api/analysis/tasks", {
+        method: "POST",
+        body: JSON.stringify({
+          stock_input: symbol,
+          batch_mode: "顺序分析",
+          max_workers: 1,
+          analysts: deepAnalysisAnalysts,
+        }),
+      });
+      const taskId = result.task_id || null;
+      if (taskId) {
+        setSingleAnalysisTaskId(taskId);
+        setSingleAnalysisTask({
+          id: taskId,
+          label: `深度分析 ${symbol}`,
+          status: "queued",
+          message: `正在提交 ${symbol} 的深度分析任务...`,
+          current: 0,
+          total: 1,
+        });
+        void loadSingleAnalysisTask(taskId).catch(() => undefined);
+      }
+      showMessage(`已开始分析 ${symbol}。`);
+    } catch (requestError) {
+      showError(requestError instanceof ApiRequestError ? requestError.message : "启动深度分析失败");
+    } finally {
+      setIsSubmittingSingleAnalysis(false);
+    }
+  }, [clear, closeHoldingPanel, deepAnalysisAnalysts, loadSingleAnalysisTask, showError, showMessage]);
+
+  const handleAnalyzeAllHoldings = async () => {
+    if (!stocks.length) {
+      showError("当前没有可分析的持仓。");
+      return;
+    }
     clear();
     setIsSubmittingHoldingsAnalysis(true);
     try {
@@ -1066,12 +1087,9 @@ export function PortfolioPage() {
           analysts: deepAnalysisAnalysts,
         }),
       });
-      setHoldingsAnalysisTaskId(taskData.task_id);
-      holdingsTerminalTaskRef.current = "";
-      void loadHoldingsAnalysisTask(taskData.task_id).catch(() => undefined);
-      showMessage(`持仓批量分析任务已提交，共 ${visibleHoldingSymbols.length} 只股票。`);
+      showMessage(`已提交 ${stocks.length} 只持仓的深度分析任务${taskData.task_id ? `（任务 ${taskData.task_id}）` : ""}。`);
     } catch (requestError) {
-      showError(requestError instanceof ApiRequestError ? requestError.message : "提交持仓批量分析失败");
+      showError(requestError instanceof ApiRequestError ? requestError.message : "提交持仓深度分析失败");
     } finally {
       setIsSubmittingHoldingsAnalysis(false);
     }
@@ -1540,208 +1558,114 @@ export function PortfolioPage() {
   const inlineEditForm = activeHoldingPanel === "edit" && editingStockId ? renderInlineEditForm() : null;
   const inlineTradeForm = activeHoldingPanel === "trade" && tradeForm.stock_id ? renderInlineTradeForm() : null;
 
-  return (
-    <PageFrame
-      title={UI.title}
-      sectionTabs={sectionTabs}
-      activeSectionKey={section}
-      onSectionChange={(nextSection) => setSection(nextSection as SectionKey)}
-      actions={(
-        <>
+  const pageBody = (
+    <div className={styles.stack}>
+      <PageFeedback error={error} message={message} />
+
+      <ModuleCard
+        title="持仓操作"
+        summary="新增持仓、买卖登记统一收在一个入口。"
+        toolbar={(
           <button
-            className={styles.secondaryButton}
-            disabled={isRefreshingPage}
-            onClick={handleManualRefresh}
+            className={activeEditor === "position" ? styles.primaryButton : styles.secondaryButton}
+            onClick={() => {
+              if (activeEditor === "position") {
+                resetPositionEditor();
+                return;
+              }
+              setPositionForm(defaultPositionForm);
+              setEditingStockId(null);
+              setActiveEditor("position");
+            }}
             type="button"
           >
-            {isRefreshingPage ? "更新中..." : "刷新"}
+            {UI.addPosition}
           </button>
-        </>
-      )}
-    >
-      <div className={styles.stack}>
-        <PageFeedback error={error} message={message} />
+        )}
+      >
+        <div className={styles.moduleSection}>
+          {renderSingleAnalysisTask()}
+        </div>
+        {activeEditor === "position" ? renderPositionForm(false) : null}
+      </ModuleCard>
 
-        {section === "overview" ? (
-          <ModuleCard
-            title="持仓总览"
-            summary="总资产、风险提醒和持仓分布收敛到一个总览模块。"
-            hideTitleOnMobile
+      <ModuleCard
+        title="持仓数据"
+        summary="点击任一股票行展开横向操作菜单，处理修改、交易和分析。"
+        toolbar={(
+          <button
+            className={styles.secondaryButton}
+            disabled={isRefreshingPage || isSubmittingHoldingsAnalysis || !stocks.length}
+            onClick={() => void handleAnalyzeAllHoldings()}
+            type="button"
           >
-            <div className={styles.moduleSection}>
-              <div className={styles.summaryMetricGrid}>
-                <div className={styles.metric}>
-                  <span className={styles.muted}>总资产</span>
-                  <strong>{numberText(risk?.total_assets)}</strong>
-                </div>
-                <div className={styles.metric}>
-                  <span className={styles.muted}>持仓市值</span>
-                  <strong>{numberText(risk?.total_market_value)}</strong>
-                </div>
-                <div className={styles.metric}>
-                  <span className={styles.muted}>可用资金</span>
-                  <strong>{numberText(risk?.available_cash)}</strong>
-                </div>
-                <div className={styles.metric}>
-                  <span className={styles.muted}>仓位利用率</span>
-                  <strong>{percentText(risk?.position_usage_pct)}</strong>
-                </div>
-                <div className={styles.metric}>
-                  <span className={styles.muted}>浮动盈亏</span>
-                  <strong className={resolvePnlTone(risk?.total_pnl, styles)}>{numberText(risk?.total_pnl)}</strong>
-                </div>
-                <div className={styles.metric}>
-                  <span className={styles.muted}>收益率</span>
-                  <strong className={resolvePnlTone(risk?.total_pnl_pct, styles)}>{percentText(risk?.total_pnl_pct)}</strong>
+            {isSubmittingHoldingsAnalysis ? "提交中..." : "分析所有持仓"}
+          </button>
+        )}
+      >
+        <div className={styles.moduleSection}>
+          <PortfolioHoldingsTable
+            stocks={stocks}
+            holdingMetrics={holdingMetrics}
+            activeHoldingMenuId={activeHoldingMenuId}
+            activeHoldingPanel={activeHoldingPanel}
+            currentTradeType={tradeForm.trade_type}
+            singleAnalysisBusy={singleAnalysisBusy}
+            pendingSingleAnalysisSymbol={pendingSingleAnalysisSymbol}
+            editingStockId={editingStockId}
+            tradeStockId={tradeForm.stock_id}
+            inlineEditForm={inlineEditForm}
+            inlineTradeForm={inlineTradeForm}
+            onToggleHoldingMenu={toggleHoldingMenu}
+            onOpenEditPosition={openEditPosition}
+            onOpenTradeEditor={openTradeEditor}
+            onOpenDeepAnalysis={handleOpenDeepAnalysis}
+          />
+        </div>
+      </ModuleCard>
+
+      <ModuleCard hideTitleOnMobile title="定时分析" summary="这里只维护执行时间；分析师配置直接跟随深度分析页面的选择。">
+        <SchedulerControl
+          enabled={Boolean(scheduler?.is_running)}
+          label="启用定时分析"
+          busy={isSavingScheduler || isTogglingScheduler}
+          onSave={() => void saveScheduler()}
+          onToggle={(next) => void toggleScheduler(next)}
+          scheduleFields={(
+            <>
+              <div className={styles.formGrid}>
+                <div className={styles.field}>
+                  <label htmlFor="scheduler-times">执行时间</label>
+                  <input
+                    id="scheduler-times"
+                    onChange={(event) => setSchedulerTimes(event.target.value)}
+                    step="60"
+                    type="time"
+                    value={schedulerTimes}
+                  />
                 </div>
               </div>
-            </div>
-            <div className={styles.moduleSection}>
-              <h3>风险提醒</h3>
-              <div className={styles.list}>
-                {riskWarnings.map((item, index) => (
-                  <div className={`${styles.noticeCard} ${styles.noticeWarning}`} key={`${item}-${index}`}>
-                    <div className={styles.noticeMeta}>
-                      <StatusBadge label="风险提醒" tone="warning" />
-                    </div>
-                    <div>{item}</div>
-                  </div>
-                ))}
-                {risk?.status === "error" && risk.message ? (
-                  <div className={`${styles.noticeCard} ${styles.noticeDanger}`}>
-                    <div className={styles.noticeMeta}>
-                      <StatusBadge label="系统异常" tone="danger" />
-                    </div>
-                    <div>{risk.message}</div>
-                  </div>
-                ) : null}
-                {!riskWarnings.length && risk?.status !== "error" ? (
-                  <div className={styles.noticeCard}>
-                    <div className={styles.noticeMeta}>
-                      <StatusBadge label="状态稳定" tone="default" />
-                    </div>
-                    <div>{UI.noWarnings}</div>
-                  </div>
-                ) : null}
-              </div>
-            </div>
-
-            <div className={styles.moduleSection}>
-              <h3>行业分布</h3>
-              <PortfolioDoughnutChart data={industryPieData} emptyText="暂无行业分布数据" />
-            </div>
-
-            <div className={styles.moduleSection}>
-              <h3>个股分布</h3>
-              <PortfolioDoughnutChart data={stockPieData} emptyText="暂无个股分布数据" />
-            </div>
-          </ModuleCard>
-        ) : null}
-
-        {section === "holdings" ? (
-          <>
-            <ModuleCard
-              title="持仓操作"
-              summary="新增持仓、买卖登记和批量分析统一收在一个入口。"
-              toolbar={(
-                <button
-                  className={activeEditor === "position" ? styles.primaryButton : styles.secondaryButton}
-                  onClick={() => {
-                    if (activeEditor === "position") {
-                      resetPositionEditor();
-                      return;
-                    }
-                    setPositionForm(defaultPositionForm);
-                    setEditingStockId(null);
-                    setActiveEditor("position");
-                  }}
-                  type="button"
-                >
-                  {UI.addPosition}
-                </button>
-              )}
-            >
-              <div className={styles.moduleSection}>
-                <div className={styles.responsiveActionGrid}>
-                  <button
-                    className={styles.secondaryButton}
-                    disabled={holdingsAnalysisBusy || !visibleHoldingSymbols.length}
-                    onClick={() => void runSelectedAccountAnalysis()}
-                    type="button"
-                  >
-                    {holdingsRunLabel}
-                  </button>
+              <div className={styles.noticeCard}>
+                <div className={styles.noticeMeta}>
+                  <strong>分析师配置</strong>
+                  <StatusBadge label="跟随深度分析" tone="default" />
                 </div>
-                {renderHoldingsAnalysisTask()}
+                <div>定时任务会直接使用深度分析页面里保存的分析师组合，不再单独维护一套持仓列表配置。</div>
               </div>
-              {activeEditor === "position" ? renderPositionForm(false) : null}
-            </ModuleCard>
-
-            <ModuleCard title="持仓数据" summary="点击任一股票行展开横向操作菜单，处理修改、交易和分析。">
-              <div className={styles.moduleSection}>
-                <PortfolioHoldingsTable
-                  stocks={stocks}
-                  holdingMetrics={holdingMetrics}
-                  activeHoldingMenuId={activeHoldingMenuId}
-                  activeHoldingPanel={activeHoldingPanel}
-                currentTradeType={tradeForm.trade_type}
-                editingStockId={editingStockId}
-                tradeStockId={tradeForm.stock_id}
-                inlineEditForm={inlineEditForm}
-                inlineTradeForm={inlineTradeForm}
-                onToggleHoldingMenu={toggleHoldingMenu}
-                onOpenEditPosition={openEditPosition}
-                onOpenTradeEditor={openTradeEditor}
-                onOpenDeepAnalysis={openDeepAnalysis}
-              />
+              <div className={styles.noticeCard}>
+                <div className={styles.noticeMeta}>
+                  <strong>分析范围</strong>
+                  <StatusBadge label="自动覆盖" tone="default" />
+                </div>
+                <div>定时分析会默认覆盖当前全部持仓。</div>
               </div>
-            </ModuleCard>
-          </>
-        ) : null}
-
-        {section === "scheduler" ? (
-          <ModuleCard hideTitleOnMobile title="定时分析" summary="这里只维护执行时间；分析师配置直接跟随深度分析页面的选择。">
-            <SchedulerControl
-              enabled={Boolean(scheduler?.is_running)}
-              label="启用定时分析"
-              busy={isSavingScheduler || isTogglingScheduler}
-              onSave={() => void saveScheduler()}
-              onToggle={(next) => void toggleScheduler(next)}
-              scheduleFields={(
-                <>
-                  <div className={styles.formGrid}>
-                    <div className={styles.field}>
-                      <label htmlFor="scheduler-times">执行时间</label>
-                      <input
-                        id="scheduler-times"
-                        onChange={(event) => setSchedulerTimes(event.target.value)}
-                        step="60"
-                        type="time"
-                        value={schedulerTimes}
-                      />
-                    </div>
-                  </div>
-                  <div className={styles.noticeCard}>
-                    <div className={styles.noticeMeta}>
-                      <strong>分析师配置</strong>
-                      <StatusBadge label="跟随深度分析" tone="default" />
-                    </div>
-                    <div>定时任务会直接使用深度分析页面里保存的分析师组合，不再单独维护一套持仓总览配置。</div>
-                  </div>
-                  <div className={styles.noticeCard}>
-                    <div className={styles.noticeMeta}>
-                      <strong>分析范围</strong>
-                      <StatusBadge label="自动覆盖" tone="default" />
-                    </div>
-                    <div>定时分析会默认覆盖当前全部持仓。</div>
-                  </div>
-                </>
-              )}
-              statusFields={renderSchedulerTask()}
-            />
-          </ModuleCard>
-        ) : null}
-      </div>
-    </PageFrame>
+            </>
+          )}
+          statusFields={renderSchedulerTask()}
+        />
+      </ModuleCard>
+    </div>
   );
+
+  return pageBody;
 }

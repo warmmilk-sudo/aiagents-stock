@@ -5,7 +5,11 @@ from fastapi import APIRouter, Request
 from backend import services
 from backend.api import ApiError, success_payload
 from backend.auth import require_session
-from backend.dto import SectorStrategySchedulerRequest, SectorStrategyTaskRequest
+from backend.dto import (
+    SectorStrategyLifecycleConfigRequest,
+    SectorStrategySchedulerRequest,
+    SectorStrategyTaskRequest,
+)
 
 
 router = APIRouter(prefix="/api/strategies/sector-strategy", tags=["sector-strategy"])
@@ -45,6 +49,27 @@ def get_strategy_task(request: Request, task_id: str) -> dict:
     return success_payload(task)
 
 
+@router.get("/lifecycle/rebuild/tasks/latest")
+def get_latest_rebuild_task(request: Request) -> dict:
+    require_session(request)
+    return success_payload(services.get_latest_ui_task(services.SECTOR_STRATEGY_LIFECYCLE_REBUILD_TASK_TYPE))
+
+
+@router.get("/lifecycle/rebuild/tasks/active")
+def get_active_rebuild_task(request: Request) -> dict:
+    require_session(request)
+    return success_payload(services.get_active_ui_task(services.SECTOR_STRATEGY_LIFECYCLE_REBUILD_TASK_TYPE))
+
+
+@router.get("/lifecycle/rebuild/tasks/{task_id}")
+def get_rebuild_task(request: Request, task_id: str) -> dict:
+    require_session(request)
+    task = services.get_ui_task(services.SECTOR_STRATEGY_LIFECYCLE_REBUILD_TASK_TYPE, task_id)
+    if not task:
+        raise ApiError(404, "未找到生命周期重建任务", error_code="sector_strategy_lifecycle_rebuild_task_not_found")
+    return success_payload(task)
+
+
 @router.get("/history")
 def list_history(request: Request, limit: int = 20) -> dict:
     require_session(request)
@@ -58,6 +83,65 @@ def get_history_report(request: Request, report_id: int) -> dict:
     if not report:
         raise ApiError(404, "未找到智策历史报告", error_code="sector_strategy_report_not_found")
     return success_payload(report)
+
+
+@router.get("/lifecycle/latest")
+def get_latest_lifecycle(request: Request) -> dict:
+    require_session(request)
+    return success_payload(services.get_sector_strategy_latest_lifecycle())
+
+
+@router.get("/lifecycle")
+def list_lifecycle(request: Request, days: int = 20) -> dict:
+    require_session(request)
+    return success_payload(services.list_sector_strategy_lifecycle(days=days))
+
+
+@router.get("/lifecycle-config")
+def get_lifecycle_config(request: Request) -> dict:
+    require_session(request)
+    return success_payload(services.get_sector_strategy_lifecycle_config())
+
+
+@router.put("/lifecycle-config")
+def update_lifecycle_config(request: Request, payload: SectorStrategyLifecycleConfigRequest) -> dict:
+    require_session(request)
+    config_payload = services.update_sector_strategy_lifecycle_config(payload.values)
+    rebuild_task = (
+        services.submit_sector_strategy_lifecycle_rebuild_task(reason="config_update")
+        if payload.auto_rebuild
+        else None
+    )
+    return success_payload(
+        {
+            "config": config_payload,
+            "rebuild_task_id": rebuild_task.get("task_id") if rebuild_task else None,
+            "rebuild_reused": bool(rebuild_task.get("reused")) if rebuild_task else False,
+        },
+        message=(
+            "生命周期阈值配置已更新，复用现有重建任务"
+            if payload.auto_rebuild and rebuild_task and rebuild_task.get("reused")
+            else "生命周期阈值配置已更新并已提交重建任务"
+            if payload.auto_rebuild
+            else "生命周期阈值配置已更新"
+        ),
+    )
+
+
+@router.post("/lifecycle/rebuild")
+def rebuild_lifecycle(request: Request) -> dict:
+    require_session(request)
+    task = services.submit_sector_strategy_lifecycle_rebuild_task(reason="manual")
+    return success_payload(
+        {"task_id": task.get("task_id"), "reused": bool(task.get("reused"))},
+        message="已存在进行中的生命周期重建任务，已复用" if task.get("reused") else "生命周期重建任务已提交",
+    )
+
+
+@router.get("/heat-daily/latest")
+def get_latest_daily_heat(request: Request, limit: int = 30) -> dict:
+    require_session(request)
+    return success_payload(services.get_sector_strategy_latest_heat_daily(limit=limit))
 
 
 @router.delete("/history/{report_id}")

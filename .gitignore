@@ -55,6 +55,8 @@ coverage.xml
 
 # === Project specific ===
 *.db
+*.db-*
+*.db.*
 *.log
 /logs/
 TradEnv/

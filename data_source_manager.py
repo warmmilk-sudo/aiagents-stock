@@ -11,6 +11,10 @@ from datetime import datetime, timedelta
 from dotenv import load_dotenv
 import config
 from tushare_utils import create_tushare_pro
+from pywencai_runtime import setup_pywencai_runtime_env
+
+setup_pywencai_runtime_env()
+import pywencai
 
 # 加载环境变量
 load_dotenv()
@@ -178,6 +182,110 @@ class DataSourceManager:
         return fuzzy_match
 
     @staticmethod
+    def _normalize_tag_text(value):
+        if value is None:
+            return None
+        try:
+            if pd.isna(value):
+                return None
+        except Exception:
+            pass
+        text = str(value).strip()
+        if not text or text in {"-", "--", "N/A", "NA", "未知", "null", "None", "nan"}:
+            return None
+        return text
+
+    def _iter_wencai_rows(self, result):
+        if result is None:
+            return []
+        if isinstance(result, pd.DataFrame):
+            return [row for _, row in result.iterrows()]
+        if isinstance(result, dict):
+            if "tableV1" in result:
+                table_data = result.get("tableV1")
+                if isinstance(table_data, pd.DataFrame):
+                    return [row for _, row in table_data.iterrows()]
+                if isinstance(table_data, list):
+                    return [pd.Series(item) for item in table_data if isinstance(item, dict)]
+            return [pd.Series(result)]
+        if isinstance(result, list):
+            return [pd.Series(item) for item in result if isinstance(item, dict)]
+        return []
+
+    def _extract_tags_from_wencai_result(self, result) -> dict:
+        industry_candidates = []
+        sector_candidates = []
+
+        def _append_sector_text(raw_text):
+            text = self._normalize_tag_text(raw_text)
+            if not text:
+                return
+            if text.isdigit():
+                return
+            for part in text.replace("；", ";").replace("，", ",").replace("、", ",").split(";"):
+                for piece in part.split(","):
+                    candidate = self._normalize_tag_text(piece)
+                    if not candidate or candidate.isdigit() or len(candidate) < 2:
+                        continue
+                    if candidate not in sector_candidates:
+                        sector_candidates.append(candidate)
+
+        for row in self._iter_wencai_rows(result):
+            row_dict = row.to_dict() if hasattr(row, "to_dict") else dict(row)
+            for key, value in row_dict.items():
+                key_text = self._normalize_tag_text(key) or ""
+                value_text = self._normalize_tag_text(value)
+                if not value_text:
+                    continue
+                if "概念" in key_text or "板块" in key_text:
+                    _append_sector_text(value_text)
+                    continue
+                if key_text in self._INDUSTRY_LABELS or ("行业" in key_text and not any(excluded in key_text for excluded in self._INDUSTRY_LABEL_EXCLUDES)):
+                    if value_text.isdigit():
+                        continue
+                    if value_text not in industry_candidates:
+                        industry_candidates.append(value_text)
+
+        return {
+            "industry": industry_candidates[0] if industry_candidates else None,
+            "sector_tags": list(dict.fromkeys(sector_candidates))[:12],
+        }
+
+    def get_stock_tag_info_from_wencai(self, symbol: str):
+        """使用问财统一获取个股行业/概念标签。"""
+        normalized_symbol = self._clean_text_value(symbol)
+        if not normalized_symbol:
+            return {"symbol": symbol, "industry": None, "sector_tags": [], "source": "pywencai", "error": "股票代码不能为空"}
+
+        queries = [
+            f"{normalized_symbol} 所属行业 所属概念",
+            f"{normalized_symbol} 行业 概念板块",
+        ]
+
+        for query in queries:
+            try:
+                result = pywencai.get(query=query, loop=True)
+                payload = self._extract_tags_from_wencai_result(result)
+                if payload.get("industry") or payload.get("sector_tags"):
+                    return {
+                        "symbol": normalized_symbol,
+                        "industry": payload.get("industry"),
+                        "sector_tags": payload.get("sector_tags") or [],
+                        "source": "pywencai",
+                        "query": query,
+                    }
+            except Exception:
+                continue
+
+        return {
+            "symbol": normalized_symbol,
+            "industry": None,
+            "sector_tags": [],
+            "source": "pywencai",
+            "error": "未获取到问财标签数据",
+        }
+
+    @staticmethod
     def _is_cn_fund_like_symbol(symbol: str) -> bool:
         if not symbol or len(symbol) != 6 or not symbol.isdigit():
             return False
@@ -328,7 +436,7 @@ class DataSourceManager:
     
     def get_stock_basic_info(self, symbol):
         """
-        获取股票基本信息（优先 Tushare）
+        获取股票基本信息（标签优先使用问财）
         
         Args:
             symbol: 股票代码
@@ -342,8 +450,21 @@ class DataSourceManager:
             "industry": None,
             "market": None,
             "business_summary": None,
+            "sector_tags": [],
+            "tag_source": None,
         }
-        
+
+        try:
+            wencai_tags = self.get_stock_tag_info_from_wencai(symbol)
+            if isinstance(wencai_tags, dict):
+                info["industry"] = self._clean_text_value(wencai_tags.get("industry")) or info["industry"]
+                info["sector_tags"] = list(dict.fromkeys(
+                    [self._clean_text_value(tag) for tag in (wencai_tags.get("sector_tags") or []) if self._clean_text_value(tag)]
+                ))[:12]
+                info["tag_source"] = "pywencai" if info["sector_tags"] or info["industry"] else None
+        except Exception as e:
+            print(f"[问财] 获取标签失败: {e}")
+
         if self.tushare_available:
             try:
                 print(f"[Tushare] 正在获取 {symbol} 的基本信息...")
@@ -366,11 +487,12 @@ class DataSourceManager:
                 if df is not None and not df.empty:
                     row = df.iloc[0]
                     info['name'] = self._clean_text_value(row.get('name')) or info['name']
-                    info['industry'] = (
-                        self._clean_text_value(row.get('industry'))
-                        or self._clean_text_value(row.get('management'))
-                        or info['industry']
-                    )
+                    if not info.get("industry"):
+                        info['industry'] = (
+                            self._clean_text_value(row.get('industry'))
+                            or self._clean_text_value(row.get('management'))
+                            or info['industry']
+                        )
                     info['market'] = self._clean_text_value(row.get('market')) or info['market']
                     info['list_date'] = self._clean_text_value(row.get('list_date')) or info.get('list_date')
                     
@@ -392,7 +514,7 @@ class DataSourceManager:
                 except Exception as company_exc:
                     print(f"[Tushare] 获取主营业务概况失败: {company_exc}")
 
-                if info.get('name') or info.get('industry') or info.get('business_summary'):
+                if info.get('name') or info.get('industry') or info.get('business_summary') or info.get("sector_tags"):
                     print(f"[Tushare] 成功获取基本信息")
                     return info
             except Exception as e:

@@ -747,6 +747,36 @@ class SmartMonitorTDXDataFetcher:
                     current_minute_index - 10,
                     current_minute_index - 5,
                 )
+                recent_15m_volume = self._sum_window_volume(
+                    minute_points,
+                    current_minute_index - 15,
+                    current_minute_index,
+                )
+                previous_15m_volume = self._sum_window_volume(
+                    minute_points,
+                    current_minute_index - 30,
+                    current_minute_index - 15,
+                )
+                recent_30m_volume = self._sum_window_volume(
+                    minute_points,
+                    current_minute_index - 30,
+                    current_minute_index,
+                )
+                previous_30m_volume = self._sum_window_volume(
+                    minute_points,
+                    current_minute_index - 60,
+                    current_minute_index - 30,
+                )
+                recent_60m_volume = self._sum_window_volume(
+                    minute_points,
+                    current_minute_index - 60,
+                    current_minute_index,
+                )
+                previous_60m_volume = self._sum_window_volume(
+                    minute_points,
+                    current_minute_index - 120,
+                    current_minute_index - 60,
+                )
                 price_position_pct = None
                 if intraday_high > intraday_low:
                     price_position_pct = (current_price - intraday_low) / (intraday_high - intraday_low) * 100
@@ -760,7 +790,13 @@ class SmartMonitorTDXDataFetcher:
                 last_30m_change_pct = self._compute_window_change(
                     minute_points, current_minute_index, current_price, 30
                 )
+                last_60m_change_pct = self._compute_window_change(
+                    minute_points, current_minute_index, current_price, 60
+                )
                 volume_acceleration_ratio = _safe_ratio(recent_5m_volume, previous_5m_volume)
+                volume_ratio_15m = _safe_ratio(recent_15m_volume, previous_15m_volume)
+                volume_ratio_30m = _safe_ratio(recent_30m_volume, previous_30m_volume)
+                volume_ratio_60m = _safe_ratio(recent_60m_volume, previous_60m_volume)
                 intraday_observations = []
                 intraday_signal_labels = []
                 if price_position_pct is not None:
@@ -775,6 +811,17 @@ class SmartMonitorTDXDataFetcher:
                     elif last_5m_change_pct <= -0.8 and volume_acceleration_ratio >= 1.2:
                         _append_unique(intraday_observations, "近5分钟放量回落")
 
+                if volume_ratio_15m is not None and volume_ratio_30m is not None:
+                    if volume_ratio_15m >= 1.15 and volume_ratio_30m >= 1.05:
+                        _append_unique(intraday_observations, "15/30分钟量能同步放大")
+                    elif volume_ratio_15m <= 0.9 and volume_ratio_30m <= 0.92:
+                        _append_unique(intraday_observations, "15/30分钟量能持续回落")
+                if volume_ratio_30m is not None and volume_ratio_60m is not None:
+                    if volume_ratio_30m >= 1.05 and volume_ratio_60m >= 1.0:
+                        _append_unique(intraday_signal_labels, "30/60分钟量能维持扩张")
+                    elif volume_ratio_30m <= 0.92 and volume_ratio_60m <= 0.95:
+                        _append_unique(intraday_signal_labels, "30/60分钟量能衰减")
+
                 if intraday_vwap is not None:
                     if current_price > intraday_vwap:
                         _append_unique(intraday_signal_labels, "价格运行在分时均价上方")
@@ -788,7 +835,9 @@ class SmartMonitorTDXDataFetcher:
                     price_position_pct is not None
                     and price_position_pct >= 85
                     and (last_15m_change_pct or 0) >= 0.8
-                    and (volume_acceleration_ratio or 0) >= 1.2
+                    and (last_30m_change_pct or 0) >= 0.6
+                    and (volume_ratio_15m or 0) >= 1.1
+                    and (volume_ratio_30m or 0) >= 1.0
                 ):
                     intraday_bias = "trend_continuation"
                     intraday_bias_text = "高位放量延续，短线趋势偏强"
@@ -796,8 +845,10 @@ class SmartMonitorTDXDataFetcher:
                 elif (
                     price_position_pct is not None
                     and price_position_pct >= 85
-                    and volume_acceleration_ratio is not None
-                    and volume_acceleration_ratio < 0.8
+                    and volume_ratio_15m is not None
+                    and volume_ratio_15m < 0.92
+                    and volume_ratio_30m is not None
+                    and volume_ratio_30m < 0.95
                 ):
                     intraday_bias = "high_level_stall"
                     intraday_bias_text = "价格靠近日内高位，但量能衰减"
@@ -805,16 +856,17 @@ class SmartMonitorTDXDataFetcher:
                 elif (
                     price_position_pct is not None
                     and price_position_pct <= 25
-                    and (last_5m_change_pct or 0) >= 0.3
-                    and (volume_acceleration_ratio or 0) >= 1.0
+                    and (last_15m_change_pct or 0) >= 0.3
+                    and (volume_ratio_15m or 0) >= 1.0
                 ):
                     intraday_bias = "pullback_support"
                     intraday_bias_text = "低位回升承接，存在回踩后的修复迹象"
                     _append_unique(intraday_signal_labels, "低位回升承接")
                 elif (
-                    last_5m_change_pct is not None
-                    and last_5m_change_pct <= -0.8
-                    and (volume_acceleration_ratio or 0) >= 1.2
+                    last_15m_change_pct is not None
+                    and last_15m_change_pct <= -0.8
+                    and (last_30m_change_pct or 0) <= -0.5
+                    and (volume_ratio_15m or 0) >= 1.05
                 ):
                     intraday_bias = "selloff_pressure"
                     intraday_bias_text = "短线放量回落，抛压偏强"
@@ -822,6 +874,8 @@ class SmartMonitorTDXDataFetcher:
                 elif (
                     last_30m_change_pct is not None
                     and abs(last_30m_change_pct) <= 0.3
+                    and last_60m_change_pct is not None
+                    and abs(last_60m_change_pct) <= 0.5
                     and price_position_pct is not None
                     and 35 <= price_position_pct <= 65
                 ):
@@ -845,9 +899,19 @@ class SmartMonitorTDXDataFetcher:
                         "last_5m_change_pct": last_5m_change_pct,
                         "last_15m_change_pct": last_15m_change_pct,
                         "last_30m_change_pct": last_30m_change_pct,
+                        "last_60m_change_pct": last_60m_change_pct,
                         "recent_5m_volume": recent_5m_volume,
                         "previous_5m_volume": previous_5m_volume,
                         "volume_acceleration_ratio": volume_acceleration_ratio,
+                        "recent_15m_volume": recent_15m_volume,
+                        "previous_15m_volume": previous_15m_volume,
+                        "volume_ratio_15m": volume_ratio_15m,
+                        "recent_30m_volume": recent_30m_volume,
+                        "previous_30m_volume": previous_30m_volume,
+                        "volume_ratio_30m": volume_ratio_30m,
+                        "recent_60m_volume": recent_60m_volume,
+                        "previous_60m_volume": previous_60m_volume,
+                        "volume_ratio_60m": volume_ratio_60m,
                         "intraday_bias": intraday_bias,
                         "intraday_bias_text": intraday_bias_text,
                         "intraday_signal_labels": intraday_signal_labels,

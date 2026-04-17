@@ -70,6 +70,20 @@ export interface SectorStrategyReportView {
     from_cache?: boolean;
     cache_warning?: string;
     data_timestamp?: string;
+    top_sectors?: Array<{
+      name?: string;
+      change_pct?: number;
+      turnover?: number;
+      top_stock?: string;
+      top_stock_change?: number;
+    }>;
+    top_concepts?: Array<{
+      name?: string;
+      change_pct?: number;
+      turnover?: number;
+      top_stock?: string;
+      top_stock_change?: number;
+    }>;
     market_overview?: {
       sh_index?: { close?: number; change_pct?: number };
       sz_index?: { close?: number; change_pct?: number };
@@ -87,7 +101,6 @@ export interface SectorStrategyReportView {
 }
 
 type ExportKind = "pdf" | "markdown";
-type ViewSectionKey = "long_short" | "rotation" | "heat" | "raw";
 
 function asText(value: unknown, fallback = "暂无"): string {
   if (value === null || value === undefined || value === "") {
@@ -226,6 +239,115 @@ function PredictionToggleSection({
   );
 }
 
+function BoardSourceSection({
+  marketSnapshot,
+}: {
+  marketSnapshot?: SectorStrategyReportView["market_snapshot"] | null;
+}) {
+  const [activeKey, setActiveKey] = useState<"industry" | "concept">("industry");
+  const industryItems = marketSnapshot?.top_sectors ?? [];
+  const conceptItems = marketSnapshot?.top_concepts ?? [];
+  const activeItems = activeKey === "industry" ? industryItems : conceptItems;
+  const tabsStyle = { "--nested-tab-count": 2 } as CSSProperties;
+
+  return (
+    <div className={`${styles.sectionControlStack} ${styles.tabControlStack}`}>
+      <div className={styles.historyDetailTabs} style={tabsStyle}>
+        <button
+          className={activeKey === "industry" ? styles.nestedTabButtonActive : styles.nestedTabButton}
+          onClick={() => setActiveKey("industry")}
+          type="button"
+        >
+          行业板块
+        </button>
+        <button
+          className={activeKey === "concept" ? styles.nestedTabButtonActive : styles.nestedTabButton}
+          onClick={() => setActiveKey("concept")}
+          type="button"
+        >
+          概念板块
+        </button>
+      </div>
+      {activeKey === "industry" ? (
+        <div className={styles.muted}>共 {marketSnapshot?.sectors_count ?? 0} 个行业板块</div>
+      ) : (
+        <div className={styles.muted}>共 {marketSnapshot?.concepts_count ?? 0} 个概念板块</div>
+      )}
+      {activeItems.length ? (
+        <div className={styles.strategyBoardList}>
+          {activeItems.map((item, index) => (
+            <div className={styles.strategyBoardItem} key={`${activeKey}-${item.name || "board"}-${index}`}>
+              <div className={styles.heatChartTop}>
+                <strong>{asText(item.name)}</strong>
+                <span>{formatPercent(item.change_pct)}</span>
+              </div>
+              <div className={styles.strategyBoardMeta}>
+                <span>换手率：{formatNumber(item.turnover, 2)}</span>
+                <span>领涨：{asText(item.top_stock)}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className={styles.muted}>暂无数据</div>
+      )}
+    </div>
+  );
+}
+
+function BoardInsightSection({
+  predictions,
+}: {
+  predictions?: SectorStrategyReportView["predictions"] | null;
+}) {
+  return (
+    <div className={styles.strategyInsightGrid}>
+      <section className={styles.strategyInsightCard}>
+        <div className={styles.strategyGroupHeader}>
+          <strong>板块多空</strong>
+        </div>
+        <PredictionToggleSection
+          detailBuilder={(item) => [item.reason || "", item.risk ? `风险提示：${item.risk}` : ""]}
+          metaBuilder={(item) => [item.direction || "看多", formatConfidence(item.confidence)]}
+          options={[
+            { key: "bullish", label: "看多板块", items: predictions?.long_short?.bullish },
+            { key: "neutral", label: "中性观察", items: predictions?.long_short?.neutral },
+            { key: "bearish", label: "风险板块", items: predictions?.long_short?.bearish },
+          ]}
+        />
+      </section>
+
+      <section className={styles.strategyInsightCard}>
+        <div className={styles.strategyGroupHeader}>
+          <strong>轮动机会</strong>
+        </div>
+        <PredictionToggleSection
+          detailBuilder={(item) => [item.logic || "", item.advice ? `操作建议：${item.advice}` : ""]}
+          metaBuilder={(item) => [item.stage || "强势", item.time_window || "暂无周期"]}
+          options={[
+            { key: "strong", label: "当前强势", items: predictions?.rotation?.current_strong },
+            { key: "potential", label: "潜力接力", items: predictions?.rotation?.potential },
+            { key: "declining", label: "衰退方向", items: predictions?.rotation?.declining },
+          ]}
+        />
+      </section>
+
+      <section className={styles.strategyInsightCard}>
+        <div className={styles.strategyGroupHeader}>
+          <strong>热度观察</strong>
+        </div>
+        <HeatObservationSection
+          options={[
+            { key: "hottest", label: "最热板块", items: predictions?.heat?.hottest, tone: "danger" },
+            { key: "heating", label: "升温板块", items: predictions?.heat?.heating, tone: "warning" },
+            { key: "cooling", label: "降温板块", items: predictions?.heat?.cooling, tone: "info" },
+          ]}
+        />
+      </section>
+    </div>
+  );
+}
+
 interface HeatToggleOption extends PredictionToggleOption {
   tone: "danger" | "warning" | "info";
 }
@@ -319,6 +441,8 @@ interface SectorReportDetailViewProps {
   onBack: () => void;
   onExport: (kind: ExportKind) => void;
   reportView?: SectorStrategyReportView | null;
+  lifecycleItems?: Array<Record<string, unknown>> | null;
+  dailyHeatPanel?: { available?: boolean; board_date?: string; total_count?: number; items?: Array<Record<string, unknown>> | null } | null;
 }
 
 export function SectorReportDetailView({
@@ -327,10 +451,9 @@ export function SectorReportDetailView({
   onBack,
   onExport,
   reportView,
+  lifecycleItems,
+  dailyHeatPanel,
 }: SectorReportDetailViewProps) {
-  const [activeSection, setActiveSection] = useState<ViewSectionKey>("long_short");
-  const sectionTabsStyle = { "--nested-tab-count": 4 } as CSSProperties;
-
   if (!reportView) {
     return (
       <div className={`${styles.stack} ${styles.historyDetailPageStack}`}>
@@ -440,98 +563,116 @@ export function SectorReportDetailView({
             <div>模型未完整返回以下字段，已使用默认值补齐：{warnings.missing_fields.join("、")}</div>
           </div>
         ) : null}
+
       </section>
 
-      <section className={`${styles.stack} ${styles.historyDetailStack}`}>
-        <div className={`${styles.sectionControlStack} ${styles.tabControlStack}`}>
-          <div className={styles.strategySummaryGrid}>
-            <div className={styles.historySummaryCell}>
-              <span>主要风险</span>
-              <strong>{asText(summary?.major_risk)}</strong>
-            </div>
-            <div className={styles.historySummaryCell}>
-              <span>整体策略</span>
-              <strong>{asText(summary?.strategy)}</strong>
-            </div>
+      <DetailSection title="板块研判">
+        <div className={styles.strategySummaryGrid}>
+          <div className={styles.historySummaryCell}>
+            <span>主要风险</span>
+            <strong>{asText(summary?.major_risk)}</strong>
           </div>
-
-          <div className={styles.historyDetailTabs} style={sectionTabsStyle}>
-            <button
-              className={activeSection === "long_short" ? styles.nestedTabButtonActive : styles.nestedTabButton}
-              onClick={() => setActiveSection("long_short")}
-              type="button"
-            >
-              板块多空
-            </button>
-            <button
-              className={activeSection === "rotation" ? styles.nestedTabButtonActive : styles.nestedTabButton}
-              onClick={() => setActiveSection("rotation")}
-              type="button"
-            >
-              轮动机会
-            </button>
-            <button
-              className={activeSection === "heat" ? styles.nestedTabButtonActive : styles.nestedTabButton}
-              onClick={() => setActiveSection("heat")}
-              type="button"
-            >
-              热度观察
-            </button>
-            <button
-              className={activeSection === "raw" ? styles.nestedTabButtonActive : styles.nestedTabButton}
-              onClick={() => setActiveSection("raw")}
-              type="button"
-            >
-              原始报告
-            </button>
+          <div className={styles.historySummaryCell}>
+            <span>整体策略</span>
+            <strong>{asText(summary?.strategy)}</strong>
           </div>
-          <div className={styles.sectionDivider} />
-
-          {activeSection === "long_short" ? (
-            <PredictionToggleSection
-              detailBuilder={(item) => [item.reason || "", item.risk ? `风险提示：${item.risk}` : ""]}
-              metaBuilder={(item) => [item.direction || "看多", formatConfidence(item.confidence)]}
-              options={[
-                { key: "bullish", label: "看多板块", items: predictions?.long_short?.bullish },
-                { key: "neutral", label: "中性观察", items: predictions?.long_short?.neutral },
-                { key: "bearish", label: "风险板块", items: predictions?.long_short?.bearish },
-              ]}
-            />
-          ) : null}
-
-          {activeSection === "rotation" ? (
-            <PredictionToggleSection
-              detailBuilder={(item) => [item.logic || "", item.advice ? `操作建议：${item.advice}` : ""]}
-              metaBuilder={(item) => [item.stage || "强势", item.time_window || "暂无周期"]}
-              options={[
-                { key: "strong", label: "当前强势", items: predictions?.rotation?.current_strong },
-                { key: "potential", label: "潜力接力", items: predictions?.rotation?.potential },
-                { key: "declining", label: "衰退方向", items: predictions?.rotation?.declining },
-              ]}
-            />
-          ) : null}
-
-          {activeSection === "heat" ? (
-            <HeatObservationSection
-              options={[
-                { key: "hottest", label: "最热板块", items: predictions?.heat?.hottest, tone: "danger" },
-                { key: "heating", label: "升温板块", items: predictions?.heat?.heating, tone: "warning" },
-                { key: "cooling", label: "降温板块", items: predictions?.heat?.cooling, tone: "info" },
-              ]}
-            />
-          ) : null}
-
-          {activeSection === "raw" ? <FixedReportWorkspace reports={reportView?.raw_reports || null} /> : null}
         </div>
 
+        <BoardInsightSection predictions={predictions} />
+        <BoardSourceSection marketSnapshot={reportView?.market_snapshot ?? null} />
+      </DetailSection>
+
+      <DetailSection title="生命周期观察">
+        {lifecycleItems?.length ? (
+          <div className={styles.heatChartList}>
+            {lifecycleItems.map((item, index) => {
+              const trajectory = Array.isArray(item.trajectory)
+                ? item.trajectory.map((entry) => String((entry as { score?: unknown }).score ?? 0)).join(" -> ")
+                : "-";
+              const details =
+                item.lifecycle_details && typeof item.lifecycle_details === "object"
+                  ? (item.lifecycle_details as Record<string, Record<string, unknown>>)
+                  : {};
+              const stage = String(item.lifecycle_stage || "neutral");
+              const stageText = stage === "startup" ? "启动期" : stage === "explosive" ? "爆发期" : stage === "decay" ? "衰退期" : "中性";
+              return (
+                <div className={styles.heatChartCard} key={`${String(item.sector_name || "sector")}-${index}`}>
+                  <div className={styles.heatChartTop}>
+                    <strong>{asText(item.sector_name)}</strong>
+                    <span>{formatNumber(item.heat_score, 0, "0")}</span>
+                  </div>
+                  <div className={styles.heatChartMeta}>
+                    <span>阶段：{stageText}</span>
+                    <span>防守线：{asText(item.defense_line_type, "NONE")}</span>
+                  </div>
+                  <div className={styles.muted}>
+                    来源：{asText(item.source_type, "-")} | 观察点数：{asText(item.observation_count, "-")} | 主窗口：{asText(item.window_size_used, "-")} 日
+                  </div>
+                  <div>生命周期轨迹：{trajectory}</div>
+                  <div className={styles.muted}>Δ1：{asText(item.delta_1, "-")} | Δ2：{asText(item.delta_2, "-")}</div>
+                  {Object.keys(details).length ? (
+                    <div className={styles.muted}>
+                      {Object.entries(details)
+                        .map(([windowKey, metrics]) => {
+                          const typedMetrics = metrics as Record<string, unknown>;
+                          return `${windowKey}日: 变化${asText(typedMetrics.change, "-")} / 斜率${asText(typedMetrics.slope, "-")} / 回撤${asText(typedMetrics.drawdown, "-")}`;
+                        })
+                        .join(" | ")}
+                    </div>
+                  ) : null}
+                  <div>{asText(item.action_hint, "暂无动作提示")}</div>
+                  {Boolean(item.selection_veto) ? <div className={styles.dangerText}>生命周期衰退，一票否决</div> : null}
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className={styles.muted}>暂无生命周期数据</div>
+        )}
+      </DetailSection>
+
+      <DetailSection title="当日热度面板">
+        {(dailyHeatPanel?.items ?? []).length ? (
+          <div className={styles.tableWrap}>
+            <table className={`${styles.table} ${styles.tableCompact}`}>
+              <thead>
+                <tr>
+                  <th>排名</th>
+                  <th>板块</th>
+                  <th>来源</th>
+                  <th>热度</th>
+                  <th>涨跌幅</th>
+                  <th>换手</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(dailyHeatPanel?.items ?? []).slice(0, 20).map((item, index) => (
+                  <tr key={`daily-heat-row-${index}`}>
+                    <td>{asText(item.rank_order, String(index + 1))}</td>
+                    <td>{asText(item.sector_name)}</td>
+                    <td>{asText(item.source_type, "-")}</td>
+                    <td>{formatNumber(item.heat_score, 2, "0.00")}</td>
+                    <td>{formatNumber(item.change_pct, 2, "0.00")}%</td>
+                    <td>{formatNumber(item.turnover, 2, "0.00")}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className={styles.muted}>暂无当日热度面板数据</div>
+        )}
+      </DetailSection>
+
+      <DetailSection title="原始报告">
+        <FixedReportWorkspace reports={reportView?.raw_reports || null} />
         {predictions?.raw_fallback_text ? (
           <div className={`${styles.noticeCard} ${styles.noticeInfo}`}>
             <strong>原始预测文本</strong>
             <div className={styles.code}>{predictions.raw_fallback_text}</div>
           </div>
         ) : null}
-
-      </section>
+      </DetailSection>
     </div>
   );
 }

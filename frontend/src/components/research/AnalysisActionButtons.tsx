@@ -38,7 +38,7 @@ export function AnalysisActionButtons({
 
   const openIntent = (path: string, intent: TypedIntent<ActionPayload>) => {
     setIntent(intent);
-    navigate(`${path}?intent=${encodeIntent(intent)}`);
+    navigate(`${path}${path.includes("?") ? "&" : "?"}${encodeIntent(intent)}`);
   };
 
   return (
@@ -62,8 +62,8 @@ export function AnalysisActionButtons({
               className={styles.primaryAction}
               onClick={() =>
                 isInPortfolio
-                  ? navigate("/investment/portfolio")
-                  : openIntent("/investment/portfolio", { type: "portfolio", payload: actionPayload })
+                  ? navigate("/research/watchlist-hub?section=holdings")
+                  : openIntent("/research/watchlist-hub?section=holdings", { type: "portfolio", payload: actionPayload })
               }
               type="button"
             >

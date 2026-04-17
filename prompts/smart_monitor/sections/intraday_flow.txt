@@ -3,8 +3,13 @@
 覆盖率/缺口: $minute_coverage_ratio | $max_minute_gap
 分时均价: $intraday_vwap
 当前价所处日内位置: $price_position_summary
-近5/15/30分钟涨跌: $last_5m_change_pct / $last_15m_change_pct / $last_30m_change_pct
-近5分钟量能加速度: $volume_acceleration_ratio ($volume_acceleration_state)
+近15/30/60分钟涨跌: $last_15m_change_pct / $last_30m_change_pct / $last_60m_change_pct
+近5分钟异动: $last_5m_change_pct | 量能加速度 $volume_acceleration_ratio ($volume_acceleration_state)
+15/30/60分钟量能比: $volume_ratio_15m / $volume_ratio_30m / $volume_ratio_60m
+量能结构: $intraday_volume_structure
+15/30/60分钟节奏: $intraday_momentum_state
+承接状态: $acceptance_state
+止盈动态提示: $take_profit_adjustment_hint
 盘中偏向: $intraday_bias_text
 主导证据: $primary_evidence
 反向约束: $counter_evidence

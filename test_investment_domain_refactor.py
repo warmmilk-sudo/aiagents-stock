@@ -341,6 +341,9 @@ class InvestmentDomainRefactorTests(unittest.TestCase):
                 "entry_range": "1480.0 - 1510.0",
                 "take_profit": "1650元",
                 "stop_loss": "1430元",
+                "holding_period": "2-5个交易日",
+                "swing_type": "微波段",
+                "swing_type_reason": "事件驱动明确，适合快进快出。",
                 "operation_advice": "等待回踩分批吸纳",
             },
             origin_analysis_id=99,
@@ -352,6 +355,11 @@ class InvestmentDomainRefactorTests(unittest.TestCase):
         self.assertEqual(payload["strategy_context"]["entry_max"], 1510.0)
         self.assertEqual(payload["strategy_context"]["take_profit"], 1650.0)
         self.assertEqual(payload["strategy_context"]["stop_loss"], 1430.0)
+        self.assertEqual(payload["strategy_context"]["holding_period"], "2-5个交易日")
+        self.assertEqual(payload["strategy_context"]["swing_type"], "微波段")
+        self.assertEqual(payload["strategy_context"]["swing_horizon_days_min"], 2)
+        self.assertEqual(payload["strategy_context"]["swing_horizon_days_max"], 5)
+        self.assertIn("事件驱动", payload["strategy_context"]["swing_type_reason"])
         self.assertEqual(payload["default_cost_price"], 1495.0)
         self.assertIn("等待回踩分批吸纳", payload["default_note"])
 

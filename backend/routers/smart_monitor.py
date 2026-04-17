@@ -11,6 +11,7 @@ from backend.dto import (
     SmartMonitorAccountRiskConfigRequest,
     SmartMonitorAnalyzeRequest,
     SmartMonitorConfigRequest,
+    SmartMonitorRunOnceRequest,
     SmartMonitorRuntimeConfigRequest,
     SmartMonitorTaskRequest,
 )
@@ -161,16 +162,17 @@ def refresh_task_baselines(
 @router.post("/tasks/run-once")
 def run_all_tasks_once(
     request: Request,
-    enabled_only: bool = True,
-    account_name: Optional[str] = None,
-    has_position: Optional[bool] = None,
+    payload: Optional[SmartMonitorRunOnceRequest] = None,
 ) -> dict:
     require_session(request)
+    resolved_payload = payload.model_dump() if payload is not None else {}
     return success_payload(
         services.run_smart_monitor_tasks_once(
-            enabled_only=enabled_only,
-            account_name=account_name,
-            has_position=has_position,
+            enabled_only=bool(resolved_payload.get("enabled_only", True)),
+            account_name=resolved_payload.get("account_name"),
+            has_position=resolved_payload.get("has_position"),
+            ordered_task_ids=resolved_payload.get("ordered_task_ids") or [],
+            task_delay_seconds=resolved_payload.get("task_delay_seconds"),
         ),
         message="已触发一次智能盯盘批量执行",
     )

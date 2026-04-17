@@ -477,6 +477,26 @@ def _normalize_market_snapshot(data_summary: Any) -> dict[str, Any] | None:
     market_overview = _as_dict(payload.get("market_overview"))
     if not sectors and not concepts and not market_overview and not payload.get("cache_warning"):
         return None
+
+    def _top_board_items(board_payload: dict[str, Any], limit: int = 10) -> list[dict[str, Any]]:
+        if not board_payload:
+            return []
+        items: list[dict[str, Any]] = []
+        for name, info in board_payload.items():
+            if not isinstance(info, dict):
+                continue
+            items.append(
+                {
+                    "name": _normalize_text(name, allow_english_only=True),
+                    "change_pct": _normalize_number(info.get("change_pct"), 0.0),
+                    "turnover": _normalize_number(info.get("turnover"), 0.0),
+                    "top_stock": _normalize_text(info.get("top_stock"), fallback="", allow_english_only=True),
+                    "top_stock_change": _normalize_number(info.get("top_stock_change"), 0.0),
+                }
+            )
+        items.sort(key=lambda item: item.get("change_pct", 0.0), reverse=True)
+        return items[:limit]
+
     return {
         "from_cache": bool(payload.get("from_cache")),
         "cache_warning": _normalize_text(payload.get("cache_warning"), fallback="", allow_english_only=True),
@@ -484,6 +504,8 @@ def _normalize_market_snapshot(data_summary: Any) -> dict[str, Any] | None:
         "market_overview": market_overview,
         "sectors_count": len(sectors),
         "concepts_count": len(concepts),
+        "top_sectors": _top_board_items(sectors),
+        "top_concepts": _top_board_items(concepts),
     }
 
 

@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import requests
 
+from investment_action_utils import normalize_strategy_context
 from smart_monitor_deepseek import SmartMonitorDeepSeek
 
 
@@ -37,6 +38,7 @@ class SmartMonitorDeepSeekTests(unittest.TestCase):
 
         self.assertEqual(decision["action"], "HOLD")
         self.assertEqual(decision["action_detail"], "持有")
+        self.assertEqual(decision["swing_execution_mode"], "watch_hold")
         self.assertEqual(decision["risk_level"], "high")
         self.assertIn("T+1", decision["reasoning"])
 
@@ -44,7 +46,11 @@ class SmartMonitorDeepSeekTests(unittest.TestCase):
         client = SmartMonitorDeepSeek(api_key="test-key")
 
         trim_decision = client._enforce_action_policy(
-            {"action": "SELL", "action_detail": "减仓", "reasoning": "test"},
+            {"action": "SELL", "action_detail": "减仓", "reasoning": "趋势仍强但接近止盈位，先锁定部分利润。"},
+            has_position=True,
+        )
+        defensive_trim_decision = client._enforce_action_policy(
+            {"action": "SELL", "action_detail": "减仓", "reasoning": "15/30/60分钟走坏，先收缩风险敞口。"},
             has_position=True,
         )
         exit_decision = client._enforce_action_policy(
@@ -53,7 +59,11 @@ class SmartMonitorDeepSeekTests(unittest.TestCase):
         )
 
         self.assertEqual(trim_decision["action_detail"], "减仓")
-        self.assertEqual(trim_decision["action_ratio_pct"], 50)
+        self.assertEqual(trim_decision["swing_execution_mode"], "proactive_trim")
+        self.assertEqual(trim_decision["action_ratio_pct"], 25)
+        self.assertEqual(defensive_trim_decision["action_detail"], "减仓")
+        self.assertEqual(defensive_trim_decision["swing_execution_mode"], "defensive_trim")
+        self.assertEqual(defensive_trim_decision["action_ratio_pct"], 35)
         self.assertEqual(exit_decision["action_detail"], "清仓")
         self.assertEqual(exit_decision["action_ratio_pct"], 100)
 
@@ -99,6 +109,8 @@ class SmartMonitorDeepSeekTests(unittest.TestCase):
 ```json
 {
   action: BUY,
+  action_detail: 加仓,
+  swing_execution_mode: breakout_add,
   confidence: 0.82,
   reasoning: "量价配合良好，趋势保持上行，可继续观察突破延续。",
   position_size_pct: 20,
@@ -114,20 +126,23 @@ class SmartMonitorDeepSeekTests(unittest.TestCase):
     entry_min: 12.10,
     entry_max: 12.40,
     take_profit: 13.20,
+    take_profit_max: 13.80,
     stop_loss: 11.70,
   },
 }
 ```
 """
 
-        decision = client._parse_decision(ai_response)
+        decision = client._parse_decision(ai_response, has_position=True)
 
         self.assertEqual(decision["action"], "BUY")
         self.assertEqual(decision["action_ratio_pct"], 20)
         self.assertEqual(decision["confidence"], 82)
         self.assertEqual(decision["risk_level"], "medium")
+        self.assertEqual(decision["swing_execution_mode"], "breakout_add")
         self.assertEqual(decision["monitor_levels"]["entry_min"], 12.1)
         self.assertEqual(decision["monitor_levels"]["take_profit"], 13.2)
+        self.assertEqual(decision["monitor_levels"]["take_profit_max"], 13.8)
 
     def test_parse_decision_normalizes_chinese_action_and_percent_strings(self):
         client = SmartMonitorDeepSeek(api_key="test-key")
@@ -152,6 +167,7 @@ class SmartMonitorDeepSeekTests(unittest.TestCase):
         self.assertEqual(decision["action_ratio_pct"], 20)
         self.assertEqual(decision["confidence"], 85)
         self.assertEqual(decision["risk_level"], "medium")
+        self.assertEqual(decision["swing_execution_mode"], "pullback_entry")
         self.assertEqual(decision["monitor_levels"]["stop_loss"], 11.7)
 
     def test_parse_decision_falls_back_to_account_risk_profile(self):
@@ -485,16 +501,21 @@ class SmartMonitorDeepSeekTests(unittest.TestCase):
         self.assertIn("当前任务模式：空仓建仓模式", messages[0]["content"])
         self.assertIn("允许动作：BUY / HOLD", messages[0]["content"])
         self.assertIn("禁止动作：SELL、减仓、止盈卖出", messages[0]["content"])
-        self.assertIn("若 `strategy_context` 已提供完整的 `entry_min / entry_max / take_profit / stop_loss`，优先沿用这些价格", messages[0]["content"])
+        self.assertIn("若 `strategy_context` 已提供完整的 `entry_min / entry_max / take_profit / stop_loss`，优先把它们作为初始参考", messages[0]["content"])
+        self.assertIn("`take_profit` 则允许根据实时强弱更主动地上修或微调", messages[0]["content"])
+        self.assertIn("若给出了 `take_profit_max`，必须满足 `take_profit <= take_profit_max`", messages[0]["content"])
         self.assertIn("`stop_loss < entry_min <= entry_max < take_profit`", messages[0]["content"])
-        self.assertIn("若明显高于 `entry_max`，默认 `HOLD`", messages[0]["content"])
+        self.assertIn("若高于 `entry_max`，通常应说明是等待回踩还是属于突破追踪，不要机械追价", messages[0]["content"])
         self.assertIn("`50-60`：证据不足，偏观察", messages[0]["content"])
         self.assertIn("若 `action = \"BUY\"`，默认不应低于 `68`", messages[0]["content"])
         self.assertIn("`low`：结构较清晰，风险可控", messages[0]["content"])
         self.assertIn("若 `action = \"BUY\"`，通常不应给出 `high`", messages[0]["content"])
         self.assertIn("若 `risk_level = \"high\"`，`confidence` 不应轻易超过 `85`", messages[0]["content"])
         self.assertIn("1. 先看实时数据是否足够新鲜", messages[0]["content"])
-        self.assertIn("只有在方向不弱、时点不差、即时风险不重时，才允许考虑 `BUY`", messages[0]["content"])
+        self.assertIn("当方向转强、时点合适、即时风险可控时，可以考虑 `BUY`", messages[0]["content"])
+        self.assertIn("本系统当前只支持两类波段：`微波段（2-5个交易日）`、`标准波段（5-15个交易日）`", messages[0]["content"])
+        self.assertIn("若未明确，必须承认“基线波段未明确”，不要自动补成标准波段", messages[0]["content"])
+        self.assertIn("不要只依赖单一 `5分钟` 量能脉冲做结论", messages[0]["content"])
         self.assertIn("必须按这个顺序覆盖 5 类信息", messages[0]["content"])
         self.assertIn("不要输出带方括号的小标题", messages[0]["content"])
         self.assertIn("若无战略基线，必须明确写“无战略基线”", messages[0]["content"])
@@ -507,13 +528,14 @@ class SmartMonitorDeepSeekTests(unittest.TestCase):
         self.assertIn("股票名称: 贵州茅台", messages[1]["content"])
         self.assertIn("请基于以上数据，给出交易决策（JSON格式）。", messages[1]["content"])
 
-    def test_build_prompt_messages_holding_mode_disallows_buy_or_add_position(self):
+    def test_build_prompt_messages_holding_mode_supports_swing_position_management(self):
         client = SmartMonitorDeepSeek(api_key="test-key")
 
         messages = client._build_prompt_messages(
             stock_code="600519",
             market_data={
                 "name": "贵州茅台",
+                "update_time": "2026-03-25 10:30:00",
                 "current_price": 1650.0,
                 "change_pct": 1.8,
                 "change_amount": 29.2,
@@ -560,18 +582,132 @@ class SmartMonitorDeepSeekTests(unittest.TestCase):
             },
         )
 
-        self.assertIn("当前任务模式：持仓退出模式", messages[0]["content"])
-        self.assertIn("允许动作：SELL / HOLD", messages[0]["content"])
-        self.assertIn("禁止动作：BUY、加仓、重新开仓", messages[0]["content"])
+        self.assertIn("当前任务模式：持仓波段管理模式", messages[0]["content"])
+        self.assertIn("允许动作：BUY / SELL / HOLD", messages[0]["content"])
+        self.assertIn("禁止动作：做空、日内回转、忽视T+1的卖出", messages[0]["content"])
         self.assertIn("先看硬退出信号：止损、破位、放量转弱、基线失效、明确利空", messages[0]["content"])
-        self.assertIn("若退出证据不足，优先 `HOLD`", messages[0]["content"])
+        self.assertIn("当前基线波段类型：未明确", messages[0]["content"])
+        self.assertIn("若未明确，必须承认“基线波段未明确”，不要自动补成标准波段", messages[0]["content"])
+        self.assertIn("持仓中的盘中决策不只包含退出，也包含波段持有中的加仓、减仓和止损管理", messages[0]["content"])
+        self.assertIn("若基线明确为 `标准波段（5-15个交易日）`，优先把动作理解为 4 类：`回踩确认加仓`、`突破确认加仓`、`主动减仓锁盈`、`防守减仓/清仓`", messages[0]["content"])
+        self.assertIn("若基线明确为 `标准波段` 且持仓处于 `第5-8个交易日`", messages[0]["content"])
+        self.assertIn("若基线明确为 `标准波段` 且持仓处于 `第9-15个交易日`", messages[0]["content"])
+        self.assertIn("若选择 `BUY` 且当前已有持仓，应将其理解为 `加仓`", messages[0]["content"])
+        self.assertIn("止损判断应优先看 `15/30/60分钟` 是否持续走坏、关键位是否失守、承接是否恶化", messages[0]["content"])
+        self.assertIn("若价格短暂跌破成本或分时抖动，但 `30/60分钟` 结构未坏、承接仍在、量能未明显失控，可优先 `HOLD`", messages[0]["content"])
+        self.assertIn("若触发止损，也要区分“防守减仓”与“直接清仓”", messages[0]["content"])
+        self.assertIn("战略基线中的 `take_profit` 主要是初始止盈参考，不等于“价格一到就立即卖出”", messages[0]["content"])
+        self.assertIn("若价格接近或触及基线止盈位，但分时仍强、量能未衰减、结构未走坏，可优先选择 `HOLD`", messages[0]["content"])
+        self.assertIn("判断“结构未走坏”时，必须综合参考 `15/30/60分钟涨跌`，看中短周期是否持续走坏", messages[0]["content"])
+        self.assertIn("若 `15/30/60分钟` 已出现连续转弱、由强转弱，或承接状态恶化，即使价格仍在高位，也应优先考虑兑现", messages[0]["content"])
+        self.assertIn("若趋势重新走强、`15/30/60分钟` 节奏共振向上、承接优化、量能结构配合，且当前价仍处于可接受的风险收益位置，可以考虑 `BUY` 做波段 `加仓`", messages[0]["content"])
+        self.assertIn("`回踩确认加仓` 更适合用于价格回踩成本区、均线、前支撑或突破后的回踩确认", messages[0]["content"])
+        self.assertIn("`突破确认加仓` 更适合用于关键压力位被有效突破后，价格站稳、量能跟随", messages[0]["content"])
+        self.assertIn("`加仓` 更适合用于回踩确认后的再启动、突破确认后的延续、或盈利仓位中的顺势强化", messages[0]["content"])
+        self.assertIn("若仍处于强趋势盈利状态，默认优先在 `HOLD` 与 `减仓` 之间选择，而不是直接 `清仓`", messages[0]["content"])
+        self.assertIn("若趋势仍强但短线已明显偏离、接近动态止盈区、或出现局部过热/承接边际转弱，可优先 `减仓` 锁定部分利润", messages[0]["content"])
+        self.assertIn("`主动减仓锁盈` 更适合用于趋势仍在但短线偏离过大、接近动态止盈区、或量价开始出现边际背离的场景", messages[0]["content"])
+        self.assertIn("`防守减仓` 更适合用于 `15/30/60分钟` 明显转弱但尚未完全失控", messages[0]["content"])
+        self.assertIn("若退出证据不足，可继续 `HOLD` 并跟踪阈值变化", messages[0]["content"])
         self.assertIn("持仓日期: 2026-03-18", messages[1]["content"])
+        self.assertIn("持仓天数: 第6个交易日（估算）", messages[1]["content"])
+        self.assertIn("波段阶段: 阶段未明确（基线未明确波段类型，不自动套用固定持仓阶段）", messages[1]["content"])
         self.assertIn("今日可卖: 是", messages[1]["content"])
+        self.assertIn("若基线已明确波段类型，优先按 `未明确`（未明确）视角管理；若未明确，只按持仓成本、结构强弱和风险约束执行，不自动套固定波段模板", messages[1]["content"])
+        self.assertIn("若基线明确为 `标准波段` 且处于 `第5-8个交易日` 的主持有窗口", messages[1]["content"])
+        self.assertIn("若基线明确为 `标准波段` 且处于 `第9-15个交易日`", messages[1]["content"])
+        self.assertIn("优先区分 `回踩确认加仓`、`突破确认加仓`、`主动减仓锁盈`、`防守减仓/清仓` 这几类动作", messages[1]["content"])
+        self.assertIn("如果 `15/30/60分钟` 持续走坏、关键位失守、承接恶化，且亏损超过止损线", messages[1]["content"])
+        self.assertIn("如果只是短线波动或瞬时下探，但 `30/60分钟` 结构未坏 → 不要轻易把正常回撤当作止损信号", messages[1]["content"])
+        self.assertIn("如果风险在扩大但趋势未完全坍塌 → 可先考虑 `防守减仓`，不必一上来就 `清仓`", messages[1]["content"])
+        self.assertIn("如果价格接近基线止盈位但技术指标仍强、分时未转弱 → 优先继续持有并上修止盈观察位", messages[1]["content"])
+        self.assertIn("如果盈利较多但趋势仍强，只想兑现部分利润 → 优先考虑 `主动减仓锁盈`，而不是直接清仓", messages[1]["content"])
+        self.assertIn("如果趋势重新走强、回踩确认有效，且 `15/30/60分钟` 节奏与量能配合 → 可考虑小到中等比例 `回踩确认加仓`", messages[1]["content"])
+        self.assertIn("如果关键压力位被有效突破并站稳，且量能与 `15/30/60分钟` 节奏继续共振 → 可考虑小到中等比例 `突破确认加仓`", messages[1]["content"])
         self.assertIn("不得出现 `take_profit <= stop_loss`", messages[0]["content"])
         self.assertIn("若 `action = \"SELL\"`，默认不应低于 `70`", messages[0]["content"])
         self.assertIn("若 `action = \"SELL\"` 由止损、破位、放量转弱或基线失效主导，通常应为 `medium` 或 `high`", messages[0]["content"])
-        self.assertIn("本次决策不讨论加仓", messages[1]["content"])
+        self.assertIn("当前有持仓时，若 `action = \"BUY\"`，`action_detail` 应优先写成 `加仓`", messages[0]["content"])
+        self.assertIn("波段持仓中的 `加仓`，`action_ratio_pct` 通常应更克制，优先小到中等比例递进", messages[0]["content"])
+        self.assertIn("`主动减仓锁盈` 默认更适合 `15-35%` 的小到中等比例", messages[0]["content"])
+        self.assertIn("`防守减仓` 默认更适合 `25-50%` 的风险收缩比例", messages[0]["content"])
+        self.assertIn("若 `action = \"BUY\"` 且 `action_detail = \"加仓\"`，必须说明这是更接近 `回踩确认加仓` 还是 `突破确认加仓`", messages[0]["content"])
+        self.assertIn("`swing_execution_mode` 只能是 `pullback_add` 或 `breakout_add`", messages[0]["content"])
+        self.assertIn("\"swing_execution_mode\": \"watch_hold\"", messages[0]["content"])
+        self.assertIn("若盈利且趋势仍强，只是做止盈管理，`action = \"SELL\"` 时优先考虑 `减仓`，不要轻易给出 `清仓`", messages[0]["content"])
+        self.assertIn("若 `action = \"SELL\"` 且 `action_detail = \"减仓\"`，必须说明“为什么不是继续 `HOLD`”", messages[0]["content"])
+        self.assertIn("若 `action = \"SELL\"` 且 `action_detail = \"清仓\"`，必须同时说明“为什么不是 `HOLD`”以及“为什么不是更温和的 `减仓`”", messages[0]["content"])
+        self.assertIn("如果选择 `加仓`，要注意当日新增仓位同样受 `T+1` 限制，不能当日卖出", messages[1]["content"])
         self.assertIn("必须结合持仓成本、当前浮盈亏", messages[0]["content"])
+
+    def test_build_prompt_messages_respects_explicit_micro_swing_baseline(self):
+        client = SmartMonitorDeepSeek(api_key="test-key")
+
+        messages = client._build_prompt_messages(
+            stock_code="300308",
+            market_data={
+                "name": "中际旭创",
+                "update_time": "2026-04-10 10:30:00",
+                "current_price": 141.8,
+                "change_pct": 3.2,
+                "volume": 120000,
+                "ma5": 139.2,
+                "ma20": 132.0,
+                "ma60": 125.0,
+                "trend": "up",
+            },
+            account_info={
+                "available_cash": 100000.0,
+                "total_value": 300000.0,
+                "total_market_value": 0.0,
+                "position_usage_pct": 0.0,
+                "positions_count": 0,
+            },
+            has_position=False,
+            session_info={
+                "session": "上午盘",
+                "volatility": "high",
+                "recommendation": "交易活跃，波动较大",
+                "beijing_hour": 10,
+                "beijing_time": "10:30",
+                "can_trade": True,
+            },
+            strategy_context={
+                "analysis_date": "2026-04-10 09:20:00",
+                "analysis_source": "research",
+                "rating": "买入",
+                "summary": "事件驱动明确，放量突破后只做流动性最好的一段，失速就撤，并采用移动止盈策略。",
+                "entry_min": 139.5,
+                "entry_max": 141.0,
+                "take_profit": 148.0,
+                "stop_loss": 137.2,
+                "holding_period": "2-5个交易日",
+                "swing_type": "微波段",
+                "swing_type_reason": "政策催化和突破共振，适合快进快出。",
+            },
+        )
+
+        self.assertIn("当前基线波段类型：微波段", messages[0]["content"])
+        self.assertIn("当前基线周期参考：2-5个交易日", messages[0]["content"])
+        self.assertIn("当前基线退出方式：移动止盈为主", messages[0]["content"])
+        self.assertIn("若基线属于 `微波段`，可以更重视突破延续性、事件驱动时效性和流动性", messages[0]["content"])
+        self.assertIn("当前适用波段: 微波段", messages[1]["content"])
+        self.assertIn("持有周期: 2-5个交易日", messages[1]["content"])
+        self.assertIn("盘中协同重点: 优先验证突破或事件驱动是否继续发酵", messages[1]["content"])
+        self.assertIn("波段判断依据: 政策催化和突破共振，适合快进快出。", messages[1]["content"])
+
+    def test_normalize_strategy_context_keeps_swing_type_unset_without_explicit_baseline(self):
+        profile = normalize_strategy_context({
+            "holding_period": "1-3个月",
+            "summary": "宏观政策转向与产业修复共振，适合中线趋势跟随，并采用移动止盈逐步上调离场底线。",
+        })
+
+        self.assertEqual(profile["swing_type"], "")
+        self.assertEqual(profile["swing_type_code"], "")
+        self.assertEqual(profile["swing_horizon_days_text"], "1-3个月")
+        self.assertEqual(profile["baseline_exit_style"], "移动止盈为主，随着价格抬升不断上调离场底线")
+        self.assertNotIn("标准波段", profile["intraday_execution_preference"])
+        self.assertIn("移动止盈", profile["strategy_style_summary"])
 
     def test_build_prompt_excludes_previous_decision_context(self):
         client = SmartMonitorDeepSeek(api_key="test-key")
@@ -703,7 +839,7 @@ class SmartMonitorDeepSeekTests(unittest.TestCase):
         self.assertEqual(summary["execution_constraint"], "N/A")
         self.assertEqual(summary["change_trigger"], "N/A")
 
-    def test_normalize_reasoning_output_rewrites_into_fixed_skeleton(self):
+    def test_normalize_reasoning_output_preserves_original_reasoning(self):
         client = SmartMonitorDeepSeek(api_key="test-key")
 
         reasoning_context = client._build_reasoning_context(
@@ -735,7 +871,7 @@ class SmartMonitorDeepSeekTests(unittest.TestCase):
             {
                 "action": "BUY",
                 "risk_level": "medium",
-                "reasoning": "原始输出写得比较散。",
+                "reasoning": "原始输出写得比较散，但核心观点明确：价格回到分时均价上方，短线偏强，量能也在改善，继续按原计划等待回踩确认，不追高。",
                 "monitor_levels": {
                     "entry_min": 141.0,
                     "entry_max": 145.0,
@@ -755,19 +891,19 @@ class SmartMonitorDeepSeekTests(unittest.TestCase):
             has_position=False,
         )
 
-        self.assertIn("盘中主导证据与战略基线基本一致", normalized)
-        self.assertIn("放量回升", normalized)
-        self.assertIn("近5分钟涨跌+0.45%", normalized)
-        self.assertIn("预警阈值沿用基线区间", normalized)
+        self.assertIn("原始输出写得比较散", normalized)
+        self.assertIn("价格回到分时均价上方", normalized)
+        self.assertIn("继续按原计划等待回踩确认", normalized)
+        self.assertNotIn("盘中主导证据与战略基线基本一致", normalized)
 
-    def test_normalize_reasoning_output_mentions_no_strategy_when_absent(self):
+    def test_normalize_reasoning_output_preserves_original_reasoning_without_strategy(self):
         client = SmartMonitorDeepSeek(api_key="test-key")
 
         normalized = client._normalize_reasoning_output(
             {
                 "action": "HOLD",
                 "risk_level": "high",
-                "reasoning": "原始输出。",
+                "reasoning": "当前没有明确战略基线，且实时数据偏旧，只能把盘中波动当辅助参考，暂时继续观望。",
                 "monitor_levels": {
                     "entry_min": 12.1,
                     "entry_max": 12.4,
@@ -785,19 +921,16 @@ class SmartMonitorDeepSeekTests(unittest.TestCase):
             has_position=False,
         )
 
-        self.assertIn("当前无战略基线", normalized)
-        self.assertIn("实时数据仅作保守参考", normalized)
-        self.assertIn("当前缺少足够分时证据", normalized)
-        self.assertIn("预警阈值基于当前盘中结构设置", normalized)
+        self.assertEqual(normalized, "当前没有明确战略基线，且实时数据偏旧，只能把盘中波动当辅助参考，暂时继续观望。")
 
-    def test_normalize_reasoning_output_does_not_reference_previous_decision(self):
+    def test_normalize_reasoning_output_does_not_replace_with_change_summary(self):
         client = SmartMonitorDeepSeek(api_key="test-key")
 
         normalized = client._normalize_reasoning_output(
             {
                 "action": "HOLD",
                 "action_detail": "持有",
-                "reasoning": "原始输出。",
+                "reasoning": "盘中结构未见明确破位，虽然短线波动加大，但不足以推翻继续持有判断。",
                 "monitor_levels": {
                     "entry_min": 12.1,
                     "entry_max": 12.4,
@@ -825,9 +958,9 @@ class SmartMonitorDeepSeekTests(unittest.TestCase):
             has_position=True,
         )
 
-        self.assertIn("但需留意价格运行在分时均价下方", normalized)
-        self.assertIn("盘中新出现近5分钟涨跌由+0.37%变为-0.81%", normalized)
-        self.assertNotIn("上一轮", normalized)
+        self.assertIn("盘中结构未见明确破位", normalized)
+        self.assertIn("不足以推翻继续持有判断", normalized)
+        self.assertNotIn("近5分钟涨跌由+0.37%变为-0.81%", normalized)
 
     def test_build_prompt_includes_realtime_freshness_context(self):
         client = SmartMonitorDeepSeek(api_key="test-key")
@@ -890,7 +1023,7 @@ class SmartMonitorDeepSeekTests(unittest.TestCase):
         )
 
         self.assertIn("[REALTIME_FRESHNESS]", prompt)
-        self.assertIn("整体状态: 可参考但应保守使用", prompt)
+        self.assertIn("整体状态: 可参考但需适度降权", prompt)
         self.assertIn("TDX 分时最后时间: 2026-04-10 10:08:00 (延迟过久)", prompt)
         self.assertIn("TDX 逐笔最后时间: 2026-04-10 10:09:12 (延迟过久)", prompt)
         self.assertIn("分时质量: 分时缺口较多", prompt)
@@ -948,9 +1081,13 @@ class SmartMonitorDeepSeekTests(unittest.TestCase):
                     "last_5m_change_pct": 0.88,
                     "last_15m_change_pct": 1.26,
                     "last_30m_change_pct": 0.42,
+                    "last_60m_change_pct": 0.93,
                     "recent_5m_volume": 4200,
                     "previous_5m_volume": 3100,
                     "volume_acceleration_ratio": 1.35,
+                    "volume_ratio_15m": 1.18,
+                    "volume_ratio_30m": 1.07,
+                    "volume_ratio_60m": 1.02,
                     "trade_tick_count": 1800,
                     "latest_trade_time": "2026-04-10T10:28:00+08:00",
                     "avg_trade_volume": 4.8,
@@ -994,8 +1131,13 @@ class SmartMonitorDeepSeekTests(unittest.TestCase):
         self.assertIn("覆盖率/缺口: 100.0% | 0 分钟", prompt)
         self.assertIn("分时均价: ¥1,449.80", prompt)
         self.assertIn("当前价所处日内位置: 52.94% (处于日内中位)", prompt)
-        self.assertIn("近5/15/30分钟涨跌: +0.88% / +1.26% / +0.42%", prompt)
-        self.assertIn("近5分钟量能加速度: 1.35 (放量)", prompt)
+        self.assertIn("近15/30/60分钟涨跌: +1.26% / +0.42% / +0.93%", prompt)
+        self.assertIn("近5分钟异动: +0.88% | 量能加速度 1.35 (放量)", prompt)
+        self.assertIn("15/30/60分钟量能比: 1.18 / 1.07 / 1.02", prompt)
+        self.assertIn("量能结构: 15/30/60分钟量能整体扩张", prompt)
+        self.assertIn("15/30/60分钟节奏: 15/30/60分钟整体走强，未见持续走坏", prompt)
+        self.assertIn("承接状态: 承接优化，回踩后仍有资金接力", prompt)
+        self.assertIn("止盈动态提示: 空仓场景，以入场节奏判断为主", prompt)
         self.assertIn("[EVIDENCE_SUMMARY] 跨层证据摘要", prompt)
         self.assertIn("盘中偏向: 高位放量延续，短线趋势偏强", prompt)
         self.assertIn("执行支持: 价格运行在分时均价上方", prompt)
@@ -1052,9 +1194,13 @@ class SmartMonitorDeepSeekTests(unittest.TestCase):
                     "last_5m_change_pct": 0.45,
                     "last_15m_change_pct": 1.2,
                     "last_30m_change_pct": 2.1,
+                    "last_60m_change_pct": 3.4,
                     "recent_5m_volume": 15000,
                     "previous_5m_volume": 10000,
                     "volume_acceleration_ratio": 1.5,
+                    "volume_ratio_15m": 1.22,
+                    "volume_ratio_30m": 1.08,
+                    "volume_ratio_60m": 1.03,
                     "trade_tick_count": 240,
                     "latest_trade_time": "2026-04-10 10:29:58",
                     "avg_trade_volume": 500,

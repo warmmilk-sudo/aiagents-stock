@@ -2,5 +2,12 @@
 ═══════════════════════════════════════════════════════════
 时间/来源: $analysis_date | $analysis_source
 评级: $rating
+当前适用波段: $swing_type
+持有周期: $holding_period
+周期框架: $swing_horizon_label | $swing_horizon_days_text
+风格: $strategy_style_summary
+退出方式: $baseline_exit_style
+盘中协同重点: $intraday_execution_preference
+波段判断依据: $swing_type_reason
 阈值: 进场 $entry_min - $entry_max | 止盈 $take_profit | 止损 $stop_loss
 摘要: $summary

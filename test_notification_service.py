@@ -95,6 +95,9 @@ class NotificationServiceTests(unittest.TestCase):
                     "symbol": "测试",
                     "name": "Webhook配置测试",
                     "type": "系统测试",
+                    "notification_class": "focus_alert",
+                    "trigger_summary": "出现回踩关注信号",
+                    "notification_reason": "价格回踩支撑后承接恢复，适合继续关注。",
                     "message": "如果您收到此消息，说明Webhook配置正确！",
                     "triggered_at": "刚刚",
                 }
@@ -105,6 +108,11 @@ class NotificationServiceTests(unittest.TestCase):
         self.assertTrue(success)
         payload_text = str(captured_payload)
         self.assertIn("aiagents通知", payload_text)
+        self.assertIn("摘要", payload_text)
+        self.assertNotIn("理由", payload_text)
+        self.assertNotIn("价格回踩支撑后承接恢复，适合继续关注。", payload_text)
+        self.assertNotIn("股票代码", payload_text)
+        self.assertNotIn("触发时间", payload_text)
 
     def test_send_notifications_skips_deleted_monitoring_items(self):
         class _FakeMonitorDb:

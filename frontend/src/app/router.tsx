@@ -7,10 +7,9 @@ import { LoginPage } from "../pages/LoginPage";
 import { NotFoundPage } from "../pages/NotFoundPage";
 
 import { ActivityPage } from "../pages/investment/ActivityPage";
-import { PortfolioPage } from "../pages/investment/PortfolioPage";
 import { SmartMonitorPage } from "../pages/investment/SmartMonitorPage";
-import { DeepAnalysisPage } from "../pages/research/DeepAnalysisPage";
-import { HistoryPage } from "../pages/research/HistoryPage";
+import { SmartSelectionPage } from "../pages/investment/SmartSelectionPage";
+import { ResearchHubPage } from "../pages/research/ResearchHubPage";
 import { LowPriceBullPage } from "../pages/selectors/LowPriceBullPage";
 import { MainForcePage } from "../pages/selectors/MainForcePage";
 import { ProfitGrowthPage } from "../pages/selectors/ProfitGrowthPage";
@@ -40,7 +39,7 @@ function AuthBootstrap() {
     return <div style={{ padding: 32 }}>正在连接后端...</div>;
   }
 
-  return <Navigate replace to={authenticated ? "/research/deep-analysis" : "/login"} />;
+  return <Navigate replace to={authenticated ? "/research/watchlist-hub" : "/login"} />;
 }
 
 function RequireAuth() {
@@ -68,6 +67,18 @@ function RedirectToSmartMonitor() {
   return <Navigate replace to={`/investment/smart-monitor${location.search}`} />;
 }
 
+function RedirectToResearchHub() {
+  const location = useLocation();
+  return <Navigate replace to={`/research/watchlist-hub${location.search}`} />;
+}
+
+function RedirectToResearchHubHoldings() {
+  const location = useLocation();
+  const searchParams = new URLSearchParams(location.search);
+  searchParams.set("section", "holdings");
+  return <Navigate replace to={`/research/watchlist-hub?${searchParams.toString()}`} />;
+}
+
 export const router = createBrowserRouter([
   {
     path: "/",
@@ -82,16 +93,20 @@ export const router = createBrowserRouter([
     element: <RequireAuth />,
     children: [
       {
+        path: "/research/watchlist-hub",
+        element: withPageSuspense(<ResearchHubPage />),
+      },
+      {
         path: "/research/deep-analysis",
-        element: withPageSuspense(<DeepAnalysisPage />),
+        element: <RedirectToResearchHub />,
       },
       {
         path: "/research/history",
-        element: withPageSuspense(<HistoryPage />),
+        element: <RedirectToResearchHub />,
       },
       {
         path: "/investment/portfolio",
-        element: withPageSuspense(<PortfolioPage />),
+        element: <RedirectToResearchHubHoldings />,
       },
       {
         path: "/investment/price-alerts",
@@ -100,6 +115,10 @@ export const router = createBrowserRouter([
       {
         path: "/investment/smart-monitor",
         element: withPageSuspense(<SmartMonitorPage />),
+      },
+      {
+        path: "/investment/smart-selection",
+        element: withPageSuspense(<SmartSelectionPage />),
       },
       {
         path: "/investment/activity",

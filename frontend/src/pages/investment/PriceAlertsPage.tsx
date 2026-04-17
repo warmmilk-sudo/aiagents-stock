@@ -30,6 +30,13 @@ interface PriceAlertNotification {
   id: number;
   symbol: string;
   message: string;
+  notification_class?: string;
+  notification_category?: string;
+  notification_label?: string;
+  notification_class_label?: string;
+  notification_reason?: string;
+  trigger_summary?: string;
+  swing_execution_label?: string;
   triggered_at: string;
 }
 
@@ -74,7 +81,48 @@ function formatNumber(value?: number) {
     : "-";
 }
 
-function resolveNotificationMeta(message: string): { tone: NotificationTone; label: string } {
+function resolveNotificationClass(value?: string | null): string {
+  const normalized = String(value || "").trim().toLowerCase().replace(/-/g, "_");
+  const mapping: Record<string, string> = {
+    focus: "focus_alert",
+    focus_alert: "focus_alert",
+    price: "price_alert",
+    price_alert: "price_alert",
+    risk: "risk_alert",
+    risk_alert: "risk_alert",
+    profit: "profit_alert",
+    profit_alert: "profit_alert",
+    system: "system_alert",
+    system_alert: "system_alert",
+    other: "other_alert",
+    other_alert: "other_alert",
+  };
+  return mapping[normalized] || "";
+}
+
+function resolveNotificationMeta(item: PriceAlertNotification): { tone: NotificationTone; label: string } {
+  const notificationClass = resolveNotificationClass(
+    item.notification_class || item.notification_category || item.notification_label,
+  );
+  const explicitLabel = String(
+    item.notification_label || item.notification_class_label || "",
+  ).trim();
+  if (notificationClass === "focus_alert") {
+    return { tone: "info", label: explicitLabel || "关注提醒" };
+  }
+  if (notificationClass === "price_alert") {
+    return { tone: "warning", label: explicitLabel || "价格提醒" };
+  }
+  if (notificationClass === "risk_alert") {
+    return { tone: "danger", label: explicitLabel || "风险预警" };
+  }
+  if (notificationClass === "profit_alert") {
+    return { tone: "success", label: explicitLabel || "收益信号" };
+  }
+  if (notificationClass === "system_alert") {
+    return { tone: "info", label: explicitLabel || "系统通知" };
+  }
+  const message = String(item.message || "");
   if (/(止损|跌破|下破|失守|回撤)/.test(message)) {
     return { tone: "danger", label: "风险预警" };
   }
@@ -354,7 +402,7 @@ export function PriceAlertsPage() {
             </div>
             <div className={styles.list}>
               {notifications.map((item) => {
-                const meta = resolveNotificationMeta(item.message);
+                const meta = resolveNotificationMeta(item);
                 return (
                   <div
                     className={`${styles.noticeCard} ${notificationToneClass[meta.tone]}`}
@@ -364,7 +412,8 @@ export function PriceAlertsPage() {
                       <StatusBadge label={meta.label} tone={meta.tone} />
                       <strong>{item.symbol}</strong>
                     </div>
-                    <div>{item.message}</div>
+                    {item.trigger_summary ? <small className={styles.muted}>触发摘要：{item.trigger_summary}</small> : null}
+                    {item.swing_execution_label ? <small className={styles.muted}>波段类型：{item.swing_execution_label}</small> : null}
                     <small className={styles.muted}>{formatDateTime(item.triggered_at, "暂无时间")}</small>
                   </div>
                 );

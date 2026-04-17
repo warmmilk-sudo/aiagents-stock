@@ -16,13 +16,15 @@ from investment_db_utils import (
 
 
 STATUS_RESEARCH = "research"
-STATUS_WATCHLIST = "watchlist"
-STATUS_PORTFOLIO = "portfolio"
-ASSET_STATUSES = {STATUS_RESEARCH, STATUS_WATCHLIST, STATUS_PORTFOLIO}
+STATUS_FOCUS = "focus"
+STATUS_HOLDING = "holding"
+STATUS_WATCHLIST = STATUS_FOCUS
+STATUS_PORTFOLIO = STATUS_HOLDING
+ASSET_STATUSES = {STATUS_RESEARCH, STATUS_FOCUS, STATUS_HOLDING}
 STATUS_PRIORITY = {
     STATUS_RESEARCH: 0,
-    STATUS_WATCHLIST: 1,
-    STATUS_PORTFOLIO: 2,
+    STATUS_FOCUS: 1,
+    STATUS_HOLDING: 2,
 }
 
 
@@ -30,13 +32,20 @@ class AssetRepository:
     """Canonical storage for the investment lifecycle domain."""
 
     ACCOUNT_NORMALIZATION_KEY = "assets_account_normalization_v1"
+    LIFECYCLE_SCHEMA_KEY = "assets_lifecycle_schema_v2"
+    LIFECYCLE_FOREIGN_KEY_REPAIR_KEY = "assets_lifecycle_foreign_key_repair_v1"
+    LIFECYCLE_DATA_BACKFILL_KEY = "assets_lifecycle_data_backfill_v2"
 
     def __init__(self, db_path: str = "investment.db"):
         self.seed_db_path = db_path
         self.db_path = resolve_investment_db_path(db_path)
         self._init_database()
+        self._migrate_assets_schema_to_lifecycle()
+        self._repair_lifecycle_foreign_keys()
         self._migrate_existing_canonical_tables()
         self._normalize_account_names_if_needed()
+        self._cleanup_to_single_account_mode()
+        self.backfill_lifecycle_data_from_legacy()
 
     def _connect(self) -> sqlite3.Connection:
         return connect_sqlite(self.db_path)
@@ -48,16 +57,24 @@ class AssetRepository:
             """
             CREATE TABLE IF NOT EXISTS assets (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                account_name TEXT NOT NULL,
+                account_name TEXT NOT NULL DEFAULT 'zfy',
                 symbol TEXT NOT NULL,
                 name TEXT NOT NULL,
                 status TEXT NOT NULL
-                    CHECK(status IN ('research', 'watchlist', 'portfolio')),
+                    CHECK(status IN ('research', 'focus', 'holding')),
                 cost_price REAL,
                 quantity INTEGER,
                 note TEXT,
                 monitor_enabled INTEGER NOT NULL DEFAULT 1,
                 origin_analysis_id INTEGER,
+                manual_pin INTEGER NOT NULL DEFAULT 0,
+                pool_reason TEXT,
+                pool_reason_source TEXT,
+                last_funnel_score REAL,
+                last_funnel_snapshot_json TEXT,
+                last_exit_reason TEXT,
+                last_exit_at TEXT,
+                sector_tags_json TEXT,
                 last_trade_at TEXT,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -67,15 +84,15 @@ class AssetRepository:
         )
         cursor.execute(
             """
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_assets_active_account_symbol
-            ON assets(account_name, symbol)
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_assets_active_symbol
+            ON assets(symbol)
             WHERE deleted_at IS NULL
             """
         )
         cursor.execute(
             """
-            CREATE INDEX IF NOT EXISTS idx_assets_status_account
-            ON assets(status, account_name, datetime(updated_at) DESC, id DESC)
+            CREATE INDEX IF NOT EXISTS idx_assets_status_updated
+            ON assets(status, datetime(updated_at) DESC, id DESC)
             """
         )
         cursor.execute(
@@ -126,6 +143,277 @@ class AssetRepository:
         conn.commit()
         conn.close()
 
+    def _migrate_assets_schema_to_lifecycle(self) -> None:
+        conn = self._connect()
+        try:
+            if get_metadata(conn, self.LIFECYCLE_SCHEMA_KEY):
+                return
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'assets'"
+            )
+            row = cursor.fetchone()
+            current_sql = str(row["sql"] or "") if row else ""
+            schema_outdated = any(
+                token in current_sql.lower()
+                for token in ("watchlist", "portfolio")
+            ) or "manual_pin" not in current_sql
+            if not schema_outdated:
+                set_metadata(conn, self.LIFECYCLE_SCHEMA_KEY, datetime.now().isoformat())
+                conn.commit()
+                return
+
+            cursor.execute("PRAGMA foreign_keys = OFF")
+            cursor.execute("ALTER TABLE assets RENAME TO assets_lifecycle_legacy")
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS assets (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    account_name TEXT NOT NULL DEFAULT 'zfy',
+                    symbol TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    status TEXT NOT NULL
+                        CHECK(status IN ('research', 'focus', 'holding')),
+                    cost_price REAL,
+                    quantity INTEGER,
+                    note TEXT,
+                    monitor_enabled INTEGER NOT NULL DEFAULT 1,
+                    origin_analysis_id INTEGER,
+                    manual_pin INTEGER NOT NULL DEFAULT 0,
+                    pool_reason TEXT,
+                    pool_reason_source TEXT,
+                    last_funnel_score REAL,
+                    last_funnel_snapshot_json TEXT,
+                    last_exit_reason TEXT,
+                    last_exit_at TEXT,
+                    sector_tags_json TEXT,
+                    last_trade_at TEXT,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    deleted_at TEXT
+                )
+                """
+            )
+            cursor.execute(
+                """
+                INSERT INTO assets (
+                    id, account_name, symbol, name, status, cost_price, quantity, note,
+                    monitor_enabled, origin_analysis_id, manual_pin, pool_reason,
+                    pool_reason_source, last_funnel_score, last_funnel_snapshot_json,
+                    last_exit_reason, last_exit_at, sector_tags_json, last_trade_at,
+                    created_at, updated_at, deleted_at
+                )
+                SELECT
+                    id,
+                    COALESCE(NULLIF(TRIM(account_name), ''), ?),
+                    symbol,
+                    name,
+                    CASE
+                        WHEN status = 'watchlist' THEN 'focus'
+                        WHEN status = 'portfolio' THEN 'holding'
+                        ELSE 'research'
+                    END,
+                    cost_price,
+                    quantity,
+                    note,
+                    COALESCE(monitor_enabled, 1),
+                    origin_analysis_id,
+                    0,
+                    note,
+                    CASE
+                        WHEN status = 'watchlist' THEN 'legacy_watchlist'
+                        WHEN status = 'portfolio' THEN 'legacy_portfolio'
+                        ELSE 'legacy_research'
+                    END,
+                    NULL,
+                    NULL,
+                    NULL,
+                    NULL,
+                    NULL,
+                    last_trade_at,
+                    COALESCE(created_at, CURRENT_TIMESTAMP),
+                    COALESCE(updated_at, CURRENT_TIMESTAMP),
+                    deleted_at
+                FROM assets_lifecycle_legacy
+                """,
+                (DEFAULT_ACCOUNT_NAME,),
+            )
+            cursor.execute("DROP TABLE assets_lifecycle_legacy")
+            cursor.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_assets_active_symbol
+                ON assets(symbol)
+                WHERE deleted_at IS NULL
+                """
+            )
+            cursor.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_assets_status_updated
+                ON assets(status, datetime(updated_at) DESC, id DESC)
+                """
+            )
+            cursor.execute("PRAGMA foreign_keys = ON")
+            set_metadata(conn, self.LIFECYCLE_SCHEMA_KEY, datetime.now().isoformat())
+            conn.commit()
+        finally:
+            conn.close()
+
+    def _repair_asset_child_table_foreign_key(
+        self,
+        cursor: sqlite3.Cursor,
+        *,
+        table_name: str,
+        create_sql: str,
+        copy_columns: tuple[str, ...],
+    ) -> bool:
+        cursor.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+            (table_name,),
+        )
+        row = cursor.fetchone()
+        current_sql = str(row["sql"] or "") if row else ""
+        if "assets_lifecycle_legacy" not in current_sql:
+            return False
+
+        backup_table = f"{table_name}_foreign_key_legacy"
+        cursor.execute(f"DROP TABLE IF EXISTS {backup_table}")
+        cursor.execute(f"ALTER TABLE {table_name} RENAME TO {backup_table}")
+        cursor.execute(create_sql)
+        columns_sql = ", ".join(copy_columns)
+        cursor.execute(
+            f"""
+            INSERT INTO {table_name} ({columns_sql})
+            SELECT {columns_sql}
+            FROM {backup_table}
+            """
+        )
+        cursor.execute(f"DROP TABLE {backup_table}")
+        return True
+
+    def _repair_lifecycle_foreign_keys(self) -> None:
+        conn = self._connect()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("PRAGMA foreign_keys = OFF")
+            repaired = 0
+            if self._repair_asset_child_table_foreign_key(
+                cursor,
+                table_name="asset_trade_history",
+                create_sql="""
+                    CREATE TABLE asset_trade_history (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        asset_id INTEGER NOT NULL,
+                        trade_date TEXT NOT NULL,
+                        trade_type TEXT NOT NULL,
+                        price REAL NOT NULL,
+                        quantity INTEGER NOT NULL,
+                        note TEXT,
+                        trade_source TEXT DEFAULT 'manual',
+                        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (asset_id) REFERENCES assets(id)
+                    )
+                """,
+                copy_columns=(
+                    "id",
+                    "asset_id",
+                    "trade_date",
+                    "trade_type",
+                    "price",
+                    "quantity",
+                    "note",
+                    "trade_source",
+                    "created_at",
+                ),
+            ):
+                repaired += 1
+            if self._repair_asset_child_table_foreign_key(
+                cursor,
+                table_name="asset_action_queue",
+                create_sql="""
+                    CREATE TABLE asset_action_queue (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        asset_id INTEGER NOT NULL,
+                        action_type TEXT NOT NULL,
+                        origin_decision_id INTEGER,
+                        status TEXT NOT NULL DEFAULT 'pending'
+                            CHECK(status IN ('pending', 'accepted', 'rejected', 'expired')),
+                        payload_json TEXT NOT NULL DEFAULT '{}',
+                        resolution_note TEXT,
+                        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (asset_id) REFERENCES assets(id)
+                    )
+                """,
+                copy_columns=(
+                    "id",
+                    "asset_id",
+                    "action_type",
+                    "origin_decision_id",
+                    "status",
+                    "payload_json",
+                    "resolution_note",
+                    "created_at",
+                    "updated_at",
+                ),
+            ):
+                repaired += 1
+            cursor.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_asset_trade_asset_date
+                ON asset_trade_history(asset_id, trade_date DESC, id DESC)
+                """
+            )
+            cursor.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_asset_action_asset_status
+                ON asset_action_queue(asset_id, status, datetime(created_at) DESC, id DESC)
+                """
+            )
+            set_metadata(
+                conn,
+                self.LIFECYCLE_FOREIGN_KEY_REPAIR_KEY,
+                json.dumps(
+                    {
+                        "repaired_tables": repaired,
+                        "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    },
+                    ensure_ascii=False,
+                ),
+            )
+            cursor.execute("PRAGMA foreign_keys = ON")
+            conn.commit()
+        finally:
+            conn.close()
+
+    def _cleanup_to_single_account_mode(self) -> None:
+        conn = self._connect()
+        try:
+            cursor = conn.cursor()
+            for table_name in (
+                "assets",
+                "analysis_records",
+                "ai_decisions",
+                "monitoring_items",
+                "portfolio_daily_snapshots",
+                "portfolio_stocks",
+            ):
+                if not self._table_exists(conn, table_name):
+                    continue
+                columns = self._table_columns(conn, table_name)
+                if "account_name" not in columns:
+                    continue
+                cursor.execute(
+                    f"""
+                    UPDATE {table_name}
+                    SET account_name = ?
+                    WHERE COALESCE(TRIM(account_name), '') != ?
+                    """,
+                    (DEFAULT_ACCOUNT_NAME, DEFAULT_ACCOUNT_NAME),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
     @staticmethod
     def _safe_json_loads(raw_value: Any, default: Any):
         if raw_value in (None, ""):
@@ -144,6 +432,13 @@ class AssetRepository:
     @staticmethod
     def _normalize_status(status: Optional[str], *, fallback: str = STATUS_RESEARCH) -> str:
         normalized = str(status or "").strip().lower()
+        alias_map = {
+            "watchlist": STATUS_FOCUS,
+            "portfolio": STATUS_HOLDING,
+            "focus": STATUS_FOCUS,
+            "holding": STATUS_HOLDING,
+        }
+        normalized = alias_map.get(normalized, normalized)
         if normalized not in ASSET_STATUSES:
             return fallback
         return normalized
@@ -189,7 +484,8 @@ class AssetRepository:
     @staticmethod
     def _normalize_flat_status(status: Any) -> str:
         normalized = str(status or "").strip().lower()
-        return normalized if normalized in {STATUS_WATCHLIST, STATUS_RESEARCH} else STATUS_WATCHLIST
+        normalized = {"watchlist": STATUS_FOCUS, "focus": STATUS_FOCUS}.get(normalized, normalized)
+        return normalized if normalized in {STATUS_FOCUS, STATUS_RESEARCH} else STATUS_FOCUS
 
     @staticmethod
     def _parse_sortable_timestamp(raw_value: Optional[object]) -> datetime:
@@ -204,9 +500,12 @@ class AssetRepository:
     def _row_to_asset(self, row: sqlite3.Row) -> Dict:
         asset = dict(row)
         asset["monitor_enabled"] = bool(asset.get("monitor_enabled", 1))
+        asset["manual_pin"] = bool(asset.get("manual_pin", 0))
+        asset["sector_tags"] = self._safe_json_loads(asset.get("sector_tags_json"), [])
+        asset["last_funnel_snapshot"] = self._safe_json_loads(asset.get("last_funnel_snapshot_json"), {})
         asset["code"] = asset.get("symbol")
         asset["auto_monitor"] = bool(asset.get("monitor_enabled", 1))
-        asset["position_status"] = "active" if asset.get("status") == STATUS_PORTFOLIO else asset.get("status")
+        asset["position_status"] = "active" if asset.get("status") == STATUS_HOLDING else asset.get("status")
         return asset
 
     @staticmethod
@@ -225,6 +524,13 @@ class AssetRepository:
             (table_name,),
         )
         return cursor.fetchone() is not None
+
+    def _table_columns(self, conn: sqlite3.Connection, table_name: str) -> set[str]:
+        if not self._table_exists(conn, table_name):
+            return set()
+        cursor = conn.cursor()
+        cursor.execute(f"PRAGMA table_info({table_name})")
+        return {str(row["name"]) for row in cursor.fetchall()}
 
     def _asset_merge_priority(self, asset: Dict) -> tuple:
         return (
@@ -274,8 +580,8 @@ class AssetRepository:
             "symbol": self._normalize_symbol(ordered_rows[0].get("symbol")),
             "name": merged_name,
             "status": merged_status,
-            "cost_price": portfolio_row.get("cost_price") if merged_status == STATUS_PORTFOLIO else None,
-            "quantity": portfolio_row.get("quantity") if merged_status == STATUS_PORTFOLIO else None,
+            "cost_price": portfolio_row.get("cost_price") if merged_status == STATUS_HOLDING else None,
+            "quantity": portfolio_row.get("quantity") if merged_status == STATUS_HOLDING else None,
             "note": merged_note,
             "monitor_enabled": self._bool_to_int(any(bool(row.get("monitor_enabled", 1)) for row in ordered_rows)),
             "origin_analysis_id": merged_origin_analysis_id,
@@ -546,7 +852,7 @@ class AssetRepository:
                 "note": note if note not in (None, "") else existing.get("note"),
                 "last_trade_at": last_trade_at or existing.get("last_trade_at"),
             }
-            if merged_status == STATUS_PORTFOLIO:
+            if merged_status == STATUS_HOLDING:
                 updates["cost_price"] = cost_price if cost_price not in (None, 0) else existing.get("cost_price")
                 updates["quantity"] = quantity if quantity not in (None, 0) else existing.get("quantity")
             self.update_asset(existing["id"], **updates)
@@ -573,8 +879,8 @@ class AssetRepository:
             symbol,
             name or symbol,
             target_status,
-            cost_price if target_status == STATUS_PORTFOLIO else None,
-            quantity if target_status == STATUS_PORTFOLIO else None,
+            cost_price if target_status == STATUS_HOLDING else None,
+            quantity if target_status == STATUS_HOLDING else None,
             note,
             self._bool_to_int(monitor_enabled),
             origin_analysis_id,
@@ -595,6 +901,615 @@ class AssetRepository:
         conn.commit()
         conn.close()
 
+    def _extract_sector_tags_from_stock_info(self, raw_value: Any) -> List[str]:
+        stock_info = self._safe_json_loads(raw_value, {})
+        if not isinstance(stock_info, dict):
+            return []
+
+        tags: List[str] = []
+        for key in (
+            "industry",
+            "sector",
+            "concept",
+            "concepts",
+            "sectors",
+            "sector_tags",
+            "所属行业",
+            "所属板块",
+            "概念板块",
+        ):
+            value = stock_info.get(key)
+            if isinstance(value, list):
+                candidates = value
+            elif isinstance(value, str):
+                candidates = value.replace("，", ",").replace("、", ",").split(",")
+            else:
+                candidates = []
+            for candidate in candidates:
+                text = str(candidate or "").strip()
+                if text and text not in tags:
+                    tags.append(text)
+        return tags[:12]
+
+    def _portfolio_stock_is_active(self, stock: Dict[str, Any]) -> bool:
+        status = str(stock.get("position_status") or "active").strip().lower()
+        if status in {"closed", "cleared", "deleted", "removed", "inactive"}:
+            return False
+        try:
+            quantity = int(float(stock.get("quantity") or 0))
+        except (TypeError, ValueError):
+            quantity = 0
+        return quantity > 0
+
+    def _upsert_lifecycle_asset(
+        self,
+        cursor: sqlite3.Cursor,
+        *,
+        symbol: Any,
+        name: Any = "",
+        status: str = STATUS_RESEARCH,
+        cost_price: Any = None,
+        quantity: Any = None,
+        note: Any = None,
+        monitor_enabled: Any = None,
+        origin_analysis_id: Any = None,
+        pool_reason: Any = None,
+        pool_reason_source: Any = None,
+        sector_tags: Optional[List[str]] = None,
+        last_trade_at: Any = None,
+        created_at: Any = None,
+        updated_at: Any = None,
+    ) -> tuple[Optional[int], bool, bool]:
+        normalized_symbol = self._normalize_symbol(symbol)
+        if not normalized_symbol:
+            return None, False, False
+
+        target_status = self._normalize_status(status)
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        cursor.execute(
+            """
+            SELECT *
+            FROM assets
+            WHERE symbol = ? AND deleted_at IS NULL
+            ORDER BY id ASC
+            LIMIT 1
+            """,
+            (normalized_symbol,),
+        )
+        row = cursor.fetchone()
+        name_text = str(name or "").strip() or normalized_symbol
+        note_text = str(note).strip() if note not in (None, "") else None
+        reason_text = str(pool_reason).strip() if pool_reason not in (None, "") else None
+        reason_source_text = (
+            str(pool_reason_source).strip() if pool_reason_source not in (None, "") else None
+        )
+        sector_tags_json = (
+            json.dumps(sector_tags, ensure_ascii=False)
+            if isinstance(sector_tags, list) and sector_tags
+            else None
+        )
+
+        if row is None:
+            cursor.execute(
+                """
+                INSERT INTO assets (
+                    account_name, symbol, name, status, cost_price, quantity, note,
+                    monitor_enabled, origin_analysis_id, pool_reason, pool_reason_source,
+                    sector_tags_json, last_trade_at, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    DEFAULT_ACCOUNT_NAME,
+                    normalized_symbol,
+                    name_text,
+                    target_status,
+                    cost_price if target_status == STATUS_HOLDING else None,
+                    quantity if target_status == STATUS_HOLDING else None,
+                    note_text,
+                    self._bool_to_int(True if monitor_enabled is None else monitor_enabled),
+                    origin_analysis_id,
+                    reason_text or note_text,
+                    reason_source_text,
+                    sector_tags_json,
+                    last_trade_at,
+                    created_at or now,
+                    updated_at or now,
+                ),
+            )
+            return int(cursor.lastrowid), True, False
+
+        existing = dict(row)
+        existing_status = self._normalize_status(existing.get("status"))
+        merged_status = (
+            target_status
+            if STATUS_PRIORITY[target_status] >= STATUS_PRIORITY[existing_status]
+            else existing_status
+        )
+        updates: Dict[str, Any] = {
+            "account_name": DEFAULT_ACCOUNT_NAME,
+            "status": merged_status,
+        }
+
+        if name_text and (not existing.get("name") or existing.get("name") == existing.get("symbol")):
+            updates["name"] = name_text
+        if monitor_enabled is not None:
+            updates["monitor_enabled"] = self._bool_to_int(monitor_enabled)
+        if origin_analysis_id not in (None, "") and existing.get("origin_analysis_id") in (None, ""):
+            updates["origin_analysis_id"] = origin_analysis_id
+        if note_text and not existing.get("note"):
+            updates["note"] = note_text
+        if reason_text and (
+            not existing.get("pool_reason")
+            or STATUS_PRIORITY[target_status] >= STATUS_PRIORITY[existing_status]
+        ):
+            updates["pool_reason"] = reason_text
+        if reason_source_text and (
+            not existing.get("pool_reason_source")
+            or STATUS_PRIORITY[target_status] >= STATUS_PRIORITY[existing_status]
+        ):
+            updates["pool_reason_source"] = reason_source_text
+        if sector_tags_json and not existing.get("sector_tags_json"):
+            updates["sector_tags_json"] = sector_tags_json
+        if last_trade_at:
+            updates["last_trade_at"] = last_trade_at
+        if merged_status == STATUS_HOLDING:
+            if cost_price not in (None, ""):
+                updates["cost_price"] = cost_price
+            if quantity not in (None, ""):
+                updates["quantity"] = quantity
+
+        changed_fields = [
+            (key, value)
+            for key, value in updates.items()
+            if existing.get(key) != value
+        ]
+        if not changed_fields:
+            return int(existing["id"]), False, False
+
+        changed_fields.append(("updated_at", updated_at or now))
+        assignments = ", ".join(f"{key} = ?" for key, _ in changed_fields)
+        values = [value for _, value in changed_fields]
+        values.append(int(existing["id"]))
+        cursor.execute(
+            f"UPDATE assets SET {assignments} WHERE id = ?",
+            tuple(values),
+        )
+        return int(existing["id"]), False, True
+
+    def _backfill_portfolio_assets(self, cursor: sqlite3.Cursor) -> Dict[str, int]:
+        if not self._table_exists(cursor.connection, "portfolio_stocks"):
+            return {}
+        columns = self._table_columns(cursor.connection, "portfolio_stocks")
+        if "code" not in columns:
+            return {}
+        cursor.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM assets
+            WHERE deleted_at IS NULL AND status = ?
+            """,
+            (STATUS_HOLDING,),
+        )
+        existing_holding_count = int((cursor.fetchone() or {"count": 0})["count"] or 0)
+        if existing_holding_count > 0:
+            return {
+                "portfolio_holdings": 0,
+                "portfolio_created": 0,
+                "portfolio_updated": 0,
+                "portfolio_skipped_existing_holdings": existing_holding_count,
+            }
+
+        cursor.execute("SELECT * FROM portfolio_stocks ORDER BY id ASC")
+        created = 0
+        updated = 0
+        holdings = 0
+        for row in cursor.fetchall():
+            stock = dict(row)
+            if not self._portfolio_stock_is_active(stock):
+                continue
+            holdings += 1
+            last_trade_at = stock.get("last_trade_at")
+            if not last_trade_at and self._table_exists(cursor.connection, "portfolio_trade_history"):
+                cursor.execute(
+                    """
+                    SELECT MAX(trade_date) AS latest_trade_date
+                    FROM portfolio_trade_history
+                    WHERE portfolio_stock_id = ?
+                    """,
+                    (stock.get("id"),),
+                )
+                trade_row = cursor.fetchone()
+                last_trade_at = trade_row["latest_trade_date"] if trade_row else None
+            _, was_created, was_updated = self._upsert_lifecycle_asset(
+                cursor,
+                symbol=stock.get("code"),
+                name=stock.get("name"),
+                status=STATUS_HOLDING,
+                cost_price=stock.get("cost_price"),
+                quantity=stock.get("quantity"),
+                note=stock.get("note"),
+                monitor_enabled=stock.get("auto_monitor", 1),
+                origin_analysis_id=stock.get("origin_analysis_id"),
+                pool_reason="由旧持仓账本迁入持仓中",
+                pool_reason_source="legacy_portfolio",
+                last_trade_at=last_trade_at,
+                created_at=stock.get("created_at"),
+                updated_at=stock.get("updated_at"),
+            )
+            created += 1 if was_created else 0
+            updated += 1 if was_updated else 0
+        return {"portfolio_holdings": holdings, "portfolio_created": created, "portfolio_updated": updated}
+
+    def _get_active_portfolio_symbols(self, cursor: sqlite3.Cursor) -> set[str]:
+        if not self._table_exists(cursor.connection, "portfolio_stocks"):
+            return set()
+        columns = self._table_columns(cursor.connection, "portfolio_stocks")
+        if "code" not in columns:
+            return set()
+
+        cursor.execute("SELECT * FROM portfolio_stocks ORDER BY id ASC")
+        return {
+            self._normalize_symbol(dict(row).get("code"))
+            for row in cursor.fetchall()
+            if self._portfolio_stock_is_active(dict(row))
+        }
+
+    def _reconcile_holdings_with_portfolio(self, cursor: sqlite3.Cursor) -> Dict[str, int]:
+        return {"holding_demoted_not_in_portfolio": 0}
+
+    def _backfill_monitoring_assets(self, cursor: sqlite3.Cursor) -> Dict[str, int]:
+        if not self._table_exists(cursor.connection, "monitoring_items"):
+            return {}
+        columns = self._table_columns(cursor.connection, "monitoring_items")
+        if "symbol" not in columns:
+            return {}
+
+        cursor.execute("SELECT * FROM monitoring_items ORDER BY id ASC")
+        created = 0
+        updated = 0
+        focus_candidates = 0
+        seen: set[str] = set()
+        for row in cursor.fetchall():
+            item = dict(row)
+            symbol = self._normalize_symbol(item.get("symbol"))
+            if not symbol or symbol in seen:
+                continue
+            seen.add(symbol)
+            config = self._safe_json_loads(item.get("config_json"), {})
+            strategy_context = config.get("strategy_context") if isinstance(config, dict) else {}
+            if not isinstance(strategy_context, dict):
+                strategy_context = {}
+            reason = (
+                strategy_context.get("summary")
+                or item.get("last_message")
+                or "由旧关注和盯盘记录迁入备选关注"
+            )
+            _, was_created, was_updated = self._upsert_lifecycle_asset(
+                cursor,
+                symbol=symbol,
+                name=item.get("name"),
+                status=STATUS_FOCUS,
+                monitor_enabled=item.get("enabled", 1),
+                origin_analysis_id=item.get("origin_analysis_id") or strategy_context.get("origin_analysis_id"),
+                pool_reason=reason,
+                pool_reason_source="legacy_monitoring",
+                created_at=item.get("created_at"),
+                updated_at=item.get("updated_at"),
+            )
+            focus_candidates += 1
+            created += 1 if was_created else 0
+            updated += 1 if was_updated else 0
+        return {"monitoring_candidates": focus_candidates, "monitoring_created": created, "monitoring_updated": updated}
+
+    def _backfill_analysis_assets(self, cursor: sqlite3.Cursor) -> Dict[str, int]:
+        if not self._table_exists(cursor.connection, "analysis_records"):
+            return {}
+        columns = self._table_columns(cursor.connection, "analysis_records")
+        if "symbol" not in columns:
+            return {}
+
+        cursor.execute(
+            """
+            SELECT *
+            FROM analysis_records
+            WHERE COALESCE(TRIM(symbol), '') != ''
+            ORDER BY datetime(COALESCE(analysis_date, created_at)) DESC, id DESC
+            """
+        )
+        created = 0
+        updated = 0
+        symbols = 0
+        seen: set[str] = set()
+        for row in cursor.fetchall():
+            record = dict(row)
+            symbol = self._normalize_symbol(record.get("symbol"))
+            if not symbol or symbol in seen:
+                continue
+            seen.add(symbol)
+            symbols += 1
+            sector_tags = self._extract_sector_tags_from_stock_info(record.get("stock_info_json"))
+            _, was_created, was_updated = self._upsert_lifecycle_asset(
+                cursor,
+                symbol=symbol,
+                name=record.get("stock_name"),
+                status=STATUS_RESEARCH,
+                note=record.get("summary"),
+                origin_analysis_id=record.get("id"),
+                pool_reason=record.get("summary") or "由历史分析迁入研究池",
+                pool_reason_source="analysis_history",
+                sector_tags=sector_tags,
+                created_at=record.get("created_at"),
+                updated_at=record.get("created_at"),
+            )
+            created += 1 if was_created else 0
+            updated += 1 if was_updated else 0
+        return {"analysis_symbols": symbols, "analysis_created": created, "analysis_updated": updated}
+
+    def _rewire_lifecycle_references(self, cursor: sqlite3.Cursor) -> Dict[str, int]:
+        rewired: Dict[str, int] = {}
+
+        if self._table_exists(cursor.connection, "analysis_records"):
+            cursor.execute(
+                """
+                UPDATE analysis_records
+                SET asset_id = (
+                    SELECT id FROM assets
+                    WHERE assets.symbol = analysis_records.symbol
+                      AND assets.deleted_at IS NULL
+                    LIMIT 1
+                )
+                WHERE COALESCE(TRIM(symbol), '') != ''
+                  AND EXISTS (
+                    SELECT 1 FROM assets
+                    WHERE assets.symbol = analysis_records.symbol
+                      AND assets.deleted_at IS NULL
+                  )
+                  AND (
+                    asset_id IS NULL
+                    OR asset_id != (
+                        SELECT id FROM assets
+                        WHERE assets.symbol = analysis_records.symbol
+                          AND assets.deleted_at IS NULL
+                        LIMIT 1
+                    )
+                  )
+                """
+            )
+            rewired["analysis_records_asset_id"] = int(cursor.rowcount or 0)
+            columns = self._table_columns(cursor.connection, "analysis_records")
+            if "portfolio_stock_id" in columns:
+                cursor.execute(
+                    """
+                    UPDATE analysis_records
+                    SET portfolio_stock_id = asset_id
+                    WHERE asset_id IS NOT NULL
+                      AND (portfolio_stock_id IS NULL OR portfolio_stock_id != asset_id)
+                    """
+                )
+                rewired["analysis_records_portfolio_stock_id"] = int(cursor.rowcount or 0)
+
+        if self._table_exists(cursor.connection, "monitoring_items"):
+            cursor.execute(
+                """
+                UPDATE monitoring_items
+                SET asset_id = (
+                    SELECT id FROM assets
+                    WHERE assets.symbol = monitoring_items.symbol
+                      AND assets.deleted_at IS NULL
+                    LIMIT 1
+                )
+                WHERE COALESCE(TRIM(symbol), '') != ''
+                  AND EXISTS (
+                    SELECT 1 FROM assets
+                    WHERE assets.symbol = monitoring_items.symbol
+                      AND assets.deleted_at IS NULL
+                  )
+                  AND (
+                    asset_id IS NULL
+                    OR asset_id != (
+                        SELECT id FROM assets
+                        WHERE assets.symbol = monitoring_items.symbol
+                          AND assets.deleted_at IS NULL
+                        LIMIT 1
+                    )
+                  )
+                """
+            )
+            rewired["monitoring_items_asset_id"] = int(cursor.rowcount or 0)
+            columns = self._table_columns(cursor.connection, "monitoring_items")
+            if "portfolio_stock_id" in columns:
+                cursor.execute(
+                    """
+                    UPDATE monitoring_items
+                    SET portfolio_stock_id = asset_id
+                    WHERE asset_id IS NOT NULL
+                      AND (portfolio_stock_id IS NULL OR portfolio_stock_id != asset_id)
+                    """
+                )
+                rewired["monitoring_items_portfolio_stock_id"] = int(cursor.rowcount or 0)
+
+        if self._table_exists(cursor.connection, "ai_decisions"):
+            cursor.execute(
+                """
+                UPDATE ai_decisions
+                SET asset_id = (
+                    SELECT id FROM assets
+                    WHERE assets.symbol = ai_decisions.stock_code
+                      AND assets.deleted_at IS NULL
+                    LIMIT 1
+                )
+                WHERE COALESCE(TRIM(stock_code), '') != ''
+                  AND EXISTS (
+                    SELECT 1 FROM assets
+                    WHERE assets.symbol = ai_decisions.stock_code
+                      AND assets.deleted_at IS NULL
+                  )
+                  AND (
+                    asset_id IS NULL
+                    OR asset_id != (
+                        SELECT id FROM assets
+                        WHERE assets.symbol = ai_decisions.stock_code
+                          AND assets.deleted_at IS NULL
+                        LIMIT 1
+                    )
+                  )
+                """
+            )
+            rewired["ai_decisions_asset_id"] = int(cursor.rowcount or 0)
+            columns = self._table_columns(cursor.connection, "ai_decisions")
+            if "portfolio_stock_id" in columns:
+                cursor.execute(
+                    """
+                    UPDATE ai_decisions
+                    SET portfolio_stock_id = asset_id
+                    WHERE asset_id IS NOT NULL
+                      AND (portfolio_stock_id IS NULL OR portfolio_stock_id != asset_id)
+                    """
+                )
+                rewired["ai_decisions_portfolio_stock_id"] = int(cursor.rowcount or 0)
+
+        return rewired
+
+    def _backfill_trade_history(self, cursor: sqlite3.Cursor) -> Dict[str, int]:
+        if not (
+            self._table_exists(cursor.connection, "portfolio_trade_history")
+            and self._table_exists(cursor.connection, "portfolio_stocks")
+            and self._table_exists(cursor.connection, "asset_trade_history")
+        ):
+            return {}
+
+        cursor.execute(
+            """
+            SELECT
+                pth.id AS legacy_trade_id,
+                pth.trade_date,
+                pth.trade_type,
+                pth.price,
+                pth.quantity,
+                pth.note,
+                pth.trade_source,
+                pth.created_at,
+                ps.code AS symbol
+            FROM portfolio_trade_history pth
+            LEFT JOIN portfolio_stocks ps ON ps.id = pth.portfolio_stock_id
+            ORDER BY pth.id ASC
+            """
+        )
+        inserted = 0
+        skipped = 0
+        for row in cursor.fetchall():
+            trade = dict(row)
+            symbol = self._normalize_symbol(trade.get("symbol"))
+            if not symbol:
+                skipped += 1
+                continue
+            cursor.execute(
+                """
+                SELECT id
+                FROM assets
+                WHERE symbol = ? AND deleted_at IS NULL
+                LIMIT 1
+                """,
+                (symbol,),
+            )
+            asset_row = cursor.fetchone()
+            if asset_row is None:
+                skipped += 1
+                continue
+            asset_id = int(asset_row["id"])
+            cursor.execute(
+                """
+                SELECT 1
+                FROM asset_trade_history
+                WHERE asset_id = ?
+                  AND trade_date = ?
+                  AND trade_type = ?
+                  AND ABS(COALESCE(price, 0) - COALESCE(?, 0)) < 0.000001
+                  AND quantity = ?
+                  AND COALESCE(note, '') = COALESCE(?, '')
+                  AND COALESCE(trade_source, '') = COALESCE(?, '')
+                LIMIT 1
+                """,
+                (
+                    asset_id,
+                    trade.get("trade_date"),
+                    trade.get("trade_type"),
+                    trade.get("price"),
+                    trade.get("quantity"),
+                    trade.get("note"),
+                    trade.get("trade_source") or "manual",
+                ),
+            )
+            if cursor.fetchone():
+                skipped += 1
+                continue
+            cursor.execute(
+                """
+                INSERT INTO asset_trade_history (
+                    asset_id, trade_date, trade_type, price, quantity, note, trade_source, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    asset_id,
+                    trade.get("trade_date"),
+                    trade.get("trade_type"),
+                    trade.get("price"),
+                    trade.get("quantity"),
+                    trade.get("note"),
+                    trade.get("trade_source") or "manual",
+                    trade.get("created_at") or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                ),
+            )
+            inserted += 1
+        return {"trade_history_inserted": inserted, "trade_history_skipped": skipped}
+
+    def backfill_lifecycle_data_from_legacy(self, *, force: bool = False) -> Dict[str, Any]:
+        conn = self._connect()
+        try:
+            if not force:
+                existing_report = get_metadata(conn, self.LIFECYCLE_DATA_BACKFILL_KEY)
+                if existing_report:
+                    return self._safe_json_loads(existing_report, {})
+
+            cursor = conn.cursor()
+            report: Dict[str, Any] = {
+                "started_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "force": bool(force),
+            }
+            for partial in (
+                self._backfill_analysis_assets(cursor),
+                self._backfill_monitoring_assets(cursor),
+                self._backfill_portfolio_assets(cursor),
+                self._reconcile_holdings_with_portfolio(cursor),
+                self._rewire_lifecycle_references(cursor),
+                self._backfill_trade_history(cursor),
+            ):
+                report.update(partial)
+
+            cursor.execute(
+                """
+                SELECT status, COUNT(*) AS count
+                FROM assets
+                WHERE deleted_at IS NULL
+                GROUP BY status
+                """
+            )
+            report["asset_status_counts"] = {
+                row["status"]: int(row["count"]) for row in cursor.fetchall()
+            }
+            report["finished_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            set_metadata(
+                conn,
+                self.LIFECYCLE_DATA_BACKFILL_KEY,
+                json.dumps(report, ensure_ascii=False),
+            )
+            conn.commit()
+            return report
+        finally:
+            conn.close()
+
     def _migrate_portfolio_stocks_to_assets(self) -> None:
         conn = self._connect()
         try:
@@ -614,7 +1529,7 @@ class AssetRepository:
                     account_name=self._normalize_account_name(stock.get("account_name")),
                     symbol=self._normalize_symbol(stock.get("code")),
                     name=stock.get("name") or stock.get("code") or "",
-                    status=STATUS_PORTFOLIO if (stock.get("position_status") or "active") == "active" else STATUS_WATCHLIST,
+                    status=STATUS_HOLDING if (stock.get("position_status") or "active") == "active" else STATUS_FOCUS,
                     asset_id=stock.get("id"),
                     cost_price=stock.get("cost_price"),
                     quantity=stock.get("quantity"),
@@ -654,7 +1569,7 @@ class AssetRepository:
                     account_name=account_name,
                     symbol=symbol,
                     name=item.get("name") or symbol,
-                    status=STATUS_WATCHLIST,
+                    status=STATUS_FOCUS,
                     note=note,
                     origin_analysis_id=item.get("origin_analysis_id") or strategy_context.get("origin_analysis_id"),
                 )
@@ -679,7 +1594,7 @@ class AssetRepository:
                 symbol = self._normalize_symbol(record.get("symbol"))
                 if not symbol:
                     continue
-                status = STATUS_PORTFOLIO if record.get("analysis_scope") == STATUS_PORTFOLIO else STATUS_RESEARCH
+                status = STATUS_HOLDING if record.get("analysis_scope") == STATUS_HOLDING else STATUS_RESEARCH
                 self._upsert_asset_from_migration(
                     account_name=self._normalize_account_name(record.get("account_name")),
                     symbol=symbol,
@@ -768,11 +1683,11 @@ class AssetRepository:
             """
             SELECT *
             FROM assets
-            WHERE symbol = ? AND account_name = ? AND deleted_at IS NULL
+            WHERE symbol = ? AND deleted_at IS NULL
             ORDER BY id DESC
             LIMIT 1
             """,
-            (self._normalize_symbol(symbol), self._normalize_account_name(account_name)),
+            (self._normalize_symbol(symbol),),
         )
         row = cursor.fetchone()
         conn.close()
@@ -796,9 +1711,6 @@ class AssetRepository:
         if status:
             clauses.append("status = ?")
             params.append(self._normalize_status(status))
-        if account_name is not None:
-            clauses.append("account_name = ?")
-            params.append(self._normalize_account_name(account_name))
         if monitor_enabled is not None:
             clauses.append("monitor_enabled = ?")
             params.append(self._bool_to_int(monitor_enabled))
@@ -825,7 +1737,6 @@ class AssetRepository:
         monitor_enabled: bool = True,
     ) -> int:
         symbol = self._normalize_symbol(symbol)
-        account_name = self._normalize_account_name(account_name)
         existing = self.get_asset_by_symbol(symbol, account_name)
         if existing:
             self.update_asset(
@@ -834,6 +1745,7 @@ class AssetRepository:
                 note=note or existing.get("note"),
                 monitor_enabled=monitor_enabled if monitor_enabled is not None else existing.get("monitor_enabled", True),
                 origin_analysis_id=origin_analysis_id or existing.get("origin_analysis_id"),
+                account_name=DEFAULT_ACCOUNT_NAME,
             )
             return int(existing["id"])
 
@@ -848,7 +1760,7 @@ class AssetRepository:
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                account_name,
+                DEFAULT_ACCOUNT_NAME,
                 symbol,
                 name or symbol,
                 STATUS_RESEARCH,
@@ -879,6 +1791,14 @@ class AssetRepository:
             "origin_analysis_id",
             "last_trade_at",
             "deleted_at",
+            "manual_pin",
+            "pool_reason",
+            "pool_reason_source",
+            "last_funnel_score",
+            "last_funnel_snapshot_json",
+            "last_exit_reason",
+            "last_exit_at",
+            "sector_tags_json",
         }
         fields = []
         values: List[Any] = []
@@ -894,11 +1814,15 @@ class AssetRepository:
                 value = status
             elif key == "monitor_enabled":
                 value = self._bool_to_int(value)
+            elif key == "manual_pin":
+                value = self._bool_to_int(value)
+            elif key in {"sector_tags_json", "last_funnel_snapshot_json"} and isinstance(value, (list, dict)):
+                value = json.dumps(value, ensure_ascii=False)
             fields.append(f"{key} = ?")
             values.append(value)
 
         if status:
-            if status != STATUS_PORTFOLIO:
+            if status != STATUS_HOLDING:
                 if "cost_price" not in updates:
                     fields.append("cost_price = NULL")
                 if "quantity" not in updates:
@@ -937,6 +1861,10 @@ class AssetRepository:
         note: Optional[str] = None,
         origin_analysis_id: Optional[int] = None,
         last_trade_at: Optional[str] = None,
+        last_exit_reason: Optional[str] = None,
+        last_exit_at: Optional[str] = None,
+        pool_reason: Optional[str] = None,
+        pool_reason_source: Optional[str] = None,
     ) -> bool:
         target_status = self._normalize_status(target_status)
         asset = self.get_asset(asset_id)
@@ -947,8 +1875,12 @@ class AssetRepository:
             "note": note if note is not None else asset.get("note"),
             "origin_analysis_id": origin_analysis_id or asset.get("origin_analysis_id"),
             "last_trade_at": last_trade_at or asset.get("last_trade_at"),
+            "last_exit_reason": last_exit_reason if last_exit_reason is not None else asset.get("last_exit_reason"),
+            "last_exit_at": last_exit_at if last_exit_at is not None else asset.get("last_exit_at"),
+            "pool_reason": pool_reason if pool_reason is not None else asset.get("pool_reason"),
+            "pool_reason_source": pool_reason_source if pool_reason_source is not None else asset.get("pool_reason_source"),
         }
-        if target_status == STATUS_PORTFOLIO:
+        if target_status == STATUS_HOLDING:
             update_payload["cost_price"] = cost_price if cost_price is not None else asset.get("cost_price")
             update_payload["quantity"] = quantity if quantity is not None else asset.get("quantity")
         else:
@@ -969,7 +1901,7 @@ class AssetRepository:
         if effective_quantity <= 0:
             return self.transition_asset_status(
                 asset_id,
-                STATUS_WATCHLIST,
+                STATUS_RESEARCH,
                 note=note,
                 last_trade_at=last_trade_at,
             )
@@ -978,7 +1910,7 @@ class AssetRepository:
             raise ValueError("portfolio 资产必须提供正数成本价")
         return self.update_asset(
             asset_id,
-            status=STATUS_PORTFOLIO,
+            status=STATUS_HOLDING,
             cost_price=effective_cost,
             quantity=effective_quantity,
             note=note,
@@ -996,15 +1928,14 @@ class AssetRepository:
         monitor_enabled: bool = True,
     ) -> int:
         symbol = self._normalize_symbol(symbol)
-        account_name = self._normalize_account_name(account_name)
         existing = self.get_asset_by_symbol(symbol, account_name)
         if existing:
-            if existing.get("status") == STATUS_PORTFOLIO:
+            if existing.get("status") == STATUS_HOLDING:
                 return int(existing["id"])
             self.update_asset(
                 existing["id"],
                 name=name or existing.get("name") or symbol,
-                status=STATUS_WATCHLIST,
+                status=STATUS_FOCUS,
                 note=note or existing.get("note"),
                 monitor_enabled=monitor_enabled if monitor_enabled is not None else existing.get("monitor_enabled", True),
                 origin_analysis_id=origin_analysis_id or existing.get("origin_analysis_id"),
@@ -1013,14 +1944,14 @@ class AssetRepository:
         asset_id = self.create_or_update_research_asset(
             symbol=symbol,
             name=name,
-            account_name=account_name,
+            account_name=DEFAULT_ACCOUNT_NAME,
             note=note,
             origin_analysis_id=origin_analysis_id,
             monitor_enabled=monitor_enabled,
         )
         self.transition_asset_status(
             asset_id,
-            STATUS_WATCHLIST,
+            STATUS_FOCUS,
             note=note,
             origin_analysis_id=origin_analysis_id,
         )
@@ -1116,7 +2047,7 @@ class AssetRepository:
         asset_id: int,
         trades: List[Dict],
         *,
-        final_status_when_flat: str = STATUS_WATCHLIST,
+        final_status_when_flat: str = STATUS_RESEARCH,
         default_trade_source: str = "manual_fix",
     ) -> Dict:
         asset = self.get_asset(asset_id)

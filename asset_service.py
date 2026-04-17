@@ -7,6 +7,8 @@ import config
 
 from analysis_repository import AnalysisRepository, analysis_repository
 from asset_repository import (
+    STATUS_FOCUS,
+    STATUS_HOLDING,
     STATUS_PORTFOLIO,
     STATUS_RESEARCH,
     STATUS_WATCHLIST,
@@ -18,7 +20,7 @@ from monitoring_repository import MonitoringRepository
 
 
 class AssetService:
-    """Lifecycle orchestration for research, watchlist, and portfolio assets."""
+    """Lifecycle orchestration for research, focus, and holding assets."""
 
     def __init__(
         self,
@@ -29,7 +31,7 @@ class AssetService:
     ):
         self.asset_repository = asset_store or asset_repository
         self.analysis_repository = analysis_store or analysis_repository
-        self.monitoring_repository = monitoring_store
+        self.monitoring_repository = monitoring_store or MonitoringRepository()
 
     @staticmethod
     def get_default_ai_interval_minutes() -> int:
@@ -46,7 +48,7 @@ class AssetService:
         return self.analysis_repository.get_latest_strategy_context(
             asset_id=asset.get("id"),
             symbol=asset.get("symbol"),
-            account_name=asset.get("account_name") or DEFAULT_ACCOUNT_NAME,
+            account_name=DEFAULT_ACCOUNT_NAME,
         )
 
     @staticmethod
@@ -89,15 +91,14 @@ class AssetService:
         haystacks = (
             str(item.get("symbol") or "").lower(),
             str(item.get("name") or "").lower(),
-            str(item.get("account_name") or "").lower(),
             str(item.get("note") or "").lower(),
             str(item.get("latest_analysis_summary") or "").lower(),
         )
         return any(normalized_search in value for value in haystacks)
 
-    def _resolve_account_risk_profile(self, account_name: Optional[str]) -> Dict[str, int]:
+    def _resolve_account_risk_profile(self, account_name: Optional[str] = None) -> Dict[str, int]:
         if self.monitoring_repository and hasattr(self.monitoring_repository, "get_account_risk_profile"):
-            profile = self.monitoring_repository.get_account_risk_profile(account_name)
+            profile = self.monitoring_repository.get_account_risk_profile(DEFAULT_ACCOUNT_NAME)
             return {
                 "position_size_pct": int(profile["position_size_pct"]),
                 "total_position_pct": int(profile["total_position_pct"]),
@@ -115,26 +116,27 @@ class AssetService:
         existing_item = existing_item or {}
         existing_config = existing_item.get("config") or {}
         status = asset.get("status")
-        account_name = asset.get("account_name") or DEFAULT_ACCOUNT_NAME
-        account_risk = self._resolve_account_risk_profile(account_name)
+        account_risk = self._resolve_account_risk_profile(DEFAULT_ACCOUNT_NAME)
+        monitor_mode = "exit" if status == STATUS_HOLDING else "entry"
         return {
             "symbol": asset["symbol"],
             "name": asset.get("name") or asset["symbol"],
             "monitor_type": "ai_task",
-            "source": "portfolio" if status == STATUS_PORTFOLIO else "ai_monitor",
+            "source": "portfolio" if status == STATUS_HOLDING else "ai_monitor",
             "enabled": bool(asset.get("monitor_enabled", True)),
             "interval_minutes": int(
                 existing_item.get("interval_minutes") or self.get_default_ai_interval_minutes()
             ),
             "trading_hours_only": bool(existing_item.get("trading_hours_only", True)),
             "notification_enabled": bool(existing_item.get("notification_enabled", True)),
-            "managed_by_portfolio": status == STATUS_PORTFOLIO,
-            "account_name": account_name,
+            "managed_by_portfolio": status == STATUS_HOLDING,
+            "account_name": DEFAULT_ACCOUNT_NAME,
             "asset_id": asset["id"],
-            "portfolio_stock_id": asset["id"] if status == STATUS_PORTFOLIO else None,
+            "portfolio_stock_id": asset["id"] if status == STATUS_HOLDING else None,
             "origin_analysis_id": asset.get("origin_analysis_id"),
             "config": {
                 "task_name": existing_config.get("task_name") or f"{asset.get('name') or asset['symbol']}盯盘",
+                "monitor_mode": monitor_mode,
                 "position_size_pct": account_risk["position_size_pct"],
                 "total_position_pct": account_risk["total_position_pct"],
                 "stop_loss_pct": account_risk["stop_loss_pct"],
@@ -187,17 +189,17 @@ class AssetService:
             "symbol": asset["symbol"],
             "name": asset.get("name") or asset["symbol"],
             "monitor_type": "price_alert",
-            "source": "portfolio" if status == STATUS_PORTFOLIO else "ai_monitor",
+            "source": "portfolio" if status == STATUS_HOLDING else "ai_monitor",
             "enabled": bool(asset.get("monitor_enabled", True)),
             "interval_minutes": int(
                 existing_item.get("interval_minutes") or self.get_default_alert_interval_minutes()
             ),
             "trading_hours_only": bool(existing_item.get("trading_hours_only", True)),
             "notification_enabled": bool(existing_item.get("notification_enabled", True)),
-            "managed_by_portfolio": status == STATUS_PORTFOLIO,
-            "account_name": asset.get("account_name") or DEFAULT_ACCOUNT_NAME,
+            "managed_by_portfolio": status == STATUS_HOLDING,
+            "account_name": DEFAULT_ACCOUNT_NAME,
             "asset_id": asset["id"],
-            "portfolio_stock_id": asset["id"] if status == STATUS_PORTFOLIO else None,
+            "portfolio_stock_id": asset["id"] if status == STATUS_HOLDING else None,
             "origin_analysis_id": strategy_context.get("origin_analysis_id") or asset.get("origin_analysis_id"),
             "config": config,
         }
@@ -210,11 +212,11 @@ class AssetService:
         search_term: str = "",
         limit: Optional[int] = 30,
     ) -> List[Dict]:
-        requested_statuses = statuses or (STATUS_WATCHLIST, STATUS_RESEARCH)
+        requested_statuses = statuses or (STATUS_FOCUS, STATUS_RESEARCH)
         normalized_statuses = tuple(
             status
             for status in requested_statuses
-            if status in {STATUS_RESEARCH, STATUS_WATCHLIST}
+            if status in {STATUS_RESEARCH, STATUS_FOCUS}
         )
         if not normalized_statuses:
             return []
@@ -224,7 +226,6 @@ class AssetService:
             assets.extend(
                 self.asset_repository.list_assets(
                     status=status,
-                    account_name=account_name,
                     include_deleted=False,
                 )
             )
@@ -234,7 +235,7 @@ class AssetService:
             strategy_context = self._get_strategy_context(asset) or {}
             item = dict(asset)
             item["strategy_context"] = strategy_context
-            item["followup_status_label"] = "关注中" if asset.get("status") == STATUS_WATCHLIST else "看过"
+            item["followup_status_label"] = "备选关注" if asset.get("status") == STATUS_FOCUS else "研究池"
             item["latest_analysis_id"] = (
                 strategy_context.get("origin_analysis_id") or asset.get("origin_analysis_id")
             )
@@ -253,7 +254,7 @@ class AssetService:
 
         result.sort(
             key=lambda item: (
-                1 if item.get("status") == STATUS_WATCHLIST else 0,
+                1 if item.get("status") == STATUS_FOCUS else 0,
                 str(item.get("latest_analysis_time") or ""),
                 str(item.get("updated_at") or ""),
                 int(item.get("id") or 0),
@@ -279,7 +280,6 @@ class AssetService:
                 if self.monitoring_repository.delete_by_symbol(
                     asset["symbol"],
                     monitor_type=monitor_type,
-                    account_name=asset.get("account_name"),
                     asset_id=asset["id"],
                 ):
                     removed += 1
@@ -288,7 +288,6 @@ class AssetService:
         existing_ai = self.monitoring_repository.get_item_by_symbol(
             asset["symbol"],
             monitor_type="ai_task",
-            account_name=asset.get("account_name"),
             asset_id=asset["id"],
         )
         strategy_context = self._get_strategy_context(asset) or {}
@@ -298,7 +297,6 @@ class AssetService:
         existing_alert = self.monitoring_repository.get_item_by_symbol(
             asset["symbol"],
             monitor_type="price_alert",
-            account_name=asset.get("account_name"),
             asset_id=asset["id"],
         )
         alert_payload = self._build_price_alert_payload(asset, strategy_context, existing_alert)
@@ -316,7 +314,6 @@ class AssetService:
 
         assets = self.asset_repository.list_assets(
             symbol=symbol,
-            account_name=account_name,
             include_deleted=False,
         )
         totals = {"ai_tasks_upserted": 0, "price_alerts_upserted": 0, "removed": 0}
@@ -349,7 +346,6 @@ class AssetService:
         return self.asset_repository.create_or_update_research_asset(
             symbol=symbol,
             name=stock_name,
-            account_name=account_name,
             note=summary,
             origin_analysis_id=origin_analysis_id,
         )
@@ -367,13 +363,12 @@ class AssetService:
         asset_id = self.asset_repository.promote_to_watchlist(
             symbol=symbol,
             name=stock_name,
-            account_name=account_name,
             note=note,
             origin_analysis_id=origin_analysis_id,
             monitor_enabled=monitor_enabled,
         )
         self.sync_managed_monitors(asset_id)
-        return True, f"已加入盯盘: {symbol}", asset_id
+        return True, f"已加入备选关注: {symbol}", asset_id
 
     def promote_to_portfolio(
         self,
@@ -395,7 +390,7 @@ class AssetService:
                 note=note or asset.get("note"),
                 monitor_enabled=monitor_enabled,
                 origin_analysis_id=origin_analysis_id or asset.get("origin_analysis_id"),
-                status=STATUS_PORTFOLIO,
+                status=STATUS_HOLDING,
                 cost_price=float(cost_price),
                 quantity=int(quantity),
                 last_trade_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -405,14 +400,13 @@ class AssetService:
             asset_id = self.asset_repository.create_or_update_research_asset(
                 symbol=symbol,
                 name=stock_name,
-                account_name=account_name,
                 note=note,
                 origin_analysis_id=origin_analysis_id,
                 monitor_enabled=monitor_enabled,
             )
             self.asset_repository.transition_asset_status(
                 asset_id,
-                STATUS_PORTFOLIO,
+                STATUS_HOLDING,
                 cost_price=float(cost_price),
                 quantity=int(quantity),
                 note=note,
@@ -430,8 +424,10 @@ class AssetService:
     def clear_position_to_watchlist(self, asset_id: int, *, note: str = "", last_trade_at: Optional[str] = None) -> bool:
         changed = self.asset_repository.transition_asset_status(
             asset_id,
-            STATUS_WATCHLIST,
+            STATUS_RESEARCH,
             note=note,
+            last_exit_reason=note,
+            last_exit_at=last_trade_at or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             last_trade_at=last_trade_at or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         )
         if changed:
@@ -488,7 +484,7 @@ class AssetService:
             return False, f"{action_label}数量必须是100的整数倍", None
 
         if normalized_trade_type == "buy":
-            if asset.get("status") == STATUS_PORTFOLIO and current_quantity > 0 and current_cost > 0:
+            if asset.get("status") == STATUS_HOLDING and current_quantity > 0 and current_cost > 0:
                 new_quantity = current_quantity + trade_quantity
                 new_cost = ((current_cost * current_quantity) + (trade_price * trade_quantity)) / new_quantity
             else:
@@ -505,7 +501,7 @@ class AssetService:
             )
             self.asset_repository.update_asset(
                 asset_id,
-                status=STATUS_PORTFOLIO,
+                status=STATUS_HOLDING,
                 cost_price=new_cost,
                 quantity=new_quantity,
                 last_trade_at=effective_trade_time,
@@ -541,7 +537,7 @@ class AssetService:
                 new_cost = 0.0
             self.asset_repository.update_asset(
                 asset_id,
-                status=STATUS_PORTFOLIO,
+                status=STATUS_HOLDING,
                 cost_price=new_cost,
                 quantity=remaining_quantity,
                 last_trade_at=effective_trade_time,
@@ -549,8 +545,10 @@ class AssetService:
         else:
             self.asset_repository.transition_asset_status(
                 asset_id,
-                STATUS_WATCHLIST,
+                STATUS_RESEARCH,
                 note=note or asset.get("note"),
+                last_exit_reason=note or asset.get("note"),
+                last_exit_at=effective_trade_time,
                 last_trade_at=effective_trade_time,
             )
         if pending_action_id:

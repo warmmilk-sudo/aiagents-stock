@@ -1,0 +1,19 @@
+热点板块：
+$extracted_payload
+
+Top 15 准入围：
+$ranked_payload
+
+最终自动入选候选：
+$final_payload
+
+手动加星保留：
+$manual_payload
+
+风控剔除：
+$risk_payload
+
+去重剔除：
+$dedup_payload
+
+请仅在“最终自动入选候选”的范围内，输出一个 JSON 对象，给出自动入选标的的推荐排序和简短说明。

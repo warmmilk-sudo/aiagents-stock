@@ -404,8 +404,8 @@ class MonitoringRepositoryTests(unittest.TestCase):
         )
         ly_item_id = self.repo.create_item(
             {
-                "symbol": "600519",
-                "name": "贵州茅台",
+                "symbol": "300750",
+                "name": "宁德时代",
                 "monitor_type": "price_alert",
                 "account_name": "ly",
             }
@@ -427,14 +427,77 @@ class MonitoringRepositoryTests(unittest.TestCase):
             created_at="2026-03-12 10:33:00",
         )
 
+        default_item = self.repo.get_item(default_item_id)
         filtered = self.repo.get_all_recent_notifications(
             limit=10,
-            task_scope=[{"symbol": "600519", "account_name": "默认账户"}],
+            task_scope=[{"symbol": default_item["symbol"], "account_name": default_item["account_name"]}],
         )
 
         self.assertEqual([item["id"] for item in filtered], [default_event_id])
         self.assertEqual(filtered[0]["account_name"], DEFAULT_ACCOUNT_NAME)
         self.assertEqual(self.repo.get_all_recent_notifications(limit=10, task_scope=[]), [])
+
+    def test_recent_notifications_expose_stable_notification_class(self):
+        focus_item_id = self.repo.create_item(
+            {
+                "symbol": "600519",
+                "name": "贵州茅台",
+                "monitor_type": "ai_task",
+                "account_name": "默认账户",
+            }
+        )
+        profit_item_id = self.repo.create_item(
+            {
+                "symbol": "300750",
+                "name": "宁德时代",
+                "monitor_type": "ai_task",
+                "account_name": "默认账户",
+            }
+        )
+        system_item_id = self.repo.create_item(
+            {
+                "symbol": "000001",
+                "name": "平安银行",
+                "monitor_type": "ai_task",
+                "account_name": "默认账户",
+            }
+        )
+        focus_event_id = self.repo.record_event(
+            item_id=focus_item_id,
+            event_type="buy",
+            message="出现回踩关注信号",
+            notification_pending=True,
+            sent=False,
+            details={"action": "BUY", "action_detail": "买入"},
+            created_at="2026-03-12 10:30:00",
+        )
+        profit_event_id = self.repo.record_event(
+            item_id=profit_item_id,
+            event_type="sell",
+            message="触发止盈减仓信号",
+            notification_pending=True,
+            sent=False,
+            details={"action": "SELL", "action_detail": "减仓", "swing_execution_mode": "proactive_trim"},
+            created_at="2026-03-12 10:31:00",
+        )
+        system_event_id = self.repo.record_event(
+            item_id=system_item_id,
+            event_type="threshold_sync",
+            message="已更新绑定价格预警的运行时阈值",
+            notification_pending=True,
+            sent=False,
+            details={"decision_id": 99},
+            created_at="2026-03-12 10:32:00",
+        )
+
+        notifications = self.repo.get_all_recent_notifications(limit=10)
+        self.assertEqual([item["id"] for item in notifications], [system_event_id, profit_event_id, focus_event_id])
+        self.assertEqual(notifications[0]["notification_class"], "system_alert")
+        self.assertEqual(notifications[0]["notification_class_label"], "系统通知")
+        self.assertEqual(notifications[1]["notification_class"], "profit_alert")
+        self.assertEqual(notifications[1]["notification_class_label"], "收益信号")
+        self.assertEqual(notifications[2]["notification_class"], "focus_alert")
+        self.assertEqual(notifications[2]["notification_class_label"], "关注提醒")
 
     def test_ignore_notification_hides_it_from_current_notification_list(self):
         item_id = self.repo.create_item(

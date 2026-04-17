@@ -177,6 +177,270 @@
   box-sizing: border-box;
 }
 
+.researchHubLayout {
+  display: grid;
+  gap: 3px;
+  grid-template-columns: minmax(220px, 1fr) minmax(0, 4fr);
+  align-items: start;
+  width: 100%;
+  min-width: 0;
+}
+
+.researchHubLayout>* {
+  min-width: 0;
+}
+
+.researchHubSidebar {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.researchHubPoolTabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
+  padding: 5px;
+  border: 1px solid color-mix(in srgb, var(--line-soft) 70%, transparent);
+  border-radius: 22px;
+  background: color-mix(in srgb, var(--bg-panel-strong) 92%, black 8%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.02);
+  min-width: 0;
+}
+
+.researchHubPoolTabs>.nestedTabButton,
+.researchHubPoolTabs>.nestedTabButtonActive {
+  display: grid;
+  gap: 4px;
+  place-items: center;
+  padding: 9px 7px;
+  border-radius: 16px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.researchHubPoolTabs span {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.researchHubAssetList {
+  display: grid;
+  gap: 1px;
+  grid-template-columns: minmax(0, 1fr);
+  min-height: 0;
+  height: 100%;
+  overflow: auto;
+  padding-right: 2px;
+  min-width: 0;
+  scrollbar-width: thin;
+}
+
+.researchHubAssetButton,
+.researchHubAssetButtonActive {
+  display: grid;
+  gap: 5px;
+  width: 100%;
+  padding: 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: 14px;
+  text-align: left;
+  color: var(--text-main);
+  background: color-mix(in srgb, var(--bg-panel-strong) 94%, transparent);
+  transition:
+    background var(--shell-transition),
+    border-color var(--shell-transition),
+    transform var(--shell-transition);
+}
+
+.researchHubAssetRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+}
+
+.researchHubAssetActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+}
+
+.researchHubAssetMain {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.researchHubTagList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.researchHubTag,
+.researchHubTagMuted {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 1.2;
+  border: 1px solid var(--line-soft);
+}
+
+.researchHubTag {
+  background: color-mix(in srgb, var(--bg-panel-strong) 94%, transparent);
+  color: var(--text-muted);
+}
+
+.researchHubTagPrimary {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 1.2;
+  border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--line-soft));
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--text);
+}
+
+.researchHubTagMuted {
+  background: transparent;
+  color: var(--text-muted);
+  opacity: 0.8;
+}
+
+.researchHubTagToggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 24px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--line-soft) 86%, transparent);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.2;
+  cursor: pointer;
+  transition:
+    border-color var(--shell-transition),
+    background var(--shell-transition),
+    color var(--shell-transition),
+    transform var(--shell-transition);
+}
+
+.researchHubTagToggle:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--accent) 32%, var(--line-soft));
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--text-main);
+}
+
+.researchHubStarButton,
+.researchHubStarButtonActive {
+  min-width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--text-muted);
+  font-size: 18px;
+  line-height: 1;
+  transition:
+    border-color var(--shell-transition),
+    background var(--shell-transition),
+    color var(--shell-transition),
+    transform var(--shell-transition);
+}
+
+.researchHubStarButton:hover,
+.researchHubStarButtonActive:hover {
+  transform: translateY(-1px);
+}
+
+.researchHubStarButtonActive {
+  border-color: color-mix(in srgb, var(--accent) 48%, var(--line-soft));
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+}
+
+.researchHubControlPage {
+  display: grid;
+  gap: 12px;
+  min-height: calc(100vh - 190px);
+  align-content: start;
+}
+
+.researchHubControlFilters {
+  min-height: 0;
+}
+
+.researchHubControlListCard {
+  min-height: calc(100vh - 320px);
+  display: grid;
+}
+
+.researchHubControlListCard .moduleBody {
+  min-height: 0;
+  height: 100%;
+}
+
+.researchHubAssetButton:hover,
+.researchHubAssetButtonActive:hover {
+  transform: translateY(-1px);
+}
+
+.researchHubAssetButtonActive {
+  border-color: color-mix(in srgb, var(--accent) 48%, var(--line-soft));
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 14%, transparent), transparent 52%),
+    color-mix(in srgb, var(--bg-panel-strong) 96%, transparent);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.2);
+}
+
+.researchHubAssetButton strong,
+.researchHubAssetButtonActive strong {
+  font-size: 15px;
+  line-height: 1.25;
+}
+
+.researchHubAssetButton span,
+.researchHubAssetButtonActive span,
+.researchHubAssetButton small,
+.researchHubAssetButtonActive small {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.researchHubAssetButton small,
+.researchHubAssetButtonActive small {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
 .compactGrid>*,
 .summaryMetricGrid>*,
 .formGrid>* {
@@ -1062,6 +1326,49 @@
   white-space: pre-wrap;
 }
 
+.historySummaryCellButton,
+.historySummaryCellButtonActive {
+  width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 14px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.historySummaryCellButton > .historySummaryCell,
+.historySummaryCellButtonActive > .historySummaryCell,
+.historySummaryCellButton,
+.historySummaryCellButtonActive {
+  display: grid;
+  gap: 6px;
+}
+
+.historySummaryCellButton {
+  padding: 12px;
+  border: 1px solid var(--line-soft);
+  background: color-mix(in srgb, var(--bg-panel) 96%, transparent);
+  transition:
+    border-color var(--shell-transition),
+    background var(--shell-transition),
+    transform var(--shell-transition);
+}
+
+.historySummaryCellButton:hover,
+.historySummaryCellButtonActive:hover {
+  transform: translateY(-1px);
+}
+
+.historySummaryCellButtonActive {
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 48%, var(--line-soft));
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 12%, transparent), transparent 60%),
+    color-mix(in srgb, var(--bg-panel-strong) 96%, transparent);
+}
+
 .historyExpanded {
   display: grid;
   gap: 1px;
@@ -1278,7 +1585,7 @@
   width: 100%;
   box-sizing: border-box;
   cursor: pointer;
-  padding: 14px 16px;
+  padding: 12px 14px;
   font-weight: 700;
 }
 
@@ -1313,7 +1620,7 @@ details > .historyDetailSummary:hover {
   width: 100%;
   box-sizing: border-box;
   min-width: 0;
-  padding: 16px;
+  padding: 12px;
 }
 
 .historyDetailPanelBody>* {
@@ -1379,13 +1686,130 @@ details > .historyDetailSummary:hover {
   min-width: 0;
 }
 
-.strategyGroupCard {
-  padding: 14px;
+.strategyInsightGrid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  width: 100%;
+  min-width: 0;
+}
+
+.strategyInsightCard {
+  padding: 10px;
   border-radius: 16px;
   border: 1px solid var(--line-soft);
   background: color-mix(in srgb, var(--bg-panel-strong) 95%, transparent);
   display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.strategyInsightWide {
+  grid-column: 1 / -1;
+}
+
+.selectionResultGrid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  width: 100%;
+  min-width: 0;
+}
+
+.selectionResultCard {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--bg-panel-strong) 95%, transparent);
+  min-width: 0;
+}
+
+.selectionResultCard > strong {
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.selectionCompactList {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.selectionCompactItem {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--line-soft) 85%, transparent);
+  background: color-mix(in srgb, var(--bg-panel) 96%, transparent);
+  min-width: 0;
+  word-break: break-word;
+}
+
+.selectionCardHeader {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
   gap: 12px;
+}
+
+.selectionCardHeader > * {
+  min-width: 0;
+}
+
+.selectionMetaRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.selectionCompactReason {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.selectionResultWide {
+  grid-column: 1 / -1;
+}
+
+.strategyBoardList {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.strategyBoardItem {
+  display: grid;
+  gap: 4px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--line-soft);
+  background: color-mix(in srgb, var(--bg-panel) 96%, transparent);
+  min-width: 0;
+}
+
+.strategyBoardMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.strategyGroupCard {
+  padding: 10px;
+  border-radius: 16px;
+  border: 1px solid var(--line-soft);
+  background: color-mix(in srgb, var(--bg-panel-strong) 95%, transparent);
+  display: grid;
+  gap: 10px;
   min-width: 0;
 }
 
@@ -1408,19 +1832,19 @@ details > .historyDetailSummary:hover {
 
 .strategyEntryItem {
   display: grid;
-  gap: 6px;
-  padding: 12px;
-  border-radius: 14px;
+  gap: 4px;
+  padding: 9px 10px;
+  border-radius: 12px;
   border: 1px solid var(--line-soft);
   background: color-mix(in srgb, var(--bg-panel) 96%, transparent);
-  line-height: 1.65;
+  line-height: 1.5;
   min-width: 0;
 }
 
 .strategyEntryItem strong {
   display: block;
-  font-size: 15px;
-  line-height: 1.45;
+  font-size: 14px;
+  line-height: 1.35;
   word-break: break-word;
 }
 
@@ -1432,10 +1856,10 @@ details > .historyDetailSummary:hover {
 
 .heatChartCard {
   display: grid;
-  gap: 8px;
-  padding: 12px;
+  gap: 6px;
+  padding: 9px 10px;
   border: 1px solid var(--line-soft);
-  border-radius: 14px;
+  border-radius: 12px;
   background: color-mix(in srgb, var(--bg-panel) 96%, transparent);
   min-width: 0;
 }
@@ -1445,12 +1869,13 @@ details > .historyDetailSummary:hover {
   align-items: baseline;
   justify-content: space-between;
   gap: 10px;
+  font-size: 13px;
 }
 
 .heatChartTrack {
   position: relative;
   width: 100%;
-  height: 10px;
+  height: 7px;
   border-radius: 999px;
   background: color-mix(in srgb, var(--bg-panel-strong) 94%, transparent);
   overflow: hidden;
@@ -1476,10 +1901,10 @@ details > .historyDetailSummary:hover {
 .heatChartMeta {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px 12px;
+  gap: 4px 10px;
   color: var(--text-muted);
-  font-size: 12px;
-  line-height: 1.5;
+  font-size: 11px;
+  line-height: 1.35;
 }
 
 .topicBubbleCloud {
@@ -2082,6 +2507,21 @@ details > .historyDetailSummary:hover {
 }
 
 @media (max-width: 900px) {
+  .researchHubControlPage {
+    min-height: auto;
+  }
+
+  .researchHubControlListCard {
+    min-height: 0;
+  }
+
+  .strategyInsightGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .selectionResultGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 
   .span6,
   .span12 {
@@ -2103,6 +2543,10 @@ details > .historyDetailSummary:hover {
 
   .reportWorkbench {
     grid-template-columns: 1fr;
+  }
+
+  .researchHubLayout {
+    grid-template-columns: minmax(240px, 1.15fr) minmax(0, 3fr);
   }
 
   .reportWorkbenchHeader {
@@ -2143,6 +2587,37 @@ details > .historyDetailSummary:hover {
     border: 0;
     border-radius: 0;
     background: transparent;
+  }
+
+  .researchHubLayout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .strategyInsightGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .selectionResultGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .researchHubAssetList {
+    height: auto;
+    max-height: none;
+    overflow: visible;
+    padding-bottom: 6px;
+  }
+
+  .researchHubControlPage {
+    padding-bottom: 18px;
+  }
+
+  .researchHubControlListCard {
+    min-height: 0;
+  }
+
+  .researchHubControlListCard .moduleBody {
+    height: auto;
   }
 
   /* Flatten nested section cards into divider-separated blocks on phones. */
@@ -2318,6 +2793,10 @@ details > .historyDetailSummary:hover {
 }
 
 @media (max-width: 560px) {
+  .researchHubControlListCard {
+    min-height: 0;
+  }
+
   .card {
     padding: 0;
   }

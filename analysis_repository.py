@@ -13,6 +13,7 @@ from investment_db_utils import (
     resolve_investment_db_path,
     set_metadata,
 )
+from investment_action_utils import normalize_strategy_context
 
 
 class AnalysisRepository:
@@ -195,6 +196,8 @@ class AnalysisRepository:
             "take_profit",
             "stop_loss",
             "holding_period",
+            "swing_type",
+            "swing_type_reason",
             "position_size",
             "risk_warning",
         )
@@ -556,6 +559,14 @@ class AnalysisRepository:
         analysis_date = analysis_date or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         created_at = datetime.now().isoformat()
         effective_account_name = self._normalize_account_name_value(account_name)
+        sector_tags = []
+        for key in ("industry", "sector", "concept", "concepts", "所属行业", "所属概念"):
+            value = stock_info.get(key)
+            if isinstance(value, str) and value.strip():
+                sector_tags.extend([part.strip() for part in value.replace("，", ",").split(",") if part.strip()])
+            elif isinstance(value, list):
+                sector_tags.extend([str(part).strip() for part in value if str(part).strip()])
+        sector_tags = list(dict.fromkeys(sector_tags))[:12]
 
         resolved_rating = self._normalize_text(final_decision.get("rating")) or None
         if extracted_from_decision_text:
@@ -702,6 +713,17 @@ class AnalysisRepository:
             )
             conn.commit()
             conn.close()
+            if asset_id is not None:
+                from asset_repository import asset_repository
+
+                asset_repository.update_asset(
+                    asset_id,
+                    name=stock_name or symbol,
+                    note=summary,
+                    pool_reason=summary,
+                    pool_reason_source=analysis_source,
+                    sector_tags_json=sector_tags,
+                )
             return existing_record_id
         cursor.execute(
             """
@@ -749,8 +771,16 @@ class AnalysisRepository:
             from asset_repository import asset_repository
 
             asset = asset_repository.get_asset(asset_id)
+            update_payload = {
+                "name": stock_name or symbol,
+                "note": summary,
+                "pool_reason": summary,
+                "pool_reason_source": analysis_source,
+                "sector_tags_json": sector_tags,
+            }
             if asset and not asset.get("origin_analysis_id"):
-                asset_repository.update_asset(asset_id, origin_analysis_id=record_id)
+                update_payload["origin_analysis_id"] = record_id
+            asset_repository.update_asset(asset_id, **update_payload)
         return record_id
 
     def list_records(
@@ -904,7 +934,7 @@ class AnalysisRepository:
         conn.close()
         if not record:
             return None
-        return {
+        return normalize_strategy_context({
             "origin_analysis_id": record["id"],
             "asset_id": record.get("asset_id"),
             "symbol": record["symbol"],
@@ -915,6 +945,7 @@ class AnalysisRepository:
             "analysis_scope": record.get("analysis_scope"),
             "analysis_source": record.get("analysis_source"),
             "analysis_date": record.get("analysis_date"),
+            "period": record.get("period"),
             "rating": record.get("rating"),
             "confidence": record.get("confidence"),
             "current_price": record.get("current_price"),
@@ -924,7 +955,7 @@ class AnalysisRepository:
             "stop_loss": record.get("stop_loss"),
             "summary": record.get("summary"),
             "final_decision": record.get("final_decision", {}),
-        }
+        })
 
     def get_latest_portfolio_record(self, portfolio_stock_id: int) -> Optional[Dict]:
         records = self.list_records(

@@ -18,7 +18,11 @@ from batch_analysis_service import analyze_single_stock_for_batch
 from config_manager import config_manager
 from database_admin import database_admin
 from investment_action_utils import build_analysis_action_payload
-from investment_db_utils import DEFAULT_ACCOUNT_NAME, SUPPORTED_ACCOUNT_NAMES, normalize_account_name
+from investment_db_utils import (
+    DEFAULT_ACCOUNT_NAME,
+    SUPPORTED_ACCOUNT_NAMES,
+    normalize_account_name,
+)
 from investment_lifecycle_service import investment_lifecycle_service
 from low_price_bull_monitor import low_price_bull_monitor
 from low_price_bull_selector import LowPriceBullSelector
@@ -45,6 +49,7 @@ from sector_strategy_normalization import (
     normalize_sector_strategy_result,
 )
 from sector_strategy_scheduler import sector_strategy_scheduler
+from smart_selection_service import smart_selection_scheduler, smart_selection_service
 from smart_monitor_db import SmartMonitorDB
 from stock_data import StockDataFetcher
 from strategy_markdown_reports import (
@@ -72,6 +77,7 @@ sector_strategy_db = SectorStrategyDatabase()
 MAIN_FORCE_SELECTION_TASK_TYPE = "main_force_selection"
 MAIN_FORCE_BATCH_TASK_TYPE = "main_force_batch_analysis"
 SECTOR_STRATEGY_TASK_TYPE = "sector_strategy_analysis"
+SECTOR_STRATEGY_LIFECYCLE_REBUILD_TASK_TYPE = "sector_strategy_lifecycle_rebuild"
 LONGHUBANG_TASK_TYPE = "longhubang_analysis"
 LONGHUBANG_BATCH_TASK_TYPE = "longhubang_batch_analysis"
 LOW_PRICE_BULL_TASK_TYPE = "low_price_bull_selection"
@@ -85,7 +91,7 @@ PORTFOLIO_SCHEDULER_TASK_TYPE = "batch"
 SMART_MONITOR_BASELINE_REFRESH_TASK_TYPE = "smart_monitor_baseline_refresh"
 SMART_MONITOR_INTRADAY_INTERVAL_KEY = "smart_monitor_intraday_decision_interval_minutes"
 SMART_MONITOR_REALTIME_INTERVAL_KEY = "smart_monitor_realtime_monitor_interval_minutes"
-SMART_MONITOR_RUN_ONCE_RETRY_LIMIT = 2
+SMART_MONITOR_RUN_ONCE_MAX_ATTEMPTS = 2
 SMART_MONITOR_RUN_ONCE_RETRY_DELAY_SECONDS = 1.0
 _SMART_MONITOR_RUN_ONCE_LOCK = threading.Lock()
 
@@ -104,6 +110,14 @@ def _default_intraday_decision_interval_minutes() -> int:
 
 def _default_realtime_monitor_interval_minutes() -> int:
     return _clamp_int(getattr(config, "SMART_MONITOR_PRICE_ALERT_INTERVAL_MINUTES", 3), 1, 10, 3)
+
+
+def _default_smart_monitor_run_once_task_delay_seconds() -> float:
+    try:
+        numeric = float(getattr(config, "SMART_MONITOR_RUN_ONCE_TASK_DELAY_SECONDS", 1.2))
+    except (TypeError, ValueError):
+        numeric = 1.2
+    return max(0.0, min(numeric, 10.0))
 
 
 def _normalize_smart_monitor_account_name(account_name: Optional[str]) -> str:
@@ -150,6 +164,7 @@ def _apply_smart_monitor_task_risk_defaults(
 
 def ensure_runtime_started() -> None:
     monitor_service.ensure_scheduler_state()
+    smart_selection_scheduler.apply_runtime_config(smart_selection_service.get_scheduler_config())
 
 
 def parse_stock_list(stock_input: str) -> list[str]:
@@ -473,7 +488,7 @@ def submit_portfolio_analysis_task(
             current=0,
             total=0,
             step_status="analyzing",
-            message=f"正在准备 {account_label} 的持仓总览任务...",
+            message=f"正在准备 {account_label} 的持仓分析任务...",
         )
 
         def progress_callback(current, total, code, status):
@@ -514,7 +529,7 @@ def submit_portfolio_analysis_task(
             account_name=normalized_account,
         )
         if not analysis_results.get("success"):
-            raise RuntimeError(str(analysis_results.get("error") or "持仓总览失败"))
+            raise RuntimeError(str(analysis_results.get("error") or "持仓分析失败"))
 
         success_rows = [
             {
@@ -540,7 +555,7 @@ def submit_portfolio_analysis_task(
             current=total,
             total=total or 1,
             step_status="success",
-            message=f"{account_label} 持仓总览完成：成功 {success_count}，失败 {failed_count}，已写入 {len(saved_ids)} 条历史",
+            message=f"{account_label} 持仓分析完成：成功 {success_count}，失败 {failed_count}，已写入 {len(saved_ids)} 条历史",
         )
         return {
             "mode": "batch",
@@ -929,6 +944,11 @@ def submit_sector_strategy_task(
         return {
             "result": _json_safe(result),
             "report_view": _json_safe(normalize_sector_strategy_result(result, data_summary=data_summary)),
+            "lifecycle_snapshot": _json_safe(
+                sector_strategy_db.get_lifecycle_items_for_analysis(int(result.get("report_id") or 0))
+                if result.get("report_id")
+                else []
+            ),
             "data_summary": _json_safe(data_summary),
             "message": "智策分析完成。",
         }
@@ -974,6 +994,11 @@ def list_sector_strategy_reports(limit: int = 20) -> list[dict[str, Any]]:
         {
             **_json_safe(report),
             "summary_data": _extract_sector_strategy_summary(report),
+            "lifecycle_summary": _json_safe(
+                sector_strategy_db.build_lifecycle_summary(
+                    sector_strategy_db.get_lifecycle_items_for_analysis(int(report.get("id") or 0))
+                )
+            ),
         }
         for report in reports
     ]
@@ -996,11 +1021,87 @@ def get_sector_strategy_report(report_id: int) -> Optional[dict[str, Any]]:
         **_json_safe(report),
         "summary_data": _extract_sector_strategy_summary(report_view),
         "report_view": _json_safe(report_view),
+        "lifecycle_items": _json_safe(report.get("lifecycle_items") or []),
+        "lifecycle_summary": _json_safe(report.get("lifecycle_summary") or sector_strategy_db.build_lifecycle_summary([])),
+        "daily_heat_panel": _json_safe(
+            sector_strategy_db.get_daily_heat_panel(
+                board_date=str(report.get("board_date") or report.get("analysis_date") or report.get("created_at") or "")[:10],
+                limit=30,
+            )
+        ),
     }
 
 
 def delete_sector_strategy_report(report_id: int) -> bool:
     return bool(sector_strategy_db.delete_analysis_report(report_id))
+
+
+def get_sector_strategy_latest_lifecycle() -> dict[str, Any]:
+    return _json_safe(sector_strategy_db.get_latest_lifecycle_snapshot())
+
+
+def list_sector_strategy_lifecycle(days: int = 20) -> list[dict[str, Any]]:
+    return _json_safe(sector_strategy_db.list_lifecycle_snapshots(days=days))
+
+
+def get_sector_strategy_latest_heat_daily(limit: int = 30) -> dict[str, Any]:
+    return _json_safe(sector_strategy_db.get_daily_heat_panel(limit=limit))
+
+
+def get_sector_strategy_lifecycle_config() -> dict[str, Any]:
+    return _json_safe(sector_strategy_db.get_lifecycle_config())
+
+
+def update_sector_strategy_lifecycle_config(values: dict[str, Any]) -> dict[str, Any]:
+    return _json_safe(sector_strategy_db.update_lifecycle_config(values or {}))
+
+
+def rebuild_sector_strategy_lifecycle() -> dict[str, Any]:
+    return _json_safe(sector_strategy_db.rebuild_heat_history())
+
+
+def submit_sector_strategy_lifecycle_rebuild_task(*, reason: str = "manual") -> dict[str, Any]:
+    existing_task = get_active_ui_task(SECTOR_STRATEGY_LIFECYCLE_REBUILD_TASK_TYPE)
+    if existing_task and existing_task.get("id"):
+        return {
+            "task_id": str(existing_task["id"]),
+            "reused": True,
+            "status": existing_task.get("status"),
+        }
+
+    def runner(_task_id: str, report_progress) -> dict[str, Any]:
+        result = sector_strategy_db.rebuild_heat_history(
+            progress_callback=lambda current, total, message: report_progress(
+                current=current,
+                total=total,
+                message=message,
+            )
+        )
+        counts = ((result.get("latest_summary") or {}).get("counts") or {})
+        report_progress(
+            current=max(1, int(result.get("reports_processed") or 0)),
+            total=max(1, int(result.get("reports_processed") or 0)),
+            message=(
+                f"生命周期重建完成: startup={int(counts.get('startup') or 0)}, "
+                f"explosive={int(counts.get('explosive') or 0)}, decay={int(counts.get('decay') or 0)}"
+            ),
+        )
+        return {
+            "result": _json_safe(result),
+            "message": "生命周期重建完成。",
+        }
+
+    task_id = start_ui_analysis_task(
+        task_type=SECTOR_STRATEGY_LIFECYCLE_REBUILD_TASK_TYPE,
+        label="生命周期重建",
+        runner=runner,
+        metadata={"reason": str(reason or "manual")},
+    )
+    return {
+        "task_id": task_id,
+        "reused": False,
+        "status": "queued",
+    }
 
 
 def get_sector_strategy_scheduler_status() -> dict[str, Any]:
@@ -1051,6 +1152,82 @@ def run_sector_strategy_scheduler_once() -> dict[str, Any]:
 def test_email_notification() -> tuple[bool, str]:
     notification_service.__init__()
     return notification_service.send_test_email()
+
+
+def get_smart_selection_overview() -> dict[str, Any]:
+    return _json_safe(smart_selection_service.get_overview())
+
+
+def submit_smart_selection_run(
+    *,
+    trigger_source: str = "manual",
+    lightweight_model: Optional[str] = None,
+    reasoning_model: Optional[str] = None,
+) -> str:
+    return smart_selection_service.submit_run(
+        trigger_source=trigger_source,
+        lightweight_model=lightweight_model,
+        reasoning_model=reasoning_model,
+    )
+
+
+def get_smart_selection_run(run_id: str) -> Optional[dict[str, Any]]:
+    return _json_safe(smart_selection_service.get_run(run_id))
+
+
+def get_latest_smart_selection_run() -> Optional[dict[str, Any]]:
+    return _json_safe(smart_selection_service.get_latest_run())
+
+
+def import_smart_selection_run(
+    *,
+    run_id: str,
+    symbols: list[str],
+    replace_existing_focus: bool = True,
+) -> dict[str, Any]:
+    return _json_safe(
+        smart_selection_service.import_run_selection(
+            run_id=run_id,
+            symbols=symbols,
+            replace_existing_focus=replace_existing_focus,
+        )
+    )
+
+
+def list_smart_selection_watch_pool(active_only: bool = True) -> list[dict[str, Any]]:
+    return _json_safe(smart_selection_service.list_watch_pool(active_only=active_only))
+
+
+def cleanup_smart_selection_watch_pool() -> dict[str, Any]:
+    return {"changed": int(smart_selection_service._cleanup_watch_pool())}
+
+
+def get_smart_selection_scheduler_status() -> dict[str, Any]:
+    return _json_safe(smart_selection_scheduler.get_status())
+
+
+def update_smart_selection_scheduler(
+    *,
+    enabled: bool,
+    schedule_time: str,
+    max_workers: Optional[int] = None,
+) -> dict[str, Any]:
+    return _json_safe(
+        smart_selection_service.update_scheduler_config(
+            enabled=enabled,
+            schedule_time=schedule_time,
+            max_workers=max_workers,
+        )
+    )
+
+
+def run_smart_selection_scheduler_once() -> dict[str, Any]:
+    run_id = smart_selection_scheduler.manual_run()
+    return {
+        "submitted": True,
+        "run_id": run_id,
+        "run": get_smart_selection_run(run_id),
+    }
 
 
 def _create_longhubang_engine(
@@ -2765,12 +2942,13 @@ def _run_smart_monitor_item_once_with_retry(
     item_id: int,
     *,
     item_label: str,
-    retry_limit: int = SMART_MONITOR_RUN_ONCE_RETRY_LIMIT,
+    max_attempts: int = SMART_MONITOR_RUN_ONCE_MAX_ATTEMPTS,
     retry_delay_seconds: float = SMART_MONITOR_RUN_ONCE_RETRY_DELAY_SECONDS,
 ) -> tuple[bool, int]:
+    max_attempts = max(1, int(max_attempts))
     attempts = 0
     last_error = ""
-    while attempts <= retry_limit:
+    while attempts < max_attempts:
         attempts += 1
         try:
             if orchestrator.run_item_once(item_id):
@@ -2780,12 +2958,12 @@ def _run_smart_monitor_item_once_with_retry(
             last_error = "执行返回失败"
         except Exception as exc:
             last_error = str(exc)
-        if attempts <= retry_limit:
+        if attempts < max_attempts:
             logger.warning(
                 "[%s] 执行失败，准备重试 (%s/%s): %s",
                 item_label,
                 attempts,
-                retry_limit + 1,
+                max_attempts,
                 last_error,
             )
             time.sleep(min(retry_delay_seconds * attempts, 2.0))
@@ -2799,6 +2977,8 @@ def run_smart_monitor_tasks_once(
     enabled_only: bool = True,
     account_name: Optional[str] = None,
     has_position: Optional[bool] = None,
+    ordered_task_ids: Optional[list[int]] = None,
+    task_delay_seconds: Optional[float] = None,
 ) -> dict[str, Any]:
     tasks = smart_monitor_db.get_monitor_tasks(
         enabled_only=enabled_only,
@@ -2807,6 +2987,16 @@ def run_smart_monitor_tasks_once(
     )
     orchestrator = monitor_service.orchestrator
     processed_alert_ids: set[int] = set()
+    requested_order = [int(task_id) for task_id in (ordered_task_ids or []) if int(task_id) > 0]
+    order_rank = {task_id: index for index, task_id in enumerate(requested_order)}
+    resolved_delay_seconds = _default_smart_monitor_run_once_task_delay_seconds() if task_delay_seconds is None else max(0.0, min(float(task_delay_seconds), 10.0))
+    ordered_tasks = sorted(
+        tasks,
+        key=lambda item: (
+            order_rank.get(int(item.get("id") or 0), len(order_rank)),
+            int(item.get("id") or 0),
+        ),
+    )
     summary = {
         "task_total": 0,
         "task_success": 0,
@@ -2819,10 +3009,18 @@ def run_smart_monitor_tasks_once(
         "account_name": account_name or "",
         "has_position": has_position,
         "enabled_only": enabled_only,
+        "task_delay_seconds": resolved_delay_seconds,
+        "execution_mode": "sequential",
+        "ordered_task_ids": requested_order,
+        "final_retry_total": 0,
+        "final_retry_success": 0,
+        "final_retry_failed": 0,
     }
 
     with _SMART_MONITOR_RUN_ONCE_LOCK:
-        for task in sorted(tasks, key=lambda item: int(item.get("id") or 0)):
+        failed_tasks: list[dict[str, Any]] = []
+
+        for index, task in enumerate(ordered_tasks):
             task_id = int(task.get("id") or 0)
             if task_id <= 0:
                 continue
@@ -2838,6 +3036,7 @@ def run_smart_monitor_tasks_once(
                 summary["task_success"] += 1
             else:
                 summary["task_failed"] += 1
+                failed_tasks.append(task)
 
             alert_item = smart_monitor_db.monitoring_repository.get_item_by_symbol(
                 task.get("stock_code") or "",
@@ -2863,6 +3062,40 @@ def run_smart_monitor_tasks_once(
                 summary["price_alert_success"] += 1
             else:
                 summary["price_alert_failed"] += 1
+
+            if resolved_delay_seconds > 0 and index < len(ordered_tasks) - 1:
+                logger.info(
+                    "[智能盯盘批量执行] 等待 %.1f 秒后继续下一只股票: %s",
+                    resolved_delay_seconds,
+                    task_code,
+                )
+                time.sleep(resolved_delay_seconds)
+
+        for failed_index, task in enumerate(failed_tasks):
+            task_id = int(task.get("id") or 0)
+            if task_id <= 0:
+                continue
+            task_code = str(task.get("stock_code") or task.get("symbol") or task_id)
+            final_success, final_attempts = _run_smart_monitor_item_once_with_retry(
+                orchestrator,
+                task_id,
+                item_label=f"盘中决策补跑 {task_code}",
+                max_attempts=1,
+            )
+            summary["final_retry_total"] += final_attempts
+            if final_success:
+                summary["final_retry_success"] += 1
+                summary["task_success"] += 1
+                summary["task_failed"] = max(0, int(summary["task_failed"]) - 1)
+            else:
+                summary["final_retry_failed"] += 1
+            if resolved_delay_seconds > 0 and failed_index < len(failed_tasks) - 1:
+                logger.info(
+                    "[智能盯盘批量补跑] 等待 %.1f 秒后继续下一只股票: %s",
+                    resolved_delay_seconds,
+                    task_code,
+                )
+                time.sleep(resolved_delay_seconds)
 
     scheduler = monitor_service.get_scheduler()
     summary["service_status"] = monitor_service.get_status()
@@ -3319,7 +3552,7 @@ def run_portfolio_scheduler_once() -> dict[str, Any]:
     if active_task:
         return {
             "success": False,
-            "message": "当前已有持仓总览任务正在执行或排队，请等待当前任务完成。",
+            "message": "当前已有持仓分析任务正在执行或排队，请等待当前任务完成。",
             "task": active_task,
             "status": get_portfolio_scheduler_status(),
         }

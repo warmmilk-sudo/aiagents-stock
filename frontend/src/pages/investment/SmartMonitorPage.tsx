@@ -27,6 +27,8 @@ interface SmartMonitorTask {
   portfolio_stock_id?: number | null;
   has_position?: number;
   asset_status?: string | null;
+  monitor_mode?: string | null;
+  strategy_track_label?: string;
   strategy_context?: {
     origin_analysis_id?: number;
     analysis_scope?: string;
@@ -64,6 +66,7 @@ interface DecisionItem {
   position_delta_pct?: number | null;
   decision_time?: string;
   reasoning?: string;
+  swing_execution_mode?: string;
   risk_level?: string;
   previous_action?: string;
   previous_action_detail?: string;
@@ -73,8 +76,25 @@ interface DecisionItem {
     entry_min?: number;
     entry_max?: number;
     take_profit?: number;
+    take_profit_max?: number;
     stop_loss?: number;
   };
+}
+
+function formatSwingExecutionMode(value?: string | null): string {
+  const normalized = String(value || "").trim().toLowerCase();
+  const mapping: Record<string, string> = {
+    pullback_entry: "回踩建仓",
+    breakout_entry: "突破建仓",
+    pullback_add: "回踩确认加仓",
+    breakout_add: "突破确认加仓",
+    proactive_trim: "主动减仓锁盈",
+    defensive_trim: "防守减仓",
+    defensive_exit: "防守清仓",
+    trend_hold: "趋势持有",
+    watch_hold: "观察持有",
+  };
+  return mapping[normalized] ?? "";
 }
 
 interface SystemStatus {
@@ -111,6 +131,13 @@ interface PriceAlertNotification {
   symbol: string;
   name?: string;
   message: string;
+  notification_class?: string;
+  notification_category?: string;
+  notification_label?: string;
+  notification_class_label?: string;
+  notification_reason?: string;
+  trigger_summary?: string;
+  swing_execution_label?: string;
   triggered_at: string;
   account_name?: string;
 }
@@ -283,6 +310,7 @@ const formatThresholdSummary = (
     entry_min?: unknown;
     entry_max?: unknown;
     take_profit?: unknown;
+    take_profit_max?: unknown;
     stop_loss?: unknown;
     entry_range?: unknown;
     final_decision?: {
@@ -290,6 +318,7 @@ const formatThresholdSummary = (
       entry_max?: unknown;
       entry_range?: unknown;
       take_profit?: unknown;
+      take_profit_max?: unknown;
       stop_loss?: unknown;
     };
   } | null,
@@ -302,8 +331,9 @@ const formatThresholdSummary = (
   const entryMin = formatThresholdValue(levels.entry_min ?? fallback.entry_min);
   const entryMax = formatThresholdValue(levels.entry_max ?? fallback.entry_max);
   const takeProfit = formatThresholdValue(levels.take_profit ?? fallback.take_profit);
+  const takeProfitMax = formatThresholdValue(levels.take_profit_max ?? fallback.take_profit_max);
   const stopLoss = formatThresholdValue(levels.stop_loss ?? fallback.stop_loss);
-  if ([entryRange, entryMin, entryMax, takeProfit, stopLoss].every((value) => value === "N/A")) {
+  if ([entryRange, entryMin, entryMax, takeProfit, takeProfitMax, stopLoss].every((value) => value === "N/A")) {
     return `${label}：暂无关键指标`;
   }
   const entryText =
@@ -312,11 +342,30 @@ const formatThresholdSummary = (
       : [entryMin, entryMax].every((value) => value === "N/A")
         ? "N/A"
         : `${entryMin}-${entryMax}`;
-  return `${label}：入场${entryText} | 止盈:${takeProfit} | 止损:${stopLoss}`;
+  const takeProfitText =
+    takeProfit === "N/A"
+      ? "N/A"
+      : takeProfitMax !== "N/A" && takeProfitMax !== takeProfit
+        ? `${takeProfit}-${takeProfitMax}`
+        : takeProfit;
+  return `${label}：入场${entryText} | 止盈:${takeProfitText} | 止损:${stopLoss}`;
 };
 
-const taskPortfolioLabel = (task: SmartMonitorTask) =>
-  Boolean(task.has_position) || task.asset_status === "portfolio" ? "在持仓" : "未持仓";
+const isTaskHolding = (task: SmartMonitorTask) =>
+  Boolean(task.has_position) || task.asset_status === "holding" || task.asset_status === "portfolio";
+
+const isTaskFocus = (task: SmartMonitorTask) =>
+  task.asset_status === "focus" || task.asset_status === "watchlist";
+
+const taskPortfolioLabel = (task: SmartMonitorTask) => {
+  if (isTaskHolding(task)) {
+    return "持仓中";
+  }
+  if (isTaskFocus(task)) {
+    return task.monitor_mode === "entry" ? "备选关注" : "备选关注";
+  }
+  return "未持仓";
+};
 
 const matchesTaskDecision = (task: SmartMonitorTask, decision: DecisionItem) => {
   if (task.stock_code !== decision.stock_code) {
@@ -334,7 +383,7 @@ const matchesTaskDecision = (task: SmartMonitorTask, decision: DecisionItem) => 
 const isDecisionHolding = (decision: DecisionItem, tasks: SmartMonitorTask[]) => {
   const matchedTask = tasks.find((task) => matchesTaskDecision(task, decision));
   if (matchedTask) {
-    return Boolean(matchedTask.has_position) || matchedTask.asset_status === "portfolio";
+    return isTaskHolding(matchedTask);
   }
   return decision.portfolio_stock_id != null;
 };
@@ -358,11 +407,50 @@ const actionTone = (action: string): NotificationTone => {
   return "warning";
 };
 
+const resolveNotificationClass = (value?: string | null): string => {
+  const normalized = String(value || "").trim().toLowerCase().replace(/-/g, "_");
+  const mapping: Record<string, string> = {
+    focus: "focus_alert",
+    focus_alert: "focus_alert",
+    price: "price_alert",
+    price_alert: "price_alert",
+    risk: "risk_alert",
+    risk_alert: "risk_alert",
+    profit: "profit_alert",
+    profit_alert: "profit_alert",
+    system: "system_alert",
+    system_alert: "system_alert",
+    other: "other_alert",
+    other_alert: "other_alert",
+  };
+  return mapping[normalized] || "";
+};
+
 const findLatestDecisionForTask = (task: SmartMonitorTask, decisions: DecisionItem[]) =>
-  decisions.find((decision) => matchesTaskDecision(task, decision) && (Boolean(task.has_position) || task.asset_status === "portfolio" || !isSellDecision(decision)))
+  decisions.find((decision) => matchesTaskDecision(task, decision) && (isTaskHolding(task) || !isSellDecision(decision)))
   || decisions.find((decision) => decision.stock_code === task.stock_code && !isSellDecision(decision));
 
-const notificationMeta = (message: string): { tone: NotificationTone; label: string } => {
+const notificationMeta = (item: PriceAlertNotification): { tone: NotificationTone; label: string } => {
+  const notificationClass = resolveNotificationClass(
+    item.notification_class || item.notification_category || item.notification_label,
+  );
+  const explicitLabel = String(item.notification_label || item.notification_class_label || "").trim();
+  if (notificationClass === "focus_alert") {
+    return { tone: "info", label: explicitLabel || "关注提醒" };
+  }
+  if (notificationClass === "price_alert") {
+    return { tone: "warning", label: explicitLabel || "价格提醒" };
+  }
+  if (notificationClass === "risk_alert") {
+    return { tone: "danger", label: explicitLabel || "风险预警" };
+  }
+  if (notificationClass === "profit_alert") {
+    return { tone: "success", label: explicitLabel || "收益信号" };
+  }
+  if (notificationClass === "system_alert") {
+    return { tone: "info", label: explicitLabel || "系统通知" };
+  }
+  const message = String(item.message || "");
   if (/(止损|跌破|下破|失守|回撤)/.test(message)) return { tone: "danger", label: "风险预警" };
   if (/(止盈|突破|上破|目标价|盈利)/.test(message)) return { tone: "success", label: "收益信号" };
   if (/(买入|入场|区间|接近)/.test(message)) return { tone: "info", label: "关注提醒" };
@@ -774,18 +862,26 @@ export function SmartMonitorPage() {
     clear();
     setIsRunningAllTasks(true);
     try {
-      const queryParams: Record<string, string | boolean> = { enabled_only: true };
-      if (filterHasPosition !== "all") {
-        queryParams.has_position = filterHasPosition === "true";
-      }
       const result = await apiFetch<{
         task_total: number;
         task_success: number;
         price_alert_total: number;
         price_alert_success: number;
-      }>(`/api/smart-monitor/tasks/run-once${buildQuery(queryParams)}`, { method: "POST" });
+        task_delay_seconds?: number;
+      }>("/api/smart-monitor/tasks/run-once", {
+        method: "POST",
+        body: JSON.stringify({
+          enabled_only: true,
+          has_position: filterHasPosition !== "all" ? filterHasPosition === "true" : null,
+          ordered_task_ids: tasks
+            .filter((item) => Boolean(item.enabled))
+            .map((item) => Number(item.id))
+            .filter((item) => Number.isFinite(item) && item > 0),
+          task_delay_seconds: 1.2,
+        }),
+      });
       showMessage(
-        `已执行 ${result.task_total} 个盯盘任务、${result.price_alert_total} 个价格监控；AI成功 ${result.task_success} 个，价格检查成功 ${result.price_alert_success} 个。`,
+        `已按列表顺序执行 ${result.task_total} 个盯盘任务、${result.price_alert_total} 个价格监控；AI成功 ${result.task_success} 个，价格检查成功 ${result.price_alert_success} 个。`,
       );
       void loadAll(true).catch(() => undefined);
     } catch (requestError) {
@@ -1034,20 +1130,24 @@ export function SmartMonitorPage() {
                           </div>
                           <strong>{stockDisplayName(item.stock_name, item.stock_code)}</strong>
                           <small className={styles.muted}>{formatDateTime(item.decision_time, "暂无时间")}</small>
+                          {formatSwingExecutionMode(item.swing_execution_mode) ? (
+                            <small className={styles.muted}>波段类型：{formatSwingExecutionMode(item.swing_execution_mode)}</small>
+                          ) : null}
                           <div className={styles.decisionReasoning}>{formatDecisionReasoning(item)}</div>
                         </div>
                       );
                     })
                   ) : (
                     latestNotifications.map((item) => {
-                      const meta = notificationMeta(item.message);
+                      const meta = notificationMeta(item);
                       return (
                         <div className={`${styles.noticeCard} ${notificationToneClass[meta.tone]}`} key={item.id}>
                           <div className={styles.noticeMeta}>
                             <StatusBadge label={meta.label} tone={meta.tone} />
                             <strong>{stockDisplayName(item.name, item.symbol)}</strong>
                           </div>
-                          <div>{item.message}</div>
+                          {item.trigger_summary ? <small className={styles.muted}>触发摘要：{item.trigger_summary}</small> : null}
+                          {item.swing_execution_label ? <small className={styles.muted}>波段类型：{item.swing_execution_label}</small> : null}
                           <small className={styles.muted}>
                             {formatDateTime(item.triggered_at, "暂无时间")}
                           </small>

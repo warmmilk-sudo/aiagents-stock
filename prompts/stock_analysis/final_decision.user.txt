@@ -39,8 +39,10 @@ $comprehensive_discussion
 5. 止盈位置（具体价位）
 6. 止损位置（具体价位）
 7. 持有周期建议
-8. 风险提示
-9. 仓位建议（轻仓/中等仓位/重仓）
+8. 当前更适合的波段类型判断（必须明确写：微波段 / 标准波段 之一）
+9. 波段类型判断理由（为什么当前更适合这个波段）
+10. 风险提示
+11. 仓位建议（轻仓/中等仓位/重仓）
 
 评级规则必须严格遵守：
 - 若当前状态为“已持仓”，只能输出：加仓 / 持有 / 减仓 / 卖出
@@ -58,6 +60,8 @@ $comprehensive_discussion
     "take_profit": "止盈价位",
     "stop_loss": "止损价位",
     "holding_period": "持有周期",
+    "swing_type": "微波段 / 标准波段 之一",
+    "swing_type_reason": "波段类型判断理由",
     "position_size": "仓位建议",
     "risk_warning": "风险提示",
     "confidence_level": "信心度(1-10分)"

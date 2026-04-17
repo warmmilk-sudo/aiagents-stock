@@ -1,0 +1,20 @@
+股票代码：$symbol
+股票名称：$stock_name
+
+近 $lookahead_days 天结构化风险事件：
+$structured_payload
+
+最近 $lookback_days 天公告：
+$announcements_payload
+
+最近 $lookback_days 天相关新闻：
+$news_payload
+
+最近 $lookback_days 天补充媒体信息：
+$supplemental_payload
+
+龙虎榜补充说明：
+$longhubang_note
+
+请输出 JSON 对象，判断该股票是否应被一票否决。
+如果没有明确近端利空，请直接输出 `vetoed=false` 和空的 `risk_notes`，不要写“人工复核”或“谨慎观察”。

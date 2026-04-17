@@ -241,8 +241,18 @@ class SectorStrategyEngine:
         if raw_data.get("sectors"):
             sorted_sectors = sorted(raw_data["sectors"].items(), key=lambda x: abs(x[1]["change_pct"]), reverse=True)
             sectors_list = [name for name, _ in sorted_sectors[:30]]  # 取前30个活跃板块
-        
-        sectors_str = ", ".join(sectors_list) if sectors_list else "未知板块"
+
+        concepts_list = []
+        if raw_data.get("concepts"):
+            sorted_concepts = sorted(raw_data["concepts"].items(), key=lambda x: abs(x[1]["change_pct"]), reverse=True)
+            concepts_list = [name for name, _ in sorted_concepts[:30]]
+
+        reference_boards = []
+        if sectors_list:
+            reference_boards.append("【行业板块】" + "、".join(sectors_list))
+        if concepts_list:
+            reference_boards.append("【概念板块】" + "、".join(concepts_list))
+        sectors_str = "\n".join(reference_boards) if reference_boards else "未知板块"
         analysis_date = str(raw_data.get("timestamp") or local_now_str())
 
         messages = build_messages(

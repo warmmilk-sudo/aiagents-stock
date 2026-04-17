@@ -22,6 +22,49 @@ class NotificationService:
         load_dotenv()
         self.config = self._load_config()
         self.last_webhook_error = ""
+
+    @staticmethod
+    def _normalize_notification_class(value) -> str:
+        normalized = str(value or "").strip().lower().replace("-", "_")
+        aliases = {
+            "focus": "focus_alert",
+            "focus_alert": "focus_alert",
+            "关注": "focus_alert",
+            "关注提醒": "focus_alert",
+            "price": "price_alert",
+            "price_alert": "price_alert",
+            "价格": "price_alert",
+            "价格提醒": "price_alert",
+            "risk": "risk_alert",
+            "risk_alert": "risk_alert",
+            "风险": "risk_alert",
+            "风险预警": "risk_alert",
+            "profit": "profit_alert",
+            "profit_alert": "profit_alert",
+            "收益": "profit_alert",
+            "收益信号": "profit_alert",
+            "system": "system_alert",
+            "system_alert": "system_alert",
+            "系统": "system_alert",
+            "系统通知": "system_alert",
+            "other": "other_alert",
+            "other_alert": "other_alert",
+            "提醒": "other_alert",
+        }
+        return aliases.get(normalized, "")
+
+    @classmethod
+    def _notification_label_for_class(cls, value) -> str:
+        normalized = cls._normalize_notification_class(value)
+        labels = {
+            "focus_alert": "关注提醒",
+            "price_alert": "价格提醒",
+            "risk_alert": "风险预警",
+            "profit_alert": "收益信号",
+            "system_alert": "系统通知",
+            "other_alert": "其他提醒",
+        }
+        return labels.get(normalized, "提醒")
     
     def _load_config(self) -> Dict:
         """加载通知配置"""
@@ -380,16 +423,45 @@ class NotificationService:
 
             turnover_rate = notification.get('turnover_rate')
             turnover_rate_text = _fmt_num(turnover_rate)
+            notification_class = self._normalize_notification_class(
+                notification.get("notification_class")
+                or notification.get("notification_category")
+                or notification.get("notification_label")
+                or notification.get("type")
+            )
+            notification_label = str(
+                notification.get("notification_label")
+                or notification.get("notification_class_label")
+                or self._notification_label_for_class(notification_class)
+                or notification.get("type")
+                or "提醒"
+            ).strip()
+            trigger_summary = str(notification.get("trigger_summary") or notification.get("message") or "").strip()
+            swing_label = str(notification.get("swing_execution_label") or "").strip()
             
             message_lines = [
-                f"{content_prefix}股票监测提醒",
+                f"{content_prefix}{notification_label}",
                 "",
                 f"**股票代码**: {notification['symbol']}",
                 "",
                 f"**股票名称**: {notification['name']}",
                 "",
-                "**📊 实时行情**:",
+                f"**提醒分类**: {notification_label}",
+                "",
             ]
+            if trigger_summary:
+                message_lines.extend([
+                    f"**📣 触发摘要**: {trigger_summary}",
+                    "",
+                ])
+            if swing_label:
+                message_lines.extend([
+                    f"**📌 波段类型**: {swing_label}",
+                    "",
+                ])
+            message_lines.extend([
+                "**📊 实时行情**:",
+            ])
             current_price = notification.get("current_price")
             if current_price is not None:
                 message_lines.append(f"- 当前价格: {current_price}元")
@@ -492,19 +564,37 @@ class NotificationService:
         """发送飞书Webhook通知"""
         try:
             import requests
+
+            def _short_text(value, limit):
+                text = " ".join(str(value or "").split()).strip()
+                if not text:
+                    return ""
+                if len(text) <= limit:
+                    return text
+                return text[: limit - 1].rstrip("，,；;。.") + "…"
+
             keyword = str(self.config.get('webhook_keyword') or '').strip()
             title_prefix = f"{keyword} - " if keyword else ""
-            keyword_block = []
-            if keyword:
-                keyword_block.append(
-                    {
-                        "tag": "div",
-                        "text": {
-                            "content": f"**关键词**\n{keyword}",
-                            "tag": "lark_md"
-                        }
-                    }
-                )
+            notification_class = self._normalize_notification_class(
+                notification.get("notification_class")
+                or notification.get("notification_category")
+                or notification.get("notification_label")
+                or notification.get("type")
+            )
+            notification_label = str(
+                notification.get("notification_label")
+                or notification.get("notification_class_label")
+                or self._notification_label_for_class(notification_class)
+                or notification.get("type")
+                or "提醒"
+            ).strip()
+            trigger_summary = _short_text(notification.get("trigger_summary") or notification.get("message"), 30)
+            swing_label = str(notification.get("swing_execution_label") or "").strip()
+            triggered_at = str(notification.get("triggered_at") or "").strip()
+            symbol = str(notification.get("symbol") or "").strip()
+            name = str(notification.get("name") or "").strip()
+            title_suffix = f"{symbol} {name}".strip() or symbol or name or "股票提醒"
+            note_parts = [part for part in (triggered_at, swing_label) if part]
             
             # 构建飞书消息格式
             data = {
@@ -512,66 +602,25 @@ class NotificationService:
                 "card": {
                     "header": {
                         "title": {
-                            "content": f"📊 {title_prefix}股票监测提醒 - {notification['symbol']}",
+                            "content": f"{title_prefix}{notification_label} | {title_suffix}",
                             "tag": "plain_text"
                         },
                         "template": "blue"
                     },
-                    "elements": keyword_block + [
-                        {
-                            "tag": "div",
-                            "fields": [
-                                {
-                                    "is_short": True,
-                                    "text": {
-                                        "content": f"**股票代码**\n{notification['symbol']}",
-                                        "tag": "lark_md"
-                                    }
-                                },
-                                {
-                                    "is_short": True,
-                                    "text": {
-                                        "content": f"**股票名称**\n{notification['name']}",
-                                        "tag": "lark_md"
-                                    }
-                                }
-                            ]
-                        },
-                        {
-                            "tag": "div",
-                            "fields": [
-                                {
-                                    "is_short": True,
-                                    "text": {
-                                        "content": f"**提醒类型**\n{notification['type']}",
-                                        "tag": "lark_md"
-                                    }
-                                },
-                                {
-                                    "is_short": True,
-                                    "text": {
-                                        "content": f"**触发时间**\n{notification['triggered_at']}",
-                                        "tag": "lark_md"
-                                    }
-                                }
-                            ]
-                        },
+                    "elements": [
                         {
                             "tag": "div",
                             "text": {
-                                "content": f"**提醒内容**\n{notification['message']}",
+                                "content": f"**摘要**\n{trigger_summary or '盘中出现新的价格/关注信号'}",
                                 "tag": "lark_md"
                             }
-                        },
-                        {
-                            "tag": "hr"
                         },
                         {
                             "tag": "note",
                             "elements": [
                                 {
                                     "tag": "plain_text",
-                                    "content": "此消息由AI股票分析系统自动发送"
+                                    "content": " | ".join(note_parts) if note_parts else "此消息由AI股票分析系统自动发送"
                                 }
                             ]
                         }

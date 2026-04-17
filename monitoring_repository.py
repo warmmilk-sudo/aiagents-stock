@@ -35,6 +35,48 @@ class MonitoringRepository:
     ACCOUNT_NORMALIZATION_KEY = "monitoring_account_normalization_v1"
     ACCOUNT_RISK_PROFILE_KEY_PREFIX = "smart_monitor_account_risk_profile::"
     SHARED_RISK_PROFILE_KEY = "smart_monitor_shared_risk_profile"
+    NOTIFICATION_CLASS_LABELS = {
+        "focus_alert": "关注提醒",
+        "price_alert": "价格提醒",
+        "risk_alert": "风险预警",
+        "profit_alert": "收益信号",
+        "system_alert": "系统通知",
+        "other_alert": "其他提醒",
+    }
+    NOTIFICATION_CLASS_TONES = {
+        "focus_alert": "info",
+        "price_alert": "warning",
+        "risk_alert": "danger",
+        "profit_alert": "success",
+        "system_alert": "info",
+        "other_alert": "warning",
+    }
+    NOTIFICATION_CLASS_ALIASES = {
+        "focus": "focus_alert",
+        "focus_alert": "focus_alert",
+        "关注": "focus_alert",
+        "关注提醒": "focus_alert",
+        "price": "price_alert",
+        "price_alert": "price_alert",
+        "价格": "price_alert",
+        "价格提醒": "price_alert",
+        "risk": "risk_alert",
+        "risk_alert": "risk_alert",
+        "风险": "risk_alert",
+        "风险预警": "risk_alert",
+        "profit": "profit_alert",
+        "profit_alert": "profit_alert",
+        "收益": "profit_alert",
+        "收益信号": "profit_alert",
+        "system": "system_alert",
+        "system_alert": "system_alert",
+        "系统": "system_alert",
+        "系统通知": "system_alert",
+        "other": "other_alert",
+        "other_alert": "other_alert",
+        "其他": "other_alert",
+        "提醒": "other_alert",
+    }
 
     @staticmethod
     def _clamp_int(value: object, minimum: int, maximum: int, default: int) -> int:
@@ -103,6 +145,151 @@ class MonitoringRepository:
     @classmethod
     def _account_risk_profile_key(cls, account_name: Optional[str]) -> str:
         return f"{cls.ACCOUNT_RISK_PROFILE_KEY_PREFIX}{cls._normalize_account_name_value(account_name)}"
+
+    @classmethod
+    def _normalize_notification_class_value(cls, value: Optional[object]) -> str:
+        normalized = str(value or "").strip().lower().replace("-", "_")
+        if not normalized:
+            return ""
+        return cls.NOTIFICATION_CLASS_ALIASES.get(normalized, "")
+
+    @classmethod
+    def _notification_class_label(cls, value: Optional[object]) -> str:
+        normalized = cls._normalize_notification_class_value(value)
+        return cls.NOTIFICATION_CLASS_LABELS.get(normalized, "提醒")
+
+    @classmethod
+    def _notification_class_tone(cls, value: Optional[object]) -> str:
+        normalized = cls._normalize_notification_class_value(value)
+        return cls.NOTIFICATION_CLASS_TONES.get(normalized, "warning")
+
+    @classmethod
+    def _derive_notification_class(
+        cls,
+        *,
+        event_type: Optional[str],
+        message: Optional[str],
+        payload: Optional[Dict],
+    ) -> str:
+        payload = payload if isinstance(payload, dict) else {}
+        for candidate in (
+            payload.get("notification_class"),
+            payload.get("notification_category"),
+            payload.get("notification_label"),
+            payload.get("type"),
+            event_type,
+        ):
+            normalized = cls._normalize_notification_class_value(candidate)
+            if normalized:
+                return normalized
+
+        parts = [
+            event_type,
+            message,
+            payload.get("message"),
+            payload.get("action"),
+            payload.get("action_detail"),
+            payload.get("swing_execution_mode"),
+            payload.get("trigger_summary"),
+            payload.get("notification_reason"),
+        ]
+        text = " ".join(str(part or "") for part in parts)
+        lowered = text.lower()
+
+        system_keywords = (
+            "threshold_sync",
+            "system",
+            "sync",
+            "test",
+            "测试",
+            "迁移",
+            "修复",
+            "初始化",
+            "重建",
+            "回写阈值",
+            "配置",
+        )
+        risk_keywords = (
+            "stop_loss",
+            "stop loss",
+            "止损",
+            "跌破",
+            "下破",
+            "失守",
+            "回撤",
+            "破位",
+            "风险",
+            "清仓",
+            "defensive_exit",
+            "defensive_trim",
+            "warning",
+        )
+        profit_keywords = (
+            "take_profit",
+            "take profit",
+            "止盈",
+            "收益",
+            "盈利",
+            "兑现",
+            "锁盈",
+            "proactive_trim",
+            "目标价",
+        )
+        focus_keywords = (
+            "buy",
+            "entry",
+            "watch",
+            "focus",
+            "关注",
+            "入场",
+            "建仓",
+            "回踩",
+            "突破",
+            "接近",
+            "区间",
+            "加仓",
+        )
+        price_keywords = (
+            "price",
+            "价格",
+            "预警",
+            "触及",
+            "价位",
+            "信号",
+        )
+
+        if any(keyword in text for keyword in system_keywords):
+            return "system_alert"
+        if any(keyword in lowered for keyword in risk_keywords):
+            return "risk_alert"
+        if any(keyword in lowered for keyword in profit_keywords):
+            return "profit_alert"
+        if any(keyword in text for keyword in focus_keywords):
+            return "focus_alert"
+        if any(keyword in text for keyword in price_keywords):
+            return "price_alert"
+        return "price_alert"
+
+    @classmethod
+    def _decorate_notification_payload(
+        cls,
+        payload: Dict,
+        *,
+        event_type: Optional[str],
+        message: Optional[str],
+    ) -> Dict:
+        enriched = dict(payload or {})
+        notification_class = cls._derive_notification_class(
+            event_type=event_type,
+            message=message,
+            payload=enriched,
+        )
+        enriched["notification_class"] = notification_class
+        enriched["notification_class_label"] = cls._notification_class_label(notification_class)
+        enriched["notification_tone"] = cls._notification_class_tone(notification_class)
+        if not str(enriched.get("notification_category") or "").strip():
+            enriched["notification_category"] = "focus" if notification_class == "focus_alert" else "price"
+        return enriched
     VALID_MONITOR_TYPES = {"ai_task", "price_alert"}
     VALID_SOURCES = {"manual", "portfolio", "ai_monitor", "legacy_conflict"}
     DEPRECATED_CONFIG_KEYS = {
@@ -409,7 +596,7 @@ class MonitoringRepository:
                 ON a.id = mi.asset_id
             WHERE mi.asset_id IS NOT NULL
               AND a.deleted_at IS NULL
-              AND a.status <> 'portfolio'
+              AND a.status <> 'holding'
               AND (
                     mi.managed_by_portfolio = 1
                  OR mi.portfolio_stock_id IS NOT NULL
@@ -511,7 +698,9 @@ class MonitoringRepository:
               AND deleted_at IS NULL
             ORDER BY
                 CASE status
+                    WHEN 'holding' THEN 1
                     WHEN 'portfolio' THEN 1
+                    WHEN 'focus' THEN 2
                     WHEN 'watchlist' THEN 2
                     ELSE 3
                 END,
@@ -2025,7 +2214,13 @@ class MonitoringRepository:
                     "triggered_at": row["created_at"],
                 }
             )
-            notifications.append(payload)
+            notifications.append(
+                self._decorate_notification_payload(
+                    payload,
+                    event_type=row["event_type"],
+                    message=row["message"],
+                )
+            )
         return notifications
 
     def get_recent_events(self, limit: int = 20) -> List[Dict]:
@@ -2135,7 +2330,13 @@ class MonitoringRepository:
                     "read_at": row["read_at"],
                 }
             )
-            notifications.append(payload)
+            notifications.append(
+                self._decorate_notification_payload(
+                    payload,
+                    event_type=row["event_type"],
+                    message=row["message"],
+                )
+            )
         return notifications
 
     def mark_notification_sent(self, event_id: int) -> None:
@@ -2318,7 +2519,7 @@ class MonitoringRepository:
                     SELECT id, account_name, symbol
                     FROM assets
                     WHERE symbol = ?
-                      AND status = 'portfolio'
+                      AND status = 'holding'
                       AND deleted_at IS NULL
                     ORDER BY id ASC
                     """,

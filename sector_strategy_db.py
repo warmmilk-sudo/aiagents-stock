@@ -6,6 +6,7 @@
 import sqlite3
 from datetime import datetime, date
 import json
+import re
 import pandas as pd
 import logging
 
@@ -14,6 +15,41 @@ from time_utils import local_now_str
 
 class SectorStrategyDatabase:
     """智策板块数据库管理类"""
+
+    LIFECYCLE_STAGE_STARTUP = "startup"
+    LIFECYCLE_STAGE_EXPLOSIVE = "explosive"
+    LIFECYCLE_STAGE_DECAY = "decay"
+    LIFECYCLE_STAGE_NEUTRAL = "neutral"
+    LIFECYCLE_LOOKBACK_DAYS = 15
+    LIFECYCLE_WINDOWS = (3, 5, 10, 15)
+    LIFECYCLE_MIN_OBSERVATIONS = {3: 3, 5: 4, 10: 7, 15: 10}
+    LIFECYCLE_CONFIG_KEY = "lifecycle_config_v1"
+    DEFAULT_LIFECYCLE_CONFIG = {
+        "startup_current_min": 60.0,
+        "startup_change_3d_min": 12.0,
+        "startup_slope_3d_min": 5.0,
+        "startup_current_vs_avg_3d_min": 8.0,
+        "startup_acceleration_min": -3.0,
+        "startup_change_5d_min": 18.0,
+        "startup_drawdown_5d_max": 4.0,
+        "startup_rising_5d_min": 3,
+        "startup_falling_5d_max": 1,
+        "startup_current_max": 88.0,
+        "explosive_current_min": 83.5,
+        "explosive_avg_10d_min": 68.0,
+        "explosive_slope_10d_min": 1.3,
+        "explosive_drawdown_10d_max": 8.0,
+        "explosive_high_heat_days_min": 2,
+        "explosive_rising_5d_min": 2,
+        "explosive_falling_5d_max": 1,
+        "explosive_current_vs_avg_5d_min": -1.0,
+        "decay_peak_min": 88.0,
+        "decay_drawdown_long_min": 14.0,
+        "decay_change_5d_max": -8.0,
+        "decay_change_3d_max": -10.0,
+        "decay_falling_5d_min": 2,
+        "decay_current_below_avg_min": 4.0,
+    }
     
     def __init__(self, db_path='sector_strategy.db'):
         """
@@ -28,6 +64,7 @@ class SectorStrategyDatabase:
         if not self.logger.handlers:
             logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(levelname)s %(name)s: %(message)s')
         self.init_database()
+        self._lifecycle_config_cache = self._load_lifecycle_config()
     
     def get_connection(self):
         """获取数据库连接"""
@@ -83,6 +120,75 @@ class SectorStrategyDatabase:
             ensure_ascii=False,
             indent=indent
         )
+
+    @staticmethod
+    def _coerce_config_value(default_value, raw_value):
+        if isinstance(default_value, int) and not isinstance(default_value, bool):
+            try:
+                return int(raw_value)
+            except (TypeError, ValueError):
+                return int(default_value)
+        try:
+            return float(raw_value)
+        except (TypeError, ValueError):
+            return float(default_value)
+
+    def _normalize_lifecycle_config(self, payload):
+        normalized = dict(self.DEFAULT_LIFECYCLE_CONFIG)
+        if not isinstance(payload, dict):
+            return normalized
+        for key, default_value in self.DEFAULT_LIFECYCLE_CONFIG.items():
+            if key in payload:
+                normalized[key] = self._coerce_config_value(default_value, payload.get(key))
+        return normalized
+
+    def _load_lifecycle_config(self):
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                '''
+                SELECT setting_value
+                FROM sector_strategy_settings
+                WHERE setting_key = ?
+                ''',
+                (self.LIFECYCLE_CONFIG_KEY,),
+            )
+            row = cursor.fetchone()
+            if not row or not row[0]:
+                return dict(self.DEFAULT_LIFECYCLE_CONFIG)
+            try:
+                payload = json.loads(row[0])
+            except Exception:
+                payload = {}
+            return self._normalize_lifecycle_config(payload)
+        finally:
+            conn.close()
+
+    def get_lifecycle_config(self):
+        self._lifecycle_config_cache = self._normalize_lifecycle_config(self._lifecycle_config_cache)
+        return dict(self._lifecycle_config_cache)
+
+    def update_lifecycle_config(self, payload):
+        normalized = self._normalize_lifecycle_config(payload)
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                '''
+                INSERT INTO sector_strategy_settings (setting_key, setting_value, updated_at)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(setting_key) DO UPDATE SET
+                    setting_value = excluded.setting_value,
+                    updated_at = CURRENT_TIMESTAMP
+                ''',
+                (self.LIFECYCLE_CONFIG_KEY, self._to_json(normalized)),
+            )
+            conn.commit()
+            self._lifecycle_config_cache = normalized
+            return dict(normalized)
+        finally:
+            conn.close()
     
     def init_database(self):
         """初始化数据库表"""
@@ -177,7 +283,81 @@ class SectorStrategyDatabase:
             FOREIGN KEY (analysis_id) REFERENCES sector_analysis_reports (id)
         )
         ''')
-        
+
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS sector_heat_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            analysis_id INTEGER NOT NULL,
+            board_date TEXT,
+            analysis_date TEXT NOT NULL,
+            sector_name TEXT NOT NULL,
+            normalized_sector_name TEXT NOT NULL,
+            source_type TEXT,
+            heat_score REAL NOT NULL DEFAULT 0,
+            heat_group TEXT,
+            heat_rank INTEGER DEFAULT 0,
+            trend_text TEXT,
+            sustainability TEXT,
+            lifecycle_stage TEXT NOT NULL DEFAULT 'neutral',
+            delta_1 REAL,
+            delta_2 REAL,
+            observation_count INTEGER NOT NULL DEFAULT 0,
+            window_size_used INTEGER NOT NULL DEFAULT 0,
+            trajectory_json TEXT,
+            lifecycle_details_json TEXT,
+            action_hint TEXT,
+            defense_line_type TEXT NOT NULL DEFAULT 'NONE',
+            selection_veto INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (analysis_id) REFERENCES sector_analysis_reports (id)
+        )
+        ''')
+        cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_sector_heat_history_analysis
+        ON sector_heat_history(analysis_id, heat_group, heat_rank)
+        ''')
+        cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_sector_heat_history_sector_date
+        ON sector_heat_history(normalized_sector_name, datetime(analysis_date) DESC, id DESC)
+        ''')
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS sector_heat_daily (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            board_date TEXT NOT NULL,
+            sector_name TEXT NOT NULL,
+            normalized_sector_name TEXT NOT NULL,
+            source_type TEXT NOT NULL,
+            heat_score REAL NOT NULL DEFAULT 0,
+            change_pct REAL NOT NULL DEFAULT 0,
+            turnover REAL NOT NULL DEFAULT 0,
+            market_cap REAL NOT NULL DEFAULT 0,
+            fund_flow_pct REAL NOT NULL DEFAULT 0,
+            rank_order INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(board_date, normalized_sector_name)
+        )
+        ''')
+        cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_sector_heat_daily_date
+        ON sector_heat_daily(board_date, rank_order)
+        ''')
+        cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_sector_heat_daily_sector
+        ON sector_heat_daily(normalized_sector_name, board_date DESC)
+        ''')
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS sector_strategy_settings (
+            setting_key TEXT PRIMARY KEY,
+            setting_value TEXT NOT NULL,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+        ''')
+        self._ensure_table_column(cursor, "sector_heat_history", "board_date", "TEXT")
+        self._ensure_table_column(cursor, "sector_heat_history", "source_type", "TEXT")
+        self._ensure_table_column(cursor, "sector_heat_history", "observation_count", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_table_column(cursor, "sector_heat_history", "window_size_used", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_table_column(cursor, "sector_heat_history", "lifecycle_details_json", "TEXT")
+
         # 数据版本管理表
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS data_versions (
@@ -198,6 +378,522 @@ class SectorStrategyDatabase:
         conn.close()
         
         self.logger.info("[智策板块] 数据库初始化完成")
+
+    @staticmethod
+    def _row_to_dict(cursor: sqlite3.Cursor, row):
+        columns = [desc[0] for desc in cursor.description] if cursor.description else []
+        return dict(zip(columns, row)) if row else None
+
+    @staticmethod
+    def _ensure_table_column(cursor: sqlite3.Cursor, table_name: str, column_name: str, column_type: str):
+        cursor.execute(f"PRAGMA table_info({table_name})")
+        existing_columns = {row[1] for row in cursor.fetchall()}
+        if column_name not in existing_columns:
+            cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}")
+
+    @staticmethod
+    def _extract_board_date(analysis_date, data_date_range=None):
+        for value in (data_date_range, analysis_date):
+            match = re.search(r"(\d{4}-\d{2}-\d{2})", str(value or ""))
+            if match:
+                return match.group(1)
+        return str(analysis_date or "")[:10]
+
+    @staticmethod
+    def _normalize_sector_name(value):
+        text = re.sub(r"\s+", "", str(value or "").strip())
+        return text.replace("概念", "").replace("板块", "")
+
+    @staticmethod
+    def _to_float(value, default=0.0):
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    def _extract_heat_payload(self, analysis_content):
+        payload = analysis_content if isinstance(analysis_content, dict) else {}
+        final_predictions = payload.get("final_predictions") if isinstance(payload.get("final_predictions"), dict) else {}
+        heat = final_predictions.get("heat") if isinstance(final_predictions.get("heat"), dict) else {}
+        return heat if isinstance(heat, dict) else {}
+
+    def _extract_heat_items(self, analysis_content):
+        heat_payload = self._extract_heat_payload(analysis_content)
+        items = []
+        for group_name in ("hottest", "heating", "cooling"):
+            group_items = heat_payload.get(group_name)
+            if not isinstance(group_items, list):
+                continue
+            for index, raw_item in enumerate(group_items, 1):
+                if not isinstance(raw_item, dict):
+                    continue
+                sector_name = str(raw_item.get("sector") or raw_item.get("name") or "").strip()
+                normalized_name = self._normalize_sector_name(sector_name)
+                if not sector_name or not normalized_name:
+                    continue
+                items.append(
+                    {
+                        "sector_name": sector_name,
+                        "normalized_sector_name": normalized_name,
+                        "heat_score": self._to_float(raw_item.get("score"), 0.0),
+                        "heat_group": group_name,
+                        "heat_rank": index,
+                        "trend_text": str(raw_item.get("trend") or "").strip(),
+                        "sustainability": str(raw_item.get("sustainability") or "").strip(),
+                    }
+                )
+        store = {}
+        for item in items:
+            existing = store.get(item["normalized_sector_name"])
+            if existing is None or item["heat_score"] > existing["heat_score"]:
+                store[item["normalized_sector_name"]] = item
+        return list(store.values())
+
+    @staticmethod
+    def _percentile_rank(values):
+        ordered = sorted(enumerate(values), key=lambda item: item[1], reverse=True)
+        total = len(ordered)
+        result = [50.0] * total
+        if total <= 1:
+            return [100.0] * total if total == 1 else []
+        for position, (index, _value) in enumerate(ordered):
+            result[index] = round((1 - (position / (total - 1))) * 100, 2)
+        return result
+
+    def _build_panel_rows_from_payload(self, board_date, analysis_content):
+        payload = analysis_content if isinstance(analysis_content, dict) else {}
+        data_summary = payload.get("data_summary") if isinstance(payload.get("data_summary"), dict) else {}
+        sectors_payload = data_summary.get("sectors") if isinstance(data_summary.get("sectors"), dict) else {}
+        concepts_payload = data_summary.get("concepts") if isinstance(data_summary.get("concepts"), dict) else {}
+        raw_entries = []
+        for source_type, boards in (("industry", sectors_payload), ("concept", concepts_payload)):
+            for sector_name, board in boards.items():
+                if not isinstance(board, dict):
+                    continue
+                normalized_name = self._normalize_sector_name(sector_name)
+                if not normalized_name:
+                    continue
+                raw_entries.append(
+                    {
+                        "board_date": board_date,
+                        "sector_name": str(sector_name or "").strip(),
+                        "normalized_sector_name": normalized_name,
+                        "source_type": source_type,
+                        "change_pct": self._to_float(board.get("change_pct"), 0.0),
+                        "turnover": self._to_float(board.get("turnover"), 0.0),
+                        "market_cap": self._to_float(board.get("market_cap"), 0.0),
+                        "fund_flow_pct": 0.0,
+                    }
+                )
+        return self._score_daily_panel_rows(raw_entries)
+
+    def _build_panel_rows_from_heat_payload(self, board_date, analysis_content):
+        heat_items = self._extract_heat_items(analysis_content)
+        if not heat_items:
+            return []
+        scored_rows = []
+        for index, item in enumerate(
+            sorted(heat_items, key=lambda row: self._to_float(row.get("heat_score"), 0.0), reverse=True),
+            1,
+        ):
+            scored_rows.append(
+                {
+                    "board_date": board_date,
+                    "sector_name": item.get("sector_name"),
+                    "normalized_sector_name": item.get("normalized_sector_name"),
+                    "source_type": "report_heat",
+                    "change_pct": 0.0,
+                    "turnover": 0.0,
+                    "market_cap": 0.0,
+                    "fund_flow_pct": 0.0,
+                    "heat_score": round(self._to_float(item.get("heat_score"), 0.0), 2),
+                    "rank_order": index,
+                }
+            )
+        return scored_rows
+
+    def _load_latest_raw_rows(self, cursor, board_date, data_type):
+        cursor.execute(
+            '''
+            SELECT MAX(data_version)
+            FROM sector_raw_data
+            WHERE data_date = ? AND data_type = ?
+            ''',
+            (board_date, data_type),
+        )
+        version_row = cursor.fetchone()
+        version = version_row[0] if version_row else None
+        if version is None:
+            return []
+        cursor.execute(
+            '''
+            SELECT sector_name, sector_code, change_pct, turnover, market_cap
+            FROM sector_raw_data
+            WHERE data_date = ? AND data_type = ? AND data_version = ?
+            ''',
+            (board_date, data_type, int(version)),
+        )
+        return cursor.fetchall()
+
+    def _load_fund_flow_ranks(self, cursor, board_date):
+        cursor.execute(
+            '''
+            SELECT MAX(data_version)
+            FROM sector_raw_data
+            WHERE data_date = ? AND data_type = 'fund_flow'
+            ''',
+            (board_date,),
+        )
+        version_row = cursor.fetchone()
+        version = version_row[0] if version_row else None
+        if version is None:
+            return {}
+        cursor.execute(
+            '''
+            SELECT sector_name, change_pct
+            FROM sector_raw_data
+            WHERE data_date = ? AND data_type = 'fund_flow' AND data_version = ?
+            ''',
+            (board_date, int(version)),
+        )
+        rows = cursor.fetchall()
+        if not rows:
+            return {}
+        normalized_names = [self._normalize_sector_name(row[0]) for row in rows]
+        values = [self._to_float(row[1], 0.0) for row in rows]
+        ranks = self._percentile_rank(values)
+        return {
+            normalized_name: {"rank": ranks[index], "value": values[index]}
+            for index, normalized_name in enumerate(normalized_names)
+            if normalized_name
+        }
+
+    def _build_panel_rows_from_raw(self, cursor, board_date):
+        fund_flow_map = self._load_fund_flow_ranks(cursor, board_date)
+        raw_entries = []
+        for source_type in ("industry", "concept"):
+            rows = self._load_latest_raw_rows(cursor, board_date, source_type)
+            for sector_name, _sector_code, change_pct, turnover, market_cap in rows:
+                normalized_name = self._normalize_sector_name(sector_name)
+                if not normalized_name:
+                    continue
+                raw_entries.append(
+                    {
+                        "board_date": board_date,
+                        "sector_name": str(sector_name or "").strip(),
+                        "normalized_sector_name": normalized_name,
+                        "source_type": source_type,
+                        "change_pct": self._to_float(change_pct, 0.0),
+                        "turnover": self._to_float(turnover, 0.0),
+                        "market_cap": self._to_float(market_cap, 0.0),
+                        "fund_flow_pct": self._to_float((fund_flow_map.get(normalized_name) or {}).get("value"), 0.0),
+                    }
+                )
+        return self._score_daily_panel_rows(raw_entries)
+
+    def _score_daily_panel_rows(self, raw_entries):
+        if not raw_entries:
+            return []
+
+        grouped = {"industry": [], "concept": []}
+        for entry in raw_entries:
+            grouped.setdefault(entry.get("source_type") or "industry", []).append(entry)
+
+        scored_entries = []
+        for source_type, entries in grouped.items():
+            if not entries:
+                continue
+            change_scores = self._percentile_rank([entry["change_pct"] for entry in entries])
+            turnover_scores = self._percentile_rank([entry["turnover"] for entry in entries])
+            fund_flow_scores = self._percentile_rank([entry["fund_flow_pct"] for entry in entries])
+            for index, entry in enumerate(entries):
+                penalty = max(0.0, min(25.0, abs(entry["change_pct"]) * 2.5)) if entry["change_pct"] < 0 else 0.0
+                heat_score = max(
+                    0.0,
+                    min(
+                        100.0,
+                        0.65 * change_scores[index] + 0.25 * turnover_scores[index] + 0.10 * fund_flow_scores[index] - penalty,
+                    ),
+                )
+                scored_entries.append(
+                    {
+                        **entry,
+                        "heat_score": round(heat_score, 2),
+                    }
+                )
+
+        merged = {}
+        for entry in scored_entries:
+            existing = merged.get(entry["normalized_sector_name"])
+            if existing is None:
+                merged[entry["normalized_sector_name"]] = dict(entry)
+                continue
+            if entry["heat_score"] > existing["heat_score"]:
+                source_types = set(str(existing.get("source_type") or "").split("|")) | {entry["source_type"]}
+                merged[entry["normalized_sector_name"]] = {
+                    **entry,
+                    "source_type": "|".join(sorted(filter(None, source_types))),
+                }
+            else:
+                source_types = set(str(existing.get("source_type") or "").split("|")) | {entry["source_type"]}
+                existing["source_type"] = "|".join(sorted(filter(None, source_types)))
+
+        ranked = sorted(
+            merged.values(),
+            key=lambda item: (self._to_float(item.get("heat_score"), 0.0), self._to_float(item.get("change_pct"), 0.0)),
+            reverse=True,
+        )
+        for index, item in enumerate(ranked, 1):
+            item["rank_order"] = index
+        return ranked
+
+    def _upsert_daily_heat_panel(self, cursor, board_date, rows):
+        cursor.execute("DELETE FROM sector_heat_daily WHERE board_date = ?", (board_date,))
+        for row in rows:
+            cursor.execute(
+                '''
+                INSERT INTO sector_heat_daily (
+                    board_date, sector_name, normalized_sector_name, source_type,
+                    heat_score, change_pct, turnover, market_cap, fund_flow_pct, rank_order
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''',
+                (
+                    board_date,
+                    row.get("sector_name"),
+                    row.get("normalized_sector_name"),
+                    row.get("source_type") or "industry",
+                    self._to_float(row.get("heat_score"), 0.0),
+                    self._to_float(row.get("change_pct"), 0.0),
+                    self._to_float(row.get("turnover"), 0.0),
+                    self._to_float(row.get("market_cap"), 0.0),
+                    self._to_float(row.get("fund_flow_pct"), 0.0),
+                    int(row.get("rank_order") or 0),
+                ),
+            )
+
+    def _ensure_daily_heat_panel(self, cursor, board_date, analysis_content=None, *, prefer_payload=True):
+        rows = []
+        if prefer_payload and isinstance(analysis_content, dict):
+            rows = self._build_panel_rows_from_payload(board_date, analysis_content)
+            if not rows:
+                rows = self._build_panel_rows_from_heat_payload(board_date, analysis_content)
+        if not rows:
+            rows = self._build_panel_rows_from_raw(cursor, board_date)
+        if rows:
+            self._upsert_daily_heat_panel(cursor, board_date, rows)
+        return rows
+
+    def _get_recent_heat_scores(self, cursor, normalized_sector_name, board_date, limit=2):
+        cursor.execute(
+            '''
+            SELECT heat_score
+            FROM sector_heat_daily
+            WHERE normalized_sector_name = ? AND board_date < ?
+            ORDER BY board_date DESC, id DESC
+            LIMIT ?
+            ''',
+            (normalized_sector_name, board_date, int(limit)),
+        )
+        return [self._to_float(row[0], 0.0) for row in cursor.fetchall()]
+
+    def _window_metrics(self, ordered_scores, window_size):
+        scores = ordered_scores[-min(window_size, len(ordered_scores)) :]
+        min_observations = self.LIFECYCLE_MIN_OBSERVATIONS.get(window_size, min(window_size, 3))
+        if len(scores) < min_observations:
+            return None
+        deltas = [right - left for left, right in zip(scores, scores[1:])]
+        peak = max(scores)
+        return {
+            "scores": scores,
+            "count": len(scores),
+            "current": scores[-1],
+            "change": scores[-1] - scores[0],
+            "avg": sum(scores) / len(scores),
+            "slope": (scores[-1] - scores[0]) / max(1, len(scores) - 1),
+            "rising": sum(1 for delta in deltas if delta > 0),
+            "falling": sum(1 for delta in deltas if delta < 0),
+            "peak": peak,
+            "drawdown": peak - scores[-1],
+            "acceleration": (deltas[-1] - deltas[-2]) if len(deltas) >= 2 else 0.0,
+            "high_heat_days": sum(1 for score in scores if score >= 80),
+        }
+
+    def _build_lifecycle_payload(self, current_score, previous_scores):
+        config = self.get_lifecycle_config()
+        ordered_scores = list(reversed(previous_scores)) + [current_score]
+        delta_1 = None
+        delta_2 = None
+        if len(ordered_scores) >= 2:
+            delta_1 = ordered_scores[-1] - ordered_scores[-2]
+        if len(ordered_scores) >= 3:
+            delta_2 = (ordered_scores[-1] - ordered_scores[-2]) - (ordered_scores[-2] - ordered_scores[-3])
+        metrics = {
+            window_size: self._window_metrics(ordered_scores, window_size)
+            for window_size in self.LIFECYCLE_WINDOWS
+        }
+        short_metrics = metrics.get(3)
+        startup_metrics = metrics.get(5) or metrics.get(3)
+        explosive_metrics = metrics.get(10) or metrics.get(5) or metrics.get(3)
+        decay_metrics = metrics.get(15) or metrics.get(10) or metrics.get(5) or metrics.get(3)
+
+        lifecycle_stage = self.LIFECYCLE_STAGE_NEUTRAL
+        defense_line_type = "NONE"
+        selection_veto = False
+        action_hint = "仅展示，不推动动作"
+        window_size_used = max((window_size for window_size, item in metrics.items() if item), default=len(ordered_scores))
+
+        if short_metrics and startup_metrics:
+            startup_signal = (
+                short_metrics["current"] >= config["startup_current_min"]
+                and short_metrics["change"] >= config["startup_change_3d_min"]
+                and short_metrics["slope"] >= config["startup_slope_3d_min"]
+                and short_metrics["rising"] >= 2
+                and short_metrics["falling"] == 0
+                and short_metrics["current"] >= short_metrics["avg"] + config["startup_current_vs_avg_3d_min"]
+                and short_metrics["acceleration"] >= config["startup_acceleration_min"]
+                and startup_metrics["change"] >= config["startup_change_5d_min"]
+                and startup_metrics["drawdown"] <= config["startup_drawdown_5d_max"]
+                and startup_metrics["rising"] >= min(startup_metrics["count"] - 1, int(config["startup_rising_5d_min"]))
+                and startup_metrics["falling"] <= int(config["startup_falling_5d_max"])
+                and current_score < config["startup_current_max"]
+            )
+        else:
+            startup_signal = False
+
+        explosive_required_high_days = int(config["explosive_high_heat_days_min"])
+        explosive_signal = bool(
+            explosive_metrics
+            and startup_metrics
+            and explosive_metrics["current"] >= config["explosive_current_min"]
+            and explosive_metrics["avg"] >= config["explosive_avg_10d_min"]
+            and explosive_metrics["slope"] >= config["explosive_slope_10d_min"]
+            and explosive_metrics["drawdown"] <= config["explosive_drawdown_10d_max"]
+            and explosive_metrics["high_heat_days"] >= explosive_required_high_days
+            and startup_metrics["rising"] >= int(config["explosive_rising_5d_min"])
+            and startup_metrics["falling"] <= int(config["explosive_falling_5d_max"])
+            and startup_metrics["current"] >= startup_metrics["avg"] + config["explosive_current_vs_avg_5d_min"]
+        )
+
+        decay_required_drawdown = (
+            config["decay_drawdown_long_min"]
+            if decay_metrics and decay_metrics["count"] >= 10
+            else min(float(config["decay_drawdown_long_min"]), 10.0)
+        )
+        decay_required_falling = (
+            int(config["decay_falling_5d_min"])
+            if startup_metrics and startup_metrics["count"] >= 4
+            else 1
+        )
+        decay_signal = bool(
+            decay_metrics
+            and startup_metrics
+            and decay_metrics["peak"] >= config["decay_peak_min"]
+            and decay_metrics["drawdown"] >= decay_required_drawdown
+            and (
+                startup_metrics["change"] <= config["decay_change_5d_max"]
+                or (short_metrics and short_metrics["change"] <= config["decay_change_3d_max"])
+            )
+            and startup_metrics["falling"] >= decay_required_falling
+            and current_score <= (decay_metrics["avg"] - config["decay_current_below_avg_min"])
+        )
+
+        if decay_signal:
+            lifecycle_stage = self.LIFECYCLE_STAGE_DECAY
+            defense_line_type = "NONE"
+            selection_veto = True
+            action_hint = "衰退期，板块级一票否决"
+        elif explosive_signal:
+            lifecycle_stage = self.LIFECYCLE_STAGE_EXPLOSIVE
+            defense_line_type = "MA5"
+            action_hint = "爆发期，允许进入尾盘执行候选"
+        elif startup_signal:
+            lifecycle_stage = self.LIFECYCLE_STAGE_STARTUP
+            defense_line_type = "MA10"
+            action_hint = "启动期，进入 MA10 重点观察池"
+        trajectory = [{"day_offset": offset - len(ordered_scores) + 1, "score": round(score, 2)} for offset, score in enumerate(ordered_scores)]
+        return {
+            "lifecycle_stage": lifecycle_stage,
+            "delta_1": round(delta_1, 2) if delta_1 is not None else None,
+            "delta_2": round(delta_2, 2) if delta_2 is not None else None,
+            "trajectory": trajectory,
+            "action_hint": action_hint,
+            "defense_line_type": defense_line_type,
+            "selection_veto": selection_veto,
+            "observation_count": len(ordered_scores),
+            "window_size_used": int(window_size_used or 0),
+            "lifecycle_details": {
+                str(window_size): {
+                    key: round(value, 2) if isinstance(value, float) else value
+                    for key, value in (window_metrics or {}).items()
+                    if key != "scores"
+                }
+                for window_size, window_metrics in metrics.items()
+                if window_metrics
+            },
+            "config_snapshot": {
+                key: self._coerce_config_value(default_value, config.get(key))
+                for key, default_value in self.DEFAULT_LIFECYCLE_CONFIG.items()
+            },
+        }
+
+    def _save_heat_history(self, cursor, analysis_id, analysis_date, analysis_content, data_date_range=None):
+        board_date = self._extract_board_date(analysis_date, data_date_range)
+        cursor.execute(
+            '''
+            SELECT sector_name, normalized_sector_name, source_type, heat_score, rank_order
+            FROM sector_heat_daily
+            WHERE board_date = ?
+            ORDER BY rank_order ASC, id ASC
+            ''',
+            (board_date,),
+        )
+        panel_rows = cursor.fetchall()
+        if not panel_rows:
+            return
+        cursor.execute("DELETE FROM sector_heat_history WHERE analysis_id = ?", (analysis_id,))
+        for sector_name, normalized_sector_name, source_type, heat_score, rank_order in panel_rows:
+            previous_scores = self._get_recent_heat_scores(
+                cursor,
+                normalized_sector_name,
+                board_date,
+                limit=max(0, int(self.LIFECYCLE_LOOKBACK_DAYS) - 1),
+            )
+            lifecycle = self._build_lifecycle_payload(self._to_float(heat_score, 0.0), previous_scores)
+            cursor.execute(
+                '''
+                INSERT INTO sector_heat_history (
+                    analysis_id, board_date, analysis_date, sector_name, normalized_sector_name,
+                    source_type, heat_score, heat_group, heat_rank, trend_text, sustainability,
+                    lifecycle_stage, delta_1, delta_2, observation_count, window_size_used,
+                    trajectory_json, lifecycle_details_json, action_hint, defense_line_type, selection_veto
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''',
+                (
+                    int(analysis_id),
+                    board_date,
+                    analysis_date,
+                    sector_name,
+                    normalized_sector_name,
+                    source_type,
+                    self._to_float(heat_score, 0.0),
+                    None,
+                    int(rank_order or 0),
+                    "",
+                    "",
+                    lifecycle["lifecycle_stage"],
+                    lifecycle["delta_1"],
+                    lifecycle["delta_2"],
+                    int(lifecycle["observation_count"]),
+                    int(lifecycle["window_size_used"]),
+                    self._to_json(lifecycle["trajectory"]),
+                    self._to_json(lifecycle["lifecycle_details"]),
+                    lifecycle["action_hint"],
+                    lifecycle["defense_line_type"],
+                    1 if lifecycle["selection_veto"] else 0,
+                ),
+            )
     
     def save_raw_data(self, data_date, data_type, data_df, version=None):
         """
@@ -385,17 +1081,19 @@ class SectorStrategyDatabase:
         """
         conn = self.get_connection()
         cursor = conn.cursor()
+        analysis_payload = analysis_content
         
         if not isinstance(analysis_content, str):
             analysis_content = self._to_json(analysis_content, indent=2)
         
+        analysis_date = local_now_str()
         cursor.execute('''
         INSERT INTO sector_analysis_reports 
         (analysis_date, data_date_range, analysis_content, recommended_sectors, 
          summary, confidence_score, risk_level, investment_horizon, market_outlook)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
-            local_now_str(),
+            analysis_date,
             data_date_range,
             analysis_content,
             self._to_json(recommended_sectors),
@@ -407,6 +1105,36 @@ class SectorStrategyDatabase:
         ))
         
         report_id = cursor.lastrowid
+        try:
+            if isinstance(analysis_payload, str):
+                analysis_payload = json.loads(analysis_payload)
+            normalized_payload = analysis_payload if isinstance(analysis_payload, dict) else {}
+            board_date = self._extract_board_date(analysis_date, data_date_range)
+            self._ensure_daily_heat_panel(cursor, board_date, normalized_payload, prefer_payload=True)
+            cursor.execute(
+                '''
+                SELECT id, analysis_date, data_date_range, analysis_content
+                FROM sector_analysis_reports
+                WHERE substr(COALESCE(data_date_range, analysis_date), 1, 10) = ?
+                   OR substr(analysis_date, 1, 10) = ?
+                ORDER BY datetime(COALESCE(created_at, analysis_date)) ASC, id ASC
+                ''',
+                (board_date, board_date),
+            )
+            same_day_reports = cursor.fetchall()
+            for same_day_report_id, same_day_analysis_date, same_day_data_date_range, same_day_content in same_day_reports:
+                payload = same_day_content
+                if isinstance(payload, str):
+                    payload = json.loads(payload)
+                self._save_heat_history(
+                    cursor,
+                    int(same_day_report_id),
+                    same_day_analysis_date,
+                    payload if isinstance(payload, dict) else {},
+                    same_day_data_date_range,
+                )
+        except Exception as exc:
+            self.logger.warning(f"[智策板块] 保存板块热度历史失败: {exc}")
         
         conn.commit()
         conn.close()
@@ -467,6 +1195,8 @@ class SectorStrategyDatabase:
                     report['analysis_content_parsed'] = json.loads(report['analysis_content'])
                 if report.get('recommended_sectors'):
                     report['recommended_sectors_parsed'] = json.loads(report['recommended_sectors'])
+                report['lifecycle_items'] = self.get_lifecycle_items_for_analysis(report_id)
+                report['lifecycle_summary'] = self.build_lifecycle_summary(report['lifecycle_items'])
             except json.JSONDecodeError as e:
                 self.logger.warning(f"[智策板块] JSON解析失败: {e}")
             
@@ -508,6 +1238,286 @@ class SectorStrategyDatabase:
             conn.rollback()
             self.logger.error(f"[智策板块] 删除报告失败: {e}")
             return False
+        finally:
+            conn.close()
+
+    def get_lifecycle_items_for_analysis(self, analysis_id):
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                '''
+                SELECT *
+                FROM sector_heat_history
+                WHERE analysis_id = ?
+                ORDER BY
+                    CASE lifecycle_stage
+                        WHEN 'explosive' THEN 0
+                        WHEN 'startup' THEN 1
+                        WHEN 'decay' THEN 2
+                        ELSE 3
+                    END,
+                    heat_score DESC,
+                    heat_rank ASC,
+                    id ASC
+                ''',
+                (int(analysis_id),),
+            )
+            rows = []
+            for row in cursor.fetchall():
+                item = self._row_to_dict(cursor, row)
+                item['selection_veto'] = bool(item.get('selection_veto', 0))
+                try:
+                    item['trajectory'] = json.loads(item.get('trajectory_json') or '[]')
+                except Exception:
+                    item['trajectory'] = []
+                try:
+                    item['lifecycle_details'] = json.loads(item.get('lifecycle_details_json') or '{}')
+                except Exception:
+                    item['lifecycle_details'] = {}
+                rows.append(item)
+            return rows
+        finally:
+            conn.close()
+
+    def build_lifecycle_summary(self, items):
+        stage_groups = {
+            self.LIFECYCLE_STAGE_STARTUP: [],
+            self.LIFECYCLE_STAGE_EXPLOSIVE: [],
+            self.LIFECYCLE_STAGE_DECAY: [],
+            self.LIFECYCLE_STAGE_NEUTRAL: [],
+        }
+        for item in items or []:
+            stage = str(item.get('lifecycle_stage') or self.LIFECYCLE_STAGE_NEUTRAL)
+            stage_groups.setdefault(stage, []).append(item)
+        return {
+            "counts": {
+                "startup": len(stage_groups.get(self.LIFECYCLE_STAGE_STARTUP, [])),
+                "explosive": len(stage_groups.get(self.LIFECYCLE_STAGE_EXPLOSIVE, [])),
+                "decay": len(stage_groups.get(self.LIFECYCLE_STAGE_DECAY, [])),
+                "neutral": len(stage_groups.get(self.LIFECYCLE_STAGE_NEUTRAL, [])),
+            },
+            "startup": stage_groups.get(self.LIFECYCLE_STAGE_STARTUP, [])[:5],
+            "explosive": stage_groups.get(self.LIFECYCLE_STAGE_EXPLOSIVE, [])[:5],
+            "decay": stage_groups.get(self.LIFECYCLE_STAGE_DECAY, [])[:5],
+        }
+
+    def get_daily_heat_panel(self, board_date=None, limit=30):
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            resolved_date = board_date
+            if not resolved_date:
+                cursor.execute(
+                    '''
+                    SELECT board_date
+                    FROM sector_heat_daily
+                    ORDER BY board_date DESC, id DESC
+                    LIMIT 1
+                    '''
+                )
+                row = cursor.fetchone()
+                resolved_date = row[0] if row else None
+            if not resolved_date:
+                return {"available": False, "board_date": None, "total_count": 0, "items": []}
+            cursor.execute(
+                '''
+                SELECT COUNT(*)
+                FROM sector_heat_daily
+                WHERE board_date = ?
+                ''',
+                (resolved_date,),
+            )
+            total_count = int((cursor.fetchone() or [0])[0] or 0)
+            cursor.execute(
+                '''
+                SELECT board_date, sector_name, normalized_sector_name, source_type,
+                       heat_score, change_pct, turnover, market_cap, fund_flow_pct, rank_order
+                FROM sector_heat_daily
+                WHERE board_date = ?
+                ORDER BY rank_order ASC, id ASC
+                LIMIT ?
+                ''',
+                (resolved_date, max(1, int(limit))),
+            )
+            columns = [desc[0] for desc in cursor.description] if cursor.description else []
+            items = [dict(zip(columns, row)) for row in cursor.fetchall()]
+            return {
+                "available": True,
+                "board_date": resolved_date,
+                "total_count": total_count,
+                "items": items,
+            }
+        finally:
+            conn.close()
+
+    def get_latest_lifecycle_snapshot(self):
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                '''
+                SELECT id, analysis_date
+                FROM sector_analysis_reports
+                ORDER BY datetime(COALESCE(created_at, analysis_date)) DESC, id DESC
+                LIMIT 1
+                '''
+            )
+            row = cursor.fetchone()
+            if not row:
+                return {"available": False, "items": [], "summary": self.build_lifecycle_summary([])}
+            analysis_id = int(row[0])
+            analysis_date = row[1]
+            items = self.get_lifecycle_items_for_analysis(analysis_id)
+            return {
+                "available": True,
+                "analysis_id": analysis_id,
+                "analysis_date": analysis_date,
+                "items": items,
+                "summary": self.build_lifecycle_summary(items),
+                "daily_heat_panel": self.get_daily_heat_panel(board_date=self._extract_board_date(analysis_date), limit=30),
+            }
+        finally:
+            conn.close()
+
+    def list_lifecycle_snapshots(self, days=20):
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                '''
+                SELECT id, analysis_date
+                FROM sector_analysis_reports
+                ORDER BY datetime(COALESCE(created_at, analysis_date)) DESC, id DESC
+                LIMIT ?
+                ''',
+                (max(1, int(days)),),
+            )
+            snapshots = []
+            for report_id, analysis_date in cursor.fetchall():
+                items = self.get_lifecycle_items_for_analysis(int(report_id))
+                snapshots.append(
+                    {
+                        "analysis_id": int(report_id),
+                        "analysis_date": analysis_date,
+                        "summary": self.build_lifecycle_summary(items),
+                        "items": items,
+                    }
+                )
+            return snapshots
+        finally:
+            conn.close()
+
+    def rebuild_heat_history(self, progress_callback=None):
+        """按历史报告时间顺序重建板块热度生命周期表。"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        report_count = 0
+        rebuilt_items = 0
+        failed_reports = []
+        try:
+            self._rebuild_daily_heat_panels(cursor)
+            cursor.execute("DELETE FROM sector_heat_history")
+            cursor.execute(
+                '''
+                SELECT id, analysis_date, data_date_range, analysis_content
+                FROM sector_analysis_reports
+                ORDER BY datetime(COALESCE(created_at, analysis_date)) ASC, id ASC
+                '''
+            )
+            reports = cursor.fetchall()
+            report_count = len(reports)
+            if callable(progress_callback):
+                progress_callback(0, max(1, report_count), f"准备重建 {report_count} 份历史报告...")
+            canonical_payload_by_date = {}
+            for report_id, analysis_date, data_date_range, analysis_content in reports:
+                try:
+                    payload = analysis_content
+                    if isinstance(payload, str):
+                        payload = json.loads(payload)
+                    if not isinstance(payload, dict):
+                        payload = {}
+                    board_date = self._extract_board_date(analysis_date, data_date_range)
+                    canonical_payload_by_date[board_date] = payload
+                except Exception:
+                    continue
+
+            for board_date, payload in canonical_payload_by_date.items():
+                self._ensure_daily_heat_panel(cursor, board_date, payload, prefer_payload=True)
+
+            for index, (report_id, analysis_date, data_date_range, analysis_content) in enumerate(reports, start=1):
+                try:
+                    payload = analysis_content
+                    if isinstance(payload, str):
+                        payload = json.loads(payload)
+                    if not isinstance(payload, dict):
+                        payload = {}
+                    self._save_heat_history(cursor, int(report_id), analysis_date, payload, data_date_range)
+                    cursor.execute(
+                        "SELECT COUNT(*) FROM sector_heat_history WHERE analysis_id = ?",
+                        (int(report_id),),
+                    )
+                    rebuilt_items += int(cursor.fetchone()[0] or 0)
+                    if callable(progress_callback):
+                        progress_callback(index, max(1, report_count), f"正在回放生命周期: {index}/{report_count}")
+                except Exception as exc:
+                    failed_reports.append(
+                        {
+                            "report_id": int(report_id),
+                            "analysis_date": analysis_date,
+                            "error": str(exc),
+                        }
+                    )
+            conn.commit()
+            latest_snapshot = self.get_latest_lifecycle_snapshot()
+            return {
+                "reports_processed": report_count,
+                "heat_rows_rebuilt": rebuilt_items,
+                "failed_reports": failed_reports,
+                "latest_summary": latest_snapshot.get("summary", self.build_lifecycle_summary([])),
+            }
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def _rebuild_daily_heat_panels(self, cursor, start_date=None, end_date=None, dates=None):
+        if dates:
+            board_dates = sorted({str(item) for item in dates if str(item).strip()})
+        else:
+            conditions = ["data_type IN ('industry', 'concept')"]
+            params = []
+            if start_date:
+                conditions.append("data_date >= ?")
+                params.append(str(start_date))
+            if end_date:
+                conditions.append("data_date <= ?")
+                params.append(str(end_date))
+            cursor.execute(
+                f'''
+                SELECT DISTINCT data_date
+                FROM sector_raw_data
+                WHERE {' AND '.join(conditions)}
+                ORDER BY data_date ASC
+                ''',
+                tuple(params),
+            )
+            board_dates = [row[0] for row in cursor.fetchall()]
+        for board_date in board_dates:
+            self._ensure_daily_heat_panel(cursor, board_date, None, prefer_payload=False)
+        return board_dates
+
+    def rebuild_daily_heat_panels(self, start_date=None, end_date=None, dates=None):
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            board_dates = self._rebuild_daily_heat_panels(cursor, start_date=start_date, end_date=end_date, dates=dates)
+            conn.commit()
+            return {"rebuilt_dates": board_dates, "rebuilt_count": len(board_dates)}
+        except Exception:
+            conn.rollback()
+            raise
         finally:
             conn.close()
     

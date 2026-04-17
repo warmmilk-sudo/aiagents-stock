@@ -20,6 +20,8 @@ STRUCTURED_FINAL_DECISION_KEYS = (
     "take_profit",
     "stop_loss",
     "holding_period",
+    "swing_type",
+    "swing_type_reason",
     "position_size",
     "risk_warning",
 )
@@ -35,6 +37,8 @@ FINAL_DECISION_FIELD_LABELS = {
     "take_profit": "止盈位",
     "stop_loss": "止损位",
     "holding_period": "持有周期",
+    "swing_type": "波段类型",
+    "swing_type_reason": "波段判断依据",
     "position_size": "建议仓位",
     "risk_warning": "风险提示",
     "decision_text": "决策文本",
@@ -73,6 +77,8 @@ REPORT_METADATA_KEYS = {
     "take_profit",
     "stop_loss",
     "holding_period",
+    "swing_type",
+    "swing_type_reason",
     "position_size",
     "risk_warning",
 }

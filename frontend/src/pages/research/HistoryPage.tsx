@@ -94,6 +94,12 @@ interface RawReportEntry {
 type ReportCategory = "technical" | "fundamental" | "fund_flow" | "market" | "news" | "risk" | "team";
 type ArchiveCategory = "持仓" | "关注" | "研究池";
 
+interface StockArchiveContentProps {
+  embedded?: boolean;
+  initialSymbol?: string;
+  onBackToHub?: () => void;
+}
+
 const reportTabs: Array<{ key: ReportCategory; label: string; emptyText: string }> = [
   { key: "technical", label: "技术", emptyText: "暂无技术报告" },
   { key: "fundamental", label: "基本面", emptyText: "暂无基本面报告" },
@@ -248,7 +254,7 @@ function getArchiveCategoryLabel(item: { is_in_portfolio?: boolean; linked_asset
   if (item.is_in_portfolio) {
     return "持仓";
   }
-  if (item.linked_asset_status_label === "盯盘中") {
+  if (["盯盘中", "关注", "备选关注"].includes(String(item.linked_asset_status_label || ""))) {
     return "关注";
   }
   return "研究池";
@@ -520,7 +526,7 @@ function RawReportWorkspace({
   );
 }
 
-export function HistoryPage() {
+export function StockArchiveContent({ embedded = false, initialSymbol = "", onBackToHub }: StockArchiveContentProps = {}) {
   const [searchParams, setSearchParams] = useSearchParams();
 
   // States for Level 1 (Stock Summaries)
@@ -540,7 +546,7 @@ export function HistoryPage() {
   const { message, error, clear, showError, showMessage } = usePageFeedback();
 
   // Navigation state derived from URL
-  const selectedSymbol = searchParams.get("symbol") || "";
+  const selectedSymbol = initialSymbol || searchParams.get("symbol") || "";
   const selectedRecordId = Number(searchParams.get("recordId") || 0);
   const selectedRecord = selectedRecordId ? (recordDetails[selectedRecordId] ?? null) : null;
   const archiveCategoryCounts = useMemo(() => {
@@ -633,6 +639,10 @@ export function HistoryPage() {
   };
 
   const goBackToStocks = () => {
+    if (embedded) {
+      onBackToHub?.();
+      return;
+    }
     setSearchParams({});
     clear();
   };
@@ -689,9 +699,8 @@ export function HistoryPage() {
     }
   };
 
-  return (
-    <PageFrame title="股票档案">
-      <div className={selectedRecordId ? `${styles.stack} ${styles.historyDetailPageStack}` : styles.stack}>
+  const content = (
+    <div className={selectedRecordId ? `${styles.stack} ${styles.historyDetailPageStack}` : styles.stack}>
         <PageFeedback error={error} message={message} />
 
         {/* LEVEL 3: Report Detail */}
@@ -759,7 +768,7 @@ export function HistoryPage() {
               <div className={styles.stack}>
                 <div className={styles.actions} style={{ justifyContent: "flex-start" }}>
                   <button className={styles.secondaryButton} onClick={goBackToStocks} type="button">
-                    返回所有股票
+                    {embedded ? "返回投研中心" : "返回所有股票"}
                   </button>
                 </div>
                 <h2 style={{ margin: 0, textAlign: "center" }}>{stockRecords[0]?.stock_name || "加载中..."} ({selectedSymbol}) 个股档案</h2>
@@ -879,6 +888,15 @@ export function HistoryPage() {
           </>
         )}
       </div>
-    </PageFrame>
   );
+
+  if (embedded) {
+    return content;
+  }
+
+  return <PageFrame title="股票档案">{content}</PageFrame>;
+}
+
+export function HistoryPage() {
+  return <StockArchiveContent />;
 }

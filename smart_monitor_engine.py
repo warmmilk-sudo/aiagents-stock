@@ -18,6 +18,7 @@ from smart_monitor_db import SmartMonitorDB
 from notification_service import notification_service  # 复用主程序的通知服务
 from config_manager import config_manager  # 复用主程序的配置管理器
 from asset_repository import STATUS_PORTFOLIO
+from investment_action_utils import normalize_strategy_context
 from investment_db_utils import DEFAULT_ACCOUNT_NAME, normalize_account_name
 from investment_lifecycle_service import InvestmentLifecycleService, investment_lifecycle_service
 from internal_events import event_bus, Events
@@ -147,6 +148,7 @@ class SmartMonitorEngine:
             resolved_position_quantity = int(asset.get("quantity") or 0)
             resolved_position_date = (
                 self._normalize_position_date((task_context or {}).get("position_date"))
+                or self._normalize_position_date(asset.get("last_trade_at"))
                 or self._normalize_position_date(asset.get("created_at"))
             )
 
@@ -397,6 +399,89 @@ class SmartMonitorEngine:
         return fallback or "持有"
 
     @staticmethod
+    def _normalize_notification_class(value: object) -> str:
+        normalized = str(value or "").strip().lower().replace("-", "_")
+        aliases = {
+            "focus": "focus_alert",
+            "focus_alert": "focus_alert",
+            "关注": "focus_alert",
+            "关注提醒": "focus_alert",
+            "price": "price_alert",
+            "price_alert": "price_alert",
+            "价格": "price_alert",
+            "价格提醒": "price_alert",
+            "risk": "risk_alert",
+            "risk_alert": "risk_alert",
+            "风险": "risk_alert",
+            "风险预警": "risk_alert",
+            "profit": "profit_alert",
+            "profit_alert": "profit_alert",
+            "收益": "profit_alert",
+            "收益信号": "profit_alert",
+            "system": "system_alert",
+            "system_alert": "system_alert",
+            "系统": "system_alert",
+            "系统通知": "system_alert",
+            "other": "other_alert",
+            "other_alert": "other_alert",
+            "提醒": "other_alert",
+        }
+        return aliases.get(normalized, "")
+
+    @staticmethod
+    def _notification_class_label(value: object) -> str:
+        normalized = SmartMonitorEngine._normalize_notification_class(value)
+        labels = {
+            "focus_alert": "关注提醒",
+            "price_alert": "价格提醒",
+            "risk_alert": "风险预警",
+            "profit_alert": "收益信号",
+            "system_alert": "系统通知",
+            "other_alert": "其他提醒",
+        }
+        return labels.get(normalized, "提醒")
+
+    @classmethod
+    def _derive_notification_class(
+        cls,
+        *,
+        action: str,
+        action_detail: str,
+        swing_execution_mode: str,
+        has_position: bool,
+        decision: Optional[Dict] = None,
+    ) -> str:
+        decision = decision or {}
+        explicit = cls._normalize_notification_class(decision.get("notification_class"))
+        if explicit:
+            return explicit
+
+        normalized_action = str(action or "").upper()
+        normalized_detail = str(action_detail or "").strip()
+        normalized_swing = str(swing_execution_mode or "").strip().lower()
+
+        if normalized_action == "BUY":
+            if not has_position:
+                return "focus_alert"
+            if normalized_swing in {"pullback_add", "breakout_add"} or "加仓" in normalized_detail:
+                return "price_alert"
+            return "focus_alert"
+
+        if normalized_action == "SELL":
+            if normalized_detail == "清仓" or normalized_swing == "defensive_exit":
+                return "risk_alert"
+            if normalized_swing == "proactive_trim" or "止盈" in normalized_detail or "锁盈" in normalized_detail:
+                return "profit_alert"
+            if normalized_swing == "defensive_trim" or "减仓" in normalized_detail:
+                return "risk_alert"
+            return "price_alert"
+
+        if normalized_action == "HOLD":
+            return "price_alert"
+
+        return "price_alert"
+
+    @staticmethod
     def _normalize_monitor_levels_payload(raw_levels: Optional[Dict]) -> Optional[Dict]:
         if not isinstance(raw_levels, dict):
             return None
@@ -409,6 +494,17 @@ class SmartMonitorEngine:
                 normalized[key] = float(value)
             except (TypeError, ValueError):
                 return None
+        take_profit_max = raw_levels.get("take_profit_max")
+        if take_profit_max not in (None, ""):
+            try:
+                normalized["take_profit_max"] = float(take_profit_max)
+            except (TypeError, ValueError):
+                pass
+        if (
+            normalized.get("take_profit_max") is not None
+            and normalized["take_profit_max"] < normalized["take_profit"]
+        ):
+            normalized["take_profit_max"] = normalized["take_profit"]
         return normalized
 
     @classmethod
@@ -428,12 +524,15 @@ class SmartMonitorEngine:
         current_action = str(current_decision.get("action") or "").upper()
         latest_action_detail = str((latest_decision or {}).get("action_detail") or "").strip()
         current_action_detail = str(current_decision.get("action_detail") or "").strip()
+        latest_swing_mode = str((latest_decision or {}).get("swing_execution_mode") or "").strip()
+        current_swing_mode = str(current_decision.get("swing_execution_mode") or "").strip()
         latest_action_ratio_pct = cls._float_or_none((latest_decision or {}).get("action_ratio_pct"))
         current_action_ratio_pct = cls._float_or_none(current_decision.get("action_ratio_pct"))
         action_changed = (
             not latest_action
             or latest_action != current_action
             or (current_action_detail and latest_action_detail != current_action_detail)
+            or (current_swing_mode and latest_swing_mode != current_swing_mode)
             or (
                 current_action_ratio_pct is not None
                 and latest_action_ratio_pct is not None
@@ -452,6 +551,14 @@ class SmartMonitorEngine:
                 thresholds_changed = any(
                     abs(float(latest_levels[key]) - float(current_levels[key])) > 0.01
                     for key in ("entry_min", "entry_max", "take_profit", "stop_loss")
+                ) or (
+                    cls._float_or_none(latest_levels.get("take_profit_max")) is not None
+                    or cls._float_or_none(current_levels.get("take_profit_max")) is not None
+                ) and (
+                    abs(
+                        float(cls._float_or_none(latest_levels.get("take_profit_max")) or latest_levels["take_profit"])
+                        - float(cls._float_or_none(current_levels.get("take_profit_max")) or current_levels["take_profit"])
+                    ) > 0.01
                 )
 
         return {
@@ -495,9 +602,30 @@ class SmartMonitorEngine:
                 return f"{detail_text}{numeric:.1f}%"
             return detail_text
 
+        def _format_swing_mode_label(value: object) -> str:
+            mapping = {
+                "pullback_entry": "回踩建仓",
+                "breakout_entry": "突破建仓",
+                "pullback_add": "回踩确认加仓",
+                "breakout_add": "突破确认加仓",
+                "proactive_trim": "主动减仓锁盈",
+                "defensive_trim": "防守减仓",
+                "defensive_exit": "防守清仓",
+                "trend_hold": "趋势持有",
+                "watch_hold": "观察持有",
+            }
+            normalized = str(value or "").strip().lower()
+            return mapping.get(normalized, normalized)
+
         delta_payload: Dict[str, object] = {
             "previous_action": str(latest_decision.get("action") or "").upper() or None,
             "previous_action_detail": str(latest_decision.get("action_detail") or "").strip() or None,
+            "previous_swing_execution_mode": str(
+                latest_decision.get("swing_execution_mode")
+                or previous_intraday.get("swing_execution_mode")
+                or ""
+            ).strip() or None,
+            "swing_execution_mode": str(current_decision.get("swing_execution_mode") or "").strip() or None,
             "previous_action_ratio_pct": latest_decision.get("action_ratio_pct"),
             "previous_confidence": latest_decision.get("confidence"),
             "previous_risk_level": latest_decision.get("risk_level"),
@@ -539,13 +667,18 @@ class SmartMonitorEngine:
         summary_parts: List[str] = []
         previous_action = str(latest_decision.get("action") or "").upper()
         previous_action_detail = str(latest_decision.get("action_detail") or "").strip()
+        previous_swing_execution_mode = str(
+            latest_decision.get("swing_execution_mode") or previous_intraday.get("swing_execution_mode") or ""
+        ).strip()
         previous_action_ratio_pct = latest_decision.get("action_ratio_pct")
         current_action = str(current_decision.get("action") or "").upper()
         current_action_detail = str(current_decision.get("action_detail") or "").strip()
+        current_swing_execution_mode = str(current_decision.get("swing_execution_mode") or "").strip()
         current_action_ratio_pct = current_decision.get("action_ratio_pct")
         if previous_action and (
             previous_action != current_action
             or (current_action_detail and previous_action_detail != current_action_detail)
+            or (current_swing_execution_mode and previous_swing_execution_mode != current_swing_execution_mode)
             or (
                 _to_float(previous_action_ratio_pct) is not None
                 and _to_float(current_action_ratio_pct) is not None
@@ -555,6 +688,10 @@ class SmartMonitorEngine:
             previous_action_text = _format_action_signature(previous_action, previous_action_detail, previous_action_ratio_pct)
             current_action_text = _format_action_signature(current_action, current_action_detail, current_action_ratio_pct)
             summary_parts.append(f"动作由{previous_action_text}变为{current_action_text}")
+        if previous_swing_execution_mode and current_swing_execution_mode and previous_swing_execution_mode != current_swing_execution_mode:
+            summary_parts.append(
+                f"执行类型由{_format_swing_mode_label(previous_swing_execution_mode)}变为{_format_swing_mode_label(current_swing_execution_mode)}"
+            )
         if delta_payload.get("intraday_bias_changed"):
             summary_parts.append(f"盘中偏向由“{previous_bias_text or '未记录'}”变为“{current_bias_text or '未记录'}”")
         if delta_payload.get("thresholds_changed"):
@@ -619,7 +756,7 @@ class SmartMonitorEngine:
             or {}
         )
         if task_strategy_context:
-            return task_strategy_context
+            return normalize_strategy_context(task_strategy_context)
 
         latest_context = self.db.analysis_repository.get_latest_strategy_context(
             asset_id=asset_id,
@@ -628,9 +765,9 @@ class SmartMonitorEngine:
             account_name=account_name,
         ) or {}
         if latest_context:
-            return latest_context
+            return normalize_strategy_context(latest_context)
 
-        return provided_strategy_context or {}
+        return normalize_strategy_context(provided_strategy_context) if provided_strategy_context else {}
 
     def _find_ai_task_item(
         self,
@@ -1028,6 +1165,7 @@ class SmartMonitorEngine:
                 'trading_session': session_info['session'],
                 'action': decision['action'],
                 'action_detail': decision.get('action_detail'),
+                'swing_execution_mode': decision.get('swing_execution_mode'),
                 'action_ratio_pct': decision.get('action_ratio_pct'),
                 'trade_intent': decision.get('trade_intent'),
                 'current_position_pct': decision.get('current_position_pct'),
@@ -1226,6 +1364,29 @@ class SmartMonitorEngine:
                     return "N/A"
                 return f"{numeric:,.0f}手"
 
+            def _clean_reason(value: object, limit: int = 120) -> str:
+                text = " ".join(str(value or "").split()).strip()
+                if not text:
+                    return "盘中出现新的执行信号，请结合实时价格与阈值复核。"
+                if len(text) <= limit:
+                    return text
+                return text[: limit - 1].rstrip("，,；;。.") + "…"
+
+            def _swing_mode_label(value: object) -> str:
+                mapping = {
+                    "pullback_entry": "回踩建仓",
+                    "breakout_entry": "突破建仓",
+                    "pullback_add": "回踩确认加仓",
+                    "breakout_add": "突破确认加仓",
+                    "proactive_trim": "主动减仓锁盈",
+                    "defensive_trim": "防守减仓",
+                    "defensive_exit": "防守清仓",
+                    "trend_hold": "趋势持有",
+                    "watch_hold": "观察持有",
+                }
+                normalized = str(value or "").strip().lower()
+                return mapping.get(normalized, "")
+
             task = self.db.get_monitor_task_by_code(
                 stock_code,
                 account_name=account_name,
@@ -1260,14 +1421,54 @@ class SmartMonitorEngine:
             current_price_text = _fmt_money(current_price)
 
             action_text = {'BUY': '买入', 'SELL': '卖出'}.get(action, action)
-            reasoning = decision.get('reasoning', '')
-            reasoning_summary = reasoning[:150] + '...' if len(reasoning) > 150 else reasoning
+            action_detail = str(decision.get("action_detail") or action_text).strip() or action_text
+            swing_execution_mode = str(decision.get("swing_execution_mode") or "").strip().lower()
+            swing_execution_label = _swing_mode_label(swing_execution_mode)
+            reasoning = str(decision.get('reasoning', '') or "").strip()
+            reasoning_summary = _clean_reason(reasoning, 150)
+            notification_class = self._derive_notification_class(
+                action=action,
+                action_detail=action_detail,
+                swing_execution_mode=swing_execution_mode,
+                has_position=bool(has_position),
+                decision=decision,
+            )
+            notification_label = self._notification_class_label(notification_class)
+            notification_category = "focus" if notification_class == "focus_alert" else "price"
+            if notification_class == "focus_alert":
+                trigger_summary = (
+                    "出现突破关注信号" if swing_execution_mode == "breakout_entry"
+                    else "出现回踩关注信号"
+                )
+            elif notification_class == "profit_alert":
+                trigger_summary = (
+                    "出现止盈收益信号" if action_detail == "减仓"
+                    else "出现收益信号"
+                )
+            elif notification_class == "risk_alert":
+                trigger_summary = (
+                    "出现清仓风险信号" if action_detail == "清仓"
+                    else "出现风险预警信号"
+                )
+            elif action == "BUY":
+                trigger_summary = (
+                    "出现突破加仓价格信号" if swing_execution_mode == "breakout_add"
+                    else "出现加仓价格信号"
+                )
+            elif action_detail == "清仓":
+                trigger_summary = "出现清仓价格信号"
+            elif action_detail == "减仓":
+                trigger_summary = "出现减仓价格信号"
+            else:
+                trigger_summary = "出现新的价格信号"
             key_levels = decision.get('key_price_levels', {}) or {}
 
-            message = f"{action_text}信号 - {stock_name}({stock_code})"
+            message = f"{notification_label} - {stock_name}({stock_code})：{trigger_summary}"
             content = (
-                f"{action_text}信号\n"
+                f"{notification_label}\n"
                 f"股票: {stock_name}({stock_code})\n"
+                f"动作: {action_text} / {action_detail}\n"
+                f"波段类型: {swing_execution_label or 'N/A'}\n"
                 f"当前价格: {current_price_text}\n"
                 f"涨跌幅: {_fmt_pct(market_data.get('change_pct'))}\n"
                 f"信心度: {decision.get('confidence', 'N/A')}%\n"
@@ -1276,6 +1477,7 @@ class SmartMonitorEngine:
                 f"压力位: {key_levels.get('resistance', 'N/A')}\n"
                 f"止盈: {decision.get('take_profit_pct', 'N/A')}%\n"
                 f"止损: {decision.get('stop_loss_pct', 'N/A')}%\n"
+                f"触发摘要: {trigger_summary}\n"
                 f"核心理由: {reasoning_summary}\n"
                 f"触发时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
             )
@@ -1288,6 +1490,16 @@ class SmartMonitorEngine:
                 'symbol': stock_code,
                 'name': stock_name,
                 'type': '智能盯盘',
+                'notification_class': notification_class,
+                'notification_category': notification_category,
+                'notification_label': notification_label,
+                'notification_class_label': notification_label,
+                'trigger_summary': trigger_summary,
+                'notification_reason': reasoning,
+                'action': action,
+                'action_detail': action_detail,
+                'swing_execution_mode': swing_execution_mode,
+                'swing_execution_label': swing_execution_label,
                 'message': message,
                 'details': content,
                 'triggered_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),

@@ -8,6 +8,7 @@ interface ModuleCardProps {
   toolbar?: ReactNode;
   footer?: ReactNode;
   className?: string;
+  hideHeader?: boolean;
   hideTitleOnMobile?: boolean;
   children: ReactNode;
 }
@@ -17,6 +18,7 @@ export function ModuleCard({
   toolbar,
   footer,
   className = "",
+  hideHeader = false,
   hideTitleOnMobile = false,
   children,
 }: ModuleCardProps) {
@@ -32,12 +34,14 @@ export function ModuleCard({
 
   return (
     <section className={`${styles.card} ${styles.moduleCard} ${className}`.trim()}>
-      <div className={headerClassName}>
-        <div className={headingClassName}>
-          <h2>{title}</h2>
+      {!hideHeader ? (
+        <div className={headerClassName}>
+          <div className={headingClassName}>
+            <h2>{title}</h2>
+          </div>
+          {toolbar ? <div className={styles.moduleToolbar}>{toolbar}</div> : null}
         </div>
-        {toolbar ? <div className={styles.moduleToolbar}>{toolbar}</div> : null}
-      </div>
+      ) : null}
       <div className={styles.moduleBody}>{children}</div>
       {footer ? <div className={styles.moduleFooter}>{footer}</div> : null}
     </section>

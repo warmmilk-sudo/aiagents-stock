@@ -60,6 +60,10 @@ interface FollowupAsset {
   action_payload?: ActionPayload | null;
 }
 
+interface DeepAnalysisPageProps {
+  startOnly?: boolean;
+}
+
 type SectionKey = "start" | "watchlist" | "viewed";
 
 const sectionTabs = [
@@ -183,7 +187,7 @@ function FollowupAssetList({
   );
 }
 
-export function DeepAnalysisPage() {
+export function DeepAnalysisPage({ startOnly = false }: DeepAnalysisPageProps = {}) {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const analysts = useDeepAnalysisStore((state) => state.analysts);
@@ -406,6 +410,69 @@ export function DeepAnalysisPage() {
     </div>
   );
 
+  const startAnalysisContent = (
+    <ModuleCard hideTitleOnMobile title="分析任务" summary="股票输入和分析师配置集中在同一模块内；深度分析当前固定按顺序执行。">
+      <form className={styles.moduleSection} id="deep-analysis-form" onSubmit={handleSubmit}>
+        <div className={styles.field}>
+          <label htmlFor="stockInput">股票代码（支持逗号或换行分隔）</label>
+          <textarea
+            id="stockInput"
+            onChange={(event) => setStockInput(event.target.value)}
+            placeholder="000001,600519,AAPL"
+            rows={4}
+            value={stockInput}
+          />
+        </div>
+        <p className={styles.muted}>当前有任务运行时仍可继续提交，新任务会按顺序排队执行。</p>
+        <div className={styles.field}>
+          <label>分析师配置</label>
+          <AnalystSelector
+            onChange={(next) =>
+              setAnalysts(analystKeysToConfig(next) as typeof analysts)
+            }
+            value={selectedAnalysts}
+          />
+        </div>
+        <div className={styles.responsiveActionGrid}>
+          <button className={styles.primaryButton} disabled={isSubmittingAnalysis} type="submit">
+            {isSubmittingAnalysis ? "提交中..." : "开始深度分析"}
+          </button>
+        </div>
+      </form>
+
+      {task ? taskSection : null}
+
+      {singleRecord?.id ? (
+        <div className={styles.moduleSection}>
+          <div className={styles.listItem}>
+            <strong>分析已完成</strong>
+            <p className={styles.muted}>
+              {singleRecord.stock_name || singleRecord.symbol} 的详细报告不在当前页展开显示。
+            </p>
+            <div className={styles.actions}>
+              <button
+                className={styles.secondaryButton}
+                onClick={() => navigate(`/research/history?recordId=${singleRecord.id}`)}
+                type="button"
+              >
+                查看分析历史
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </ModuleCard>
+  );
+
+  if (startOnly) {
+    return (
+      <div className={styles.stack}>
+        <PageFeedback error={error} message={message} />
+        {startAnalysisContent}
+      </div>
+    );
+  }
+
   return (
     <PageFrame
       sectionTabs={sectionTabs}
@@ -416,59 +483,7 @@ export function DeepAnalysisPage() {
       <div className={styles.stack}>
         <PageFeedback error={error} message={message} />
 
-        {section === "start" ? (
-          <ModuleCard hideTitleOnMobile title="分析任务" summary="股票输入和分析师配置集中在同一模块内；深度分析当前固定按顺序执行。">
-            <form className={styles.moduleSection} id="deep-analysis-form" onSubmit={handleSubmit}>
-              <div className={styles.field}>
-                <label htmlFor="stockInput">股票代码（支持逗号或换行分隔）</label>
-                <textarea
-                  id="stockInput"
-                  onChange={(event) => setStockInput(event.target.value)}
-                  placeholder="000001,600519,AAPL"
-                  rows={4}
-                  value={stockInput}
-                />
-              </div>
-              <p className={styles.muted}>当前有任务运行时仍可继续提交，新任务会按顺序排队执行。</p>
-              <div className={styles.field}>
-                <label>分析师配置</label>
-                <AnalystSelector
-                  onChange={(next) =>
-                    setAnalysts(analystKeysToConfig(next) as typeof analysts)
-                  }
-                  value={selectedAnalysts}
-                />
-              </div>
-              <div className={styles.responsiveActionGrid}>
-                <button className={styles.primaryButton} disabled={isSubmittingAnalysis} type="submit">
-                  {isSubmittingAnalysis ? "提交中..." : "开始深度分析"}
-                </button>
-              </div>
-            </form>
-
-            {task ? taskSection : null}
-
-            {singleRecord?.id ? (
-              <div className={styles.moduleSection}>
-                <div className={styles.listItem}>
-                  <strong>分析已完成</strong>
-                  <p className={styles.muted}>
-                    {singleRecord.stock_name || singleRecord.symbol} 的详细报告不在当前页展开显示。
-                  </p>
-                  <div className={styles.actions}>
-                    <button
-                      className={styles.secondaryButton}
-                      onClick={() => navigate(`/research/history?recordId=${singleRecord.id}`)}
-                      type="button"
-                    >
-                      查看分析历史
-                    </button>
-                  </div>
-                </div>
-              </div>
-            ) : null}
-          </ModuleCard>
-        ) : null}
+        {section === "start" ? startAnalysisContent : null}
 
         {section === "watchlist" ? (
           <ModuleCard hideTitleOnMobile title="关注中" summary="搜索、刷新和后续操作都收拢到同一模块。">

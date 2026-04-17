@@ -62,6 +62,29 @@ class SectorStrategyTaskRequest(BaseModel):
     reasoning_model: Optional[str] = None
 
 
+class ResearchHubSelectionTaskRequest(BaseModel):
+    lightweight_model: Optional[str] = None
+    reasoning_model: Optional[str] = None
+
+
+class SmartSelectionRunRequest(BaseModel):
+    trigger_source: Optional[str] = "manual"
+    lightweight_model: Optional[str] = None
+    reasoning_model: Optional[str] = None
+
+
+class SmartSelectionImportRequest(BaseModel):
+    run_id: str
+    symbols: list[str] = Field(default_factory=list)
+    replace_existing_focus: bool = True
+
+
+class SmartSelectionSchedulerRequest(BaseModel):
+    enabled: bool = True
+    schedule_time: str = "14:30"
+    max_workers: Optional[int] = None
+
+
 class LonghubangTaskRequest(BaseModel):
     date: Optional[str] = None
     days: int = 1
@@ -80,6 +103,11 @@ class LonghubangBatchTaskRequest(BaseModel):
 class SectorStrategySchedulerRequest(BaseModel):
     schedule_time: str = "09:00"
     enabled: bool = True
+
+
+class SectorStrategyLifecycleConfigRequest(BaseModel):
+    values: dict[str, float | int] = Field(default_factory=dict)
+    auto_rebuild: bool = False
 
 
 class MainForceExportRequest(BaseModel):
@@ -217,6 +245,17 @@ class FollowupStatusRequest(BaseModel):
     note: str = ""
 
 
+class ResearchHubAssetUpdateRequest(BaseModel):
+    target_status: Optional[str] = None
+    manual_pin: Optional[bool] = None
+    note: Optional[str] = None
+    pool_reason: Optional[str] = None
+
+
+class ResearchHubQuickAnalyzeRequest(BaseModel):
+    symbol: str
+
+
 class PortfolioStockCreateRequest(BaseModel):
     code: str
     name: Optional[str] = None
@@ -324,6 +363,14 @@ class SmartMonitorAnalyzeRequest(BaseModel):
 class SmartMonitorRuntimeConfigRequest(BaseModel):
     intraday_decision_interval_minutes: int = 60
     realtime_monitor_interval_minutes: int = 3
+
+
+class SmartMonitorRunOnceRequest(BaseModel):
+    enabled_only: bool = True
+    account_name: Optional[str] = None
+    has_position: Optional[bool] = None
+    ordered_task_ids: list[int] = Field(default_factory=list)
+    task_delay_seconds: Optional[float] = None
 
 
 class SmartMonitorConfigRequest(BaseModel):

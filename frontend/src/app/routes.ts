@@ -6,10 +6,11 @@ export interface AppRouteItem {
 }
 
 export const routeItems: AppRouteItem[] = [
-  { path: "/research/deep-analysis", title: "深度分析", group: "投资管理" },
-  { path: "/investment/portfolio", title: "持仓总览", group: "投资管理" },
-  { path: "/research/history", title: "股票档案", group: "投资管理" },
+  { path: "/research/watchlist-hub", title: "投研中心", group: "投资管理" },
+  { path: "/research/history", title: "股票档案", group: "投资管理", hidden: true },
+  { path: "/investment/portfolio", title: "持仓列表", group: "投资管理", hidden: true },
   { path: "/investment/smart-monitor", title: "智能盯盘", group: "投资管理" },
+  { path: "/investment/smart-selection", title: "智能选股", group: "投资管理" },
   {
     path: "/investment/price-alerts",
     title: "价格预警",
@@ -35,4 +36,4 @@ export const routeItems: AppRouteItem[] = [
   { path: "/system/database", title: "数据库管理", group: "系统管理" },
 ];
 
-export const defaultRoute = "/research/deep-analysis";
+export const defaultRoute = "/research/watchlist-hub";

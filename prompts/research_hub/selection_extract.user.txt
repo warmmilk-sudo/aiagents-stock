@@ -1,0 +1,18 @@
+分析日期：$analysis_date
+
+智策标题：$headline
+市场观点：$market_view
+核心机会：$key_opportunity
+主要风险：$major_risk
+整体策略：$strategy
+
+热度结构：
+$heat_payload
+
+推荐板块：
+$recommended_payload
+
+补充摘要：
+$report_excerpt
+
+请提取明日最具爆发潜力的 3-5 个板块，并严格输出 JSON 数组。

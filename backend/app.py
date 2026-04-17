@@ -28,8 +28,10 @@ from backend.routers import (
     portfolio,
     price_alerts,
     profit_growth,
+    research_hub,
     sector_strategy,
     small_cap,
+    smart_selection,
     smart_monitor,
     system,
     tasks,
@@ -81,11 +83,13 @@ def create_app() -> FastAPI:
     app.include_router(analysis.router)
     app.include_router(analysis_history.router)
     app.include_router(agent_memory.router)
+    app.include_router(research_hub.router)
     app.include_router(followup_assets.router)
     app.include_router(exports.router)
     app.include_router(portfolio.router)
     app.include_router(price_alerts.router)
     app.include_router(smart_monitor.router)
+    app.include_router(smart_selection.router)
     app.include_router(investment_activity.router)
     app.include_router(low_price_bull.router)
     app.include_router(main_force.router)

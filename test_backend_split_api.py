@@ -220,6 +220,71 @@ class BackendSplitApiTests(unittest.TestCase):
         self.assertEqual(response.json()["data"]["task_id"], "task-news-flow")
         mocked.assert_called_once()
 
+    def test_update_smart_selection_scheduler_passes_max_workers(self):
+        self.login()
+        with patch(
+            "backend.services.update_smart_selection_scheduler",
+            return_value={
+                "running": False,
+                "enabled": True,
+                "schedule_time": "14:35",
+                "max_workers": 8,
+                "next_run_time": None,
+                "last_run_time": None,
+            },
+        ) as mocked:
+            response = self.client.put(
+                "/api/smart-selection/scheduler",
+                json={"enabled": True, "schedule_time": "14:35", "max_workers": 8},
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["max_workers"], 8)
+        mocked.assert_called_once_with(enabled=True, schedule_time="14:35", max_workers=8)
+
+    def test_update_sector_strategy_lifecycle_config_uses_service(self):
+        self.login()
+        with patch(
+            "backend.services.update_sector_strategy_lifecycle_config",
+            return_value={"explosive_current_min": 84.0, "explosive_avg_10d_min": 70.0},
+        ) as mocked_update, patch(
+            "backend.services.submit_sector_strategy_lifecycle_rebuild_task",
+            return_value={"task_id": "rebuild-task-1", "reused": False, "status": "queued"},
+        ) as mocked_rebuild:
+            response = self.client.put(
+                "/api/strategies/sector-strategy/lifecycle-config",
+                json={"values": {"explosive_current_min": 84, "explosive_avg_10d_min": 70}, "auto_rebuild": True},
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["config"]["explosive_current_min"], 84.0)
+        self.assertEqual(response.json()["data"]["rebuild_task_id"], "rebuild-task-1")
+        self.assertFalse(response.json()["data"]["rebuild_reused"])
+        mocked_update.assert_called_once_with({"explosive_current_min": 84, "explosive_avg_10d_min": 70})
+        mocked_rebuild.assert_called_once_with(reason="config_update")
+
+    def test_rebuild_sector_strategy_lifecycle_uses_service(self):
+        self.login()
+        with patch(
+            "backend.services.submit_sector_strategy_lifecycle_rebuild_task",
+            return_value={"task_id": "rebuild-task-2", "reused": False, "status": "queued"},
+        ) as mocked:
+            response = self.client.post("/api/strategies/sector-strategy/lifecycle/rebuild")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["task_id"], "rebuild-task-2")
+        self.assertFalse(response.json()["data"]["reused"])
+        mocked.assert_called_once_with(reason="manual")
+
+    def test_rebuild_sector_strategy_lifecycle_reuses_active_task(self):
+        self.login()
+        with patch(
+            "backend.services.submit_sector_strategy_lifecycle_rebuild_task",
+            return_value={"task_id": "rebuild-task-3", "reused": True, "status": "running"},
+        ) as mocked:
+            response = self.client.post("/api/strategies/sector-strategy/lifecycle/rebuild")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["task_id"], "rebuild-task-3")
+        self.assertTrue(response.json()["data"]["reused"])
+        mocked.assert_called_once_with(reason="manual")
+
     def test_run_smart_monitor_tasks_once_retries_each_task_sequentially(self):
         tasks = [
             {
@@ -268,6 +333,88 @@ class BackendSplitApiTests(unittest.TestCase):
         self.assertEqual(result["task_failed"], 0)
         self.assertEqual(result["task_retry_total"], 1)
         self.assertEqual(result["price_alert_total"], 0)
+
+    def test_run_smart_monitor_tasks_once_respects_requested_order_and_delay(self):
+        tasks = [
+            {"id": 101, "stock_code": "600519", "account_name": "默认账户", "asset_id": 1, "portfolio_stock_id": 1},
+            {"id": 102, "stock_code": "000001", "account_name": "默认账户", "asset_id": 2, "portfolio_stock_id": 2},
+            {"id": 103, "stock_code": "300750", "account_name": "默认账户", "asset_id": 3, "portfolio_stock_id": 3},
+        ]
+        call_order: list[int] = []
+
+        def run_item_once(item_id: int) -> bool:
+            call_order.append(item_id)
+            return True
+
+        with patch.object(services.smart_monitor_db, "get_monitor_tasks", return_value=tasks), patch.object(
+            services.smart_monitor_db.monitoring_repository,
+            "get_item_by_symbol",
+            return_value=None,
+        ), patch.object(
+            services.monitor_service.orchestrator,
+            "run_item_once",
+            side_effect=run_item_once,
+        ), patch.object(
+            services.monitor_service,
+            "get_status",
+            return_value={"running": False},
+        ), patch.object(
+            services.monitor_service,
+            "get_scheduler",
+            return_value=None,
+        ), patch("backend.services.time.sleep", return_value=None) as mocked_sleep:
+            result = services.run_smart_monitor_tasks_once(
+                ordered_task_ids=[103, 101],
+                task_delay_seconds=1.2,
+            )
+
+        self.assertEqual(call_order, [103, 101, 102])
+        self.assertEqual(result["ordered_task_ids"], [103, 101])
+        self.assertEqual(result["task_delay_seconds"], 1.2)
+        self.assertEqual(result["execution_mode"], "sequential")
+        self.assertEqual(mocked_sleep.call_count, 2)
+
+    def test_run_smart_monitor_tasks_once_runs_final_retry_for_items_still_failing_after_two_attempts(self):
+        tasks = [
+            {"id": 101, "stock_code": "600519", "account_name": "默认账户", "asset_id": 1, "portfolio_stock_id": 1},
+            {"id": 102, "stock_code": "000001", "account_name": "默认账户", "asset_id": 2, "portfolio_stock_id": 2},
+        ]
+        call_order: list[int] = []
+        item_attempts = {101: 0, 102: 0}
+
+        def run_item_once(item_id: int) -> bool:
+            call_order.append(item_id)
+            item_attempts[item_id] += 1
+            if item_id == 101:
+                return item_attempts[item_id] >= 3
+            return True
+
+        with patch.object(services.smart_monitor_db, "get_monitor_tasks", return_value=tasks), patch.object(
+            services.smart_monitor_db.monitoring_repository,
+            "get_item_by_symbol",
+            return_value=None,
+        ), patch.object(
+            services.monitor_service.orchestrator,
+            "run_item_once",
+            side_effect=run_item_once,
+        ), patch.object(
+            services.monitor_service,
+            "get_status",
+            return_value={"running": False},
+        ), patch.object(
+            services.monitor_service,
+            "get_scheduler",
+            return_value=None,
+        ), patch("backend.services.time.sleep", return_value=None):
+            result = services.run_smart_monitor_tasks_once(task_delay_seconds=0)
+
+        self.assertEqual(call_order, [101, 101, 102, 101])
+        self.assertEqual(result["task_success"], 2)
+        self.assertEqual(result["task_failed"], 0)
+        self.assertEqual(result["task_retry_total"], 1)
+        self.assertEqual(result["final_retry_total"], 1)
+        self.assertEqual(result["final_retry_success"], 1)
+        self.assertEqual(result["final_retry_failed"], 0)
 
     def test_sector_strategy_scheduler_status_requires_auth_and_returns_payload(self):
         self.login()
