@@ -124,9 +124,11 @@ function PoolPanel({
   counts,
   activeId,
   pinUpdatingAssetId,
+  deletingAssetId,
   onPoolChange,
   onSelect,
   onToggleManualPin,
+  onDeleteResearchCard,
   renderAssetTags,
 }: {
   activePool: PoolKey;
@@ -134,9 +136,11 @@ function PoolPanel({
   counts: Record<string, number>;
   activeId: number | null;
   pinUpdatingAssetId: number | null;
+  deletingAssetId: number | null;
   onPoolChange: (pool: PoolKey) => void;
   onSelect: (item: HubAsset) => void;
   onToggleManualPin: (item: HubAsset) => void;
+  onDeleteResearchCard: (item: HubAsset) => void;
   renderAssetTags: (item: HubAsset) => ReactNode;
 }) {
   return (
@@ -174,16 +178,30 @@ function PoolPanel({
               </button>
               <div className={styles.researchHubAssetActions}>
                 {activePool !== "holding" ? (
-                  <button
-                    aria-label={item.status === "focus" || item.manual_pin ? `移出备选关注 ${item.symbol}` : `加入备选关注 ${item.symbol}`}
-                    className={item.status === "focus" || item.manual_pin ? styles.researchHubStarButtonActive : styles.researchHubStarButton}
-                    disabled={pinUpdatingAssetId === item.id}
-                    onClick={() => onToggleManualPin(item)}
-                    title={item.status === "focus" || item.manual_pin ? "移出备选关注" : "加入备选关注"}
-                    type="button"
-                  >
-                    {item.status === "focus" || item.manual_pin ? "★" : "☆"}
-                  </button>
+                  <div className={styles.researchHubAssetActionStack}>
+                    <button
+                      aria-label={item.status === "focus" || item.manual_pin ? `移出备选关注 ${item.symbol}` : `加入备选关注 ${item.symbol}`}
+                      className={item.status === "focus" || item.manual_pin ? styles.researchHubStarButtonActive : styles.researchHubStarButton}
+                      disabled={pinUpdatingAssetId === item.id}
+                      onClick={() => onToggleManualPin(item)}
+                      title={item.status === "focus" || item.manual_pin ? "移出备选关注" : "加入备选关注"}
+                      type="button"
+                    >
+                      {item.status === "focus" || item.manual_pin ? "★" : "☆"}
+                    </button>
+                    {activePool === "research" ? (
+                      <button
+                        aria-label={`删除研究池卡片 ${item.symbol}`}
+                        className={styles.researchHubDeleteButton}
+                        disabled={deletingAssetId === item.id}
+                        onClick={() => onDeleteResearchCard(item)}
+                        title="删除研究池卡片"
+                        type="button"
+                      >
+                        {deletingAssetId === item.id ? "…" : "🗑"}
+                      </button>
+                    ) : null}
+                  </div>
                 ) : null}
               </div>
             </div>
@@ -219,6 +237,7 @@ export function ResearchHubPage() {
   const [searchTerm, setSearchTerm] = useState("");
   const [selectionTask, setSelectionTask] = useState<BackgroundTask | null>(null);
   const [pinUpdatingAssetId, setPinUpdatingAssetId] = useState<number | null>(null);
+  const [deletingAssetId, setDeletingAssetId] = useState<number | null>(null);
   const [expandedTagAssetIds, setExpandedTagAssetIds] = useState<Record<number, boolean>>({});
   const { message, error, showError, showMessage, clear } = usePageFeedback();
 
@@ -332,6 +351,23 @@ export function ResearchHubPage() {
       showError(requestError instanceof ApiRequestError ? requestError.message : "关注状态更新失败");
     } finally {
       setPinUpdatingAssetId(null);
+    }
+  };
+
+  const handleDeleteResearchCard = async (item: HubAsset) => {
+    clear();
+    if (!window.confirm(`确定要删除 ${item.name}（${item.symbol}）这张研究池卡片吗？此操作不可恢复。`)) {
+      return;
+    }
+    setDeletingAssetId(item.id);
+    try {
+      await apiFetch(`/api/watchlist-hub/assets/${item.id}`, { method: "DELETE" });
+      showMessage(`${item.symbol} 研究池卡片已删除`);
+      await loadAssets();
+    } catch (requestError) {
+      showError(requestError instanceof ApiRequestError ? requestError.message : "删除研究池卡片失败");
+    } finally {
+      setDeletingAssetId(null);
     }
   };
 
@@ -465,15 +501,17 @@ export function ResearchHubPage() {
         >
           <PoolPanel
             activeId={selectedAssetId}
-            activePool={activePool}
-            counts={displayCounts}
-            items={activePoolItems}
-            pinUpdatingAssetId={pinUpdatingAssetId}
-            onPoolChange={setActivePool}
-            onSelect={handleOpenStockProfile}
-            onToggleManualPin={handleToggleManualPin}
-            renderAssetTags={renderAssetTags}
-          />
+          activePool={activePool}
+          counts={displayCounts}
+          items={activePoolItems}
+          pinUpdatingAssetId={pinUpdatingAssetId}
+          deletingAssetId={deletingAssetId}
+          onPoolChange={setActivePool}
+          onSelect={handleOpenStockProfile}
+          onDeleteResearchCard={handleDeleteResearchCard}
+          onToggleManualPin={handleToggleManualPin}
+          renderAssetTags={renderAssetTags}
+        />
         </ModuleCard>
 
       </div>

@@ -272,6 +272,12 @@
   min-width: 0;
 }
 
+.researchHubAssetActionStack {
+  display: grid;
+  gap: 8px;
+  justify-items: end;
+}
+
 .researchHubAssetMain {
   display: grid;
   gap: 5px;
@@ -382,6 +388,30 @@
   border-color: color-mix(in srgb, var(--accent) 48%, var(--line-soft));
   background: color-mix(in srgb, var(--accent) 16%, transparent);
   color: var(--accent);
+}
+
+.researchHubDeleteButton {
+  min-width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--danger) 42%, var(--line-soft));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  color: var(--danger);
+  font-size: 16px;
+  line-height: 1;
+  transition:
+    border-color var(--shell-transition),
+    background var(--shell-transition),
+    color var(--shell-transition),
+    transform var(--shell-transition);
+}
+
+.researchHubDeleteButton:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--danger) 58%, var(--line-soft));
+  background: color-mix(in srgb, var(--danger) 18%, transparent);
+  color: color-mix(in srgb, var(--danger) 84%, white);
 }
 
 .researchHubControlPage {
@@ -1689,7 +1719,7 @@ details > .historyDetailSummary:hover {
 .strategyInsightGrid {
   display: grid;
   gap: 10px;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   width: 100%;
   min-width: 0;
 }
@@ -2516,7 +2546,7 @@ details > .historyDetailSummary:hover {
   }
 
   .strategyInsightGrid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .selectionResultGrid {

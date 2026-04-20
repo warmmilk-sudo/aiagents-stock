@@ -20,6 +20,7 @@ from backend.routers import (
     exports,
     followup_assets,
     investment_activity,
+    macro_analysis,
     macro_cycle,
     low_price_bull,
     longhubang,
@@ -99,6 +100,7 @@ def create_app() -> FastAPI:
     app.include_router(sector_strategy.router)
     app.include_router(longhubang.router)
     app.include_router(news_flow.router)
+    app.include_router(macro_analysis.router)
     app.include_router(macro_cycle.router)
 
     if (FRONTEND_DIST_DIR / "assets").is_dir():

@@ -23,6 +23,7 @@ DEFAULT_SCHEDULE_TIME = "14:30"
 DEFAULT_MAX_WORKERS = 6
 FINAL_SELECTION_LIMIT = 10
 SECTOR_WATCH_LIMIT = 3
+HOT_LIFECYCLE_STAGES = {"startup", "explosive", "decay"}
 
 
 def _now_text() -> str:
@@ -310,6 +311,7 @@ class SmartSelectionService:
             "ranked_action_candidates": items.get("ranked_action_candidates", []),
             "final_selected": items.get("final_selected", []),
             "excluded_by_lifecycle_veto": items.get("excluded_by_lifecycle_veto", []),
+            "excluded_by_risk_veto": items.get("excluded_by_risk_veto", []),
         }
         return payload
 
@@ -405,7 +407,10 @@ class SmartSelectionService:
             "distribution_penalty": distribution_penalty,
             "composite_score": composite_score,
             "volume_contraction_days": volume_contraction_days,
-            "tail_session": bool((candidate.get("technical_metrics") or {}).get("intraday_bias")),
+            "tail_session": bool(metrics.get("tail_session")),
+            "latest_minute_time": str(metrics.get("latest_minute_time") or ""),
+            "latest_trade_time": str(metrics.get("latest_trade_time") or ""),
+            "realtime_freshness": metrics.get("realtime_freshness") if isinstance(metrics.get("realtime_freshness"), dict) else {},
             "lifecycle_stage": lifecycle_item.get("lifecycle_stage") or "neutral",
             "defense_line_type": lifecycle_item.get("defense_line_type") or "NONE",
             "selection_veto": bool(lifecycle_item.get("selection_veto")),
@@ -438,7 +443,61 @@ class SmartSelectionService:
             "tail_confirmation_score": metrics.get("tail_confirmation_score"),
             "distribution_penalty": metrics.get("distribution_penalty"),
             "market_cap": candidate.get("market_cap"),
+            "tail_session": bool(metrics.get("tail_session")),
+            "latest_minute_time": metrics.get("latest_minute_time"),
+            "latest_trade_time": metrics.get("latest_trade_time"),
+            "realtime_freshness": metrics.get("realtime_freshness") if isinstance(metrics.get("realtime_freshness"), dict) else {},
         }
+
+    def _build_selection_sector_snapshot(
+        self,
+        *,
+        extracted_sectors: list[dict[str, Any]],
+        lifecycle_snapshot: list[dict[str, Any]],
+        warnings: list[str],
+    ) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
+        lifecycle_by_name = {
+            research_hub_service._normalize_sector_text(item.get("sector_name")): item
+            for item in lifecycle_snapshot
+            if item.get("sector_name")
+        }
+
+        selection_sectors: list[dict[str, Any]] = []
+        selected_lifecycle_by_name: dict[str, dict[str, Any]] = {}
+        for hot_item in extracted_sectors:
+            normalized_name = research_hub_service._normalize_sector_text(hot_item.get("sector"))
+            if not normalized_name:
+                continue
+            lifecycle_item = lifecycle_by_name.get(normalized_name)
+            if not lifecycle_item:
+                continue
+            lifecycle_stage = str(lifecycle_item.get("lifecycle_stage") or "")
+            if lifecycle_stage not in HOT_LIFECYCLE_STAGES:
+                continue
+            selection_sectors.append(
+                {
+                    "sector": lifecycle_item.get("sector_name") or hot_item.get("sector"),
+                    "heat_score": max(
+                        _safe_float(hot_item.get("heat_score"), 0.0),
+                        _safe_float(lifecycle_item.get("heat_score"), 0.0),
+                    ),
+                    "lifecycle_stage": lifecycle_stage,
+                    "defense_line_type": lifecycle_item.get("defense_line_type"),
+                    "selection_veto": lifecycle_item.get("selection_veto"),
+                    "trajectory": lifecycle_item.get("trajectory"),
+                    "delta_1": lifecycle_item.get("delta_1"),
+                    "delta_2": lifecycle_item.get("delta_2"),
+                    "action_hint": lifecycle_item.get("action_hint"),
+                    "source": hot_item.get("source"),
+                }
+            )
+            selected_lifecycle_by_name[normalized_name] = lifecycle_item
+
+        if extracted_sectors and not selection_sectors:
+            warnings.append("主线热点与生命周期候选未形成有效交集，智能选股降级为空结果")
+        elif not extracted_sectors:
+            warnings.append("未能从智策板块报告提取到有效主线热点，智能选股降级为空结果")
+        return selection_sectors, selected_lifecycle_by_name
 
     def _upsert_watch_pool(self, run_id: str, items: list[dict[str, Any]]) -> None:
         if not items:
@@ -564,6 +623,7 @@ class SmartSelectionService:
         )
         warnings.extend([str(item).strip() for item in sector_info.get("warnings") or [] if str(item).strip()])
         report = sector_info.get("report") or {}
+        market_context = research_hub_service._build_selection_market_context(report)
         report_id = int(sector_info.get("report_id") or 0)
         lifecycle_snapshot = self.sector_strategy_db.get_lifecycle_items_for_analysis(report_id) if report_id else []
         if not lifecycle_snapshot:
@@ -580,27 +640,34 @@ class SmartSelectionService:
                 "warnings": warnings,
             }
 
-        report_progress(20, "读取板块生命周期并映射研究池...")
-        selection_sectors = [
-            {
-                "sector": item.get("sector_name"),
-                "heat_score": item.get("heat_score"),
-                "lifecycle_stage": item.get("lifecycle_stage"),
-                "defense_line_type": item.get("defense_line_type"),
-                "selection_veto": item.get("selection_veto"),
-                "trajectory": item.get("trajectory"),
-                "delta_1": item.get("delta_1"),
-                "delta_2": item.get("delta_2"),
-                "action_hint": item.get("action_hint"),
+        report_progress(20, "提取主线热点并映射生命周期...")
+        extracted_sectors = research_hub_service._extract_selection_sectors(
+            report,
+            warnings,
+            lightweight_model=lightweight_model,
+            reasoning_model=reasoning_model,
+        )
+        selection_sectors, lifecycle_by_name = self._build_selection_sector_snapshot(
+            extracted_sectors=extracted_sectors,
+            lifecycle_snapshot=lifecycle_snapshot,
+            warnings=warnings,
+        )
+        if not selection_sectors:
+            lifecycle_summary = self.sector_strategy_db.build_lifecycle_summary(lifecycle_snapshot)
+            return {
+                "sector_strategy_report_id": report_id,
+                "sector_strategy_reused": bool(sector_info.get("reused")),
+                "market_context": market_context,
+                "extracted_sectors": extracted_sectors,
+                "selection_sectors": [],
+                "lifecycle_summary": lifecycle_summary,
+                "observed_startup_candidates": [],
+                "ranked_action_candidates": [],
+                "final_selected": [],
+                "excluded_by_lifecycle_veto": [],
+                "excluded_by_risk_veto": [],
+                "warnings": list(dict.fromkeys(warnings)),
             }
-            for item in lifecycle_snapshot
-            if item.get("sector_name")
-        ]
-        lifecycle_by_name = {
-            research_hub_service._normalize_sector_text(item.get("sector_name")): item
-            for item in lifecycle_snapshot
-            if item.get("sector_name")
-        }
 
         research_assets = [
             asset
@@ -619,6 +686,7 @@ class SmartSelectionService:
         def process_asset(asset: dict[str, Any]) -> Optional[tuple[str, dict[str, Any], str]]:
             local_warnings: list[str] = []
             context = research_hub_service._collect_asset_match_context(asset, local_warnings)
+            context["market_context"] = market_context
             candidate = research_hub_service._score_selection_candidate(asset, context, selection_sectors)
             if local_warnings:
                 with warnings_lock:
@@ -661,27 +729,59 @@ class SmartSelectionService:
             ranked = sorted(
                 items,
                 key=lambda item: (
-                    _safe_float(item.get("market_cap"), 0.0),
                     _safe_float(item.get("score"), 0.0),
+                    _safe_float(item.get("market_cap"), 0.0),
                 ),
                 reverse=True,
             )[:SECTOR_WATCH_LIMIT]
             observed_startup_candidates.extend(ranked)
-        observed_startup_candidates.sort(key=lambda item: (_safe_float(item.get("market_cap")), _safe_float(item.get("score"))), reverse=True)
+        observed_startup_candidates.sort(key=lambda item: (_safe_float(item.get("score")), _safe_float(item.get("market_cap"))), reverse=True)
 
         report_progress(72, "筛选尾盘执行候选...")
         ranked_action_candidates = sorted(explosive_candidates, key=lambda item: _safe_float(item.get("score")), reverse=True)
 
         final_selected: list[dict[str, Any]] = []
+        risk_vetoed_candidates: list[dict[str, Any]] = []
         sector_counts: dict[str, int] = {}
+        longhubang_map = research_hub_service._group_recent_longhubang_by_symbol(days=3, warnings=warnings)
+        risk_client = research_hub_service.DeepSeekClient(
+            lightweight_model=lightweight_model,
+            reasoning_model=reasoning_model,
+        )
+        filtered_by_tail = 0
+        filtered_by_freshness = 0
         for item in ranked_action_candidates:
             if len(final_selected) >= FINAL_SELECTION_LIMIT:
                 break
+            if not bool(item.get("tail_session")):
+                filtered_by_tail += 1
+                continue
+            realtime_freshness = item.get("realtime_freshness") if isinstance(item.get("realtime_freshness"), dict) else {}
+            if realtime_freshness.get("intraday_decision_ready") is not True:
+                filtered_by_freshness += 1
+                continue
             if _safe_float(item.get("shrinkage_score")) < 55:
                 continue
             if _safe_float(item.get("relative_strength_score")) < 55:
                 continue
             if _safe_float(item.get("tail_confirmation_score")) < 55:
+                continue
+            risk_result = research_hub_service._evaluate_risk_for_symbol(
+                str(item.get("symbol") or ""),
+                str(item.get("name") or item.get("symbol") or ""),
+                longhubang_map,
+                warnings,
+                risk_client=risk_client,
+            )
+            risk_notes = [str(note).strip() for note in risk_result.get("risk_notes") or [] if str(note).strip()]
+            if risk_notes:
+                item["risk_notes"] = risk_notes
+                item["risk_level"] = str(risk_result.get("risk_level") or "")
+                item["reason"] = f"{item.get('reason') or ''} | 风控提示: {'；'.join(risk_notes[:2])}".strip(" |")
+            if risk_result.get("vetoed"):
+                item["selection_veto"] = True
+                item["reason"] = f"{item.get('reason') or ''} | 个股风控否决".strip(" |")
+                risk_vetoed_candidates.append(item)
                 continue
             bucket = research_hub_service._normalize_sector_text(item.get("primary_sector")) or "other"
             if sector_counts.get(bucket, 0) >= 2:
@@ -689,10 +789,16 @@ class SmartSelectionService:
             sector_counts[bucket] = sector_counts.get(bucket, 0) + 1
             final_selected.append(item)
 
+        if filtered_by_tail:
+            warnings.append(f"{filtered_by_tail} 只爆发期候选因未到尾盘时段而仅保留观察，不进入执行名单")
+        if filtered_by_freshness:
+            warnings.append(f"{filtered_by_freshness} 只爆发期候选因分时新鲜度不足而未进入执行名单")
+
         self._replace_run_items(run_id, "observed_startup_candidates", observed_startup_candidates)
         self._replace_run_items(run_id, "ranked_action_candidates", ranked_action_candidates)
         self._replace_run_items(run_id, "final_selected", final_selected)
         self._replace_run_items(run_id, "excluded_by_lifecycle_veto", vetoed_candidates)
+        self._replace_run_items(run_id, "excluded_by_risk_veto", risk_vetoed_candidates)
         self._upsert_watch_pool(run_id, observed_startup_candidates)
 
         lifecycle_summary = self.sector_strategy_db.build_lifecycle_summary(lifecycle_snapshot)
@@ -700,11 +806,15 @@ class SmartSelectionService:
         return {
             "sector_strategy_report_id": report_id,
             "sector_strategy_reused": bool(sector_info.get("reused")),
+            "market_context": market_context,
+            "extracted_sectors": extracted_sectors,
+            "selection_sectors": selection_sectors,
             "lifecycle_summary": lifecycle_summary,
             "observed_startup_candidates": observed_startup_candidates,
             "ranked_action_candidates": ranked_action_candidates,
             "final_selected": final_selected,
             "excluded_by_lifecycle_veto": vetoed_candidates,
+            "excluded_by_risk_veto": risk_vetoed_candidates,
             "warnings": list(dict.fromkeys(warnings)),
             "watch_pool_size": len(self.list_watch_pool(active_only=True)),
         }

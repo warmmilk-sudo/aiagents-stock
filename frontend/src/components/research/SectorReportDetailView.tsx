@@ -441,7 +441,6 @@ interface SectorReportDetailViewProps {
   onBack: () => void;
   onExport: (kind: ExportKind) => void;
   reportView?: SectorStrategyReportView | null;
-  lifecycleItems?: Array<Record<string, unknown>> | null;
   dailyHeatPanel?: { available?: boolean; board_date?: string; total_count?: number; items?: Array<Record<string, unknown>> | null } | null;
 }
 
@@ -451,7 +450,6 @@ export function SectorReportDetailView({
   onBack,
   onExport,
   reportView,
-  lifecycleItems,
   dailyHeatPanel,
 }: SectorReportDetailViewProps) {
   if (!reportView) {
@@ -580,55 +578,6 @@ export function SectorReportDetailView({
 
         <BoardInsightSection predictions={predictions} />
         <BoardSourceSection marketSnapshot={reportView?.market_snapshot ?? null} />
-      </DetailSection>
-
-      <DetailSection title="生命周期观察">
-        {lifecycleItems?.length ? (
-          <div className={styles.heatChartList}>
-            {lifecycleItems.map((item, index) => {
-              const trajectory = Array.isArray(item.trajectory)
-                ? item.trajectory.map((entry) => String((entry as { score?: unknown }).score ?? 0)).join(" -> ")
-                : "-";
-              const details =
-                item.lifecycle_details && typeof item.lifecycle_details === "object"
-                  ? (item.lifecycle_details as Record<string, Record<string, unknown>>)
-                  : {};
-              const stage = String(item.lifecycle_stage || "neutral");
-              const stageText = stage === "startup" ? "启动期" : stage === "explosive" ? "爆发期" : stage === "decay" ? "衰退期" : "中性";
-              return (
-                <div className={styles.heatChartCard} key={`${String(item.sector_name || "sector")}-${index}`}>
-                  <div className={styles.heatChartTop}>
-                    <strong>{asText(item.sector_name)}</strong>
-                    <span>{formatNumber(item.heat_score, 0, "0")}</span>
-                  </div>
-                  <div className={styles.heatChartMeta}>
-                    <span>阶段：{stageText}</span>
-                    <span>防守线：{asText(item.defense_line_type, "NONE")}</span>
-                  </div>
-                  <div className={styles.muted}>
-                    来源：{asText(item.source_type, "-")} | 观察点数：{asText(item.observation_count, "-")} | 主窗口：{asText(item.window_size_used, "-")} 日
-                  </div>
-                  <div>生命周期轨迹：{trajectory}</div>
-                  <div className={styles.muted}>Δ1：{asText(item.delta_1, "-")} | Δ2：{asText(item.delta_2, "-")}</div>
-                  {Object.keys(details).length ? (
-                    <div className={styles.muted}>
-                      {Object.entries(details)
-                        .map(([windowKey, metrics]) => {
-                          const typedMetrics = metrics as Record<string, unknown>;
-                          return `${windowKey}日: 变化${asText(typedMetrics.change, "-")} / 斜率${asText(typedMetrics.slope, "-")} / 回撤${asText(typedMetrics.drawdown, "-")}`;
-                        })
-                        .join(" | ")}
-                    </div>
-                  ) : null}
-                  <div>{asText(item.action_hint, "暂无动作提示")}</div>
-                  {Boolean(item.selection_veto) ? <div className={styles.dangerText}>生命周期衰退，一票否决</div> : null}
-                </div>
-              );
-            })}
-          </div>
-        ) : (
-          <div className={styles.muted}>暂无生命周期数据</div>
-        )}
       </DetailSection>
 
       <DetailSection title="当日热度面板">

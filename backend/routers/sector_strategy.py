@@ -106,26 +106,7 @@ def get_lifecycle_config(request: Request) -> dict:
 @router.put("/lifecycle-config")
 def update_lifecycle_config(request: Request, payload: SectorStrategyLifecycleConfigRequest) -> dict:
     require_session(request)
-    config_payload = services.update_sector_strategy_lifecycle_config(payload.values)
-    rebuild_task = (
-        services.submit_sector_strategy_lifecycle_rebuild_task(reason="config_update")
-        if payload.auto_rebuild
-        else None
-    )
-    return success_payload(
-        {
-            "config": config_payload,
-            "rebuild_task_id": rebuild_task.get("task_id") if rebuild_task else None,
-            "rebuild_reused": bool(rebuild_task.get("reused")) if rebuild_task else False,
-        },
-        message=(
-            "生命周期阈值配置已更新，复用现有重建任务"
-            if payload.auto_rebuild and rebuild_task and rebuild_task.get("reused")
-            else "生命周期阈值配置已更新并已提交重建任务"
-            if payload.auto_rebuild
-            else "生命周期阈值配置已更新"
-        ),
-    )
+    raise ApiError(403, "生命周期阈值已固定在代码配置中，不支持在线修改", error_code="sector_strategy_lifecycle_config_read_only")
 
 
 @router.post("/lifecycle/rebuild")

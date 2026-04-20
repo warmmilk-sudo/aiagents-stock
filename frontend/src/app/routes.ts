@@ -26,6 +26,7 @@ export const routeItems: AppRouteItem[] = [
   { path: "/strategies/sector-strategy", title: "智策板块", group: "策略分析" },
   { path: "/strategies/longhubang", title: "智瞰龙虎", group: "策略分析" },
   { path: "/strategies/news-flow", title: "新闻流量", group: "策略分析" },
+  { path: "/strategies/macro-analysis", title: "宏观分析", group: "策略分析" },
   { path: "/strategies/macro-cycle", title: "宏观周期", group: "策略分析" },
   { path: "/selectors/main-force", title: "主力选股", group: "选股" },
   { path: "/selectors/low-price-bull", title: "低价擒牛", group: "选股" },

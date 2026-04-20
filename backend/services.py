@@ -84,6 +84,7 @@ LOW_PRICE_BULL_TASK_TYPE = "low_price_bull_selection"
 SMALL_CAP_TASK_TYPE = "small_cap_selection"
 PROFIT_GROWTH_TASK_TYPE = "profit_growth_selection"
 VALUE_STOCK_TASK_TYPE = "value_stock_selection"
+MACRO_ANALYSIS_TASK_TYPE = "macro_analysis"
 MACRO_CYCLE_TASK_TYPE = "macro_cycle_analysis"
 NEWS_FLOW_TASK_TYPE = "news_flow_analysis"
 HOME_STOCK_ANALYSIS_TASK_TYPE = "home_stock_analysis"
@@ -2114,6 +2115,42 @@ def _create_macro_cycle_database():
     return macro_cycle_db
 
 
+def submit_macro_analysis_task(
+    *,
+    lightweight_model: Optional[str],
+    reasoning_model: Optional[str],
+) -> str:
+    def runner(_task_id: str, report_progress) -> dict[str, Any]:
+        from macro_analysis_engine import MacroAnalysisEngine
+
+        def progress_callback(progress_pct, text):
+            raw = float(progress_pct or 0)
+            if 0 <= raw <= 1:
+                raw *= 100
+            pct_value = int(max(0, min(100, raw)))
+            report_progress(current=pct_value, total=100, message=text or "宏观分析进行中...")
+
+        engine = MacroAnalysisEngine(
+            lightweight_model=lightweight_model,
+            reasoning_model=reasoning_model,
+        )
+        result = engine.run_full_analysis(progress_callback=progress_callback)
+        if not result.get("success"):
+            raise RuntimeError(result.get("error") or "宏观分析失败")
+        report_progress(current=100, total=100, message="宏观分析完成，正在同步结果...")
+        return {
+            "result": _json_safe(result),
+            "message": "宏观分析完成。",
+        }
+
+    return start_ui_analysis_task(
+        task_type=MACRO_ANALYSIS_TASK_TYPE,
+        label="宏观分析",
+        runner=runner,
+        metadata={},
+    )
+
+
 def submit_macro_cycle_task(
     *,
     lightweight_model: Optional[str],
@@ -2182,6 +2219,25 @@ def export_macro_cycle_pdf(result: dict[str, Any]) -> tuple[bytes, str, str]:
         data = file_obj.read()
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     return data, f"宏观周期报告_{timestamp}.pdf", "application/pdf"
+
+
+def export_macro_analysis_markdown(result: dict[str, Any]) -> tuple[bytes, str, str]:
+    from macro_analysis_pdf import generate_macro_analysis_markdown
+
+    markdown = generate_macro_analysis_markdown(result or {})
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return markdown.encode("utf-8"), f"宏观分析报告_{timestamp}.md", "text/markdown; charset=utf-8"
+
+
+def export_macro_analysis_pdf(result: dict[str, Any]) -> tuple[bytes, str, str]:
+    from macro_analysis_pdf import MacroAnalysisPDFGenerator
+
+    generator = MacroAnalysisPDFGenerator()
+    pdf_path = generator.generate_pdf(result or {})
+    with open(pdf_path, "rb") as file_obj:
+        data = file_obj.read()
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return data, f"宏观分析报告_{timestamp}.pdf", "application/pdf"
 
 
 def _get_news_flow_engine():
@@ -3404,8 +3460,11 @@ def get_activity_snapshot() -> dict[str, Any]:
 
 
 def save_config_values(values: dict[str, str]) -> tuple[bool, str]:
-    editable_values = config_manager.filter_system_config_values(values)
     current_values = config_manager.read_env()
+    editable_values = config_manager.resolve_masked_secrets(
+        config_manager.filter_system_config_values(values),
+        current_values,
+    )
     merged_values = {**current_values, **editable_values}
     valid, message = config_manager.validate_config(merged_values)
     if not valid:

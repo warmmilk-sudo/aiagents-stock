@@ -134,23 +134,20 @@ class SectorStrategyLifecycleTests(unittest.TestCase):
         self.assertEqual(daily_panel["total_count"], 1)
         self.assertEqual(daily_panel["items"][0]["sector_name"], "算力租赁")
 
-    def test_lifecycle_config_round_trip(self):
-        original = self.db.get_lifecycle_config()
-        self.assertIn("explosive_current_min", original)
+    def test_lifecycle_config_is_code_defined_and_read_only(self):
+        config = self.db.get_lifecycle_config()
+        self.assertEqual(config, self.db.DEFAULT_LIFECYCLE_CONFIG)
 
-        updated = self.db.update_lifecycle_config(
-            {
-                "explosive_current_min": 83,
-                "explosive_avg_10d_min": 68.5,
-                "decay_drawdown_long_min": 16,
-            }
-        )
+        with self.assertRaisesRegex(ValueError, "不支持在线修改"):
+            self.db.update_lifecycle_config(
+                {
+                    "explosive_current_min": 83,
+                    "explosive_avg_10d_min": 68.5,
+                    "decay_drawdown_long_min": 16,
+                }
+            )
 
-        self.assertEqual(updated["explosive_current_min"], 83.0)
-        self.assertEqual(updated["explosive_avg_10d_min"], 68.5)
-        self.assertEqual(updated["decay_drawdown_long_min"], 16.0)
-        self.assertEqual(updated["startup_current_min"], original["startup_current_min"])
-        self.assertEqual(self.db.get_lifecycle_config()["explosive_current_min"], 83.0)
+        self.assertEqual(self.db.get_lifecycle_config(), self.db.DEFAULT_LIFECYCLE_CONFIG)
 
 
 if __name__ == "__main__":

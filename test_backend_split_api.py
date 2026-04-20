@@ -212,6 +212,14 @@ class BackendSplitApiTests(unittest.TestCase):
         self.assertEqual(response.json()["data"]["task_id"], "task-macro-cycle")
         mocked.assert_called_once()
 
+    def test_submit_macro_analysis_task_uses_service(self):
+        self.login()
+        with patch("backend.services.submit_macro_analysis_task", return_value="task-macro-analysis") as mocked:
+            response = self.client.post("/api/strategies/macro-analysis/tasks", json={})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["task_id"], "task-macro-analysis")
+        mocked.assert_called_once()
+
     def test_submit_news_flow_task_uses_service(self):
         self.login()
         with patch("backend.services.submit_news_flow_task", return_value="task-news-flow") as mocked:
@@ -241,25 +249,14 @@ class BackendSplitApiTests(unittest.TestCase):
         self.assertEqual(response.json()["data"]["max_workers"], 8)
         mocked.assert_called_once_with(enabled=True, schedule_time="14:35", max_workers=8)
 
-    def test_update_sector_strategy_lifecycle_config_uses_service(self):
+    def test_update_sector_strategy_lifecycle_config_is_read_only(self):
         self.login()
-        with patch(
-            "backend.services.update_sector_strategy_lifecycle_config",
-            return_value={"explosive_current_min": 84.0, "explosive_avg_10d_min": 70.0},
-        ) as mocked_update, patch(
-            "backend.services.submit_sector_strategy_lifecycle_rebuild_task",
-            return_value={"task_id": "rebuild-task-1", "reused": False, "status": "queued"},
-        ) as mocked_rebuild:
-            response = self.client.put(
-                "/api/strategies/sector-strategy/lifecycle-config",
-                json={"values": {"explosive_current_min": 84, "explosive_avg_10d_min": 70}, "auto_rebuild": True},
-            )
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["data"]["config"]["explosive_current_min"], 84.0)
-        self.assertEqual(response.json()["data"]["rebuild_task_id"], "rebuild-task-1")
-        self.assertFalse(response.json()["data"]["rebuild_reused"])
-        mocked_update.assert_called_once_with({"explosive_current_min": 84, "explosive_avg_10d_min": 70})
-        mocked_rebuild.assert_called_once_with(reason="config_update")
+        response = self.client.put(
+            "/api/strategies/sector-strategy/lifecycle-config",
+            json={"values": {"explosive_current_min": 84, "explosive_avg_10d_min": 70}, "auto_rebuild": True},
+        )
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json()["error_code"], "sector_strategy_lifecycle_config_read_only")
 
     def test_rebuild_sector_strategy_lifecycle_uses_service(self):
         self.login()
@@ -475,6 +472,18 @@ class BackendSplitApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.content, b"macro")
         self.assertIn('attachment; filename="macro.md"', response.headers.get("content-disposition", ""))
+        mocked.assert_called_once()
+
+    def test_macro_analysis_markdown_export_returns_attachment(self):
+        self.login()
+        with patch(
+            "backend.services.export_macro_analysis_markdown",
+            return_value=(b"macro-analysis", "macro-analysis.md", "text/markdown; charset=utf-8"),
+        ) as mocked:
+            response = self.client.post("/api/exports/macro-analysis/markdown", json={"result": {"success": True}})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.content, b"macro-analysis")
+        self.assertIn('attachment; filename="macro-analysis.md"', response.headers.get("content-disposition", ""))
         mocked.assert_called_once()
 
     def test_news_flow_pdf_export_returns_attachment(self):

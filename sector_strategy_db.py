@@ -24,6 +24,7 @@ class SectorStrategyDatabase:
     LIFECYCLE_WINDOWS = (3, 5, 10, 15)
     LIFECYCLE_MIN_OBSERVATIONS = {3: 3, 5: 4, 10: 7, 15: 10}
     LIFECYCLE_CONFIG_KEY = "lifecycle_config_v1"
+    # 生命周期阈值固定在代码中，避免通过 UI / 数据库在线调参影响回放与选股口径。
     DEFAULT_LIFECYCLE_CONFIG = {
         "startup_current_min": 60.0,
         "startup_change_3d_min": 12.0,
@@ -143,52 +144,14 @@ class SectorStrategyDatabase:
         return normalized
 
     def _load_lifecycle_config(self):
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        try:
-            cursor.execute(
-                '''
-                SELECT setting_value
-                FROM sector_strategy_settings
-                WHERE setting_key = ?
-                ''',
-                (self.LIFECYCLE_CONFIG_KEY,),
-            )
-            row = cursor.fetchone()
-            if not row or not row[0]:
-                return dict(self.DEFAULT_LIFECYCLE_CONFIG)
-            try:
-                payload = json.loads(row[0])
-            except Exception:
-                payload = {}
-            return self._normalize_lifecycle_config(payload)
-        finally:
-            conn.close()
+        return dict(self.DEFAULT_LIFECYCLE_CONFIG)
 
     def get_lifecycle_config(self):
-        self._lifecycle_config_cache = self._normalize_lifecycle_config(self._lifecycle_config_cache)
+        self._lifecycle_config_cache = dict(self.DEFAULT_LIFECYCLE_CONFIG)
         return dict(self._lifecycle_config_cache)
 
     def update_lifecycle_config(self, payload):
-        normalized = self._normalize_lifecycle_config(payload)
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        try:
-            cursor.execute(
-                '''
-                INSERT INTO sector_strategy_settings (setting_key, setting_value, updated_at)
-                VALUES (?, ?, CURRENT_TIMESTAMP)
-                ON CONFLICT(setting_key) DO UPDATE SET
-                    setting_value = excluded.setting_value,
-                    updated_at = CURRENT_TIMESTAMP
-                ''',
-                (self.LIFECYCLE_CONFIG_KEY, self._to_json(normalized)),
-            )
-            conn.commit()
-            self._lifecycle_config_cache = normalized
-            return dict(normalized)
-        finally:
-            conn.close()
+        raise ValueError("生命周期阈值已固定在代码配置中，不支持在线修改")
     
     def init_database(self):
         """初始化数据库表"""

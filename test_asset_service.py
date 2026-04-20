@@ -5,6 +5,7 @@ import unittest
 from analysis_repository import AnalysisRepository
 from asset_repository import AssetRepository, STATUS_PORTFOLIO, STATUS_RESEARCH, STATUS_WATCHLIST
 from asset_service import AssetService
+from monitoring_repository import MonitoringRepository
 
 
 class AssetServiceFollowupListTests(unittest.TestCase):
@@ -17,9 +18,11 @@ class AssetServiceFollowupListTests(unittest.TestCase):
             legacy_analysis_db_path=self.legacy_db_path,
         )
         self.asset_repository = AssetRepository(self.db_path)
+        self.monitoring_repository = MonitoringRepository(self.db_path)
         self.service = AssetService(
             asset_store=self.asset_repository,
             analysis_store=self.analysis_repository,
+            monitoring_store=self.monitoring_repository,
         )
 
     def tearDown(self):
@@ -175,6 +178,44 @@ class AssetServiceFollowupListTests(unittest.TestCase):
 
         search_by_summary = self.service.list_followup_assets(search_term="景气改善", limit=None)
         self.assertEqual([item["id"] for item in search_by_summary], [research_asset_id])
+
+    def test_promote_to_portfolio_runs_initial_holding_analysis_for_manual_position(self):
+        captured = {}
+
+        def fake_initial_analysis(*, symbol, asset_id, account_name):
+            captured["symbol"] = symbol
+            captured["asset_id"] = asset_id
+            captured["account_name"] = account_name
+            self.asset_repository.set_open_position_cycle_baseline(
+                asset_id,
+                swing_type="标准波段",
+                swing_type_reason="手动加入持仓时确认本轮更适合顺势持有。",
+                holding_period="5-15个交易日",
+                baseline_source="manual_portfolio_promotion_analysis",
+                baseline_analysis_id=123,
+                overwrite=True,
+            )
+            return True, ""
+
+        self.service._analyze_initial_holding_baseline = fake_initial_analysis
+
+        success, message, asset_id = self.service.promote_to_portfolio(
+            symbol="300750",
+            stock_name="宁德时代",
+            cost_price=210.0,
+            quantity=100,
+            note="手动加入持仓",
+        )
+
+        self.assertTrue(success)
+        self.assertIn("已设为持仓并完成首次持仓分析", message)
+        self.assertEqual(captured["symbol"], "300750")
+        self.assertEqual(captured["asset_id"], asset_id)
+
+        open_cycle = self.asset_repository.get_open_position_cycle(asset_id)
+        self.assertIsNotNone(open_cycle)
+        self.assertEqual(open_cycle["swing_type"], "标准波段")
+        self.assertEqual(open_cycle["baseline_source"], "manual_portfolio_promotion_analysis")
 
 
 if __name__ == "__main__":

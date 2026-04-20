@@ -8,7 +8,14 @@ from fastapi import APIRouter, Request, Response
 
 from backend import services
 from backend.auth import require_session
-from backend.dto import LonghubangExportRequest, MacroCycleExportRequest, MainForceExportRequest, NewsFlowExportRequest, SectorStrategyExportRequest
+from backend.dto import (
+    LonghubangExportRequest,
+    MacroAnalysisExportRequest,
+    MacroCycleExportRequest,
+    MainForceExportRequest,
+    NewsFlowExportRequest,
+    SectorStrategyExportRequest,
+)
 
 
 router = APIRouter(prefix="/api/exports", tags=["exports"])
@@ -91,6 +98,20 @@ def export_macro_cycle_markdown(request: Request, payload: MacroCycleExportReque
 def export_macro_cycle_pdf(request: Request, payload: MacroCycleExportRequest) -> Response:
     require_session(request)
     data, filename, media_type = services.export_macro_cycle_pdf(payload.result)
+    return _build_file_response(data, filename, media_type)
+
+
+@router.post("/macro-analysis/markdown")
+def export_macro_analysis_markdown(request: Request, payload: MacroAnalysisExportRequest) -> Response:
+    require_session(request)
+    data, filename, media_type = services.export_macro_analysis_markdown(payload.result)
+    return _build_file_response(data, filename, media_type)
+
+
+@router.post("/macro-analysis/pdf")
+def export_macro_analysis_pdf(request: Request, payload: MacroAnalysisExportRequest) -> Response:
+    require_session(request)
+    data, filename, media_type = services.export_macro_analysis_pdf(payload.result)
     return _build_file_response(data, filename, media_type)
 
 

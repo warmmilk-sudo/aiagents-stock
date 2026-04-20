@@ -16,6 +16,7 @@ import { ProfitGrowthPage } from "../pages/selectors/ProfitGrowthPage";
 import { SmallCapPage } from "../pages/selectors/SmallCapPage";
 import { ValueStockPage } from "../pages/selectors/ValueStockPage";
 import { LonghubangPage } from "../pages/strategies/LonghubangPage";
+import { MacroAnalysisPage } from "../pages/strategies/MacroAnalysisPage";
 import { MacroCyclePage } from "../pages/strategies/MacroCyclePage";
 import { NewsFlowPage } from "../pages/strategies/NewsFlowPage";
 import { SectorStrategyPage } from "../pages/strategies/SectorStrategyPage";
@@ -155,6 +156,10 @@ export const router = createBrowserRouter([
       {
         path: "/strategies/news-flow",
         element: withPageSuspense(<NewsFlowPage />),
+      },
+      {
+        path: "/strategies/macro-analysis",
+        element: withPageSuspense(<MacroAnalysisPage />),
       },
       {
         path: "/strategies/macro-cycle",

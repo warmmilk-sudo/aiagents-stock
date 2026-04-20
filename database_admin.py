@@ -18,6 +18,7 @@ MANAGED_DATABASES = {
     "monitoring.db": "监测事件库",
     "stock_monitor.db": "价格预警库",
     "news_flow.db": "新闻流量库",
+    "macro_analysis.db": "宏观分析库",
     "macro_cycle.db": "宏观周期库",
     "sector_strategy.db": "智策板块库",
     "longhubang.db": "智瞰龙虎库",
@@ -254,6 +255,7 @@ class DatabaseAdmin:
         deleted_summary: list[dict[str, Any]] = []
 
         cleanup_plans: dict[str, list[tuple[str, str]]] = {
+            "macro_analysis.db": [("macro_analysis_reports", "created_at")],
             "macro_cycle.db": [("macro_cycle_reports", "created_at")],
             "sector_strategy.db": [("sector_analysis_reports", "created_at")],
             "longhubang.db": [("longhubang_analysis", "created_at")],

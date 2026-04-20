@@ -50,6 +50,18 @@ def update_asset(request: Request, asset_id: int, payload: ResearchHubAssetUpdat
     return success_payload(item, message="标的状态已更新")
 
 
+@router.delete("/assets/{asset_id}")
+def delete_asset(request: Request, asset_id: int) -> dict:
+    require_session(request)
+    try:
+        deleted = research_hub_service.delete_hub_asset(asset_id)
+    except ValueError as exc:
+        raise ApiError(400, str(exc), error_code="research_hub_asset_delete_failed") from exc
+    if not deleted:
+        raise ApiError(404, "未找到标的", error_code="research_hub_asset_not_found")
+    return success_payload({"deleted": True, "asset_id": asset_id}, message="研究池卡片已删除")
+
+
 @router.post("/quick-analyze")
 def quick_analyze(request: Request, payload: ResearchHubQuickAnalyzeRequest) -> dict:
     require_session(request)

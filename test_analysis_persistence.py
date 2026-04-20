@@ -26,6 +26,11 @@ from ui_shared import (
 )
 
 try:
+    from macro_analysis_engine import MacroAnalysisEngine
+except ModuleNotFoundError:
+    MacroAnalysisEngine = None
+
+try:
     from macro_cycle_db import MacroCycleDatabase
 except ModuleNotFoundError:
     MacroCycleDatabase = None
@@ -877,6 +882,24 @@ class MacroCyclePersistenceTests(unittest.TestCase):
             self.assertIsNone(db.get_latest_report())
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+@unittest.skipIf(MacroAnalysisEngine is None, "macro analysis dependencies unavailable")
+class MacroAnalysisSummaryTests(unittest.TestCase):
+    def test_extract_chief_summary_prefers_report_body_over_reasoning(self):
+        engine = MacroAnalysisEngine.__new__(MacroAnalysisEngine)
+        summary = engine._extract_chief_summary(
+            {
+                "agents_analysis": {
+                    "chief": {
+                        "analysis": "【推理过程】\n先归纳宏观数据与板块映射。\n"
+                        "# 一、综合结论\n当前宏观环境偏结构性机会，红利与高质量成长均有配置价值。"
+                    }
+                }
+            }
+        )
+
+        self.assertEqual(summary, "一、综合结论")
 
 
 @unittest.skipIf(MacroCycleEngine is None, "macro cycle dependencies unavailable")

@@ -270,7 +270,8 @@ def analyze_single_stock_for_batch(
             asset_id=asset_id,
             portfolio_stock_id=portfolio_stock_id,
         )
-        is_initial_holding_analysis = bool(resolved_has_position and not existing_strategy_context)
+        existing_swing_type = str((existing_strategy_context or {}).get("swing_type") or "").strip()
+        is_initial_holding_analysis = bool(resolved_has_position and not existing_swing_type)
         context_started_at = time.perf_counter()
         context_data = _collect_optional_context_data(symbol, stock_data, enabled_analysts_config)
         logger.info("[%s] optional context data prepared in %.2fs", symbol, time.perf_counter() - context_started_at)

@@ -484,6 +484,121 @@ class ResearchHubLifecycleTests(unittest.TestCase):
         self.assertEqual(run_pipeline.call_args.kwargs["lightweight_model"], "deepseek-chat")
         self.assertEqual(run_pipeline.call_args.kwargs["reasoning_model"], "deepseek-reasoner")
 
+    def test_list_hub_assets_backfills_display_name_and_concept_tags_for_cards(self):
+        repo = AssetRepository(str(self.base / "investment.db"))
+        analysis_repo = AnalysisRepository(str(self.base / "investment.db"))
+        asset_id = repo.create_or_update_research_asset(
+            symbol="600519",
+            name="600519",
+            note="测试标的",
+        )
+        analysis_repo.save_record(
+            symbol="600519",
+            stock_name="600519",
+            period="1y",
+            stock_info={"symbol": "600519", "industry": "食品饮料"},
+            agents_results={"summary": "ok"},
+            discussion_result="ok",
+            final_decision={"rating": "买入", "operation_advice": "继续跟踪"},
+        )
+
+        fake_data_source_manager = Mock()
+        fake_data_source_manager.get_stock_basic_info.return_value = {
+            "symbol": "600519",
+            "name": "贵州茅台",
+            "industry": "食品饮料",
+            "sector_tags": ["白酒", "高端消费", "沪深300"],
+        }
+
+        fake_data_source_module = types.ModuleType("data_source_manager")
+        fake_data_source_module.data_source_manager = fake_data_source_manager
+
+        with patch("research_hub_service.asset_repository", repo), patch(
+            "research_hub_service.analysis_repository",
+            analysis_repo,
+        ), patch("research_hub_service._list_ai_decisions", return_value=[]), patch.dict(
+            sys.modules,
+            {"data_source_manager": fake_data_source_module},
+        ):
+            items = research_hub_service.list_hub_assets()
+
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["name"], "贵州茅台")
+        self.assertEqual(items[0]["primary_industry"], "食品饮料")
+        self.assertIn("白酒", items[0]["core_concepts"])
+        self.assertIn("高端消费", items[0]["display_tags"])
+
+        refreshed = repo.get_asset(asset_id)
+        self.assertEqual(refreshed["name"], "贵州茅台")
+        self.assertIn("白酒", refreshed["sector_tags"])
+
+    def test_research_pool_cards_prioritize_most_recent_analysis(self):
+        repo = AssetRepository(str(self.base / "investment.db"))
+        analysis_repo = AnalysisRepository(str(self.base / "investment.db"))
+
+        older_asset_id = repo.create_or_update_research_asset(symbol="600001", name="旧分析卡")
+        newer_asset_id = repo.create_or_update_research_asset(symbol="600002", name="新分析卡")
+        repo.update_asset(older_asset_id, last_funnel_score=99.0)
+        repo.update_asset(newer_asset_id, last_funnel_score=10.0)
+
+        with patch("asset_repository.asset_repository", repo), patch("research_hub_service.asset_repository", repo), patch(
+            "research_hub_service.analysis_repository",
+            analysis_repo,
+        ), patch("research_hub_service._list_ai_decisions", return_value=[]):
+            analysis_repo.save_record(
+                symbol="600001",
+                stock_name="旧分析卡",
+                period="1y",
+                asset_id=older_asset_id,
+                stock_info={"industry": "旧行业"},
+                agents_results={"summary": "旧分析"},
+                discussion_result="旧分析",
+                final_decision={"rating": "买入"},
+                summary="旧分析",
+                analysis_date="2026-04-10 10:00:00",
+                has_full_report=True,
+            )
+            analysis_repo.save_record(
+                symbol="600002",
+                stock_name="新分析卡",
+                period="1y",
+                asset_id=newer_asset_id,
+                stock_info={"industry": "新行业"},
+                agents_results={"summary": "新分析"},
+                discussion_result="新分析",
+                final_decision={"rating": "买入"},
+                summary="新分析",
+                analysis_date="2026-04-18 10:00:00",
+                has_full_report=True,
+            )
+
+            items = research_hub_service.list_hub_assets(pool=STATUS_RESEARCH)
+
+        self.assertGreaterEqual(len(items), 2)
+        self.assertEqual([item["symbol"] for item in items[:2]], ["600002", "600001"])
+
+    def test_delete_hub_asset_soft_deletes_research_card(self):
+        repo = AssetRepository(str(self.base / "investment.db"))
+        analysis_repo = AnalysisRepository(str(self.base / "investment.db"))
+        asset_id = repo.create_or_update_research_asset(symbol="600003", name="待删除卡")
+
+        fake_asset_service = Mock()
+        fake_asset_service.sync_managed_monitors.return_value = {"removed": 0}
+
+        with patch("research_hub_service.asset_repository", repo), patch(
+            "research_hub_service.analysis_repository",
+            analysis_repo,
+        ), patch("research_hub_service.asset_service", fake_asset_service), patch(
+            "research_hub_service._list_ai_decisions",
+            return_value=[],
+        ):
+            deleted = research_hub_service.delete_hub_asset(asset_id)
+            items = research_hub_service.list_hub_assets(pool=STATUS_RESEARCH)
+
+        self.assertTrue(deleted)
+        self.assertIsNone(repo.get_asset(asset_id))
+        self.assertNotIn("600003", [item["symbol"] for item in items])
+
 
 if __name__ == "__main__":
     unittest.main()

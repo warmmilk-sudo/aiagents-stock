@@ -218,6 +218,15 @@ class MacroCycleExportRequest(BaseModel):
     result: dict = Field(default_factory=dict)
 
 
+class MacroAnalysisTaskRequest(BaseModel):
+    lightweight_model: Optional[str] = None
+    reasoning_model: Optional[str] = None
+
+
+class MacroAnalysisExportRequest(BaseModel):
+    result: dict = Field(default_factory=dict)
+
+
 class NewsFlowTaskRequest(BaseModel):
     category: Optional[str] = None
     lightweight_model: Optional[str] = None

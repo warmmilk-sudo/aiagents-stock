@@ -51,6 +51,46 @@ class AssetService:
             account_name=DEFAULT_ACCOUNT_NAME,
         )
 
+    def _analyze_initial_holding_baseline(
+        self,
+        *,
+        symbol: str,
+        asset_id: int,
+        account_name: str = DEFAULT_ACCOUNT_NAME,
+    ) -> Tuple[bool, str]:
+        try:
+            from batch_analysis_service import analyze_single_stock_for_batch
+        except Exception as exc:
+            return False, f"首次持仓分析模块不可用: {exc}"
+
+        period = str(getattr(config, "DATA_PERIOD", "1y") or "1y").strip() or "1y"
+        try:
+            result = analyze_single_stock_for_batch(
+                symbol=symbol,
+                period=period,
+                save_to_global_history=True,
+                has_position=True,
+                account_name=account_name,
+                asset_id=asset_id,
+                portfolio_stock_id=asset_id,
+            )
+        except Exception as exc:
+            return False, f"首次持仓分析执行失败: {exc}"
+
+        if not isinstance(result, dict):
+            return False, "首次持仓分析返回结果异常"
+        if not result.get("success"):
+            return False, str(result.get("error") or "首次持仓分析失败").strip() or "首次持仓分析失败"
+
+        open_cycle = self.asset_repository.get_open_position_cycle(asset_id) or {}
+        swing_type = str(open_cycle.get("swing_type") or "").strip()
+        if not swing_type:
+            final_decision = result.get("final_decision") if isinstance(result.get("final_decision"), dict) else {}
+            swing_type = str(final_decision.get("swing_type") or "").strip()
+        if not swing_type:
+            return False, "首次持仓分析未确认波段类型"
+        return True, ""
+
     @staticmethod
     def _normalize_runtime_thresholds(config: Optional[Dict]) -> Optional[Dict]:
         if not isinstance(config, dict):
@@ -420,13 +460,23 @@ class AssetService:
             baseline_analysis_id=origin_analysis_id,
             overwrite_baseline=False,
         )
-        warning = ""
+        warning_parts = []
+        analysis_success, analysis_error = self._analyze_initial_holding_baseline(
+            symbol=symbol,
+            asset_id=asset_id,
+            account_name=account_name,
+        )
+        if not analysis_success and analysis_error:
+            print(f"[WARN] 手动设为持仓后首次波段分析失败 ({symbol}): {analysis_error}")
+            warning_parts.append(f"首次持仓波段分析失败: {analysis_error}")
         try:
             self.sync_managed_monitors(asset_id)
         except Exception as exc:
             print(f"[WARN] 设为持仓后同步监测失败 ({symbol}): {exc}")
-            warning = f"（监测同步失败: {exc}）"
-        return True, f"已设为持仓: {symbol}{warning}", asset_id
+            warning_parts.append(f"监测同步失败: {exc}")
+        message_prefix = "已设为持仓并完成首次持仓分析" if analysis_success else "已设为持仓"
+        warning = f"（{'；'.join(warning_parts)}）" if warning_parts else ""
+        return True, f"{message_prefix}: {symbol}{warning}", asset_id
 
     def clear_position_to_watchlist(self, asset_id: int, *, note: str = "", last_trade_at: Optional[str] = None) -> bool:
         effective_trade_at = last_trade_at or datetime.now().strftime("%Y-%m-%d %H:%M:%S")

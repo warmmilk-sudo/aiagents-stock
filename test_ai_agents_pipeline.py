@@ -46,6 +46,36 @@ class StockAnalysisAgentsPipelineTests(unittest.TestCase):
         self.assertIn("risk", result)
         self.assertNotIn("risk_management", result)
 
+    def test_run_multi_agent_analysis_keeps_successful_reports_when_one_agent_fails(self):
+        agent = StockAnalysisAgents.__new__(StockAnalysisAgents)
+        agent.llm_client = None
+        agent.technical_analyst_agent = lambda *args, **kwargs: {"analysis": "技术"}
+        agent.fundamental_analyst_agent = lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("llm_empty_response"))
+        agent.fund_flow_analyst_agent = lambda *args, **kwargs: {"analysis": "资金"}
+        agent.risk_management_agent = lambda *args, **kwargs: {"analysis": "风险"}
+        agent.market_sentiment_agent = lambda *args, **kwargs: {"analysis": "情绪"}
+        agent.news_analyst_agent = lambda *args, **kwargs: {"analysis": "新闻"}
+
+        result = agent.run_multi_agent_analysis(
+            stock_info={"symbol": "600519"},
+            stock_data=[],
+            indicators={},
+            enabled_analysts={
+                "technical": True,
+                "fundamental": True,
+                "fund_flow": True,
+                "risk": False,
+                "sentiment": False,
+                "news": False,
+            },
+        )
+
+        self.assertIn("technical", result)
+        self.assertIn("fund_flow", result)
+        self.assertNotIn("fundamental", result)
+        self.assertIn("_analysis_errors", result)
+        self.assertIn("fundamental", result["_analysis_errors"])
+
     def test_conduct_team_discussion_rejects_empty_reports(self):
         agent = StockAnalysisAgents.__new__(StockAnalysisAgents)
         agent.llm_client = types.SimpleNamespace()

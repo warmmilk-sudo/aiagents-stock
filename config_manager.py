@@ -5,11 +5,15 @@ import re
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+import requests
+
 
 class ConfigManager:
     """Read, validate, and write `.env` configuration."""
 
     _SYSTEM_CONFIG_HIDDEN_PREFIXES = ("SMART_MONITOR_",)
+    _MASKED_PASSWORD_VALUE = "********"
+    _MODEL_DISCOVERY_TIMEOUT_SECONDS = 8
 
     _ENV_ASSIGNMENT_RE = re.compile(
         r"^(?P<leading>\s*)(?P<export>export\s+)?(?P<key>[A-Za-z_][A-Za-z0-9_]*)"
@@ -277,6 +281,78 @@ class ConfigManager:
     def _is_system_config_visible_key(self, key: str) -> bool:
         return not any(key.startswith(prefix) for prefix in self._SYSTEM_CONFIG_HIDDEN_PREFIXES)
 
+    def _is_password_field(self, key: str) -> bool:
+        field = self.default_config.get(key)
+        return bool(field and field.get("type") == "password")
+
+    def _parse_model_options_value(self, value: Any) -> list[str]:
+        options: list[str] = []
+        raw_value = self._normalize_env_value(value)
+        for item in raw_value.replace("\n", ",").replace(";", ",").split(","):
+            normalized = item.strip()
+            if normalized and normalized not in options:
+                options.append(normalized)
+        return options
+
+    def _fetch_available_llm_models(self, config: Dict[str, str]) -> Optional[list[str]]:
+        api_key = str(config.get("LLM_API_KEY", "")).strip()
+        base_url = str(config.get("LLM_BASE_URL", "")).strip()
+        if not api_key or not base_url:
+            return None
+
+        endpoint = f"{base_url.rstrip('/')}/models"
+        try:
+            response = requests.get(
+                endpoint,
+                headers={"Authorization": f"Bearer {api_key}"},
+                timeout=(3, self._MODEL_DISCOVERY_TIMEOUT_SECONDS),
+            )
+            response.raise_for_status()
+            payload = response.json()
+        except Exception:
+            return None
+
+        models: list[str] = []
+        for item in payload.get("data", []) if isinstance(payload, dict) else []:
+            if not isinstance(item, dict):
+                continue
+            model_id = str(item.get("id", "")).strip()
+            if model_id and model_id not in models:
+                models.append(model_id)
+        return models or None
+
+    def _validate_llm_models(self, config: Dict[str, str]) -> tuple[bool, str]:
+        available_models = self._fetch_available_llm_models(config)
+        if not available_models:
+            return True, "配置验证通过"
+
+        available_model_set = set(available_models)
+        invalid_entries: list[str] = []
+
+        for key in ("LIGHTWEIGHT_MODEL_NAME", "REASONING_MODEL_NAME"):
+            value = str(config.get(key, "")).strip()
+            if value and value not in available_model_set:
+                invalid_entries.append(f"{key}={value}")
+
+        for key in ("LIGHTWEIGHT_MODEL_OPTIONS", "REASONING_MODEL_OPTIONS"):
+            invalid_options = [
+                item for item in self._parse_model_options_value(config.get(key, ""))
+                if item not in available_model_set
+            ]
+            if invalid_options:
+                invalid_entries.append(f"{key} 包含 {', '.join(invalid_options)}")
+
+        if not invalid_entries:
+            return True, "配置验证通过"
+
+        available_preview = ", ".join(sorted(available_models)[:10])
+        return (
+            False,
+            "当前 LLM 网关不支持以下模型配置："
+            f"{'; '.join(invalid_entries)}。"
+            f"可用模型示例：{available_preview}",
+        )
+
     def filter_system_config_values(self, config: Dict[str, str]) -> Dict[str, str]:
         return {
             key: value
@@ -284,6 +360,22 @@ class ConfigManager:
             if key in self.default_config
             and self._is_system_config_visible_key(key)
         }
+
+    def resolve_masked_secrets(
+        self,
+        updates: Dict[str, str],
+        current_values: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, str]:
+        existing_values = current_values or self.read_env()
+        resolved: Dict[str, str] = {}
+
+        for key, value in updates.items():
+            if self._is_password_field(key) and value == self._MASKED_PASSWORD_VALUE:
+                resolved[key] = existing_values.get(key, "")
+            else:
+                resolved[key] = value
+
+        return resolved
 
     def _split_value_and_comment(self, raw_value: str) -> tuple[str, str]:
         in_single_quote = False
@@ -470,8 +562,11 @@ class ConfigManager:
         for key, info in self.default_config.items():
             if not self._is_system_config_visible_key(key):
                 continue
+            value = current_values.get(key, info["value"])
+            if self._is_password_field(key) and value:
+                value = self._MASKED_PASSWORD_VALUE
             config_info[key] = {
-                "value": current_values.get(key, info["value"]),
+                "value": value,
                 "description": info["description"],
                 "required": info["required"],
                 "type": info["type"],
@@ -490,6 +585,10 @@ class ConfigManager:
         if str(config.get("TDX_ENABLED", "false")).strip().lower() == "true":
             if not str(config.get("TDX_BASE_URL", "")).strip():
                 return False, "启用 TDX 数据源时，TDX API 地址不能为空"
+
+        llm_valid, llm_message = self._validate_llm_models(config)
+        if not llm_valid:
+            return False, llm_message
 
         return True, "配置验证通过"
 

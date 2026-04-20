@@ -1,4 +1,5 @@
 import concurrent.futures
+import logging
 import os
 import time
 from typing import Any, Dict, Optional
@@ -7,6 +8,9 @@ from deepseek_client import DeepSeekClient
 from investment_action_utils import build_holding_strategy_prompt_block
 from model_routing import ModelTier
 from prompt_registry import build_messages
+
+
+logger = logging.getLogger(__name__)
 
 
 class StockAnalysisAgents:
@@ -453,9 +457,16 @@ class StockAnalysisAgents:
         if tasks:
             with concurrent.futures.ThreadPoolExecutor(max_workers=len(tasks)) as executor:
                 future_pairs = [(key, executor.submit(task)) for key, task in tasks]
+                analysis_errors = {}
                 for key, future in future_pairs:
-                    agents_results[key] = future.result()
-        
+                    try:
+                        agents_results[key] = future.result()
+                    except Exception as exc:
+                        analysis_errors[key] = str(exc)
+                        logger.warning("[%s] 分析师任务失败: %s", key, exc, exc_info=True)
+                if analysis_errors:
+                    agents_results["_analysis_errors"] = analysis_errors
+
         print("✅ 所有已选择的分析师完成分析")
         print("=" * 50)
         
@@ -472,8 +483,6 @@ class StockAnalysisAgents:
     ) -> str:
         """进行团队讨论"""
         print("🤝 分析团队正在进行综合讨论...")
-        if not agents_results:
-            raise RuntimeError("没有可用于团队讨论的分析师报告")
 
         # 收集参与分析的分析师名单和报告
         participants = []
@@ -502,6 +511,13 @@ class StockAnalysisAgents:
         if "news" in agents_results:
             participants.append("新闻分析师")
             reports.append(self._trim_report_for_discussion("新闻分析师报告", agents_results['news'].get('analysis', '')))
+
+        if not reports:
+            failed_agents = agents_results.get("_analysis_errors")
+            if failed_agents:
+                failed_text = "；".join(f"{key}: {value}" for key, value in failed_agents.items())
+                raise RuntimeError(f"没有可用于团队讨论的分析师报告，失败原因：{failed_text}")
+            raise RuntimeError("没有可用于团队讨论的分析师报告")
 
         # Inject memory context before all reports if available
         memory_block = ""

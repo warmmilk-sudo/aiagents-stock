@@ -46,6 +46,17 @@ class SmartSelectionServiceTests(unittest.TestCase):
         self.service.sector_strategy_db.save_analysis_report("2026-04-02 数据分析", build_analysis_payload(55, 90, 95), [], "r2")
         self.report_id = self.service.sector_strategy_db.save_analysis_report("2026-04-03 数据分析", build_analysis_payload(70, 95, 85), [], "r3")
         self.report = self.service.sector_strategy_db.get_analysis_report(self.report_id)
+        self.market_context = {
+            "state": "momentum",
+            "state_label": "主升浪",
+            "profile": {"heat_multiplier": 0.92, "agent_multiplier": 1.12, "weights": {}},
+            "signals": ["指数均值 +1.20%", "上涨占比 72.0%", "涨跌停 85/4"],
+        }
+        self.extracted_sectors = [
+            {"sector": "机器人", "heat_score": 95, "source": "heat.hottest"},
+            {"sector": "算力租赁", "heat_score": 82, "source": "heat.heating"},
+            {"sector": "高位题材", "heat_score": 78, "source": "heat.hottest"},
+        ]
 
     def tearDown(self):
         os.chdir(self.original_cwd)
@@ -79,6 +90,13 @@ class SmartSelectionServiceTests(unittest.TestCase):
                 "distribution_risk": distribution,
                 "volume_contraction_days": 3,
                 "intraday_bias": "pullback_support",
+                "tail_session": True,
+                "latest_minute_time": "14:45",
+                "latest_trade_time": "14:45",
+                "realtime_freshness": {
+                    "intraday_decision_ready": True,
+                    "overall_status": "ready",
+                },
                 "bias_pct": -3.0,
             },
             "reason": f"{primary_sector} 候选",
@@ -86,38 +104,47 @@ class SmartSelectionServiceTests(unittest.TestCase):
             "asset": asset,
         }
 
-    def test_pipeline_routes_candidates_by_lifecycle(self):
-        run_id = self.service._insert_run(trigger_source="manual", lightweight_model=None, reasoning_model=None)
-        with patch("smart_selection_service.asset_repository", self.asset_repo), patch(
+    def _run_with_common_patches(self, *, score_side_effect=None, risk_side_effect=None):
+        return patch("smart_selection_service.asset_repository", self.asset_repo), patch(
             "smart_selection_service.research_hub_service.ensure_recent_sector_strategy_report",
             return_value={"reused": True, "report_id": self.report_id, "report": self.report, "warnings": []},
+        ), patch(
+            "smart_selection_service.research_hub_service._build_selection_market_context",
+            return_value=self.market_context,
+        ), patch(
+            "smart_selection_service.research_hub_service._extract_selection_sectors",
+            return_value=self.extracted_sectors,
         ), patch(
             "smart_selection_service.research_hub_service._collect_asset_match_context",
             return_value={},
         ), patch(
             "smart_selection_service.research_hub_service._score_selection_candidate",
-            side_effect=self._fake_candidate,
-        ):
+            side_effect=score_side_effect or self._fake_candidate,
+        ), patch(
+            "smart_selection_service.research_hub_service._group_recent_longhubang_by_symbol",
+            return_value={},
+        ), patch(
+            "smart_selection_service.research_hub_service._evaluate_risk_for_symbol",
+            side_effect=risk_side_effect or (lambda *_args, **_kwargs: {"vetoed": False, "risk_notes": [], "risk_level": "low"}),
+        )
+
+    def test_pipeline_routes_candidates_by_lifecycle(self):
+        run_id = self.service._insert_run(trigger_source="manual", lightweight_model=None, reasoning_model=None)
+        common_patches = self._run_with_common_patches()
+        with common_patches[0], common_patches[1], common_patches[2], common_patches[3], common_patches[4], common_patches[5], common_patches[6], common_patches[7]:
             result = self.service._run_pipeline(run_id)
 
         self.assertEqual([item["symbol"] for item in result["observed_startup_candidates"]], ["600001"])
         self.assertEqual([item["symbol"] for item in result["final_selected"]], ["600002"])
         self.assertEqual([item["symbol"] for item in result["excluded_by_lifecycle_veto"]], ["600003"])
+        self.assertEqual(result["market_context"]["state"], "momentum")
         watch_pool = self.service.list_watch_pool()
         self.assertEqual([item["symbol"] for item in watch_pool], ["600001"])
 
     def test_import_replaces_existing_focus(self):
         run_id = self.service._insert_run(trigger_source="manual", lightweight_model=None, reasoning_model=None)
-        with patch("smart_selection_service.asset_repository", self.asset_repo), patch(
-            "smart_selection_service.research_hub_service.ensure_recent_sector_strategy_report",
-            return_value={"reused": True, "report_id": self.report_id, "report": self.report, "warnings": []},
-        ), patch(
-            "smart_selection_service.research_hub_service._collect_asset_match_context",
-            return_value={},
-        ), patch(
-            "smart_selection_service.research_hub_service._score_selection_candidate",
-            side_effect=self._fake_candidate,
-        ):
+        common_patches = self._run_with_common_patches()
+        with common_patches[0], common_patches[1], common_patches[2], common_patches[3], common_patches[4], common_patches[5], common_patches[6], common_patches[7]:
             self.service._run_pipeline(run_id)
             result = self.service.import_run_selection(run_id=run_id, symbols=["600002"], replace_existing_focus=True)
 
@@ -146,6 +173,53 @@ class SmartSelectionServiceTests(unittest.TestCase):
         self.assertEqual(status["schedule_time"], "14:35")
         self.assertEqual(status["max_workers"], 8)
         self.assertEqual(self.service.get_scheduler_config()["max_workers"], 8)
+
+    def test_pipeline_injects_market_context_into_candidate_scoring(self):
+        run_id = self.service._insert_run(trigger_source="manual", lightweight_model=None, reasoning_model=None)
+        score_calls = []
+
+        def capture_candidate(asset, context, lifecycle_snapshot):
+            score_calls.append((asset["symbol"], context, lifecycle_snapshot))
+            return self._fake_candidate(asset, context, lifecycle_snapshot)
+
+        common_patches = self._run_with_common_patches(score_side_effect=capture_candidate)
+        with common_patches[0], common_patches[1], common_patches[2], common_patches[3], common_patches[4], common_patches[5], common_patches[6], common_patches[7]:
+            self.service._run_pipeline(run_id)
+
+        self.assertTrue(score_calls)
+        self.assertTrue(all(call[1].get("market_context", {}).get("state") == "momentum" for call in score_calls))
+
+    def test_pipeline_requires_tail_session_for_final_selection(self):
+        run_id = self.service._insert_run(trigger_source="manual", lightweight_model=None, reasoning_model=None)
+
+        def non_tail_candidate(asset, context, lifecycle_snapshot):
+            candidate = self._fake_candidate(asset, context, lifecycle_snapshot)
+            candidate["technical_metrics"]["tail_session"] = False
+            candidate["technical_metrics"]["latest_minute_time"] = "13:20"
+            return candidate
+
+        common_patches = self._run_with_common_patches(score_side_effect=non_tail_candidate)
+        with common_patches[0], common_patches[1], common_patches[2], common_patches[3], common_patches[4], common_patches[5], common_patches[6], common_patches[7]:
+            result = self.service._run_pipeline(run_id)
+
+        self.assertEqual(result["final_selected"], [])
+        self.assertTrue(any("未到尾盘时段" in warning for warning in result["warnings"]))
+
+    def test_pipeline_applies_individual_risk_veto(self):
+        run_id = self.service._insert_run(trigger_source="manual", lightweight_model=None, reasoning_model=None)
+
+        def risk_result(symbol, *_args, **_kwargs):
+            if symbol == "600002":
+                return {"vetoed": True, "risk_notes": ["近2天存在股东减持或减持公告"], "risk_level": "high"}
+            return {"vetoed": False, "risk_notes": [], "risk_level": "low"}
+
+        common_patches = self._run_with_common_patches(risk_side_effect=risk_result)
+        with common_patches[0], common_patches[1], common_patches[2], common_patches[3], common_patches[4], common_patches[5], common_patches[6], common_patches[7]:
+            result = self.service._run_pipeline(run_id)
+
+        self.assertEqual(result["final_selected"], [])
+        self.assertEqual([item["symbol"] for item in result["excluded_by_risk_veto"]], ["600002"])
+        self.assertIn("个股风控否决", result["excluded_by_risk_veto"][0]["reason"])
 
 
 if __name__ == "__main__":

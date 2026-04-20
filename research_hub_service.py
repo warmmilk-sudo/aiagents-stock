@@ -215,6 +215,17 @@ def _extract_tags_from_mapping(raw_value: Any) -> List[str]:
     return tags[:16]
 
 
+def _extract_name_from_mapping(raw_value: Any) -> str:
+    payload = raw_value if isinstance(raw_value, dict) else _safe_json_loads(raw_value, {})
+    if not isinstance(payload, dict):
+        return ""
+    for key in ("name", "stock_name", "股票名称", "股票简称", "证券简称", "简称"):
+        text = str(payload.get(key) or "").strip()
+        if text:
+            return text
+    return ""
+
+
 def _collect_display_tags_from_sources(*sources: Any) -> List[str]:
     tags: List[str] = []
     for source in sources:
@@ -290,6 +301,20 @@ def _split_display_tags(tags: List[str], *, core_limit: int = 5) -> Dict[str, An
         "extra_tags_count": extra_tags_count,
         "display_tag_summary": display_tag_summary,
     }
+
+
+def _is_invalid_asset_display_name(name: Any, symbol: Any) -> bool:
+    text = str(name or "").strip()
+    normalized_symbol = str(symbol or "").strip()
+    if not text:
+        return True
+    invalid_names = {
+        normalized_symbol,
+        f"股票{normalized_symbol}",
+        f"港股{normalized_symbol}",
+        f"美股{normalized_symbol}",
+    }
+    return text in invalid_names or text.upper() == normalized_symbol.upper()
 
 
 def _decode_first_json_value(text: str) -> Any:
@@ -629,9 +654,41 @@ def _build_asset_item(asset: Dict[str, Any]) -> Dict[str, Any]:
         asset.get("sector_tags") or [],
         latest_record.get("stock_info") if isinstance(latest_record, dict) else {},
     )
+    resolved_name = _derive_asset_display_name(asset)
+
     tag_display = _split_display_tags(display_tags)
+    should_backfill_basic_info = _is_invalid_asset_display_name(asset.get("name"), asset.get("symbol")) or not display_tags or not tag_display.get("core_concepts")
+    if should_backfill_basic_info:
+        try:
+            from data_source_manager import data_source_manager
+
+            basic_info = data_source_manager.get_stock_basic_info(str(asset.get("symbol") or ""))
+        except Exception:
+            basic_info = {}
+
+        basic_name = _extract_name_from_mapping(basic_info)
+        merged_tags = _collect_display_tags_from_sources(display_tags, basic_info)
+
+        if basic_name and not _is_invalid_asset_display_name(basic_name, asset.get("symbol")):
+            resolved_name = basic_name
+        if merged_tags:
+            display_tags = merged_tags
+            tag_display = _split_display_tags(display_tags)
+
+        update_payload: Dict[str, Any] = {}
+        if basic_name and not _is_invalid_asset_display_name(basic_name, asset.get("symbol")) and str(asset.get("name") or "").strip() != basic_name:
+            update_payload["name"] = basic_name
+        if display_tags != (asset.get("sector_tags") or []):
+            update_payload["sector_tags_json"] = display_tags
+        if update_payload and asset.get("id") is not None:
+            try:
+                asset_repository.update_asset(int(asset["id"]), **update_payload)
+            except Exception:
+                pass
+
     return {
         **asset,
+        "name": resolved_name,
         "status_label": _status_label(str(asset.get("status") or "")),
         "strategy_context": strategy_context,
         "latest_analysis_id": (latest_record or {}).get("id") or strategy_context.get("origin_analysis_id"),
@@ -674,6 +731,7 @@ def list_hub_assets(*, pool: Optional[str] = None, search_term: str = "") -> Lis
         key=lambda item: (
             1 if item.get("manual_pin") else 0,
             2 if item.get("status") == STATUS_HOLDING else 1 if item.get("status") == STATUS_FOCUS else 0,
+            (_parse_dt(item.get("latest_analysis_time")) or datetime.min) if item.get("status") == STATUS_RESEARCH else datetime.min,
             _safe_float(item.get("last_funnel_score")),
             str(item.get("updated_at") or ""),
             int(item.get("id") or 0),
@@ -827,6 +885,17 @@ def update_hub_asset(
         elif target_status == STATUS_HOLDING:
             raise ValueError("持仓状态只能通过交易记录变更")
     return get_hub_asset_detail(asset_id)
+
+
+def delete_hub_asset(asset_id: int) -> bool:
+    asset = asset_repository.get_asset(int(asset_id))
+    if not asset:
+        return False
+    if str(asset.get("status") or "").strip().lower() != STATUS_RESEARCH:
+        raise ValueError("仅支持删除研究池卡片")
+
+    asset_service.sync_managed_monitors(asset_id)
+    return asset_repository.soft_delete_asset(asset_id)
 
 
 def quick_analyze_and_add_to_research(symbol: str) -> Dict[str, Any]:
@@ -1159,8 +1228,7 @@ def _derive_asset_display_name(asset: Dict[str, Any]) -> str:
         text = str(candidate or "").strip()
         if not text:
             continue
-        invalid_names = {symbol, f"股票{symbol}", f"港股{symbol}", f"美股{symbol}"}
-        if text in invalid_names or text.upper() == symbol.upper():
+        if _is_invalid_asset_display_name(text, symbol):
             continue
         return text
     return symbol
@@ -1336,6 +1404,25 @@ def _get_selection_intraday_context(symbol: str) -> Dict[str, Any]:
     except Exception:
         return {}
     return payload if isinstance(payload, dict) else {}
+
+
+def _get_selection_realtime_freshness(
+    intraday_context: Dict[str, Any],
+    *,
+    update_time: Any = None,
+) -> Dict[str, Any]:
+    fetcher = _get_selection_smart_monitor_fetcher()
+    if fetcher is None or not hasattr(fetcher, "_build_realtime_freshness"):
+        return {}
+    try:
+        payload = {
+            "intraday_context": intraday_context if isinstance(intraday_context, dict) else {},
+            "update_time": update_time,
+        }
+        freshness = fetcher._build_realtime_freshness(payload)
+    except Exception:
+        return {}
+    return freshness if isinstance(freshness, dict) else {}
 
 
 def _should_fetch_main_force_flow(volume_ratio: Optional[float], turnover_rate: Optional[float]) -> bool:
@@ -1736,6 +1823,10 @@ def _run_volume_price_resonance_agent(
     volume_ratio = _optional_float(indicators.get("volume_ratio") or (bundle.get("stock_info") or {}).get("volume_ratio"))
     turnover_rate = _optional_float((bundle.get("stock_info") or {}).get("turnover_rate"))
     intraday_context = _get_selection_intraday_context(str(asset.get("symbol") or ""))
+    realtime_freshness = _get_selection_realtime_freshness(
+        intraday_context,
+        update_time=(bundle.get("realtime_quote") or {}).get("update_time"),
+    )
     main_force_flow = _get_selection_main_force_flow(
         str(asset.get("symbol") or ""),
         volume_ratio=volume_ratio,
@@ -1777,6 +1868,7 @@ def _run_volume_price_resonance_agent(
         "component_scores": component_scores,
         "features": features,
         "intraday_context": intraday_context,
+        "realtime_freshness": realtime_freshness,
         "main_force_flow": main_force_flow,
         "market_context": market_context,
         "nonlinear_adjustments": nonlinear,
@@ -1840,6 +1932,7 @@ def _score_selection_candidate(
     features = agent_result.get("features") if isinstance(agent_result.get("features"), dict) else {}
     component_scores = agent_result.get("component_scores") if isinstance(agent_result.get("component_scores"), dict) else {}
     adjustments = agent_result.get("nonlinear_adjustments") if isinstance(agent_result.get("nonlinear_adjustments"), dict) else {}
+    realtime_freshness = agent_result.get("realtime_freshness") if isinstance(agent_result.get("realtime_freshness"), dict) else {}
     signal_labels = [item.get("label") for item in adjustments.get("adjustments") or [] if isinstance(item, dict) and str(item.get("label") or "").strip()]
     if not signal_labels:
         state_label = str(market_context.get("state_label") or "")
@@ -1882,12 +1975,16 @@ def _score_selection_candidate(
             "volume_contraction_days": _safe_int(features.get("volume_contraction_days")),
             "intraday_bias": str(features.get("intraday_bias") or ""),
             "intraday_bias_text": str(features.get("intraday_bias_text") or ""),
+            "tail_session": bool(features.get("tail_session")),
+            "latest_minute_time": str((agent_result.get("intraday_context") or {}).get("latest_minute_time") or ""),
+            "latest_trade_time": str((agent_result.get("intraday_context") or {}).get("latest_trade_time") or ""),
             "last_30m_change_pct": _safe_round(_optional_float(features.get("last_30m_change_pct")), 2),
             "last_60m_change_pct": _safe_round(_optional_float(features.get("last_60m_change_pct")), 2),
             "order_book_imbalance": _safe_round(_optional_float(features.get("order_book_imbalance")), 3),
             "main_net_pct": _safe_round(_optional_float(features.get("main_net_pct")), 2),
             "signal_labels": signal_labels,
             "nonlinear_adjustments": adjustments.get("adjustments") or [],
+            "realtime_freshness": realtime_freshness,
         },
         "reason": "",
         "market_cap": _safe_float(stock_info.get("market_cap")),
