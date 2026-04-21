@@ -6,6 +6,7 @@
 import logging
 import time
 import inspect
+import re
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from typing import Any, Dict, List, Optional
 from datetime import date, datetime, timedelta
@@ -18,7 +19,7 @@ from smart_monitor_db import SmartMonitorDB
 from notification_service import notification_service  # 复用主程序的通知服务
 from config_manager import config_manager  # 复用主程序的配置管理器
 from asset_repository import STATUS_PORTFOLIO
-from investment_action_utils import normalize_strategy_context
+from investment_action_utils import normalize_strategy_context, normalize_swing_type, swing_type_label
 from investment_db_utils import DEFAULT_ACCOUNT_NAME, normalize_account_name
 from investment_lifecycle_service import InvestmentLifecycleService, investment_lifecycle_service
 from internal_events import event_bus, Events
@@ -463,6 +464,81 @@ class SmartMonitorEngine:
             return appendix
         return f"{base}\n\n补充说明：{appendix}"
 
+    @staticmethod
+    def _reasoning_vetoes_buy(reasoning: object) -> bool:
+        text = str(reasoning or "").strip()
+        if not text:
+            return False
+        veto_patterns = (
+            r"暂不(?:执行)?(?:加仓|买入)",
+            r"不(?:宜|建议|执行).{0,6}(?:加仓|买入)",
+            r"等待.{0,30}(?:再|后再)考虑.{0,12}(?:加仓|买入)",
+            r"(?:建议|应|宜)?(?:维持|继续)持有",
+            r"暂不执行",
+        )
+        return any(re.search(pattern, text) for pattern in veto_patterns)
+
+    @staticmethod
+    def _reasoning_vetoes_sell(reasoning: object) -> bool:
+        text = str(reasoning or "").strip()
+        if not text:
+            return False
+        veto_patterns = (
+            r"暂不(?:执行)?(?:减仓|卖出|清仓)",
+            r"不(?:宜|建议|执行).{0,6}(?:减仓|卖出|清仓)",
+            r"等待.{0,30}(?:再|后再)考虑.{0,12}(?:减仓|卖出|清仓)",
+            r"(?:建议|应|宜)?(?:维持|继续)持有",
+            r"暂不执行",
+        )
+        return any(re.search(pattern, text) for pattern in veto_patterns)
+
+    def _reconcile_reasoning_action_consistency(
+        self,
+        *,
+        decision: Dict[str, object],
+        has_position: bool,
+        account_info: Optional[Dict[str, object]],
+        risk_profile: Optional[Dict[str, object]],
+    ) -> Dict[str, object]:
+        action = str(decision.get("action") or "").strip().upper()
+        reasoning = str(decision.get("reasoning") or "").strip()
+        vetoed_by_reasoning = (
+            (action == "BUY" and self._reasoning_vetoes_buy(reasoning))
+            or (action == "SELL" and self._reasoning_vetoes_sell(reasoning))
+        )
+        if not vetoed_by_reasoning:
+            return decision
+
+        decision["action"] = "HOLD"
+        if hasattr(self.llm_client, "_resolve_action_detail"):
+            decision["action_detail"] = self.llm_client._resolve_action_detail(
+                decision.get("action_detail"),
+                action="HOLD",
+                has_position=has_position,
+            )
+        else:
+            decision["action_detail"] = "持有" if has_position else "观望"
+
+        if hasattr(self.llm_client, "_resolve_swing_execution_mode"):
+            decision["swing_execution_mode"] = self.llm_client._resolve_swing_execution_mode(
+                decision.get("swing_execution_mode"),
+                action="HOLD",
+                action_detail=decision.get("action_detail"),
+                has_position=has_position,
+                reasoning=reasoning,
+            )
+        else:
+            decision["swing_execution_mode"] = "trend_hold" if has_position else "watch_hold"
+
+        decision["action_ratio_pct"] = None
+        if hasattr(self.llm_client, "_attach_execution_targets"):
+            decision = self.llm_client._attach_execution_targets(
+                decision,
+                account_info=account_info,
+                risk_profile=risk_profile,
+            )
+        return decision
+
     @classmethod
     def _extract_monitor_levels_from_strategy_context(cls, strategy_context: Optional[Dict]) -> Optional[Dict]:
         if not isinstance(strategy_context, dict) or not strategy_context:
@@ -643,14 +719,277 @@ class SmartMonitorEngine:
         ).strip()
         return decision
 
+    def _prepare_market_structure_features(self, market_data: Dict[str, object]) -> Dict[str, object]:
+        prepared = dict(market_data or {})
+        feature_beacons = self.llm_client._derive_feature_beacons(prepared)
+        prepared["feature_beacons"] = feature_beacons
+        trend_anchor_type, trend_anchor_value = self.llm_client._select_trend_anchor(prepared)
+        prepared["trend_anchor_type"] = trend_anchor_type
+        prepared["trend_anchor_value"] = trend_anchor_value
+        return prepared
+
+    @classmethod
+    def _resolve_effective_swing_type_code(
+        cls,
+        *,
+        strategy_context: Optional[Dict[str, object]],
+        decision: Optional[Dict[str, object]] = None,
+    ) -> str:
+        upgraded_code = normalize_swing_type((decision or {}).get("upgraded_swing_type"))
+        if upgraded_code:
+            return upgraded_code
+        return normalize_swing_type((strategy_context or {}).get("swing_type_code") or (strategy_context or {}).get("swing_type"))
+
+    @classmethod
+    def _apply_atr_guardrail(
+        cls,
+        *,
+        decision: Dict[str, object],
+        strategy_context: Optional[Dict[str, object]],
+        market_data: Optional[Dict[str, object]],
+    ) -> tuple[Dict[str, object], Optional[Dict[str, object]]]:
+        current_price = cls._float_or_none((market_data or {}).get("current_price"))
+        atr14 = cls._float_or_none(
+            (decision or {}).get("atr14")
+            or (market_data or {}).get("atr14")
+            or (strategy_context or {}).get("atr14")
+        )
+        swing_type_code = cls._resolve_effective_swing_type_code(
+            strategy_context=strategy_context,
+            decision=decision,
+        )
+        if current_price is None or atr14 is None:
+            return decision, None
+
+        multiplier = 2.5 if swing_type_code == "standard_swing" else 1.2
+        atr_stop_floor = round(current_price - atr14 * multiplier, 3)
+        decision["atr14"] = round(atr14, 4)
+        decision["atr14_pct"] = round((atr14 / current_price) * 100, 4) if current_price > 0 else None
+        decision["atr_stop_floor"] = atr_stop_floor
+
+        clamped_fields: List[str] = []
+        top_level_stop = cls._float_or_none(decision.get("stop_loss"))
+        if top_level_stop is not None and top_level_stop < atr_stop_floor:
+            decision["stop_loss"] = atr_stop_floor
+            clamped_fields.append("stop_loss")
+
+        key_levels = dict(decision.get("key_price_levels") or {}) if isinstance(decision.get("key_price_levels"), dict) else {}
+        key_stop = cls._float_or_none(key_levels.get("stop_loss"))
+        if key_stop is not None and key_stop < atr_stop_floor:
+            key_levels["stop_loss"] = atr_stop_floor
+            decision["key_price_levels"] = key_levels
+            clamped_fields.append("key_price_levels.stop_loss")
+
+        monitor_levels = cls._normalize_monitor_levels_payload(
+            decision.get("monitor_levels") if isinstance(decision, dict) else None
+        )
+        if monitor_levels:
+            if float(monitor_levels["stop_loss"]) < atr_stop_floor:
+                monitor_levels["stop_loss"] = atr_stop_floor
+                decision["monitor_levels"] = monitor_levels
+                clamped_fields.append("monitor_levels.stop_loss")
+
+        if not clamped_fields:
+            return decision, None
+
+        return decision, {
+            "atr_stop_floor": atr_stop_floor,
+            "clamped_fields": clamped_fields,
+            "swing_type_code": swing_type_code or "micro_swing",
+        }
+
+    @classmethod
+    def _build_position_cycle_runtime_snapshot(
+        cls,
+        *,
+        decision: Dict[str, object],
+        strategy_context: Optional[Dict[str, object]],
+        market_data: Optional[Dict[str, object]],
+        position_date: Optional[str],
+    ) -> Dict[str, object]:
+        effective_swing_type_code = cls._resolve_effective_swing_type_code(
+            strategy_context=strategy_context,
+            decision=decision,
+        )
+        effective_swing_type = swing_type_label(effective_swing_type_code)
+        decision["upgraded_swing_type"] = swing_type_label(decision.get("upgraded_swing_type"))
+        current_price = cls._float_or_none((market_data or {}).get("current_price"))
+        atr14 = cls._float_or_none(
+            decision.get("atr14")
+            or (market_data or {}).get("atr14")
+            or (strategy_context or {}).get("atr14")
+        )
+        atr14_pct = cls._float_or_none(
+            decision.get("atr14_pct")
+            or (market_data or {}).get("atr14_pct")
+            or (strategy_context or {}).get("atr14_pct")
+        )
+        anchor_type = str(
+            decision.get("trend_anchor_type")
+            or (market_data or {}).get("trend_anchor_type")
+            or (strategy_context or {}).get("trend_anchor_type")
+            or ("MA20" if atr14_pct is not None and atr14_pct > 4.0 else "MA10")
+        ).strip().upper()
+        anchor_value = cls._float_or_none(
+            decision.get("trend_anchor_value")
+            or (market_data or {}).get("trend_anchor_value")
+            or (market_data or {}).get("ma20" if anchor_type == "MA20" else "ma10")
+            or (strategy_context or {}).get("trend_anchor_value")
+        )
+        holding_days = SmartMonitorDeepSeek._estimate_holding_trading_days(
+            position_date=position_date,
+            market_data=market_data,
+        )
+        account_position = (
+            (market_data or {}).get("account_position")
+            if isinstance((market_data or {}).get("account_position"), dict)
+            else {}
+        )
+        cost_price = cls._float_or_none(account_position.get("cost_price"))
+        profit_loss_pct = None
+        if current_price is not None and cost_price is not None and cost_price > 0:
+            profit_loss_pct = (current_price - cost_price) / cost_price * 100
+        structure_state = str(decision.get("structure_state") or "结构状态未明确").strip() or "结构状态未明确"
+        trend_following_active = bool(
+            effective_swing_type_code == "standard_swing"
+            and holding_days is not None
+            and holding_days >= 10
+            and profit_loss_pct is not None
+            and atr14_pct is not None
+            and profit_loss_pct >= atr14_pct * 2
+            and current_price is not None
+            and anchor_value is not None
+            and current_price >= anchor_value
+            and structure_state != "筑顶高位派发"
+        )
+        decision["trend_following_active"] = trend_following_active
+        decision["trend_anchor_type"] = anchor_type
+        decision["trend_anchor_value"] = anchor_value
+        if decision.get("atr_stop_floor") in (None, "") and current_price is not None and atr14 is not None:
+            multiplier = 2.5 if effective_swing_type_code == "standard_swing" else 1.2
+            decision["atr_stop_floor"] = round(current_price - atr14 * multiplier, 3)
+
+        return {
+            "holding_period": str((strategy_context or {}).get("holding_period") or "").strip(),
+            "structure_state": structure_state,
+            "structure_state_reason": str(decision.get("structure_state_reason") or "").strip(),
+            "atr14": atr14,
+            "atr14_pct": atr14_pct,
+            "atr_stop_floor": cls._float_or_none(decision.get("atr_stop_floor")),
+            "trend_anchor_type": anchor_type,
+            "trend_anchor_value": anchor_value,
+            "trend_following_active": trend_following_active,
+            "trend_following_activated_at": (
+                str((strategy_context or {}).get("trend_following_activated_at") or "").strip()
+                or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            ) if trend_following_active else None,
+            "feature_beacons": (
+                decision.get("feature_beacons")
+                if isinstance(decision.get("feature_beacons"), list)
+                else ((market_data or {}).get("feature_beacons") if isinstance((market_data or {}).get("feature_beacons"), list) else [])
+            ),
+            "swing_type": effective_swing_type,
+        }
+
+    @classmethod
+    def _resolve_upgrade_writeback(
+        cls,
+        *,
+        decision: Dict[str, object],
+        strategy_context: Optional[Dict[str, object]],
+        market_data: Optional[Dict[str, object]],
+    ) -> Optional[Dict[str, str]]:
+        current_swing_type_code = normalize_swing_type((strategy_context or {}).get("swing_type"))
+        upgraded_swing_type_code = normalize_swing_type(decision.get("upgraded_swing_type"))
+        feature_beacons = (
+            [str(item).strip() for item in decision.get("feature_beacons", []) if str(item).strip()]
+            if isinstance(decision.get("feature_beacons"), list)
+            else []
+        )
+        if not feature_beacons:
+            feature_beacons = [str(item).strip() for item in ((market_data or {}).get("feature_beacons") or []) if str(item).strip()]
+        if (
+            not bool(decision.get("swing_type_upgrade"))
+            or current_swing_type_code != "micro_swing"
+            or upgraded_swing_type_code != "standard_swing"
+            or not feature_beacons
+        ):
+            decision["swing_type_upgrade"] = False
+            decision["upgraded_swing_type"] = ""
+            return None
+        decision["upgraded_swing_type"] = "标准波段"
+        return {
+            "swing_type": "标准波段",
+            "swing_type_reason": str(decision.get("upgrade_reason") or "").strip() or str(decision.get("reasoning") or "").strip(),
+        }
+
+    def _sync_position_cycle_runtime_state(
+        self,
+        *,
+        asset_id: Optional[int],
+        decision_id: int,
+        decision: Dict[str, object],
+        strategy_context: Optional[Dict[str, object]],
+        market_data: Optional[Dict[str, object]],
+        position_date: Optional[str],
+        has_position: bool,
+    ) -> None:
+        if asset_id is None or not has_position:
+            return
+        asset = self.db.asset_repository.get_asset(int(asset_id))
+        if not asset or str(asset.get("status") or "").strip().lower() != STATUS_PORTFOLIO:
+            return
+
+        upgrade_writeback = self._resolve_upgrade_writeback(
+            decision=decision,
+            strategy_context=strategy_context,
+            market_data=market_data,
+        )
+        effective_swing_type = (
+            upgrade_writeback["swing_type"]
+            if upgrade_writeback
+            else str((strategy_context or {}).get("swing_type") or "").strip()
+        )
+        effective_reason = (
+            upgrade_writeback["swing_type_reason"]
+            if upgrade_writeback
+            else str((strategy_context or {}).get("swing_type_reason") or "").strip()
+        )
+        runtime_snapshot = self._build_position_cycle_runtime_snapshot(
+            decision=decision,
+            strategy_context={
+                **(strategy_context or {}),
+                **({"swing_type": effective_swing_type, "swing_type_reason": effective_reason} if effective_swing_type else {}),
+            },
+            market_data=market_data,
+            position_date=position_date,
+        )
+        baseline_source = str(
+            (strategy_context or {}).get("position_cycle_baseline_source")
+            or (strategy_context or {}).get("analysis_source")
+            or "smart_monitor_intraday"
+        ).strip() or "smart_monitor_intraday"
+        baseline_analysis_id = (strategy_context or {}).get("position_cycle_baseline_analysis_id") or (strategy_context or {}).get("origin_analysis_id")
+        self.db.asset_repository.set_open_position_cycle_baseline(
+            int(asset_id),
+            swing_type=effective_swing_type,
+            swing_type_reason=effective_reason,
+            holding_period=runtime_snapshot.get("holding_period"),
+            baseline_source=baseline_source,
+            baseline_analysis_id=baseline_analysis_id,
+            baseline_decision_id=decision_id,
+            overwrite=True,
+            baseline_snapshot_extra=runtime_snapshot,
+        )
+
     @staticmethod
     def _normalize_notification_class(value: object) -> str:
         normalized = str(value or "").strip().lower().replace("-", "_")
         aliases = {
-            "focus": "focus_alert",
-            "focus_alert": "focus_alert",
-            "关注": "focus_alert",
-            "关注提醒": "focus_alert",
+            "focus": "price_alert",
+            "focus_alert": "price_alert",
+            "关注": "price_alert",
+            "关注提醒": "price_alert",
             "price": "price_alert",
             "price_alert": "price_alert",
             "价格": "price_alert",
@@ -677,7 +1016,6 @@ class SmartMonitorEngine:
     def _notification_class_label(value: object) -> str:
         normalized = SmartMonitorEngine._normalize_notification_class(value)
         labels = {
-            "focus_alert": "关注提醒",
             "price_alert": "价格提醒",
             "risk_alert": "风险预警",
             "profit_alert": "收益信号",
@@ -707,10 +1045,10 @@ class SmartMonitorEngine:
 
         if normalized_action == "BUY":
             if not has_position:
-                return "focus_alert"
+                return "price_alert"
             if normalized_swing in {"pullback_add", "breakout_add"} or "加仓" in normalized_detail:
                 return "price_alert"
-            return "focus_alert"
+            return "price_alert"
 
         if normalized_action == "SELL":
             if normalized_detail == "清仓" or normalized_swing == "defensive_exit":
@@ -878,6 +1216,18 @@ class SmartMonitorEngine:
             "action_changed": bool(change_flags.get("action_changed")),
             "thresholds_changed": bool(change_flags.get("thresholds_changed")),
             "decision_changed": bool(change_flags.get("decision_changed")),
+            "structure_state": str(current_decision.get("structure_state") or "").strip() or None,
+            "structure_state_reason": str(current_decision.get("structure_state_reason") or "").strip() or None,
+            "trend_following_active": bool(current_decision.get("trend_following_active")),
+            "trend_anchor_type": str(current_decision.get("trend_anchor_type") or "").strip() or None,
+            "trend_anchor_value": _to_float(current_decision.get("trend_anchor_value")),
+            "atr14": _to_float(current_decision.get("atr14")),
+            "atr14_pct": _to_float(current_decision.get("atr14_pct")),
+            "atr_stop_floor": _to_float(current_decision.get("atr_stop_floor")),
+            "swing_type_upgrade": bool(current_decision.get("swing_type_upgrade")),
+            "upgraded_swing_type": str(current_decision.get("upgraded_swing_type") or "").strip() or None,
+            "upgrade_reason": str(current_decision.get("upgrade_reason") or "").strip() or None,
+            "feature_beacons": current_decision.get("feature_beacons") if isinstance(current_decision.get("feature_beacons"), list) else [],
         }
 
         previous_bias_text = str(previous_intraday.get("intraday_bias_text") or "").strip()
@@ -1258,6 +1608,7 @@ class SmartMonitorEngine:
                     'success': False,
                     'error': '获取市场数据失败'
                 }
+            market_data = self._prepare_market_structure_features(market_data)
             
             task_context = self.db.get_monitor_task_by_code(
                 stock_code,
@@ -1335,6 +1686,8 @@ class SmartMonitorEngine:
                 position_date=position_date,
                 current_market_price=self._safe_float(market_data.get("current_price")),
             )
+            if isinstance(account_info.get("current_position"), dict):
+                market_data["account_position"] = dict(account_info.get("current_position") or {})
             portfolio_stock_id = portfolio_stock_id or task_context.get("portfolio_stock_id") or (
                 asset_id if asset and asset.get("status") == STATUS_PORTFOLIO else None
             )
@@ -1446,6 +1799,17 @@ class SmartMonitorEngine:
                 decision=decision,
                 strategy_context=strategy_context,
             )
+            decision, atr_guardrail_info = self._apply_atr_guardrail(
+                decision=decision,
+                strategy_context=strategy_context,
+                market_data=market_data,
+            )
+            decision = self._reconcile_reasoning_action_consistency(
+                decision=decision,
+                has_position=has_position,
+                account_info=account_info,
+                risk_profile=risk_profile,
+            )
             t1_sell_blocked = original_action == "SELL" and str(decision.get("action") or "").upper() != "SELL"
             
             self.logger.info(f"[{stock_code}] AI决策: {decision['action']} "
@@ -1496,12 +1860,26 @@ class SmartMonitorEngine:
                     current_decision=decision,
                     market_data=market_data,
                     change_flags=change_flags,
+                ) | (
+                    {"atr_guardrail_clamped": atr_guardrail_info}
+                    if atr_guardrail_info
+                    else {}
                 ),
                 'market_data': market_data,
                 'account_info': account_info,
                 'execution_mode': 'manual_only',
                 'action_status': 'pending' if actionable_signal and action_changed else 'suggested',
             })
+
+            self._sync_position_cycle_runtime_state(
+                asset_id=asset_id,
+                decision_id=decision_id,
+                decision=decision,
+                strategy_context=strategy_context,
+                market_data=market_data,
+                position_date=position_date,
+                has_position=has_position,
+            )
 
             if decision_changed:
                 self._sync_runtime_thresholds(
@@ -1688,9 +2066,9 @@ class SmartMonitorEngine:
                 text = " ".join(str(value or "").split()).strip()
                 if not text:
                     return "盘中出现新的执行信号，请结合实时价格与阈值复核。"
-                if len(text) <= limit:
-                    return text
-                return text[: limit - 1].rstrip("，,；;。.") + "…"
+                text = re.sub(r"(?:\.{3,}|…+)(?:（已截断）)?", "。", text)
+                text = re.sub(r"。{2,}", "。", text)
+                return text.strip()
 
             def _swing_mode_label(value: object) -> str:
                 mapping = {
@@ -1754,13 +2132,8 @@ class SmartMonitorEngine:
                 decision=decision,
             )
             notification_label = self._notification_class_label(notification_class)
-            notification_category = "focus" if notification_class == "focus_alert" else "price"
-            if notification_class == "focus_alert":
-                trigger_summary = (
-                    "出现突破关注信号" if swing_execution_mode == "breakout_entry"
-                    else "出现回踩关注信号"
-                )
-            elif notification_class == "profit_alert":
+            notification_category = "price"
+            if notification_class == "profit_alert":
                 trigger_summary = (
                     "出现止盈收益信号" if action_detail == "减仓"
                     else "出现收益信号"
@@ -1771,10 +2144,12 @@ class SmartMonitorEngine:
                     else "出现风险预警信号"
                 )
             elif action == "BUY":
-                trigger_summary = (
-                    "出现突破加仓价格信号" if swing_execution_mode == "breakout_add"
-                    else "出现加仓价格信号"
-                )
+                if not has_position:
+                    trigger_summary = "出现入场价格信号"
+                elif swing_execution_mode == "breakout_add":
+                    trigger_summary = "出现突破加仓价格信号"
+                else:
+                    trigger_summary = "出现加仓价格信号"
             elif action_detail == "清仓":
                 trigger_summary = "出现清仓价格信号"
             elif action_detail == "减仓":
@@ -1822,6 +2197,7 @@ class SmartMonitorEngine:
             content = rendered_notification["content"]
             notification_data['message'] = message
             notification_data['details'] = content
+            notification_data['notification_explanation'] = rendered_notification.get("explanation", "")
 
             self.db.save_notification({
                 'stock_code': stock_code,

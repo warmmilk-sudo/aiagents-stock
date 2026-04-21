@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
+from fastapi_cache.decorator import cache
 
 from backend import services
 from backend.api import ApiError, success_payload
@@ -29,9 +30,18 @@ def submit_strategy_task(request: Request, payload: SectorStrategyTaskRequest) -
 
 
 @router.get("/tasks/latest")
-def get_latest_strategy_task(request: Request) -> dict:
+def get_latest_strategy_task(
+    request: Request,
+    full: bool = False,
+    include_raw_reports: bool = False,
+) -> dict:
     require_session(request)
-    return success_payload(services.get_latest_ui_task(services.SECTOR_STRATEGY_TASK_TYPE))
+    return success_payload(
+        services.get_latest_sector_strategy_task(
+            full=full,
+            include_raw_reports=include_raw_reports,
+        )
+    )
 
 
 @router.get("/tasks/active")
@@ -41,9 +51,18 @@ def get_active_strategy_task(request: Request) -> dict:
 
 
 @router.get("/tasks/{task_id}")
-def get_strategy_task(request: Request, task_id: str) -> dict:
+def get_strategy_task(
+    request: Request,
+    task_id: str,
+    full: bool = False,
+    include_raw_reports: bool = False,
+) -> dict:
     require_session(request)
-    task = services.get_ui_task(services.SECTOR_STRATEGY_TASK_TYPE, task_id)
+    task = services.get_sector_strategy_task(
+        task_id,
+        full=full,
+        include_raw_reports=include_raw_reports,
+    )
     if not task:
         raise ApiError(404, "未找到智策分析任务", error_code="sector_strategy_task_not_found")
     return success_payload(task)
@@ -71,23 +90,35 @@ def get_rebuild_task(request: Request, task_id: str) -> dict:
 
 
 @router.get("/history")
-def list_history(request: Request, limit: int = 20) -> dict:
-    require_session(request)
+@cache(expire=15, namespace="sector-strategy")
+def list_history(
+    request: Request,
+    _session: dict = Depends(require_session),
+    limit: int = 20,
+) -> dict:
     return success_payload(services.list_sector_strategy_reports(limit=limit))
 
 
 @router.get("/history/{report_id}")
-def get_history_report(request: Request, report_id: int) -> dict:
-    require_session(request)
-    report = services.get_sector_strategy_report(report_id)
+@cache(expire=15, namespace="sector-strategy")
+def get_history_report(
+    request: Request,
+    report_id: int,
+    _session: dict = Depends(require_session),
+    include_raw_reports: bool = False,
+) -> dict:
+    report = services.get_sector_strategy_report(report_id, include_raw_reports=include_raw_reports)
     if not report:
         raise ApiError(404, "未找到智策历史报告", error_code="sector_strategy_report_not_found")
     return success_payload(report)
 
 
 @router.get("/lifecycle/latest")
-def get_latest_lifecycle(request: Request) -> dict:
-    require_session(request)
+@cache(expire=15, namespace="sector-strategy")
+def get_latest_lifecycle(
+    request: Request,
+    _session: dict = Depends(require_session),
+) -> dict:
     return success_payload(services.get_sector_strategy_latest_lifecycle())
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
+from fastapi_cache.decorator import cache
 
 from backend import services
 from backend.api import ApiError, success_payload
@@ -67,26 +68,41 @@ def run_alert_check(request: Request) -> dict:
 
 
 @router.get("/dashboard")
-def get_dashboard(request: Request) -> dict:
-    require_session(request)
+@cache(expire=10, namespace="news-flow")
+def get_dashboard(
+    request: Request,
+    _session: dict = Depends(require_session),
+) -> dict:
     return success_payload(services.get_news_flow_dashboard())
 
 
 @router.get("/trend")
-def get_trend(request: Request, days: int = 7) -> dict:
-    require_session(request)
+@cache(expire=15, namespace="news-flow")
+def get_trend(
+    request: Request,
+    _session: dict = Depends(require_session),
+    days: int = 7,
+) -> dict:
     return success_payload(services.get_news_flow_trend(days=days))
 
 
 @router.get("/history")
-def list_history(request: Request, limit: int = 50) -> dict:
-    require_session(request)
+@cache(expire=15, namespace="news-flow")
+def list_history(
+    request: Request,
+    _session: dict = Depends(require_session),
+    limit: int = 50,
+) -> dict:
     return success_payload(services.list_news_flow_history(limit=limit))
 
 
 @router.get("/history/{snapshot_id}")
-def get_history_detail(request: Request, snapshot_id: int) -> dict:
-    require_session(request)
+@cache(expire=15, namespace="news-flow")
+def get_history_detail(
+    request: Request,
+    snapshot_id: int,
+    _session: dict = Depends(require_session),
+) -> dict:
     detail = services.get_news_flow_snapshot_detail(snapshot_id)
     if not detail:
         raise ApiError(404, "未找到新闻流量历史记录", error_code="news_flow_history_not_found")
@@ -100,20 +116,32 @@ def list_alerts(request: Request, days: int = 7, alert_type: str | None = None) 
 
 
 @router.get("/ai-history")
-def list_ai_history(request: Request, limit: int = 20) -> dict:
-    require_session(request)
+@cache(expire=15, namespace="news-flow")
+def list_ai_history(
+    request: Request,
+    _session: dict = Depends(require_session),
+    limit: int = 20,
+) -> dict:
     return success_payload(services.list_news_flow_ai_history(limit=limit))
 
 
 @router.get("/sentiment-history")
-def list_sentiment_history(request: Request, limit: int = 50) -> dict:
-    require_session(request)
+@cache(expire=15, namespace="news-flow")
+def list_sentiment_history(
+    request: Request,
+    _session: dict = Depends(require_session),
+    limit: int = 50,
+) -> dict:
     return success_payload(services.list_news_flow_sentiment_history(limit=limit))
 
 
 @router.get("/daily-statistics")
-def list_daily_statistics(request: Request, days: int = 7) -> dict:
-    require_session(request)
+@cache(expire=15, namespace="news-flow")
+def list_daily_statistics(
+    request: Request,
+    _session: dict = Depends(require_session),
+    days: int = 7,
+) -> dict:
     return success_payload(services.list_news_flow_daily_statistics(days=days))
 
 
@@ -182,6 +210,9 @@ def list_scheduler_logs(request: Request, days: int = 7, task_type: str | None =
 
 
 @router.get("/platforms")
-def list_supported_platforms(request: Request) -> dict:
-    require_session(request)
+@cache(expire=300, namespace="news-flow")
+def list_supported_platforms(
+    request: Request,
+    _session: dict = Depends(require_session),
+) -> dict:
     return success_payload(services.get_news_flow_supported_platforms())

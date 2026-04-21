@@ -465,7 +465,7 @@ class MonitoringRepositoryTests(unittest.TestCase):
         focus_event_id = self.repo.record_event(
             item_id=focus_item_id,
             event_type="buy",
-            message="出现回踩关注信号",
+            message="出现回踩价格信号",
             notification_pending=True,
             sent=False,
             details={"action": "BUY", "action_detail": "买入"},
@@ -496,8 +496,8 @@ class MonitoringRepositoryTests(unittest.TestCase):
         self.assertEqual(notifications[0]["notification_class_label"], "系统通知")
         self.assertEqual(notifications[1]["notification_class"], "profit_alert")
         self.assertEqual(notifications[1]["notification_class_label"], "收益信号")
-        self.assertEqual(notifications[2]["notification_class"], "focus_alert")
-        self.assertEqual(notifications[2]["notification_class_label"], "关注提醒")
+        self.assertEqual(notifications[2]["notification_class"], "price_alert")
+        self.assertEqual(notifications[2]["notification_class_label"], "价格提醒")
 
     def test_ignore_notification_hides_it_from_current_notification_list(self):
         item_id = self.repo.create_item(

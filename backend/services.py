@@ -8,7 +8,7 @@ import time
 from datetime import date, datetime, timedelta
 from functools import lru_cache
 from types import SimpleNamespace
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import config
 from analysis_history_service import analysis_history_service
@@ -119,6 +119,79 @@ def _default_smart_monitor_run_once_task_delay_seconds() -> float:
     except (TypeError, ValueError):
         numeric = 1.2
     return max(0.0, min(numeric, 10.0))
+
+
+_REPORT_CACHE_TTL_SECONDS = _clamp_int(
+    getattr(config, "REPORT_VIEW_CACHE_TTL_SECONDS", 1800),
+    60,
+    86400,
+    1800,
+)
+_REPORT_LIST_CACHE_TTL_SECONDS = _clamp_int(
+    getattr(config, "REPORT_LIST_CACHE_TTL_SECONDS", 300),
+    30,
+    3600,
+    300,
+)
+_REPORT_CACHE_LOCK = threading.RLock()
+_REPORT_CACHE: dict[str, tuple[float, Any]] = {}
+_REPORT_CACHE_MISS = object()
+
+
+def _build_report_cache_key(scope: str, *parts: Any) -> str:
+    normalized_parts = [scope]
+    normalized_parts.extend(str(part) for part in parts)
+    return ":".join(normalized_parts)
+
+
+def _get_report_cache_value(cache_key: str) -> Any:
+    now = time.monotonic()
+    with _REPORT_CACHE_LOCK:
+        cached = _REPORT_CACHE.get(cache_key)
+        if cached is None:
+            return _REPORT_CACHE_MISS
+        expires_at, value = cached
+        if expires_at <= now:
+            _REPORT_CACHE.pop(cache_key, None)
+            return _REPORT_CACHE_MISS
+        return value
+
+
+def _set_report_cache_value(cache_key: str, value: Any, ttl_seconds: int) -> Any:
+    resolved_ttl = max(1, int(ttl_seconds or _REPORT_CACHE_TTL_SECONDS))
+    with _REPORT_CACHE_LOCK:
+        _REPORT_CACHE[cache_key] = (time.monotonic() + resolved_ttl, value)
+    return value
+
+
+def _get_or_build_report_cache(
+    scope: str,
+    *parts: Any,
+    builder: Callable[[], Any],
+    ttl_seconds: Optional[int] = None,
+) -> Any:
+    cache_key = _build_report_cache_key(scope, *parts)
+    cached = _get_report_cache_value(cache_key)
+    if cached is not _REPORT_CACHE_MISS:
+        return cached
+    return _set_report_cache_value(
+        cache_key,
+        builder(),
+        int(ttl_seconds or _REPORT_CACHE_TTL_SECONDS),
+    )
+
+
+def invalidate_report_cache(*prefixes: str) -> None:
+    if not prefixes:
+        return
+    with _REPORT_CACHE_LOCK:
+        keys_to_remove = [
+            cache_key
+            for cache_key in list(_REPORT_CACHE.keys())
+            if any(cache_key.startswith(prefix) for prefix in prefixes)
+        ]
+        for cache_key in keys_to_remove:
+            _REPORT_CACHE.pop(cache_key, None)
 
 
 def _normalize_smart_monitor_account_name(account_name: Optional[str]) -> str:
@@ -933,6 +1006,7 @@ def submit_sector_strategy_task(
         if not result.get("success"):
             raise RuntimeError(result.get("error") or "智策分析失败")
 
+        invalidate_report_cache("sector:list:", "sector:lifecycle:latest")
         report_progress(current=100, total=100, message="智策分析完成，正在同步结果...")
         data_summary = {
             "from_cache": bool(data.get("from_cache")),
@@ -986,59 +1060,153 @@ def _extract_sector_strategy_summary(source: dict[str, Any]) -> dict[str, Any]:
 
 
 def list_sector_strategy_reports(limit: int = 20) -> list[dict[str, Any]]:
-    reports_df = sector_strategy_db.get_analysis_reports(limit=limit)
-    if pd is not None and isinstance(reports_df, pd.DataFrame):
-        reports = reports_df.to_dict(orient="records")
-    else:
-        reports = list(reports_df or [])
-    return [
-        {
+    def builder() -> list[dict[str, Any]]:
+        reports_df = sector_strategy_db.get_analysis_reports(limit=limit)
+        if pd is not None and isinstance(reports_df, pd.DataFrame):
+            reports = reports_df.to_dict(orient="records")
+        else:
+            reports = list(reports_df or [])
+        return [
+            {
+                **_json_safe(report),
+                "summary_data": _extract_sector_strategy_summary(report),
+                "lifecycle_summary": _json_safe(
+                    sector_strategy_db.build_lifecycle_summary(
+                        sector_strategy_db.get_lifecycle_items_for_analysis(int(report.get("id") or 0))
+                    )
+                ),
+            }
+            for report in reports
+        ]
+
+    return _get_or_build_report_cache(
+        "sector:list",
+        limit,
+        builder=builder,
+        ttl_seconds=_REPORT_LIST_CACHE_TTL_SECONDS,
+    )
+
+
+def _compact_sector_strategy_task_payload(
+    task: Optional[dict[str, Any]],
+    *,
+    full: bool = False,
+    include_raw_reports: bool = False,
+) -> Optional[dict[str, Any]]:
+    if not isinstance(task, dict):
+        return task
+
+    compact_task = dict(task)
+    payload = compact_task.get("result")
+    if not isinstance(payload, dict):
+        return compact_task
+
+    compact_payload = dict(payload)
+    report_view = compact_payload.get("report_view")
+    if isinstance(report_view, dict):
+        compact_payload["report_view"] = normalize_sector_strategy_result(
+            {"report_view": report_view},
+            include_raw_reports=include_raw_reports,
+        )
+
+    if not full:
+        raw_result = compact_payload.get("result")
+        if isinstance(raw_result, dict):
+            compact_payload["result"] = {
+                key: raw_result.get(key)
+                for key in ("report_id", "timestamp", "analysis_date", "created_at")
+                if raw_result.get(key) not in (None, "")
+            }
+        else:
+            compact_payload["result"] = None
+
+    compact_task["result"] = compact_payload
+    return compact_task
+
+
+def get_latest_sector_strategy_task(
+    *,
+    full: bool = False,
+    include_raw_reports: bool = False,
+) -> Optional[dict[str, Any]]:
+    return _compact_sector_strategy_task_payload(
+        get_latest_ui_task(SECTOR_STRATEGY_TASK_TYPE),
+        full=full,
+        include_raw_reports=include_raw_reports,
+    )
+
+
+def get_sector_strategy_task(
+    task_id: str,
+    *,
+    full: bool = False,
+    include_raw_reports: bool = False,
+) -> Optional[dict[str, Any]]:
+    return _compact_sector_strategy_task_payload(
+        get_ui_task(SECTOR_STRATEGY_TASK_TYPE, task_id),
+        full=full,
+        include_raw_reports=include_raw_reports,
+    )
+
+
+def get_sector_strategy_report(report_id: int, *, include_raw_reports: bool = False) -> Optional[dict[str, Any]]:
+    def builder() -> Optional[dict[str, Any]]:
+        report = sector_strategy_db.get_analysis_report(report_id)
+        if not report:
+            return None
+        embedded_data_summary = {}
+        analysis_payload = report.get("analysis_content_parsed") if isinstance(report.get("analysis_content_parsed"), dict) else {}
+        if isinstance(analysis_payload, dict):
+            embedded_data_summary = analysis_payload.get("data_summary") if isinstance(analysis_payload.get("data_summary"), dict) else {}
+        if not embedded_data_summary:
+            report_date = str(report.get("analysis_date") or report.get("created_at") or "").strip()[:10]
+            if report_date:
+                embedded_data_summary = sector_strategy_db.build_data_summary(data_date=report_date)
+        report_view = normalize_sector_strategy_result(
+            report,
+            data_summary=embedded_data_summary,
+            include_raw_reports=include_raw_reports,
+        )
+        return {
             **_json_safe(report),
-            "summary_data": _extract_sector_strategy_summary(report),
-            "lifecycle_summary": _json_safe(
-                sector_strategy_db.build_lifecycle_summary(
-                    sector_strategy_db.get_lifecycle_items_for_analysis(int(report.get("id") or 0))
+            "summary_data": _extract_sector_strategy_summary(report_view),
+            "report_view": _json_safe(report_view),
+            "lifecycle_items": _json_safe(report.get("lifecycle_items") or []),
+            "lifecycle_summary": _json_safe(report.get("lifecycle_summary") or sector_strategy_db.build_lifecycle_summary([])),
+            "daily_heat_panel": _json_safe(
+                sector_strategy_db.get_daily_heat_panel(
+                    board_date=str(report.get("board_date") or report.get("analysis_date") or report.get("created_at") or "")[:10],
+                    limit=30,
                 )
             ),
         }
-        for report in reports
-    ]
 
-
-def get_sector_strategy_report(report_id: int) -> Optional[dict[str, Any]]:
-    report = sector_strategy_db.get_analysis_report(report_id)
-    if not report:
-        return None
-    embedded_data_summary = {}
-    analysis_payload = report.get("analysis_content_parsed") if isinstance(report.get("analysis_content_parsed"), dict) else {}
-    if isinstance(analysis_payload, dict):
-        embedded_data_summary = analysis_payload.get("data_summary") if isinstance(analysis_payload.get("data_summary"), dict) else {}
-    if not embedded_data_summary:
-        report_date = str(report.get("analysis_date") or report.get("created_at") or "").strip()[:10]
-        if report_date:
-            embedded_data_summary = sector_strategy_db.build_data_summary(data_date=report_date)
-    report_view = normalize_sector_strategy_result(report, data_summary=embedded_data_summary)
-    return {
-        **_json_safe(report),
-        "summary_data": _extract_sector_strategy_summary(report_view),
-        "report_view": _json_safe(report_view),
-        "lifecycle_items": _json_safe(report.get("lifecycle_items") or []),
-        "lifecycle_summary": _json_safe(report.get("lifecycle_summary") or sector_strategy_db.build_lifecycle_summary([])),
-        "daily_heat_panel": _json_safe(
-            sector_strategy_db.get_daily_heat_panel(
-                board_date=str(report.get("board_date") or report.get("analysis_date") or report.get("created_at") or "")[:10],
-                limit=30,
-            )
-        ),
-    }
+    return _get_or_build_report_cache(
+        "sector:detail",
+        report_id,
+        int(bool(include_raw_reports)),
+        builder=builder,
+        ttl_seconds=_REPORT_CACHE_TTL_SECONDS,
+    )
 
 
 def delete_sector_strategy_report(report_id: int) -> bool:
-    return bool(sector_strategy_db.delete_analysis_report(report_id))
+    deleted = bool(sector_strategy_db.delete_analysis_report(report_id))
+    if deleted:
+        invalidate_report_cache(
+            "sector:list:",
+            f"sector:detail:{report_id}:",
+            "sector:lifecycle:latest",
+        )
+    return deleted
 
 
 def get_sector_strategy_latest_lifecycle() -> dict[str, Any]:
-    return _json_safe(sector_strategy_db.get_latest_lifecycle_snapshot())
+    return _get_or_build_report_cache(
+        "sector:lifecycle:latest",
+        builder=lambda: _json_safe(sector_strategy_db.get_latest_lifecycle_snapshot()),
+        ttl_seconds=_REPORT_LIST_CACHE_TTL_SECONDS,
+    )
 
 
 def list_sector_strategy_lifecycle(days: int = 20) -> list[dict[str, Any]]:
@@ -1087,6 +1255,7 @@ def submit_sector_strategy_lifecycle_rebuild_task(*, reason: str = "manual") -> 
                 f"explosive={int(counts.get('explosive') or 0)}, decay={int(counts.get('decay') or 0)}"
             ),
         )
+        invalidate_report_cache("sector:lifecycle:latest")
         return {
             "result": _json_safe(result),
             "message": "生命周期重建完成。",
@@ -1256,13 +1425,15 @@ def _normalize_longhubang_result(
     *,
     recommended_stocks: Optional[list[dict[str, Any]]] = None,
     timestamp: Optional[str] = None,
+    include_reports: bool = True,
 ) -> dict[str, Any]:
     source = payload or {}
+    agents_analysis = _json_safe(source.get("agents_analysis") or {})
     return {
         "success": bool(source.get("success", True)),
         "timestamp": timestamp or source.get("timestamp") or local_now_str(),
         "data_info": _json_safe(source.get("data_info") or {}),
-        "agents_analysis": _json_safe(source.get("agents_analysis") or {}),
+        "agents_analysis": agents_analysis if include_reports else {},
         "scoring_ranking": _json_safe(source.get("scoring_ranking") or []),
         "final_report": _json_safe(source.get("final_report") or {}),
         "recommended_stocks": _json_safe(
@@ -1270,6 +1441,7 @@ def _normalize_longhubang_result(
         ),
         "error": source.get("error"),
         "report_id": source.get("report_id"),
+        "has_deferred_reports": bool(agents_analysis),
     }
 
 
@@ -1325,6 +1497,7 @@ def submit_longhubang_task(
         result = engine.run_comprehensive_analysis(date=normalized_date, days=normalized_days)
         if not result.get("success"):
             raise RuntimeError(result.get("error") or "龙虎榜分析失败")
+        invalidate_report_cache("longhubang:list:", "longhubang:stats:")
         report_progress(current=3, total=3, message="龙虎榜分析完成，正在同步结果...")
         return {
             "result": _json_safe(result),
@@ -1443,50 +1616,85 @@ def submit_longhubang_batch_task(
 
 
 def list_longhubang_reports(limit: int = 50) -> list[dict[str, Any]]:
-    database = _create_longhubang_database()
-    reports_df = database.get_analysis_reports(limit=limit)
-    if pd is not None and isinstance(reports_df, pd.DataFrame):
-        reports = reports_df.to_dict(orient="records")
-    else:
-        reports = list(reports_df or [])
-    return [_json_safe(report) for report in reports]
+    def builder() -> list[dict[str, Any]]:
+        database = _create_longhubang_database()
+        reports_df = database.get_analysis_reports(limit=limit)
+        if pd is not None and isinstance(reports_df, pd.DataFrame):
+            reports = reports_df.to_dict(orient="records")
+        else:
+            reports = list(reports_df or [])
+        return [_json_safe(report) for report in reports]
 
-
-def get_longhubang_report(report_id: int) -> Optional[dict[str, Any]]:
-    database = _create_longhubang_database()
-    report = database.get_analysis_report(report_id)
-    if not report:
-        return None
-    parsed = report.get("analysis_content_parsed")
-    recommended = report.get("recommended_stocks")
-    result_payload = _normalize_longhubang_result(
-        parsed if isinstance(parsed, dict) else None,
-        recommended_stocks=recommended if isinstance(recommended, list) else None,
-        timestamp=report.get("analysis_date"),
+    return _get_or_build_report_cache(
+        "longhubang:list",
+        limit,
+        builder=builder,
+        ttl_seconds=_REPORT_LIST_CACHE_TTL_SECONDS,
     )
-    return {
-        **_json_safe(report),
-        "summary_data": _extract_longhubang_report_summary(report),
-        "result_payload": result_payload,
-    }
+
+
+def get_longhubang_report(report_id: int, *, include_reports: bool = False) -> Optional[dict[str, Any]]:
+    def builder() -> Optional[dict[str, Any]]:
+        database = _create_longhubang_database()
+        report = database.get_analysis_report(report_id)
+        if not report:
+            return None
+        parsed = report.get("analysis_content_parsed")
+        recommended = report.get("recommended_stocks")
+        result_payload = _normalize_longhubang_result(
+            parsed if isinstance(parsed, dict) else None,
+            recommended_stocks=recommended if isinstance(recommended, list) else None,
+            timestamp=report.get("analysis_date"),
+            include_reports=include_reports,
+        )
+        return {
+            **_json_safe(report),
+            "summary_data": _extract_longhubang_report_summary(report),
+            "result_payload": result_payload,
+            "has_deferred_reports": bool(result_payload.get("has_deferred_reports")),
+        }
+
+    return _get_or_build_report_cache(
+        "longhubang:detail",
+        report_id,
+        int(bool(include_reports)),
+        builder=builder,
+        ttl_seconds=_REPORT_CACHE_TTL_SECONDS,
+    )
 
 
 def delete_longhubang_report(report_id: int) -> bool:
     database = _create_longhubang_database()
-    return bool(database.delete_analysis_report(report_id))
+    deleted = bool(database.delete_analysis_report(report_id))
+    if deleted:
+        invalidate_report_cache(
+            "longhubang:list:",
+            f"longhubang:detail:{report_id}:",
+            "longhubang:stats:",
+        )
+    return deleted
 
 
 def get_longhubang_statistics(window_days: int = 30) -> dict[str, Any]:
-    database = _create_longhubang_database()
     normalized_days = max(1, int(window_days or 30))
-    end_date = datetime.now().strftime("%Y-%m-%d")
-    start_date = (datetime.now() - timedelta(days=normalized_days)).strftime("%Y-%m-%d")
-    return {
-        "stats": _json_safe(database.get_statistics()),
-        "window_days": normalized_days,
-        "top_youzi": _json_safe(database.get_top_youzi(start_date, end_date, limit=20)),
-        "top_stocks": _json_safe(database.get_top_stocks(start_date, end_date, limit=20)),
-    }
+
+    def builder() -> dict[str, Any]:
+        database = _create_longhubang_database()
+        end_date = datetime.now().strftime("%Y-%m-%d")
+        start_date = (datetime.now() - timedelta(days=normalized_days)).strftime("%Y-%m-%d")
+        return {
+            "stats": _json_safe(database.get_statistics()),
+            "window_days": normalized_days,
+            "top_youzi": _json_safe(database.get_top_youzi(start_date, end_date, limit=20)),
+            "top_stocks": _json_safe(database.get_top_stocks(start_date, end_date, limit=20)),
+        }
+
+    return _get_or_build_report_cache(
+        "longhubang:stats",
+        normalized_days,
+        builder=builder,
+        ttl_seconds=_REPORT_LIST_CACHE_TTL_SECONDS,
+    )
 
 
 def _build_main_force_export_context(context_snapshot: Optional[dict[str, Any]]) -> SimpleNamespace:
@@ -2173,6 +2381,7 @@ def submit_macro_cycle_task(
         result = engine.run_full_analysis(progress_callback=progress_callback)
         if not result.get("success"):
             raise RuntimeError(result.get("error") or "宏观周期分析失败")
+        invalidate_report_cache("macro-cycle:list:")
         report_progress(current=100, total=100, message="宏观周期分析完成，正在同步结果...")
         return {
             "result": _json_safe(result),
@@ -2188,18 +2397,66 @@ def submit_macro_cycle_task(
 
 
 def list_macro_cycle_reports(limit: int = 20) -> list[dict[str, Any]]:
-    reports_df = _create_macro_cycle_database().get_historical_reports(limit=limit)
-    if pd is not None and isinstance(reports_df, pd.DataFrame):
-        return _json_safe(reports_df.to_dict(orient="records"))
-    return _json_safe(reports_df or [])
+    def builder() -> list[dict[str, Any]]:
+        reports_df = _create_macro_cycle_database().get_historical_reports(limit=limit)
+        if pd is not None and isinstance(reports_df, pd.DataFrame):
+            return _json_safe(reports_df.to_dict(orient="records"))
+        return _json_safe(reports_df or [])
+
+    return _get_or_build_report_cache(
+        "macro-cycle:list",
+        limit,
+        builder=builder,
+        ttl_seconds=_REPORT_LIST_CACHE_TTL_SECONDS,
+    )
 
 
-def get_macro_cycle_report(report_id: int) -> Optional[dict[str, Any]]:
-    return _json_safe(_create_macro_cycle_database().get_report_detail(report_id))
+def _compact_macro_cycle_report_payload(
+    report: Optional[dict[str, Any]],
+    *,
+    include_reports: bool = False,
+) -> Optional[dict[str, Any]]:
+    if not isinstance(report, dict):
+        return _json_safe(report)
+
+    compact_report = dict(report)
+    result_parsed = compact_report.get("result_parsed")
+    if not isinstance(result_parsed, dict):
+        compact_report["has_deferred_reports"] = False
+        return _json_safe(compact_report)
+
+    compact_result = dict(result_parsed)
+    agents_analysis = compact_result.get("agents_analysis")
+    has_deferred_reports = isinstance(agents_analysis, dict) and bool(agents_analysis)
+    if not include_reports:
+        compact_result["agents_analysis"] = {}
+    compact_result["has_deferred_reports"] = has_deferred_reports
+    compact_report["result_parsed"] = compact_result
+    compact_report["has_deferred_reports"] = has_deferred_reports
+    return _json_safe(compact_report)
+
+
+def get_macro_cycle_report(report_id: int, *, include_reports: bool = False) -> Optional[dict[str, Any]]:
+    return _get_or_build_report_cache(
+        "macro-cycle:detail",
+        report_id,
+        int(bool(include_reports)),
+        builder=lambda: _compact_macro_cycle_report_payload(
+            _create_macro_cycle_database().get_report_detail(report_id),
+            include_reports=include_reports,
+        ),
+        ttl_seconds=_REPORT_CACHE_TTL_SECONDS,
+    )
 
 
 def delete_macro_cycle_report(report_id: int) -> bool:
-    return bool(_create_macro_cycle_database().delete_report(report_id))
+    deleted = bool(_create_macro_cycle_database().delete_report(report_id))
+    if deleted:
+        invalidate_report_cache(
+            "macro-cycle:list:",
+            f"macro-cycle:detail:{report_id}:",
+        )
+    return deleted
 
 
 def export_macro_cycle_markdown(result: dict[str, Any]) -> tuple[bytes, str, str]:
@@ -2633,9 +2890,28 @@ def get_stock_info(symbol: str) -> dict[str, Any]:
 
 
 def list_portfolio_stocks(account_name: Optional[str] = None) -> list[dict[str, Any]]:
-    all_stocks = portfolio_manager.get_all_latest_analysis(
-        account_name=normalize_account_name(account_name) or DEFAULT_ACCOUNT_NAME,
-    )
+    resolved_account_name = normalize_account_name(account_name) or DEFAULT_ACCOUNT_NAME
+    all_stocks = portfolio_manager.get_all_latest_analysis(account_name=resolved_account_name)
+    snapshot = portfolio_manager.get_portfolio_snapshot(account_name=resolved_account_name)
+    holding_metrics_map: dict[int, dict[str, Any]] = {}
+    for holding in snapshot.get("holdings", []):
+        stock_id = holding.get("stock_id")
+        if stock_id is None:
+            continue
+        try:
+            normalized_stock_id = int(stock_id)
+        except (TypeError, ValueError):
+            continue
+        holding_metrics_map[normalized_stock_id] = {
+            "current_price": holding.get("current_price"),
+            "market_value": holding.get("market_value"),
+            "cost_value": holding.get("cost_value"),
+            "pnl": holding.get("pnl"),
+            "pnl_pct": holding.get("pnl_pct"),
+            "weight": holding.get("weight"),
+            "asset_weight": holding.get("asset_weight"),
+            "industry": holding.get("industry"),
+        }
     all_stocks = portfolio_manager.backfill_portfolio_stock_names(all_stocks)
     trade_summary_map = portfolio_manager.get_trade_summary_map(
         [stock.get("id") for stock in all_stocks if stock.get("id")]
@@ -2644,6 +2920,12 @@ def list_portfolio_stocks(account_name: Optional[str] = None) -> list[dict[str, 
     for stock in all_stocks:
         item = dict(stock)
         item.update(trade_summary_map.get(stock.get("id"), {}))
+        try:
+            snapshot_metrics = holding_metrics_map.get(int(stock.get("id")))
+        except (TypeError, ValueError):
+            snapshot_metrics = None
+        if snapshot_metrics:
+            item.update(snapshot_metrics)
         result.append(item)
     return result
 
@@ -2714,7 +2996,9 @@ def list_portfolio_trade_records(
     return portfolio_manager.get_trade_records(account_name=account_name, limit=int(limit or 120))
 
 
-def get_portfolio_risk(account_name: Optional[str] = None) -> dict[str, Any]:
+def get_portfolio_risk(account_name: Optional[str] = None, *, refresh: bool = False) -> dict[str, Any]:
+    if refresh:
+        portfolio_manager.get_portfolio_snapshot(account_name=account_name, refresh=True)
     return portfolio_manager.calculate_portfolio_risk(account_name=account_name)
 
 
@@ -3103,21 +3387,20 @@ def run_smart_monitor_tasks_once(
                 portfolio_stock_id=task.get("portfolio_stock_id"),
             )
             alert_id = int((alert_item or {}).get("id") or 0)
-            if alert_id <= 0 or alert_id in processed_alert_ids:
-                continue
-            processed_alert_ids.add(alert_id)
-            summary["price_alert_total"] += 1
-            alert_label = str(alert_item.get("symbol") or task.get("stock_code") or alert_id) if isinstance(alert_item, dict) else str(task.get("stock_code") or alert_id)
-            alert_success, alert_attempts = _run_smart_monitor_item_once_with_retry(
-                orchestrator,
-                alert_id,
-                item_label=f"价格监控 {alert_label}",
-            )
-            summary["price_alert_retry_total"] += max(0, alert_attempts - 1)
-            if alert_success:
-                summary["price_alert_success"] += 1
-            else:
-                summary["price_alert_failed"] += 1
+            if alert_id > 0 and alert_id not in processed_alert_ids:
+                processed_alert_ids.add(alert_id)
+                summary["price_alert_total"] += 1
+                alert_label = str(alert_item.get("symbol") or task.get("stock_code") or alert_id) if isinstance(alert_item, dict) else str(task.get("stock_code") or alert_id)
+                alert_success, alert_attempts = _run_smart_monitor_item_once_with_retry(
+                    orchestrator,
+                    alert_id,
+                    item_label=f"价格监控 {alert_label}",
+                )
+                summary["price_alert_retry_total"] += max(0, alert_attempts - 1)
+                if alert_success:
+                    summary["price_alert_success"] += 1
+                else:
+                    summary["price_alert_failed"] += 1
 
             if resolved_delay_seconds > 0 and index < len(ordered_tasks) - 1:
                 logger.info(

@@ -34,6 +34,7 @@ interface PriceAlertNotification {
   notification_category?: string;
   notification_label?: string;
   notification_class_label?: string;
+  notification_explanation?: string;
   notification_reason?: string;
   trigger_summary?: string;
   swing_execution_label?: string;
@@ -81,11 +82,20 @@ function formatNumber(value?: number) {
     : "-";
 }
 
+function formatNotificationText(value?: string | null): string {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  if (!text) return "";
+  return text
+    .replace(/(?:\.{3,}|…+)(?:（已截断）)?/gu, "。")
+    .replace(/。{2,}/gu, "。")
+    .trim();
+}
+
 function resolveNotificationClass(value?: string | null): string {
   const normalized = String(value || "").trim().toLowerCase().replace(/-/g, "_");
   const mapping: Record<string, string> = {
-    focus: "focus_alert",
-    focus_alert: "focus_alert",
+    focus: "price_alert",
+    focus_alert: "price_alert",
     price: "price_alert",
     price_alert: "price_alert",
     risk: "risk_alert",
@@ -107,9 +117,6 @@ function resolveNotificationMeta(item: PriceAlertNotification): { tone: Notifica
   const explicitLabel = String(
     item.notification_label || item.notification_class_label || "",
   ).trim();
-  if (notificationClass === "focus_alert") {
-    return { tone: "info", label: explicitLabel || "关注提醒" };
-  }
   if (notificationClass === "price_alert") {
     return { tone: "warning", label: explicitLabel || "价格提醒" };
   }
@@ -130,7 +137,7 @@ function resolveNotificationMeta(item: PriceAlertNotification): { tone: Notifica
     return { tone: "success", label: "收益信号" };
   }
   if (/(买入|入场|区间|接近)/.test(message)) {
-    return { tone: "info", label: "关注提醒" };
+    return { tone: "warning", label: "价格提醒" };
   }
   return { tone: "warning", label: "价格提醒" };
 }
@@ -397,7 +404,7 @@ export function PriceAlertsPage() {
             <div className={styles.cardHeader}>
               <div>
                 <h2 className={styles.mobileDuplicateHeading}>近期通知</h2>
-                <p className={styles.helperText}>用颜色区分不同类型，优先识别风险、收益和关注信号。</p>
+                <p className={styles.helperText}>用颜色区分不同类型，优先识别风险、收益和价格信号。</p>
               </div>
             </div>
             <div className={styles.list}>
@@ -412,8 +419,14 @@ export function PriceAlertsPage() {
                       <StatusBadge label={meta.label} tone={meta.tone} />
                       <strong>{item.symbol}</strong>
                     </div>
-                    {item.trigger_summary ? <small className={styles.muted}>触发摘要：{item.trigger_summary}</small> : null}
-                    {item.swing_execution_label ? <small className={styles.muted}>波段类型：{item.swing_execution_label}</small> : null}
+                    {formatNotificationText(item.trigger_summary) ? (
+                      <small className={styles.muted}>触发摘要：{formatNotificationText(item.trigger_summary)}</small>
+                    ) : null}
+                    {formatNotificationText(item.notification_explanation || item.notification_reason) ? (
+                      <small className={styles.muted}>
+                        解释说明：{formatNotificationText(item.notification_explanation || item.notification_reason)}
+                      </small>
+                    ) : null}
                     <small className={styles.muted}>{formatDateTime(item.triggered_at, "暂无时间")}</small>
                   </div>
                 );

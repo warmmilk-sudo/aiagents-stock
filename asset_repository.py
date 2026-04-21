@@ -2239,10 +2239,21 @@ class AssetRepository:
         baseline_analysis_id: Optional[int] = None,
         baseline_decision_id: Optional[int] = None,
         overwrite: bool = False,
+        baseline_snapshot_extra: Optional[Dict[str, Any]] = None,
     ) -> bool:
-        baseline_snapshot = {}
+        existing_cycle = self.get_open_position_cycle(asset_id)
+        baseline_snapshot = (
+            dict(existing_cycle.get("baseline_snapshot") or {})
+            if isinstance(existing_cycle, dict) and isinstance(existing_cycle.get("baseline_snapshot"), dict)
+            else {}
+        )
         if holding_period not in (None, ""):
             baseline_snapshot["holding_period"] = str(holding_period).strip()
+        if isinstance(baseline_snapshot_extra, dict):
+            for key, value in baseline_snapshot_extra.items():
+                if value in (None, "", [], {}):
+                    continue
+                baseline_snapshot[key] = value
         cycle_id = self.open_position_cycle(
             asset_id,
             baseline_source=baseline_source,

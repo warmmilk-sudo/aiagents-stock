@@ -94,6 +94,19 @@
   max-width: 100%;
 }
 
+.holdingsAnalysisToolbar {
+  display: flex;
+  flex: 1 1 100%;
+  width: 100%;
+  min-width: 0;
+  justify-content: flex-end;
+}
+
+.holdingsAnalysisButton {
+  width: 100%;
+  min-width: 180px;
+}
+
 .moduleBody {
   display: grid;
   gap: 14px;
@@ -259,9 +272,28 @@
 
 .researchHubAssetRow {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   gap: 10px;
   align-items: start;
+}
+
+.researchHubUnreadDot {
+  width: 8px;
+  height: 8px;
+  margin-top: 8px;
+  border-radius: 999px;
+  background: var(--success);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--success) 16%, transparent);
+  flex: 0 0 auto;
+}
+
+.researchHubUnreadDotHidden {
+  width: 8px;
+  height: 8px;
+  margin-top: 8px;
+  border-radius: 999px;
+  flex: 0 0 auto;
+  visibility: hidden;
 }
 
 .researchHubAssetActions {
@@ -278,6 +310,33 @@
   justify-items: end;
 }
 
+.researchHubAssetInfoStack {
+  display: grid;
+  gap: 3px;
+  justify-items: end;
+  text-align: right;
+  min-width: 0;
+}
+
+.researchHubAssetInfoLine,
+.researchHubAssetInfoLineMuted {
+  display: block;
+  min-width: 0;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.researchHubAssetInfoLine {
+  color: var(--text-main);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.researchHubAssetInfoLineMuted {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
 .researchHubAssetMain {
   display: grid;
   gap: 5px;
@@ -289,6 +348,10 @@
   text-align: left;
   font: inherit;
   cursor: pointer;
+}
+
+.researchHubAssetMainUnread {
+  padding-left: 2px;
 }
 
 .researchHubTagList {
@@ -363,17 +426,16 @@
 
 .researchHubStarButton,
 .researchHubStarButtonActive {
-  min-width: 36px;
-  height: 36px;
+  min-width: 28px;
+  height: 28px;
   padding: 0;
-  border: 1px solid var(--line-soft);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.02);
+  border: none;
+  border-radius: 14px;
+  background: transparent;
   color: var(--text-muted);
-  font-size: 18px;
+  font-size: 28px;
   line-height: 1;
   transition:
-    border-color var(--shell-transition),
     background var(--shell-transition),
     color var(--shell-transition),
     transform var(--shell-transition);
@@ -382,35 +444,42 @@
 .researchHubStarButton:hover,
 .researchHubStarButtonActive:hover {
   transform: translateY(-1px);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
 .researchHubStarButtonActive {
-  border-color: color-mix(in srgb, var(--accent) 48%, var(--line-soft));
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
   color: var(--accent);
 }
 
 .researchHubDeleteButton {
-  min-width: 36px;
-  height: 36px;
+  min-width: 28px;
+  height: 28px;
+  margin-top: 4px;
   padding: 0;
-  border: 1px solid color-mix(in srgb, var(--danger) 42%, var(--line-soft));
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  border: none;
+  border-radius: 3px;
+  background: transparent;
   color: var(--danger);
-  font-size: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   line-height: 1;
   transition:
-    border-color var(--shell-transition),
     background var(--shell-transition),
     color var(--shell-transition),
     transform var(--shell-transition);
 }
 
+.researchHubDeleteButton svg {
+  width: 28px;
+  height: 28px;
+  display: block;
+  fill: currentColor;
+}
+
 .researchHubDeleteButton:hover {
   transform: translateY(-1px);
-  border-color: color-mix(in srgb, var(--danger) 58%, var(--line-soft));
-  background: color-mix(in srgb, var(--danger) 18%, transparent);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
   color: color-mix(in srgb, var(--danger) 84%, white);
 }
 
@@ -419,6 +488,74 @@
   gap: 12px;
   min-height: calc(100vh - 190px);
   align-content: start;
+}
+
+.dialogBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(8, 14, 22, 0.52);
+  backdrop-filter: blur(10px);
+}
+
+.dialogCard {
+  width: min(100%, 460px);
+  display: grid;
+  gap: 16px;
+  padding: 18px;
+  border: 1px solid color-mix(in srgb, var(--line-soft) 82%, transparent);
+  border-radius: 20px;
+  background: color-mix(in srgb, var(--bg-panel) 97%, black 3%);
+  box-shadow: var(--shadow-card);
+}
+
+.dialogHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.dialogHeader strong {
+  font-size: 17px;
+  color: var(--text-main);
+}
+
+.dialogCloseButton {
+  min-width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--line-soft) 78%, transparent);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    border-color var(--shell-transition),
+    background var(--shell-transition),
+    color var(--shell-transition);
+}
+
+.dialogCloseButton:hover {
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--line-soft));
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  color: var(--text-main);
+}
+
+.dialogBody {
+  color: var(--text-muted);
+  line-height: 1.7;
+}
+
+.dialogActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
 }
 
 .researchHubControlFilters {
@@ -560,8 +697,8 @@
 }
 
 .field input[type="date"],
-.actions > input[type="date"],
-.responsiveActionGrid > input[type="date"] {
+.actions>input[type="date"],
+.responsiveActionGrid>input[type="date"] {
   -webkit-appearance: none;
   appearance: none;
   display: block;
@@ -577,23 +714,23 @@
 }
 
 .field input[type="date"]::-webkit-datetime-edit,
-.actions > input[type="date"]::-webkit-datetime-edit,
-.responsiveActionGrid > input[type="date"]::-webkit-datetime-edit {
+.actions>input[type="date"]::-webkit-datetime-edit,
+.responsiveActionGrid>input[type="date"]::-webkit-datetime-edit {
   min-width: 0;
   padding: 0;
   overflow: hidden;
 }
 
 .field input[type="date"]::-webkit-datetime-edit-fields-wrapper,
-.actions > input[type="date"]::-webkit-datetime-edit-fields-wrapper,
-.responsiveActionGrid > input[type="date"]::-webkit-datetime-edit-fields-wrapper {
+.actions>input[type="date"]::-webkit-datetime-edit-fields-wrapper,
+.responsiveActionGrid>input[type="date"]::-webkit-datetime-edit-fields-wrapper {
   min-width: 0;
   overflow: hidden;
 }
 
 .field input[type="date"]::-webkit-calendar-picker-indicator,
-.actions > input[type="date"]::-webkit-calendar-picker-indicator,
-.responsiveActionGrid > input[type="date"]::-webkit-calendar-picker-indicator {
+.actions>input[type="date"]::-webkit-calendar-picker-indicator,
+.responsiveActionGrid>input[type="date"]::-webkit-calendar-picker-indicator {
   margin: 0;
   padding: 0;
 }
@@ -1196,6 +1333,26 @@
   min-width: 0;
 }
 
+.smartMonitorTaskActionRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.smartMonitorTaskActionLeft,
+.smartMonitorTaskActionRight {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.smartMonitorTaskActionRight {
+  margin-left: auto;
+}
+
 .smartMonitorTaskTitle {
   font-size: 15px;
   line-height: 1.5;
@@ -1368,8 +1525,8 @@
   cursor: pointer;
 }
 
-.historySummaryCellButton > .historySummaryCell,
-.historySummaryCellButtonActive > .historySummaryCell,
+.historySummaryCellButton>.historySummaryCell,
+.historySummaryCellButtonActive>.historySummaryCell,
 .historySummaryCellButton,
 .historySummaryCellButtonActive {
   display: grid;
@@ -1619,7 +1776,7 @@
   font-weight: 700;
 }
 
-details > .historyDetailSummary {
+details>.historyDetailSummary {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1630,18 +1787,18 @@ details > .historyDetailSummary {
     color var(--shell-transition);
 }
 
-details > .historyDetailSummary::after {
+details>.historyDetailSummary::after {
   content: "▾";
   color: var(--text-muted);
   font-size: 12px;
   transition: transform var(--shell-transition);
 }
 
-details:not([open]) > .historyDetailSummary::after {
+details:not([open])>.historyDetailSummary::after {
   transform: rotate(-90deg);
 }
 
-details > .historyDetailSummary:hover {
+details>.historyDetailSummary:hover {
   background: color-mix(in srgb, var(--bg-panel-strong) 94%, transparent);
 }
 
@@ -1756,7 +1913,7 @@ details > .historyDetailSummary:hover {
   min-width: 0;
 }
 
-.selectionResultCard > strong {
+.selectionResultCard>strong {
   font-size: 14px;
   line-height: 1.35;
 }
@@ -1785,7 +1942,7 @@ details > .historyDetailSummary:hover {
   gap: 12px;
 }
 
-.selectionCardHeader > * {
+.selectionCardHeader>* {
   min-width: 0;
 }
 
@@ -2242,7 +2399,7 @@ details > .historyDetailSummary:hover {
     padding-left: 22px;
   }
 
-  li + li {
+  li+li {
     margin-top: 6px;
   }
 
@@ -2825,6 +2982,57 @@ details > .historyDetailSummary:hover {
 @media (max-width: 560px) {
   .researchHubControlListCard {
     min-height: 0;
+  }
+
+  .researchHubAssetRow {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: 8px;
+  }
+
+  .researchHubUnreadDot,
+  .researchHubUnreadDotHidden {
+    margin-top: 7px;
+  }
+
+  .researchHubAssetActions {
+    justify-content: flex-start;
+  }
+
+  .researchHubAssetActionStack {
+    display: grid;
+    gap: 8px;
+    justify-items: end;
+  }
+
+  .researchHubStarButton,
+  .researchHubStarButtonActive,
+  .researchHubDeleteButton {
+    min-width: 48px;
+    width: 48px;
+    height: 48px;
+  }
+
+  .researchHubStarButton,
+  .researchHubStarButtonActive {
+    font-size: 32px;
+  }
+
+  .researchHubDeleteButton svg {
+    width: 30px;
+    height: 30px;
+  }
+
+  .dialogBackdrop {
+    padding: 14px;
+  }
+
+  .dialogCard {
+    padding: 16px;
+  }
+
+  .dialogActions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .card {

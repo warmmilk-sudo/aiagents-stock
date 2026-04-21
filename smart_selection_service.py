@@ -24,6 +24,8 @@ DEFAULT_MAX_WORKERS = 6
 FINAL_SELECTION_LIMIT = 10
 SECTOR_WATCH_LIMIT = 3
 HOT_LIFECYCLE_STAGES = {"startup", "explosive", "decay"}
+STRICT_EXECUTION_TRIGGER_SOURCES = {"scheduled"}
+RISK_REVIEW_PARALLELISM_CAP = 4
 
 
 def _now_text() -> str:
@@ -53,6 +55,22 @@ def _safe_json_loads(value: Any, default: Any):
         return json.loads(value)
     except (TypeError, ValueError):
         return default
+
+
+def _normalize_trigger_source(value: Any) -> str:
+    return str(value or "manual").strip().lower() or "manual"
+
+
+def _is_ordered_subsequence(shorter: str, longer: str) -> bool:
+    if not shorter or not longer or len(shorter) > len(longer):
+        return False
+    position = 0
+    for char in shorter:
+        position = longer.find(char, position)
+        if position < 0:
+            return False
+        position += 1
+    return True
 
 
 class SmartSelectionService:
@@ -308,7 +326,9 @@ class SmartSelectionService:
         payload["result"] = {
             **(payload.get("result_summary") or {}),
             "observed_startup_candidates": items.get("observed_startup_candidates", []),
+            "observed_decay_candidates": items.get("observed_decay_candidates", []),
             "ranked_action_candidates": items.get("ranked_action_candidates", []),
+            "excluded_by_execution_gate": items.get("excluded_by_execution_gate", []),
             "final_selected": items.get("final_selected", []),
             "excluded_by_lifecycle_veto": items.get("excluded_by_lifecycle_veto", []),
             "excluded_by_risk_veto": items.get("excluded_by_risk_veto", []),
@@ -380,6 +400,50 @@ class SmartSelectionService:
         worker.start()
         return run_id
 
+    def _build_score_fusion(
+        self,
+        *,
+        agent_composite_score: float,
+        execution_composite_score: float,
+        metrics: dict[str, Any],
+    ) -> dict[str, Any]:
+        market_state = str(metrics.get("market_state") or "")
+        execution_weight_by_state = {
+            "momentum": 0.44,
+            "momo": 0.44,
+            "range": 0.38,
+            "ice": 0.30,
+            "retreat": 0.34,
+        }
+        execution_weight = execution_weight_by_state.get(market_state, 0.38)
+        agent_weight = 1.0 - execution_weight
+        readiness_adjustment = 0.0
+        if bool(metrics.get("tail_session")):
+            readiness_adjustment += 4.0
+        else:
+            readiness_adjustment -= 5.0
+        realtime_freshness = metrics.get("realtime_freshness") if isinstance(metrics.get("realtime_freshness"), dict) else {}
+        if realtime_freshness.get("intraday_decision_ready") is True:
+            readiness_adjustment += 3.0
+        else:
+            readiness_adjustment -= 4.0
+        fusion_score = round(
+            agent_composite_score * agent_weight
+            + execution_composite_score * execution_weight
+            + readiness_adjustment,
+            2,
+        )
+        return {
+            "agent_composite_score": round(agent_composite_score, 2),
+            "execution_composite_score": round(execution_composite_score, 2),
+            "score_fusion_weights": {
+                "agent": round(agent_weight, 2),
+                "execution": round(execution_weight, 2),
+            },
+            "readiness_adjustment": round(readiness_adjustment, 2),
+            "fusion_score": fusion_score,
+        }
+
     def _build_candidate_metrics(self, candidate: dict[str, Any], lifecycle_item: dict[str, Any]) -> dict[str, Any]:
         metrics = candidate.get("technical_metrics") or {}
         anticipation_score = round((_safe_float(candidate.get("heat_score")) * 0.55) + (_safe_float(metrics.get("trend_score")) * 0.25) + (_safe_float(metrics.get("chip_score")) * 0.2), 2)
@@ -389,7 +453,7 @@ class SmartSelectionService:
         relative_strength_score = round((_safe_float(metrics.get("order_flow_score")) * 0.45) + (_safe_float(metrics.get("chip_score")) * 0.25) + (_safe_float(metrics.get("trend_score")) * 0.3), 2)
         tail_confirmation_score = round((_safe_float(metrics.get("intraday_score")) * 0.75) + (10 if str(metrics.get("intraday_bias") or "") in {"trend_continuation", "pullback_support"} else 0), 2)
         distribution_penalty = round(_safe_float(metrics.get("distribution_risk")), 2)
-        composite_score = round(
+        execution_composite_score = round(
             anticipation_score * 0.18
             + washout_score * 0.2
             + shrinkage_score * 0.18
@@ -398,6 +462,11 @@ class SmartSelectionService:
             - distribution_penalty * 0.2,
             2,
         )
+        fusion_payload = self._build_score_fusion(
+            agent_composite_score=_safe_float(candidate.get("composite_score"), 0.0),
+            execution_composite_score=execution_composite_score,
+            metrics=metrics,
+        )
         return {
             "anticipation_score": anticipation_score,
             "washout_score": washout_score,
@@ -405,7 +474,11 @@ class SmartSelectionService:
             "relative_strength_score": relative_strength_score,
             "tail_confirmation_score": tail_confirmation_score,
             "distribution_penalty": distribution_penalty,
-            "composite_score": composite_score,
+            "execution_composite_score": execution_composite_score,
+            "agent_composite_score": fusion_payload.get("agent_composite_score"),
+            "score_fusion_weights": fusion_payload.get("score_fusion_weights"),
+            "readiness_adjustment": fusion_payload.get("readiness_adjustment"),
+            "composite_score": fusion_payload.get("fusion_score"),
             "volume_contraction_days": volume_contraction_days,
             "tail_session": bool(metrics.get("tail_session")),
             "latest_minute_time": str(metrics.get("latest_minute_time") or ""),
@@ -418,6 +491,8 @@ class SmartSelectionService:
             "delta_1": lifecycle_item.get("delta_1"),
             "delta_2": lifecycle_item.get("delta_2"),
             "action_hint": lifecycle_item.get("action_hint") or "",
+            "market_state": str(metrics.get("market_state") or ""),
+            "market_state_label": str(metrics.get("market_state_label") or ""),
         }
 
     def _format_result_item(self, candidate: dict[str, Any], lifecycle_item: dict[str, Any], metrics: dict[str, Any]) -> dict[str, Any]:
@@ -428,6 +503,11 @@ class SmartSelectionService:
             "primary_sector": candidate.get("primary_sector"),
             "score": metrics.get("composite_score"),
             "heat_score": candidate.get("heat_score"),
+            "tech_score": candidate.get("tech_score"),
+            "agent_composite_score": metrics.get("agent_composite_score"),
+            "execution_composite_score": metrics.get("execution_composite_score"),
+            "score_fusion_weights": metrics.get("score_fusion_weights"),
+            "readiness_adjustment": metrics.get("readiness_adjustment"),
             "reason": candidate.get("reason"),
             "lifecycle_stage": metrics.get("lifecycle_stage"),
             "defense_line_type": metrics.get("defense_line_type"),
@@ -447,7 +527,44 @@ class SmartSelectionService:
             "latest_minute_time": metrics.get("latest_minute_time"),
             "latest_trade_time": metrics.get("latest_trade_time"),
             "realtime_freshness": metrics.get("realtime_freshness") if isinstance(metrics.get("realtime_freshness"), dict) else {},
+            "market_state": metrics.get("market_state"),
+            "market_state_label": metrics.get("market_state_label"),
         }
+
+    def _find_lifecycle_match(
+        self,
+        sector_name: Any,
+        lifecycle_by_name: dict[str, dict[str, Any]],
+    ) -> tuple[str, Optional[dict[str, Any]]]:
+        normalized_name = research_hub_service._normalize_sector_text(sector_name)
+        if not normalized_name:
+            return "", None
+        exact_match = lifecycle_by_name.get(normalized_name)
+        if exact_match:
+            return normalized_name, exact_match
+
+        fallback_candidates: list[tuple[float, str, dict[str, Any]]] = []
+        for lifecycle_key, lifecycle_item in lifecycle_by_name.items():
+            if not lifecycle_key:
+                continue
+            if (
+                normalized_name in lifecycle_key
+                or lifecycle_key in normalized_name
+                or _is_ordered_subsequence(normalized_name, lifecycle_key)
+                or _is_ordered_subsequence(lifecycle_key, normalized_name)
+            ):
+                fallback_candidates.append(
+                    (
+                        _safe_float(lifecycle_item.get("heat_score"), 0.0),
+                        lifecycle_key,
+                        lifecycle_item,
+                    )
+                )
+        if not fallback_candidates:
+            return normalized_name, None
+        fallback_candidates.sort(key=lambda item: item[0], reverse=True)
+        _, matched_key, lifecycle_item = fallback_candidates[0]
+        return matched_key, lifecycle_item
 
     def _build_selection_sector_snapshot(
         self,
@@ -462,36 +579,46 @@ class SmartSelectionService:
             if item.get("sector_name")
         }
 
-        selection_sectors: list[dict[str, Any]] = []
+        selection_sector_store: dict[str, dict[str, Any]] = {}
         selected_lifecycle_by_name: dict[str, dict[str, Any]] = {}
         for hot_item in extracted_sectors:
-            normalized_name = research_hub_service._normalize_sector_text(hot_item.get("sector"))
-            if not normalized_name:
+            alias_name = research_hub_service._normalize_sector_text(hot_item.get("sector"))
+            if not alias_name:
                 continue
-            lifecycle_item = lifecycle_by_name.get(normalized_name)
+            matched_name, lifecycle_item = self._find_lifecycle_match(hot_item.get("sector"), lifecycle_by_name)
             if not lifecycle_item:
                 continue
             lifecycle_stage = str(lifecycle_item.get("lifecycle_stage") or "")
             if lifecycle_stage not in HOT_LIFECYCLE_STAGES:
                 continue
-            selection_sectors.append(
-                {
-                    "sector": lifecycle_item.get("sector_name") or hot_item.get("sector"),
-                    "heat_score": max(
-                        _safe_float(hot_item.get("heat_score"), 0.0),
-                        _safe_float(lifecycle_item.get("heat_score"), 0.0),
-                    ),
-                    "lifecycle_stage": lifecycle_stage,
-                    "defense_line_type": lifecycle_item.get("defense_line_type"),
-                    "selection_veto": lifecycle_item.get("selection_veto"),
-                    "trajectory": lifecycle_item.get("trajectory"),
-                    "delta_1": lifecycle_item.get("delta_1"),
-                    "delta_2": lifecycle_item.get("delta_2"),
-                    "action_hint": lifecycle_item.get("action_hint"),
-                    "source": hot_item.get("source"),
-                }
-            )
-            selected_lifecycle_by_name[normalized_name] = lifecycle_item
+            matched_sector_name = matched_name or alias_name
+            payload = {
+                "sector": hot_item.get("sector") or lifecycle_item.get("sector_name"),
+                "lifecycle_sector": lifecycle_item.get("sector_name") or hot_item.get("sector"),
+                "heat_score": max(
+                    _safe_float(hot_item.get("heat_score"), 0.0),
+                    _safe_float(lifecycle_item.get("heat_score"), 0.0),
+                ),
+                "lifecycle_stage": lifecycle_stage,
+                "defense_line_type": lifecycle_item.get("defense_line_type"),
+                "selection_veto": lifecycle_item.get("selection_veto"),
+                "trajectory": lifecycle_item.get("trajectory"),
+                "delta_1": lifecycle_item.get("delta_1"),
+                "delta_2": lifecycle_item.get("delta_2"),
+                "action_hint": lifecycle_item.get("action_hint"),
+                "source": hot_item.get("source"),
+            }
+            existing = selection_sector_store.get(matched_sector_name)
+            if existing is None or _safe_float(payload.get("heat_score"), 0.0) > _safe_float(existing.get("heat_score"), 0.0):
+                selection_sector_store[matched_sector_name] = payload
+            selected_lifecycle_by_name[matched_sector_name] = lifecycle_item
+            selected_lifecycle_by_name[alias_name] = lifecycle_item
+
+        selection_sectors = sorted(
+            selection_sector_store.values(),
+            key=lambda item: _safe_float(item.get("heat_score"), 0.0),
+            reverse=True,
+        )
 
         if extracted_sectors and not selection_sectors:
             warnings.append("主线热点与生命周期候选未形成有效交集，智能选股降级为空结果")
@@ -608,10 +735,13 @@ class SmartSelectionService:
         self,
         run_id: str,
         *,
+        trigger_source: str = "manual",
         lightweight_model: Optional[str] = None,
         reasoning_model: Optional[str] = None,
     ) -> dict[str, Any]:
         warnings: list[str] = []
+        normalized_trigger_source = _normalize_trigger_source(trigger_source)
+        strict_execution_mode = normalized_trigger_source in STRICT_EXECUTION_TRIGGER_SOURCES
 
         def report_progress(current: int, message: str) -> None:
             self._update_run(run_id, current=int(current), total=100, message=message)
@@ -634,6 +764,7 @@ class SmartSelectionService:
                 "sector_strategy_reused": bool(sector_info.get("reused")),
                 "lifecycle_summary": lifecycle_summary,
                 "observed_startup_candidates": [],
+                "observed_decay_candidates": [],
                 "ranked_action_candidates": [],
                 "final_selected": [],
                 "excluded_by_lifecycle_veto": [],
@@ -662,6 +793,7 @@ class SmartSelectionService:
                 "selection_sectors": [],
                 "lifecycle_summary": lifecycle_summary,
                 "observed_startup_candidates": [],
+                "observed_decay_candidates": [],
                 "ranked_action_candidates": [],
                 "final_selected": [],
                 "excluded_by_lifecycle_veto": [],
@@ -676,6 +808,7 @@ class SmartSelectionService:
         ]
 
         startup_by_sector: dict[str, list[dict[str, Any]]] = {}
+        decay_candidates: list[dict[str, Any]] = []
         explosive_candidates: list[dict[str, Any]] = []
         vetoed_candidates: list[dict[str, Any]] = []
         max_workers = self.get_scheduler_config().get("max_workers", DEFAULT_MAX_WORKERS)
@@ -707,6 +840,13 @@ class SmartSelectionService:
             if metrics["lifecycle_stage"] == self.sector_strategy_db.LIFECYCLE_STAGE_STARTUP:
                 return ("startup", result_item, primary_sector or "other")
 
+            if metrics["lifecycle_stage"] == self.sector_strategy_db.LIFECYCLE_STAGE_DECAY:
+                if metrics["selection_veto"]:
+                    result_item["reason"] = f"{result_item['reason']} | 生命周期衰退，一票否决"
+                    return ("veto", result_item, primary_sector or "other")
+                result_item["reason"] = f"{result_item['reason']} | 生命周期衰退，保留观察不进入执行名单"
+                return ("decay", result_item, primary_sector or "other")
+
             if metrics["lifecycle_stage"] != self.sector_strategy_db.LIFECYCLE_STAGE_EXPLOSIVE:
                 return None
 
@@ -721,6 +861,8 @@ class SmartSelectionService:
                     vetoed_candidates.append(result_item)
                 elif bucket == "startup":
                     startup_by_sector.setdefault(primary_sector, []).append(result_item)
+                elif bucket == "decay":
+                    decay_candidates.append(result_item)
                 elif bucket == "explosive":
                     explosive_candidates.append(result_item)
 
@@ -736,43 +878,122 @@ class SmartSelectionService:
             )[:SECTOR_WATCH_LIMIT]
             observed_startup_candidates.extend(ranked)
         observed_startup_candidates.sort(key=lambda item: (_safe_float(item.get("score")), _safe_float(item.get("market_cap"))), reverse=True)
+        observed_decay_candidates = sorted(
+            decay_candidates,
+            key=lambda item: (
+                _safe_float(item.get("score"), 0.0),
+                _safe_float(item.get("market_cap"), 0.0),
+            ),
+            reverse=True,
+        )
 
         report_progress(72, "筛选尾盘执行候选...")
         ranked_action_candidates = sorted(explosive_candidates, key=lambda item: _safe_float(item.get("score")), reverse=True)
 
         final_selected: list[dict[str, Any]] = []
         risk_vetoed_candidates: list[dict[str, Any]] = []
+        execution_gated_candidates: list[dict[str, Any]] = []
         sector_counts: dict[str, int] = {}
         longhubang_map = research_hub_service._group_recent_longhubang_by_symbol(days=3, warnings=warnings)
-        risk_client = research_hub_service.DeepSeekClient(
-            lightweight_model=lightweight_model,
-            reasoning_model=reasoning_model,
-        )
         filtered_by_tail = 0
         filtered_by_freshness = 0
+        manual_relaxed_candidates = 0
+        pre_risk_candidates: list[dict[str, Any]] = []
+        min_shrinkage = 55.0 if strict_execution_mode else 50.0
+        min_relative_strength = 55.0 if strict_execution_mode else 50.0
+        min_tail_confirmation = 55.0 if strict_execution_mode else 45.0
+
+        def build_execution_gate_item(item: dict[str, Any], gate_reason: str, gate_type: str) -> dict[str, Any]:
+            gated_item = dict(item)
+            gated_item["execution_gate_reason"] = gate_reason
+            gated_item["execution_gate_type"] = gate_type
+            gated_item["reason"] = f"{item.get('reason') or ''} | {gate_reason}".strip(" |")
+            return gated_item
+
         for item in ranked_action_candidates:
-            if len(final_selected) >= FINAL_SELECTION_LIMIT:
-                break
-            if not bool(item.get("tail_session")):
-                filtered_by_tail += 1
-                continue
+            tail_ready = bool(item.get("tail_session"))
             realtime_freshness = item.get("realtime_freshness") if isinstance(item.get("realtime_freshness"), dict) else {}
-            if realtime_freshness.get("intraday_decision_ready") is not True:
+            freshness_ready = realtime_freshness.get("intraday_decision_ready") is True
+            item["execution_ready"] = bool(tail_ready and freshness_ready)
+            item["execution_mode"] = "strict" if strict_execution_mode else "manual_explore"
+            if strict_execution_mode and not tail_ready:
+                filtered_by_tail += 1
+                execution_gated_candidates.append(build_execution_gate_item(item, "未到尾盘执行时段", "tail_session"))
+                continue
+            if strict_execution_mode and not freshness_ready:
                 filtered_by_freshness += 1
+                execution_gated_candidates.append(build_execution_gate_item(item, "分时新鲜度不足", "realtime_freshness"))
                 continue
-            if _safe_float(item.get("shrinkage_score")) < 55:
+            if not strict_execution_mode and not item["execution_ready"]:
+                manual_relaxed_candidates += 1
+                suffix = "手工触发盘中探索模式，先保留候选不做尾盘一刀切"
+                item["reason"] = f"{item.get('reason') or ''} | {suffix}".strip(" |")
+            if _safe_float(item.get("shrinkage_score")) < min_shrinkage:
+                execution_gated_candidates.append(
+                    build_execution_gate_item(item, f"缩量分不足 {min_shrinkage:.0f}", "shrinkage_score")
+                )
                 continue
-            if _safe_float(item.get("relative_strength_score")) < 55:
+            if _safe_float(item.get("relative_strength_score")) < min_relative_strength:
+                execution_gated_candidates.append(
+                    build_execution_gate_item(item, f"相对强度不足 {min_relative_strength:.0f}", "relative_strength_score")
+                )
                 continue
-            if _safe_float(item.get("tail_confirmation_score")) < 55:
+            if _safe_float(item.get("tail_confirmation_score")) < min_tail_confirmation:
+                execution_gated_candidates.append(
+                    build_execution_gate_item(item, f"尾盘确认不足 {min_tail_confirmation:.0f}", "tail_confirmation_score")
+                )
                 continue
+            pre_risk_candidates.append(item)
+
+        risk_results: dict[str, dict[str, Any]] = {}
+
+        def evaluate_item_risk(item: dict[str, Any]) -> tuple[str, dict[str, Any], list[str]]:
+            symbol = str(item.get("symbol") or "")
+            local_warnings: list[str] = []
+            client = research_hub_service.DeepSeekClient(
+                lightweight_model=lightweight_model,
+                reasoning_model=reasoning_model,
+            )
             risk_result = research_hub_service._evaluate_risk_for_symbol(
-                str(item.get("symbol") or ""),
+                symbol,
                 str(item.get("name") or item.get("symbol") or ""),
                 longhubang_map,
-                warnings,
-                risk_client=risk_client,
+                local_warnings,
+                risk_client=client,
             )
+            return symbol, risk_result, local_warnings
+
+        if pre_risk_candidates:
+            risk_worker_count = min(
+                max(1, int(max_workers or DEFAULT_MAX_WORKERS)),
+                len(pre_risk_candidates),
+                RISK_REVIEW_PARALLELISM_CAP,
+            )
+            with concurrent.futures.ThreadPoolExecutor(max_workers=risk_worker_count) as executor:
+                future_map = {
+                    executor.submit(evaluate_item_risk, item): str(item.get("symbol") or "")
+                    for item in pre_risk_candidates
+                }
+                for future in concurrent.futures.as_completed(future_map):
+                    symbol = future_map[future]
+                    try:
+                        resolved_symbol, risk_result, local_warnings = future.result()
+                    except Exception as exc:
+                        warnings.append(f"{symbol} 个股风控异常，已降级放行: {exc}")
+                        risk_results[symbol] = {
+                            "vetoed": False,
+                            "risk_notes": [f"风控降级: {exc}"],
+                            "risk_level": "medium",
+                        }
+                        continue
+                    if local_warnings:
+                        warnings.extend(local_warnings)
+                    risk_results[resolved_symbol] = risk_result if isinstance(risk_result, dict) else {}
+
+        for item in pre_risk_candidates:
+            if len(final_selected) >= FINAL_SELECTION_LIMIT:
+                break
+            risk_result = risk_results.get(str(item.get("symbol") or ""), {})
             risk_notes = [str(note).strip() for note in risk_result.get("risk_notes") or [] if str(note).strip()]
             if risk_notes:
                 item["risk_notes"] = risk_notes
@@ -793,9 +1014,13 @@ class SmartSelectionService:
             warnings.append(f"{filtered_by_tail} 只爆发期候选因未到尾盘时段而仅保留观察，不进入执行名单")
         if filtered_by_freshness:
             warnings.append(f"{filtered_by_freshness} 只爆发期候选因分时新鲜度不足而未进入执行名单")
+        if manual_relaxed_candidates and not strict_execution_mode:
+            warnings.append(f"{manual_relaxed_candidates} 只爆发期候选按手工盘中探索模式放宽尾盘时段与分时新鲜度限制")
 
         self._replace_run_items(run_id, "observed_startup_candidates", observed_startup_candidates)
+        self._replace_run_items(run_id, "observed_decay_candidates", observed_decay_candidates)
         self._replace_run_items(run_id, "ranked_action_candidates", ranked_action_candidates)
+        self._replace_run_items(run_id, "excluded_by_execution_gate", execution_gated_candidates)
         self._replace_run_items(run_id, "final_selected", final_selected)
         self._replace_run_items(run_id, "excluded_by_lifecycle_veto", vetoed_candidates)
         self._replace_run_items(run_id, "excluded_by_risk_veto", risk_vetoed_candidates)
@@ -811,10 +1036,14 @@ class SmartSelectionService:
             "selection_sectors": selection_sectors,
             "lifecycle_summary": lifecycle_summary,
             "observed_startup_candidates": observed_startup_candidates,
+            "observed_decay_candidates": observed_decay_candidates,
             "ranked_action_candidates": ranked_action_candidates,
+            "excluded_by_execution_gate": execution_gated_candidates,
             "final_selected": final_selected,
             "excluded_by_lifecycle_veto": vetoed_candidates,
             "excluded_by_risk_veto": risk_vetoed_candidates,
+            "trigger_source": normalized_trigger_source,
+            "strict_execution_mode": strict_execution_mode,
             "warnings": list(dict.fromkeys(warnings)),
             "watch_pool_size": len(self.list_watch_pool(active_only=True)),
         }
@@ -833,6 +1062,7 @@ class SmartSelectionService:
             self._update_run(run_id, status="running", started_at=_now_text(), message="智能选股任务开始执行", current=0, total=100)
             result = self._run_pipeline(
                 run_id,
+                trigger_source=trigger_source,
                 lightweight_model=lightweight_model,
                 reasoning_model=reasoning_model,
             )

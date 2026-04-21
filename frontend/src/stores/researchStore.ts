@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { createJSONStorage, persist } from "zustand/middleware";
 
 
 type ResearchIntentType =
@@ -14,18 +15,44 @@ interface ResearchIntent {
   payload?: unknown;
 }
 
-interface ResearchState {
-  pendingIntent: ResearchIntent | null;
-  setIntent: (intent: ResearchIntent | null) => void;
-  consumeIntent: () => ResearchIntent | null;
+export interface ResearchHubPageCache {
+  overview: unknown | null;
+  assets: unknown[];
+  selectedAssetId: number | null;
+  activePool: string;
+  searchTerm: string;
+  updatedAt: number;
 }
 
-export const useResearchStore = create<ResearchState>((set, get) => ({
-  pendingIntent: null,
-  setIntent: (intent) => set({ pendingIntent: intent }),
-  consumeIntent: () => {
-    const current = get().pendingIntent;
-    set({ pendingIntent: null });
-    return current;
-  },
-}));
+interface ResearchState {
+  pendingIntent: ResearchIntent | null;
+  hubPageCache: ResearchHubPageCache | null;
+  setIntent: (intent: ResearchIntent | null) => void;
+  consumeIntent: () => ResearchIntent | null;
+  setHubPageCache: (cache: ResearchHubPageCache) => void;
+  clearHubPageCache: () => void;
+}
+
+export const useResearchStore = create<ResearchState>()(
+  persist(
+    (set, get) => ({
+      pendingIntent: null,
+      hubPageCache: null,
+      setIntent: (intent) => set({ pendingIntent: intent }),
+      consumeIntent: () => {
+        const current = get().pendingIntent;
+        set({ pendingIntent: null });
+        return current;
+      },
+      setHubPageCache: (hubPageCache) => set({ hubPageCache }),
+      clearHubPageCache: () => set({ hubPageCache: null }),
+    }),
+    {
+      name: "research-ui-state",
+      storage: createJSONStorage(() => localStorage),
+      partialize: (state) => ({
+        hubPageCache: state.hubPageCache,
+      }),
+    },
+  ),
+);

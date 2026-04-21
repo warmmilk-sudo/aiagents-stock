@@ -34,7 +34,10 @@ export function ReportWorkspace({
   emptyText = "暂无报告",
   ariaLabel = "报告分类",
 }: ReportWorkspaceProps) {
-  const visibleEntries = useMemo(() => entries.filter((item) => item.body || item.reasoning), [entries]);
+  const visibleEntries = useMemo(
+    () => entries.filter((item) => item.rawContent || item.body || item.reasoning),
+    [entries],
+  );
   const [activeKey, setActiveKey] = useState(visibleEntries[0]?.key ?? "");
 
   useEffect(() => {
@@ -79,7 +82,7 @@ export function ReportWorkspace({
               content={
                 activeEntry.key === "__discussion__"
                   ? sanitizeDiscussionSpeakers(activeEntry.rawContent || String(activeEntry.body || ""))
-                  : (activeEntry.rawContent || String(activeEntry.body || emptyText))
+                  : (activeEntry.rawContent || activeEntry.body || emptyText)
               }
               emptyText={emptyText}
             />

@@ -57,9 +57,15 @@ interface SmartSelectionResultItem {
   name?: string;
   primary_sector?: string;
   score?: number;
+  tech_score?: number;
+  agent_composite_score?: number;
+  execution_composite_score?: number;
   reason?: string;
   lifecycle_stage?: string;
   defense_line_type?: string;
+  execution_ready?: boolean;
+  execution_gate_reason?: string;
+  execution_gate_type?: string;
   trajectory?: Array<{ day_offset?: number; score?: number }>;
   delta_1?: number | null;
   delta_2?: number | null;
@@ -87,7 +93,9 @@ interface SmartSelectionRun {
     lifecycle_summary?: LatestLifecycle["summary"];
     watch_pool_size?: number;
     observed_startup_candidates?: SmartSelectionResultItem[];
+    observed_decay_candidates?: SmartSelectionResultItem[];
     ranked_action_candidates?: SmartSelectionResultItem[];
+    excluded_by_execution_gate?: SmartSelectionResultItem[];
     final_selected?: SmartSelectionResultItem[];
     excluded_by_lifecycle_veto?: SmartSelectionResultItem[];
   };
@@ -236,7 +244,9 @@ export function SmartSelectionPage() {
 
   const finalSelected = latestRun?.result?.final_selected ?? [];
   const observedStartupCandidates = latestRun?.result?.observed_startup_candidates ?? [];
+  const observedDecayCandidates = latestRun?.result?.observed_decay_candidates ?? [];
   const rankedActionCandidates = latestRun?.result?.ranked_action_candidates ?? [];
+  const executionGatedCandidates = latestRun?.result?.excluded_by_execution_gate ?? [];
   const vetoedCandidates = latestRun?.result?.excluded_by_lifecycle_veto ?? [];
   const lifecycleCounts = overview?.lifecycle?.summary?.counts ?? {};
   const hubAssetLookup = new Map(hubAssets.map((item) => [item.symbol, item]));
@@ -390,7 +400,7 @@ export function SmartSelectionPage() {
       <div className={styles.cardHeader}>
         <div>
           <strong>最终执行清单</strong>
-          <p className={styles.helperText}>这是尾盘执行池。启动期观察和爆发期候选都在流程页展开，避免把“跟踪”和“执行”混在一起。</p>
+          <p className={styles.helperText}>这是当前可操作清单。手工在 14:30 前触发时会放宽到盘中探索模式，不再因为尾盘门槛直接跑空。</p>
         </div>
       </div>
       <div className={styles.selectionCompactList}>
@@ -452,6 +462,10 @@ export function SmartSelectionPage() {
                 <span>{stageLabel(item.lifecycle_stage)}</span>
                 <span>{item.defense_line_type || "NONE"}</span>
                 <span>综合分 {formatScore(item.score)}</span>
+              </div>
+              <div className={styles.selectionCompactReason}>
+                Agent {formatScore(item.agent_composite_score, 1)} / 执行 {formatScore(item.execution_composite_score, 1)} / 就绪{" "}
+                {item.execution_ready === false ? "盘中探索" : "可执行"}
               </div>
               <div className={styles.selectionCompactReason}>
                 预期差 {formatScore(item.anticipation_score, 1)} / 缩量 {formatScore(item.shrinkage_score, 1)} / 相对强度{" "}
@@ -535,6 +549,11 @@ export function SmartSelectionPage() {
             <span>爆发期候选</span>
             <strong>{rankedActionCandidates.length}</strong>
             <div className={styles.muted}>进入执行筛选</div>
+          </button>
+          <button className={styles.historySummaryCellButton} onClick={() => setSection("pipeline")} type="button">
+            <span>执行门槛过滤</span>
+            <strong>{executionGatedCandidates.length}</strong>
+            <div className={styles.muted}>时段与阈值拦截</div>
           </button>
           <button
             className={styles.historySummaryCellButton}
@@ -681,6 +700,10 @@ export function SmartSelectionPage() {
                     {item.symbol} | {item.primary_sector || "-"} | 综合分 {formatScore(item.score)}
                   </div>
                   <div className={styles.selectionCompactReason}>
+                    Agent {formatScore(item.agent_composite_score, 1)} / 执行 {formatScore(item.execution_composite_score, 1)} / 就绪{" "}
+                    {item.execution_ready === false ? "盘中探索" : "可执行"}
+                  </div>
+                  <div className={styles.selectionCompactReason}>
                     缩量 {formatScore(item.shrinkage_score, 1)} / 相对强度 {formatScore(item.relative_strength_score, 1)} / 尾盘确认{" "}
                     {formatScore(item.tail_confirmation_score, 1)}
                   </div>
@@ -688,6 +711,54 @@ export function SmartSelectionPage() {
                 </div>
               ))}
               {!rankedActionCandidates.length ? <div className={styles.muted}>暂无爆发期候选</div> : null}
+            </div>
+          </section>
+
+          <section className={styles.selectionResultCard}>
+            <div className={styles.cardHeader}>
+              <div>
+                <strong>衰退期观察</strong>
+                <p className={styles.helperText}>这些标的命中了主线映射，但板块处于 Decay，现在线上展示出来，避免静默丢失。</p>
+              </div>
+            </div>
+            <div className={styles.selectionCompactList}>
+              {observedDecayCandidates.map((item) => (
+                <div className={styles.selectionCompactItem} key={`decay-${item.symbol}`}>
+                  <strong>{item.name || item.symbol}</strong>
+                  <div className={styles.muted}>
+                    {item.symbol} | {item.primary_sector || "-"} | {stageLabel(item.lifecycle_stage)}
+                  </div>
+                  <div className={styles.selectionCompactReason}>
+                    轨迹 {formatTrajectory(item.trajectory)} | 综合分 {formatScore(item.score)}
+                  </div>
+                  <div className={styles.selectionCompactReason}>{item.reason || "暂无说明"}</div>
+                </div>
+              ))}
+              {!observedDecayCandidates.length ? <div className={styles.muted}>暂无衰退期观察标的</div> : null}
+            </div>
+          </section>
+
+          <section className={styles.selectionResultCard}>
+            <div className={styles.cardHeader}>
+              <div>
+                <strong>执行门槛过滤</strong>
+                <p className={styles.helperText}>这里展示被时段、新鲜度和执行阈值拦截的候选，便于区分“没有机会”和“暂不满足执行条件”。</p>
+              </div>
+            </div>
+            <div className={styles.selectionCompactList}>
+              {executionGatedCandidates.map((item) => (
+                <div className={styles.selectionCompactItem} key={`gate-${item.symbol}-${item.execution_gate_type}`}>
+                  <strong>{item.name || item.symbol}</strong>
+                  <div className={styles.muted}>
+                    {item.symbol} | {item.primary_sector || "-"} | {item.execution_gate_type || "gate"}
+                  </div>
+                  <div className={styles.selectionCompactReason}>
+                    原综合分 {formatScore(item.score)} | 就绪 {item.execution_ready === false ? "否" : "是"}
+                  </div>
+                  <div className={styles.selectionCompactReason}>{item.execution_gate_reason || item.reason || "暂无说明"}</div>
+                </div>
+              ))}
+              {!executionGatedCandidates.length ? <div className={styles.muted}>暂无执行门槛过滤项</div> : null}
             </div>
           </section>
 

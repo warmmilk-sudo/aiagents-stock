@@ -10,7 +10,7 @@ import {
   type SectorStrategyReportView,
   type SectorStrategySummaryView,
 } from "../../components/research/SectorReportDetailView";
-import { ApiRequestError, apiFetch, downloadApiFile } from "../../lib/api";
+import { ApiRequestError, apiFetch, apiFetchCached, downloadApiFile } from "../../lib/api";
 import { formatDateTime } from "../../lib/datetime";
 import styles from "../ConsolePage.module.scss";
 
@@ -88,6 +88,9 @@ const sectionTabs = [
   { key: "history", label: "历史报告" },
   { key: "scheduler", label: "定时设置" },
 ];
+const HISTORY_CACHE_TTL_MS = 60_000;
+const HISTORY_DETAIL_CACHE_TTL_MS = 30 * 60_000;
+const LIFECYCLE_CACHE_TTL_MS = 60_000;
 
 function asText(value: unknown, fallback = "暂无"): string {
   if (value === null || value === undefined || value === "") {
@@ -114,11 +117,36 @@ function taskProgressTone(task: TaskDetail<SectorTaskPayload> | null): "running"
   return "running";
 }
 
+function buildLatestTaskUrl(options?: { full?: boolean; includeRawReports?: boolean }): string {
+  const params = new URLSearchParams();
+  if (options?.full) {
+    params.set("full", "1");
+  }
+  if (options?.includeRawReports) {
+    params.set("include_raw_reports", "1");
+  }
+  const query = params.toString();
+  return query ? `/api/strategies/sector-strategy/tasks/latest?${query}` : "/api/strategies/sector-strategy/tasks/latest";
+}
+
+function buildHistoryDetailUrl(reportId: number, options?: { includeRawReports?: boolean }): string {
+  const params = new URLSearchParams();
+  if (options?.includeRawReports) {
+    params.set("include_raw_reports", "1");
+  }
+  const query = params.toString();
+  return query
+    ? `/api/strategies/sector-strategy/history/${reportId}?${query}`
+    : `/api/strategies/sector-strategy/history/${reportId}`;
+}
+
 export function SectorStrategyPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [task, setTask] = useState<TaskDetail<SectorTaskPayload> | null>(null);
   const [history, setHistory] = useState<SectorHistoryRecord[]>([]);
   const [historyDetails, setHistoryDetails] = useState<Record<number, SectorHistoryDetail>>({});
+  const [latestDetailReportViewOverride, setLatestDetailReportViewOverride] = useState<SectorStrategyReportView | null>(null);
+  const [latestDetailRawResult, setLatestDetailRawResult] = useState<Record<string, unknown> | null>(null);
   const [scheduler, setScheduler] = useState<SchedulerStatus | null>(null);
   const [latestLifecycle, setLatestLifecycle] = useState<LifecycleSnapshot | null>(null);
   const [scheduleTime, setScheduleTime] = useState("09:00");
@@ -129,6 +157,7 @@ export function SectorStrategyPage() {
   const [isSavingScheduler, setIsSavingScheduler] = useState(false);
   const [isRunningOnce, setIsRunningOnce] = useState(false);
   const [deletingHistoryId, setDeletingHistoryId] = useState<number | null>(null);
+  const [loadingRawReportsTarget, setLoadingRawReportsTarget] = useState<"latest" | number | null>(null);
   const syncedHistoryReportIdRef = useRef<number | null>(null);
 
   const detailView = searchParams.get("view") === "detail";
@@ -136,14 +165,20 @@ export function SectorStrategyPage() {
   const detailReportId = Number(searchParams.get("reportId") || 0);
   const historyDetail = detailReportId ? (historyDetails[detailReportId] ?? null) : null;
   const latestReportView = task?.result?.report_view ?? null;
+  const latestReportIdentity = `${task?.id || ""}:${Number(task?.result?.result?.report_id ?? 0)}:${latestReportView?.meta?.timestamp || ""}`;
 
-  const loadTask = async () => {
-    const data = await apiFetch<TaskDetail<SectorTaskPayload> | null>("/api/strategies/sector-strategy/tasks/latest");
+  const loadTask = async (options?: { full?: boolean; includeRawReports?: boolean }) => {
+    const data = await apiFetch<TaskDetail<SectorTaskPayload> | null>(buildLatestTaskUrl(options));
     setTask(data);
+    return data;
   };
 
   const loadHistory = async () => {
-    const data = await apiFetch<SectorHistoryRecord[]>("/api/strategies/sector-strategy/history");
+    const data = await apiFetchCached<SectorHistoryRecord[]>(
+      "/api/strategies/sector-strategy/history",
+      {},
+      { ttlMs: HISTORY_CACHE_TTL_MS },
+    );
     setHistory(data);
   };
 
@@ -154,7 +189,11 @@ export function SectorStrategyPage() {
   };
 
   const loadLifecycle = async () => {
-    const data = await apiFetch<LifecycleSnapshot>("/api/strategies/sector-strategy/lifecycle/latest");
+    const data = await apiFetchCached<LifecycleSnapshot>(
+      "/api/strategies/sector-strategy/lifecycle/latest",
+      {},
+      { ttlMs: LIFECYCLE_CACHE_TTL_MS },
+    );
     setLatestLifecycle(data);
   };
 
@@ -169,12 +208,17 @@ export function SectorStrategyPage() {
     );
   };
 
-  const loadHistoryDetail = async (reportId: number) => {
+  const loadHistoryDetail = async (reportId: number, options?: { includeRawReports?: boolean }) => {
     if (!reportId) {
       return;
     }
-    const data = await apiFetch<SectorHistoryDetail>(`/api/strategies/sector-strategy/history/${reportId}`);
+    const data = await apiFetchCached<SectorHistoryDetail>(
+      buildHistoryDetailUrl(reportId, options),
+      {},
+      { ttlMs: HISTORY_DETAIL_CACHE_TTL_MS },
+    );
     setHistoryDetails((current) => ({ ...current, [reportId]: data }));
+    return data;
   };
 
   useEffect(() => {
@@ -206,6 +250,11 @@ export function SectorStrategyPage() {
   }, [detailReportId, historyDetails]);
 
   useEffect(() => {
+    setLatestDetailReportViewOverride(null);
+    setLatestDetailRawResult(null);
+  }, [latestReportIdentity]);
+
+  useEffect(() => {
     if (!detailView) {
       return;
     }
@@ -219,9 +268,15 @@ export function SectorStrategyPage() {
   }, [detailReportId, detailSource, detailView]);
 
   const latestSummary = latestReportView?.summary ?? null;
-  const detailReportView = detailSource === "latest" ? latestReportView : historyDetail?.report_view ?? null;
+  const detailReportView =
+    detailSource === "latest"
+      ? latestDetailReportViewOverride ?? latestReportView
+      : historyDetail?.report_view ?? null;
   const detailDailyHeatPanel = detailSource === "latest" ? latestLifecycle?.daily_heat_panel ?? null : historyDetail?.daily_heat_panel ?? null;
-  const detailRawResult = detailSource === "latest" ? task?.result?.result ?? null : historyDetail?.analysis_content_parsed ?? null;
+  const detailRawResult =
+    detailSource === "latest"
+      ? latestDetailRawResult ?? null
+      : historyDetail?.analysis_content_parsed ?? null;
 
   const detailTitle = useMemo(() => {
     if (detailSource === "latest") {
@@ -242,6 +297,44 @@ export function SectorStrategyPage() {
   const openHistoryDetail = (reportId: number) => {
     setSection("history");
     setSearchParams({ view: "detail", reportId: String(reportId) });
+  };
+
+  const loadRawReportsForCurrentDetail = async () => {
+    if (detailSource === "latest") {
+      setLoadingRawReportsTarget("latest");
+      try {
+        const data = await loadTask({ includeRawReports: true });
+        setLatestDetailReportViewOverride(data?.result?.report_view ?? null);
+      } finally {
+        setLoadingRawReportsTarget((current) => (current === "latest" ? null : current));
+      }
+      return;
+    }
+
+    if (!detailReportId) {
+      return;
+    }
+
+    setLoadingRawReportsTarget(detailReportId);
+    try {
+      await loadHistoryDetail(detailReportId, { includeRawReports: true });
+    } finally {
+      setLoadingRawReportsTarget((current) => (current === detailReportId ? null : current));
+    }
+  };
+
+  const ensureLatestDetailRawResult = async (): Promise<Record<string, unknown> | null> => {
+    if (latestDetailRawResult) {
+      return latestDetailRawResult;
+    }
+    const data = await loadTask({ full: true });
+    const rawResult = data?.result?.result ?? null;
+    if (rawResult && typeof rawResult === "object") {
+      const normalized = rawResult as Record<string, unknown>;
+      setLatestDetailRawResult(normalized);
+      return normalized;
+    }
+    return null;
   };
 
   const submitAnalysis = async () => {
@@ -343,7 +436,11 @@ export function SectorStrategyPage() {
   };
 
   const exportCurrentResult = async (kind: "pdf" | "markdown") => {
-    if (!detailRawResult) {
+    let exportPayload = detailRawResult;
+    if (detailSource === "latest" && !exportPayload) {
+      exportPayload = await ensureLatestDetailRawResult();
+    }
+    if (!exportPayload) {
       return;
     }
     setMessage("");
@@ -351,7 +448,7 @@ export function SectorStrategyPage() {
     try {
       await downloadApiFile(`/api/exports/sector-strategy/${kind}`, {
         method: "POST",
-        body: JSON.stringify({ result: detailRawResult }),
+        body: JSON.stringify({ result: exportPayload }),
       });
       setMessage(kind === "pdf" ? "智策 PDF 已开始下载" : "智策 Markdown 已开始下载");
     } catch (requestError) {
@@ -373,8 +470,14 @@ export function SectorStrategyPage() {
           <SectorReportDetailView
             backLabel={section === "history" ? "返回历史报告" : "返回分析总览"}
             dailyHeatPanel={detailDailyHeatPanel}
+            isLoadingRawReports={
+              detailSource === "latest"
+                ? loadingRawReportsTarget === "latest"
+                : loadingRawReportsTarget === detailReportId
+            }
             onBack={closeDetail}
             onExport={(kind) => void exportCurrentResult(kind)}
+            onLoadRawReports={() => void loadRawReportsForCurrentDetail()}
             reportView={detailReportView}
             title={detailTitle}
           />

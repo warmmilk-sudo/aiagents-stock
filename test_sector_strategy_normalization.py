@@ -144,6 +144,15 @@ class SectorStrategyNormalizationTests(unittest.TestCase):
         self.assertEqual(report_view["raw_reports"]["macro"]["title"], "宏观策略师")
         self.assertEqual(report_view["warnings"]["missing_fields"], [])
 
+    def test_normalize_result_can_skip_raw_reports_for_lightweight_views(self) -> None:
+        report_view = normalize_sector_strategy_result(
+            self.complete_result,
+            include_raw_reports=False,
+        )
+
+        self.assertIsNone(report_view["raw_reports"])
+        self.assertEqual(report_view["summary"]["confidence_score"], 78)
+
     def test_missing_fields_are_backfilled(self) -> None:
         normalized = normalize_sector_strategy_predictions(
             {

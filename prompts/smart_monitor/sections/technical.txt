@@ -1,9 +1,12 @@
 [TECHNICAL] 技术指标
 ═══════════════════════════════════════════════════════════
 MA5: $ma5
+MA10: $ma10
 MA20: $ma20
 MA60: $ma60
 趋势判断: $trend_label
+ATR14: $atr14
+ATR波动率: $atr14_pct
 
 MACD:
   DIF: $macd_dif

@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
+from fastapi_cache.decorator import cache
 
 from backend.api import ApiError, success_payload
 from backend.auth import build_session_key, require_session
@@ -22,13 +23,14 @@ router = APIRouter(prefix="/api/smart-monitor", tags=["smart-monitor"])
 
 
 @router.get("/tasks")
+@cache(expire=10, namespace="smart-monitor")
 def list_tasks(
     request: Request,
+    _session: dict = Depends(require_session),
     enabled_only: bool = False,
     account_name: Optional[str] = None,
     has_position: Optional[bool] = None,
 ) -> dict:
-    require_session(request)
     return success_payload(
         services.list_smart_monitor_tasks(
             enabled_only=enabled_only,
@@ -39,14 +41,20 @@ def list_tasks(
 
 
 @router.get("/runtime-config")
-def get_runtime_config(request: Request) -> dict:
-    require_session(request)
+@cache(expire=10, namespace="smart-monitor")
+def get_runtime_config(
+    request: Request,
+    _session: dict = Depends(require_session),
+) -> dict:
     return success_payload(services.get_smart_monitor_runtime_config())
 
 
 @router.get("/config")
-def get_config(request: Request) -> dict:
-    require_session(request)
+@cache(expire=10, namespace="smart-monitor")
+def get_config(
+    request: Request,
+    _session: dict = Depends(require_session),
+) -> dict:
     return success_payload(services.get_smart_monitor_config())
 
 
@@ -60,8 +68,11 @@ def update_config(request: Request, payload: SmartMonitorConfigRequest) -> dict:
 
 
 @router.get("/account-configs")
-def list_account_configs(request: Request) -> dict:
-    require_session(request)
+@cache(expire=10, namespace="smart-monitor")
+def list_account_configs(
+    request: Request,
+    _session: dict = Depends(require_session),
+) -> dict:
     return success_payload(services.list_smart_monitor_account_configs())
 
 
@@ -200,32 +211,45 @@ def run_manual_analysis(request: Request, payload: SmartMonitorAnalyzeRequest) -
 
 
 @router.get("/decisions")
-def list_decisions(request: Request, limit: int = 100) -> dict:
-    require_session(request)
+@cache(expire=10, namespace="smart-monitor")
+def list_decisions(
+    request: Request,
+    _session: dict = Depends(require_session),
+    limit: int = 100,
+) -> dict:
     return success_payload(services.list_smart_monitor_decisions(limit=limit))
 
 
 @router.get("/decisions/summary")
-def get_decision_summary(request: Request, limit: int = 120) -> dict:
-    require_session(request)
+@cache(expire=10, namespace="smart-monitor")
+def get_decision_summary(
+    request: Request,
+    _session: dict = Depends(require_session),
+    limit: int = 120,
+) -> dict:
     return success_payload(services.get_smart_monitor_decision_summary(limit=limit))
 
 
 @router.get("/trades")
-def list_trade_records(request: Request, limit: int = 100) -> dict:
-    require_session(request)
+@cache(expire=10, namespace="smart-monitor")
+def list_trade_records(
+    request: Request,
+    _session: dict = Depends(require_session),
+    limit: int = 100,
+) -> dict:
     return success_payload(services.list_smart_monitor_trade_records(limit=limit))
 
 
 @router.get("/pending-actions")
+@cache(expire=10, namespace="smart-monitor")
 def list_pending(
     request: Request,
+    _session: dict = Depends(require_session),
     status: Optional[str] = "pending",
     account_name: Optional[str] = None,
     asset_id: Optional[int] = None,
     limit: int = 100,
 ) -> dict:
-    require_session(request)
     return success_payload(
         services.list_pending_actions(
             status=status,

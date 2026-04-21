@@ -348,6 +348,20 @@ class AnalysisRepository:
         merged["holding_period"] = str(baseline_snapshot.get("holding_period") or "").strip()
         merged["swing_type"] = str(open_cycle.get("swing_type") or "").strip()
         merged["swing_type_reason"] = str(open_cycle.get("swing_type_reason") or "").strip()
+        for key in (
+            "structure_state",
+            "structure_state_reason",
+            "atr14",
+            "atr14_pct",
+            "atr_stop_floor",
+            "trend_anchor_type",
+            "trend_anchor_value",
+            "trend_following_active",
+            "trend_following_activated_at",
+            "feature_beacons",
+        ):
+            if key in baseline_snapshot:
+                merged[key] = baseline_snapshot.get(key)
         return normalize_strategy_context(merged)
 
     def _sync_open_position_cycle_baseline(
@@ -379,6 +393,22 @@ class AnalysisRepository:
             baseline_source=str(analysis_source or "analysis_record").strip() or "analysis_record",
             baseline_analysis_id=analysis_id,
             overwrite=False,
+            baseline_snapshot_extra={
+                key: final_decision.get(key)
+                for key in (
+                    "structure_state",
+                    "structure_state_reason",
+                    "atr14",
+                    "atr14_pct",
+                    "atr_stop_floor",
+                    "trend_anchor_type",
+                    "trend_anchor_value",
+                    "trend_following_active",
+                    "trend_following_activated_at",
+                    "feature_beacons",
+                )
+                if final_decision.get(key) not in (None, "", [], {})
+            },
         )
 
     def _find_duplicate_record_id(

@@ -2,7 +2,6 @@ import { useMemo } from "react";
 
 import styles from "../../pages/ConsolePage.module.scss";
 import { formatDateTime } from "../../lib/datetime";
-import { splitReportSections } from "./FormattedReport";
 import { ReportWorkspace, type ReportWorkspaceEntry } from "./ReportWorkspace";
 
 type ExportKind = "pdf" | "markdown";
@@ -27,6 +26,9 @@ interface MacroCycleReportDetailViewProps {
   result?: MacroCycleResultLike | null;
   headline?: string;
   onExport: (kind: ExportKind) => void;
+  onLoadReports?: () => void;
+  isLoadingReports?: boolean;
+  hasDeferredReports?: boolean;
 }
 
 function metricText(value: unknown, fallback = "暂无"): string {
@@ -40,6 +42,9 @@ export function MacroCycleReportDetailView({
   result,
   headline,
   onExport,
+  onLoadReports,
+  isLoadingReports = false,
+  hasDeferredReports = false,
 }: MacroCycleReportDetailViewProps) {
   const reportEntries = useMemo<ReportWorkspaceEntry[]>(() => {
     const agents = result?.agents_analysis;
@@ -51,21 +56,18 @@ export function MacroCycleReportDetailView({
     ];
 
     return entries.map(([key, label, title, analysis]) => {
-      const sections = splitReportSections(analysis);
       return {
         key,
         label,
         title,
         timestamp: formatDateTime(result?.timestamp, ""),
         rawContent: String(analysis || "").trim(),
-        body: sections.body || analysis || "",
-        reasoning: sections.reasoning,
         summary: key === "chief" ? headline : undefined,
       };
     });
   }, [headline, result?.agents_analysis, result?.timestamp]);
 
-  const agentCount = reportEntries.filter((item) => item.body || item.reasoning).length;
+  const agentCount = reportEntries.filter((item) => item.rawContent).length;
   const dataErrorCount = result?.data_errors?.length ?? 0;
   const hasHeadline = Boolean(String(headline || "").trim());
 
@@ -113,11 +115,29 @@ export function MacroCycleReportDetailView({
 
       <section className={styles.card}>
         <div className={styles.sectionControlStack}>
-          <ReportWorkspace
-            ariaLabel="宏观周期分析师报告"
-            emptyText="暂无宏观周期报告"
-            entries={reportEntries}
-          />
+          {reportEntries.some((item) => item.rawContent) ? (
+            <ReportWorkspace
+              ariaLabel="宏观周期分析师报告"
+              emptyText="暂无宏观周期报告"
+              entries={reportEntries}
+            />
+          ) : hasDeferredReports ? (
+            <div className={styles.stack}>
+              <div className={styles.muted}>完整分析师正文按需加载，避免历史详情首屏拉取长文本。</div>
+              <div className={styles.actions}>
+                <button
+                  className={styles.secondaryButton}
+                  disabled={isLoadingReports}
+                  onClick={onLoadReports}
+                  type="button"
+                >
+                  {isLoadingReports ? "加载中..." : "加载完整报告"}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className={styles.muted}>暂无宏观周期报告</div>
+          )}
         </div>
       </section>
     </>

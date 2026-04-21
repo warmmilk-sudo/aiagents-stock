@@ -520,17 +520,40 @@ def _build_sector_strategy_headline(summary: dict[str, Any], bullish: list[dict[
     return "智策板块分析报告"
 
 
-def normalize_sector_strategy_result(raw_result: Any, data_summary: Any = None) -> dict[str, Any]:
+def _prune_sector_strategy_report_view(
+    report_view: dict[str, Any],
+    *,
+    include_raw_reports: bool,
+) -> dict[str, Any]:
+    normalized_view = dict(report_view or {})
+    if not include_raw_reports:
+        normalized_view["raw_reports"] = None
+    return normalized_view
+
+
+def normalize_sector_strategy_result(
+    raw_result: Any,
+    data_summary: Any = None,
+    *,
+    include_raw_reports: bool = True,
+) -> dict[str, Any]:
     payload = _unwrap_sector_strategy_payload(raw_result)
     if not payload and isinstance(raw_result, dict) and isinstance(raw_result.get("report_view"), dict):
-        return raw_result["report_view"]
+        return _prune_sector_strategy_report_view(
+            raw_result["report_view"],
+            include_raw_reports=include_raw_reports,
+        )
 
     resolved_data_summary = _as_dict(data_summary) or _as_dict(payload.get("data_summary"))
 
     cache_meta = _as_dict(payload.get("cache_meta"))
     normalized_predictions = normalize_sector_strategy_predictions(payload.get("final_predictions"))
     market_snapshot = _normalize_market_snapshot(resolved_data_summary)
-    reports = normalize_sector_strategy_reports(payload.get("agents_analysis"), payload.get("comprehensive_report"))
+    reports = (
+        normalize_sector_strategy_reports(payload.get("agents_analysis"), payload.get("comprehensive_report"))
+        if include_raw_reports
+        else None
+    )
 
     meta = {
         "timestamp": _normalize_text(
@@ -568,7 +591,8 @@ def normalize_sector_strategy_result(raw_result: Any, data_summary: Any = None) 
         "market_outlook": normalized_predictions["market_outlook"],
     }
 
-    return {
+    return _prune_sector_strategy_report_view(
+        {
         "meta": meta,
         "summary": summary,
         "predictions": {
@@ -580,7 +604,9 @@ def normalize_sector_strategy_result(raw_result: Any, data_summary: Any = None) 
         "market_snapshot": market_snapshot,
         "raw_reports": reports,
         "warnings": normalized_predictions["warnings"],
-    }
+        },
+        include_raw_reports=include_raw_reports,
+    )
 
 
 def build_sector_strategy_summary(source: Any) -> dict[str, Any]:

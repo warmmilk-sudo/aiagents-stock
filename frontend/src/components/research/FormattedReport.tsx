@@ -81,8 +81,6 @@ const METRIC_LABEL_ALIASES: Record<string, string> = {
   take_profit: "止盈位",
   stop_loss: "止损位",
   holding_period: "持有周期",
-  swing_type: "波段类型",
-  swing_type_reason: "波段判断依据",
   position_size: "仓位建议",
   risk_level: "风险等级",
   market_outlook: "市场展望",
@@ -115,8 +113,6 @@ const STRUCTURED_METRIC_FIELDS = [
   "take_profit",
   "stop_loss",
   "holding_period",
-  "swing_type",
-  "swing_type_reason",
   "position_size",
   "market_view",
   "key_opportunity",
@@ -167,7 +163,14 @@ const METRIC_TEXT_FALLBACK_LABELS = new Set([
 ]);
 
 const LONG_VALUE_LABELS = new Set(["市场观点", "主线机会", "主要风险", "策略", "风险提示", "操作建议"]);
-const METRIC_IGNORED_LABELS = new Set(["推理过程", "思考过程", "分析过程", "报告正文", "正文内容", "分析正文"]);
+const METRIC_IGNORED_LABELS = new Set([
+  "推理过程",
+  "思考过程",
+  "分析过程",
+  "报告正文",
+  "正文内容",
+  "分析正文",
+]);
 
 function toReportText(value: unknown): string {
   if (value === null || value === undefined || value === "") {
@@ -575,7 +578,7 @@ function extractMetricPairsFromLine(line: string): ReportMetricItem[] {
 
       const label = humanizeMetricLabel(match[1]);
       const value = match[2].trim();
-      if (!label || !value || METRIC_IGNORED_LABELS.has(label)) {
+      if (!label || !value || METRIC_IGNORED_LABELS.has(label) || label.startsWith("波段")) {
         return [];
       }
       if (!METRIC_TEXT_FALLBACK_LABELS.has(label) && !LONG_VALUE_LABELS.has(label) && label.length > 10) {

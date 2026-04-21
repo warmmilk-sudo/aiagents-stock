@@ -4,7 +4,8 @@ import { PageFeedback } from "../../components/common/PageFeedback";
 import { PageFrame } from "../../components/common/PageFrame";
 import { AnalysisActionButtons, type ActionPayload } from "../../components/research/AnalysisActionButtons";
 import { LonghubangReportDetailView } from "../../components/research/LonghubangReportDetailView";
-import { ApiRequestError, apiFetch, downloadApiFile } from "../../lib/api";
+import { usePollingLoader } from "../../hooks/usePollingLoader";
+import { ApiRequestError, apiFetch, apiFetchCached, downloadApiFile } from "../../lib/api";
 import styles from "../ConsolePage.module.scss";
 
 type Panel = "analysis" | "history" | "statistics";
@@ -14,6 +15,9 @@ const sectionTabs = [
   { key: "history", label: "历史报告" },
   { key: "statistics", label: "数据统计" },
 ];
+const HISTORY_CACHE_TTL_MS = 60_000;
+const HISTORY_DETAIL_CACHE_TTL_MS = 30 * 60_000;
+const STATISTICS_CACHE_TTL_MS = 60_000;
 
 interface TaskDetail<T> {
   id: string;
@@ -81,6 +85,7 @@ interface HistoryRecord {
   analysis_date?: string;
   data_date_range?: string;
   summary?: string;
+  has_deferred_reports?: boolean;
   summary_data?: {
     recommended_count?: number;
     total_records?: number;
@@ -227,31 +232,44 @@ export function LonghubangPage() {
   const [isSubmittingAnalysis, setIsSubmittingAnalysis] = useState(false);
   const [isSubmittingBatch, setIsSubmittingBatch] = useState(false);
   const [deletingHistoryId, setDeletingHistoryId] = useState<number | null>(null);
+  const [isLoadingSelectedReport, setIsLoadingSelectedReport] = useState(false);
   const lastTerminalTaskRef = useRef<string>("");
   const lastTerminalBatchTaskRef = useRef<string>("");
+  const shouldPollTask = !task || task.status === "queued" || task.status === "running";
+  const shouldPollBatchTask = !batchTask || batchTask.status === "queued" || batchTask.status === "running";
 
   const loadTask = async () => setTask(await apiFetch<TaskDetail<LonghubangTaskPayload> | null>("/api/strategies/longhubang/tasks/latest"));
   const loadBatchTask = async () =>
     setBatchTask(await apiFetch<TaskDetail<BatchResult> | null>("/api/strategies/longhubang/batch-tasks/latest"));
-  const loadHistory = async () => setHistory(await apiFetch<HistoryRecord[]>("/api/strategies/longhubang/history"));
+  const loadHistory = async () =>
+    setHistory(await apiFetchCached<HistoryRecord[]>("/api/strategies/longhubang/history", {}, { ttlMs: HISTORY_CACHE_TTL_MS }));
   const loadStatistics = async () =>
-    setStatistics(await apiFetch<StatisticsPayload>("/api/strategies/longhubang/statistics?days=30"));
+    setStatistics(
+      await apiFetchCached<StatisticsPayload>("/api/strategies/longhubang/statistics?days=30", {}, { ttlMs: STATISTICS_CACHE_TTL_MS }),
+    );
+  const loadHistoryDetail = async (reportId: number, options?: { includeReports?: boolean }) => {
+    const params = new URLSearchParams();
+    if (options?.includeReports) {
+      params.set("include_reports", "1");
+    }
+    const query = params.toString();
+    return apiFetchCached<HistoryRecord>(
+      query
+        ? `/api/strategies/longhubang/history/${reportId}?${query}`
+        : `/api/strategies/longhubang/history/${reportId}`,
+      {},
+      { ttlMs: HISTORY_DETAIL_CACHE_TTL_MS },
+    );
+  };
 
-  useEffect(() => {
-    void Promise.all([loadTask(), loadBatchTask(), loadHistory(), loadStatistics()]);
-    const taskTimer = window.setInterval(() => {
-      void loadTask();
-      void loadBatchTask();
-    }, 2000);
-    const dataTimer = window.setInterval(() => {
-      void loadHistory();
-      void loadStatistics();
-    }, 10000);
-    return () => {
-      window.clearInterval(taskTimer);
-      window.clearInterval(dataTimer);
-    };
-  }, []);
+  usePollingLoader({ load: loadTask, intervalMs: 2000, enabled: shouldPollTask });
+  usePollingLoader({ load: loadBatchTask, intervalMs: 2000, enabled: shouldPollBatchTask });
+  usePollingLoader({
+    load: async () => {
+      await Promise.all([loadHistory(), loadStatistics()]);
+    },
+    intervalMs: 10000,
+  });
 
   useEffect(() => {
     if (!task || task.status === "queued" || task.status === "running") {
@@ -356,10 +374,27 @@ export function LonghubangPage() {
 
   const openHistory = async (reportId: number) =>
     withRequest(async () => {
-      const data = await apiFetch<HistoryRecord>(`/api/strategies/longhubang/history/${reportId}`);
+      const data = await loadHistoryDetail(reportId);
       setSelectedReport(data);
       setPanel("history");
     }, "加载龙虎榜历史报告失败");
+
+  const ensureSelectedReportWithReports = async (): Promise<HistoryRecord | null> => {
+    if (!selectedReport?.id) {
+      return null;
+    }
+    if (selectedReport.result_payload?.agents_analysis && Object.keys(selectedReport.result_payload.agents_analysis).length) {
+      return selectedReport;
+    }
+    setIsLoadingSelectedReport(true);
+    try {
+      const data = await loadHistoryDetail(selectedReport.id, { includeReports: true });
+      setSelectedReport(data);
+      return data;
+    } finally {
+      setIsLoadingSelectedReport(false);
+    }
+  };
 
   const deleteHistory = async (reportId: number) => {
     setMessage("");
@@ -401,6 +436,19 @@ export function LonghubangPage() {
         return;
       }
       await downloadApiFile(`/api/exports/longhubang/${kind}`, { method: "POST", body: JSON.stringify({ result }) });
+      setMessage(kind === "pdf" ? "智瞰龙虎 PDF 已开始下载" : "智瞰龙虎 Markdown 已开始下载");
+    }, "导出智瞰龙虎报告失败");
+
+  const exportSelectedHistoryResult = async (kind: "pdf" | "markdown") =>
+    withRequest(async () => {
+      const detail = await ensureSelectedReportWithReports();
+      if (!detail?.result_payload) {
+        return;
+      }
+      await downloadApiFile(`/api/exports/longhubang/${kind}`, {
+        method: "POST",
+        body: JSON.stringify({ result: detail.result_payload }),
+      });
       setMessage(kind === "pdf" ? "智瞰龙虎 PDF 已开始下载" : "智瞰龙虎 Markdown 已开始下载");
     }, "导出智瞰龙虎报告失败");
 
@@ -538,7 +586,10 @@ export function LonghubangPage() {
 
                 {selectedReport.result_payload ? (
                   <LonghubangReportDetailView
-                    onExport={(kind) => void exportResult(selectedReport.result_payload ?? null, kind)}
+                    hasDeferredReports={Boolean(selectedReport.has_deferred_reports)}
+                    isLoadingReports={isLoadingSelectedReport}
+                    onExport={(kind) => void exportSelectedHistoryResult(kind)}
+                    onLoadReports={() => void ensureSelectedReportWithReports()}
                     result={selectedReport.result_payload}
                   />
                 ) : (

@@ -381,6 +381,7 @@ export function NewsFlowPage() {
   const peakTrendScore = trendMaxScores.length ? Math.max(...trendMaxScores) : null;
   const latestTrendSentiment = sentimentHistory.length ? sentimentHistory[0] : null;
   const trendTopicTimeline = buildTrendTopicTimeline(dailyStatistics);
+  const shouldPollTask = !task || task.status === "queued" || task.status === "running";
   const loadTask = async () => {
     setTask(await apiFetch<TaskDetail<NewsFlowTaskPayload> | null>("/api/strategies/news-flow/tasks/latest"));
   };
@@ -458,7 +459,7 @@ export function NewsFlowPage() {
     );
   };
 
-  usePollingLoader({ load: loadTask, intervalMs: 2000 });
+  usePollingLoader({ load: loadTask, intervalMs: 2000, enabled: shouldPollTask });
   usePollingLoader({
     load: async () => {
       await Promise.all([loadDashboard(), loadSettings()]);

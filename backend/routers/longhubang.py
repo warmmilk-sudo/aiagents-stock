@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
+from fastapi_cache.decorator import cache
 
 from backend import services
 from backend.api import ApiError, success_payload
@@ -85,15 +86,24 @@ def get_batch_task(request: Request, task_id: str) -> dict:
 
 
 @router.get("/history")
-def list_history(request: Request, limit: int = 50) -> dict:
-    require_session(request)
+@cache(expire=15, namespace="longhubang")
+def list_history(
+    request: Request,
+    _session: dict = Depends(require_session),
+    limit: int = 50,
+) -> dict:
     return success_payload(services.list_longhubang_reports(limit=limit))
 
 
 @router.get("/history/{report_id}")
-def get_history_report(request: Request, report_id: int) -> dict:
-    require_session(request)
-    report = services.get_longhubang_report(report_id)
+@cache(expire=15, namespace="longhubang")
+def get_history_report(
+    request: Request,
+    report_id: int,
+    _session: dict = Depends(require_session),
+    include_reports: bool = False,
+) -> dict:
+    report = services.get_longhubang_report(report_id, include_reports=include_reports)
     if not report:
         raise ApiError(404, "未找到龙虎榜历史报告", error_code="longhubang_report_not_found")
     return success_payload(report)
@@ -108,6 +118,10 @@ def delete_history_report(request: Request, report_id: int) -> dict:
 
 
 @router.get("/statistics")
-def get_statistics(request: Request, days: int = 30) -> dict:
-    require_session(request)
+@cache(expire=15, namespace="longhubang")
+def get_statistics(
+    request: Request,
+    _session: dict = Depends(require_session),
+    days: int = 30,
+) -> dict:
     return success_payload(services.get_longhubang_statistics(window_days=days))

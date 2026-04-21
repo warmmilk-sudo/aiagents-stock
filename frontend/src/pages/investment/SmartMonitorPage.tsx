@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { ModuleCard } from "../../components/common/ModuleCard";
@@ -81,22 +81,6 @@ interface DecisionItem {
   };
 }
 
-function formatSwingExecutionMode(value?: string | null): string {
-  const normalized = String(value || "").trim().toLowerCase();
-  const mapping: Record<string, string> = {
-    pullback_entry: "回踩建仓",
-    breakout_entry: "突破建仓",
-    pullback_add: "回踩确认加仓",
-    breakout_add: "突破确认加仓",
-    proactive_trim: "主动减仓锁盈",
-    defensive_trim: "防守减仓",
-    defensive_exit: "防守清仓",
-    trend_hold: "趋势持有",
-    watch_hold: "观察持有",
-  };
-  return mapping[normalized] ?? "";
-}
-
 interface SystemStatus {
   monitor_service?: {
     running?: boolean;
@@ -135,6 +119,7 @@ interface PriceAlertNotification {
   notification_category?: string;
   notification_label?: string;
   notification_class_label?: string;
+  notification_explanation?: string;
   notification_reason?: string;
   trigger_summary?: string;
   swing_execution_label?: string;
@@ -176,6 +161,7 @@ type ComposerPanel = "task" | null;
 type NotificationTone = "danger" | "success" | "warning" | "info";
 type ResultPanel = "decisions" | "notifications";
 type SectionKey = "results" | "tasks" | "controls";
+type ConfirmAction = { kind: "delete"; task: SmartMonitorTask };
 
 const sectionTabs: Array<{ key: SectionKey; label: string }> = [
   { key: "results", label: "监控结果" },
@@ -266,6 +252,15 @@ function formatDecisionReasoning(item: DecisionItem): string {
   const text = String(value || "").replace(/\s+/g, " ").trim();
   if (!text) return "暂无盘中决策内容";
   return text.replace(/…(?:（已截断）)?$/u, "。");
+}
+
+function formatNotificationText(value?: string | null): string {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  if (!text) return "";
+  return text
+    .replace(/(?:\.{3,}|…+)(?:（已截断）)?/gu, "。")
+    .replace(/。{2,}/gu, "。")
+    .trim();
 }
 
 const formatThresholdValue = (value?: unknown): string => {
@@ -410,8 +405,8 @@ const actionTone = (action: string): NotificationTone => {
 const resolveNotificationClass = (value?: string | null): string => {
   const normalized = String(value || "").trim().toLowerCase().replace(/-/g, "_");
   const mapping: Record<string, string> = {
-    focus: "focus_alert",
-    focus_alert: "focus_alert",
+    focus: "price_alert",
+    focus_alert: "price_alert",
     price: "price_alert",
     price_alert: "price_alert",
     risk: "risk_alert",
@@ -435,9 +430,6 @@ const notificationMeta = (item: PriceAlertNotification): { tone: NotificationTon
     item.notification_class || item.notification_category || item.notification_label,
   );
   const explicitLabel = String(item.notification_label || item.notification_class_label || "").trim();
-  if (notificationClass === "focus_alert") {
-    return { tone: "info", label: explicitLabel || "关注提醒" };
-  }
   if (notificationClass === "price_alert") {
     return { tone: "warning", label: explicitLabel || "价格提醒" };
   }
@@ -453,7 +445,7 @@ const notificationMeta = (item: PriceAlertNotification): { tone: NotificationTon
   const message = String(item.message || "");
   if (/(止损|跌破|下破|失守|回撤)/.test(message)) return { tone: "danger", label: "风险预警" };
   if (/(止盈|突破|上破|目标价|盈利)/.test(message)) return { tone: "success", label: "收益信号" };
-  if (/(买入|入场|区间|接近)/.test(message)) return { tone: "info", label: "关注提醒" };
+  if (/(买入|入场|区间|接近)/.test(message)) return { tone: "warning", label: "价格提醒" };
   return { tone: "warning", label: "价格提醒" };
 };
 
@@ -510,6 +502,7 @@ export function SmartMonitorPage() {
   const [pendingToggleTaskId, setPendingToggleTaskId] = useState<number | null>(null);
   const [pendingDeleteTaskId, setPendingDeleteTaskId] = useState<number | null>(null);
   const [pendingNotificationId, setPendingNotificationId] = useState<number | null>(null);
+  const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null);
   const { message, error, clear, showError, showMessage } = usePageFeedback();
   const baselineTerminalTaskRef = useRef("");
 
@@ -802,11 +795,12 @@ export function SmartMonitorPage() {
       return;
     }
     const previousEnabled = Boolean(task.enabled);
+    const nextEnabled = previousEnabled ? 0 : 1;
     setPendingToggleTaskId(task.id);
     setTasks((current) =>
       current.map((item) =>
         item.id === task.id
-          ? { ...item, enabled: previousEnabled ? 0 : 1 }
+          ? { ...item, enabled: nextEnabled }
           : item,
       ),
     );
@@ -856,6 +850,10 @@ export function SmartMonitorPage() {
     } finally {
       setPendingDeleteTaskId((current) => current === task.id ? null : current);
     }
+  };
+
+  const requestDeleteTask = (task: SmartMonitorTask) => {
+    setConfirmAction({ kind: "delete", task });
   };
 
   const runAllTasksOnce = async () => {
@@ -1001,6 +999,16 @@ export function SmartMonitorPage() {
   const baselineRefreshBusy =
     isRefreshingBaselines
     || Boolean(baselineRefreshTaskId && (!baselineRefreshTask || baselineRefreshTask.status === "queued" || baselineRefreshTask.status === "running"));
+  const confirmDialogMeta = useMemo(() => {
+    if (!confirmAction) {
+      return null;
+    }
+    return {
+      title: "确认删除任务",
+      description: `确定要删除 ${confirmAction.task.stock_name || confirmAction.task.stock_code}（${confirmAction.task.stock_code}）这条盯盘任务吗？此操作不可恢复。`,
+      confirmLabel: "确认删除",
+    };
+  }, [confirmAction]);
   const latestDecisions = decisions.reduce<DecisionItem[]>((accumulator, item) => {
     const key = `${item.stock_code || ""}::${item.asset_id ?? ""}::${item.portfolio_stock_id ?? ""}`;
     if (!accumulator.some((existing) => `${existing.stock_code || ""}::${existing.asset_id ?? ""}::${existing.portfolio_stock_id ?? ""}` === key)) {
@@ -1016,6 +1024,17 @@ export function SmartMonitorPage() {
     }
     return accumulator;
   }, []);
+
+  const handleConfirmAction = async () => {
+    if (!confirmAction) {
+      return;
+    }
+    const currentAction = confirmAction;
+    setConfirmAction(null);
+    if (currentAction.kind === "delete") {
+      await deleteTask(currentAction.task);
+    }
+  };
   const renderTaskForm = () => (
     <form className={styles.moduleSection} onSubmit={submitTask}>
       <div className={styles.formGrid}>
@@ -1130,9 +1149,6 @@ export function SmartMonitorPage() {
                           </div>
                           <strong>{stockDisplayName(item.stock_name, item.stock_code)}</strong>
                           <small className={styles.muted}>{formatDateTime(item.decision_time, "暂无时间")}</small>
-                          {formatSwingExecutionMode(item.swing_execution_mode) ? (
-                            <small className={styles.muted}>波段类型：{formatSwingExecutionMode(item.swing_execution_mode)}</small>
-                          ) : null}
                           <div className={styles.decisionReasoning}>{formatDecisionReasoning(item)}</div>
                         </div>
                       );
@@ -1146,8 +1162,14 @@ export function SmartMonitorPage() {
                             <StatusBadge label={meta.label} tone={meta.tone} />
                             <strong>{stockDisplayName(item.name, item.symbol)}</strong>
                           </div>
-                          {item.trigger_summary ? <small className={styles.muted}>触发摘要：{item.trigger_summary}</small> : null}
-                          {item.swing_execution_label ? <small className={styles.muted}>波段类型：{item.swing_execution_label}</small> : null}
+                          {formatNotificationText(item.trigger_summary) ? (
+                            <small className={styles.muted}>触发摘要：{formatNotificationText(item.trigger_summary)}</small>
+                          ) : null}
+                          {formatNotificationText(item.notification_explanation || item.notification_reason) ? (
+                            <small className={styles.muted}>
+                              解释说明：{formatNotificationText(item.notification_explanation || item.notification_reason)}
+                            </small>
+                          ) : null}
                           <small className={styles.muted}>
                             {formatDateTime(item.triggered_at, "暂无时间")}
                           </small>
@@ -1250,34 +1272,46 @@ export function SmartMonitorPage() {
                         <strong className={styles.smartMonitorTaskTitle}>
                           {`${stockDisplayName(task.stock_name, task.stock_code)} | ${taskPortfolioLabel(task)}`}
                         </strong>
-                        <button
-                          className={Boolean(task.enabled) ? styles.smartMonitorStateToggleEnabled : styles.smartMonitorStateToggleDisabled}
-                          disabled={pendingToggleTaskId === task.id}
-                          onClick={() => void toggleTaskEnabled(task)}
-                          type="button"
-                        >
-                          {pendingToggleTaskId === task.id ? "处理中..." : Boolean(task.enabled) ? "启用" : "停用"}
-                        </button>
                       </div>
                       <p className={styles.taskIndicatorText}>{formatThresholdSummary("分析基线", task.strategy_context)}</p>
                       <p className={styles.taskIndicatorText}>{formatThresholdSummary("盘中决策", latestDecision?.monitor_levels)}</p>
-                      <div className={styles.actions}>
-                        <button
-                          className={styles.secondaryButton}
-                          disabled={pendingRunTaskId === task.id}
-                          onClick={() => void runTaskOnce(task)}
-                          type="button"
-                        >
-                          {pendingRunTaskId === task.id ? "执行中..." : "立即分析"}
-                        </button>
-                        <button
-                          className={styles.dangerButton}
-                          disabled={pendingDeleteTaskId === task.id}
-                          onClick={() => void deleteTask(task)}
-                          type="button"
-                        >
-                          {pendingDeleteTaskId === task.id ? "删除中..." : "删除"}
-                        </button>
+                      <div className={styles.smartMonitorTaskActionRow}>
+                        <div className={styles.smartMonitorTaskActionLeft}>
+                          <button
+                            className={styles.secondaryButton}
+                            disabled={pendingRunTaskId === task.id}
+                            onClick={() => void runTaskOnce(task)}
+                            type="button"
+                          >
+                            {pendingRunTaskId === task.id ? "执行中..." : "立即分析"}
+                          </button>
+                        </div>
+                        <div className={styles.smartMonitorTaskActionRight}>
+                          <button
+                            className={Boolean(task.enabled) ? styles.smartMonitorStateToggleEnabled : styles.smartMonitorStateToggleDisabled}
+                            disabled={pendingToggleTaskId === task.id}
+                            onClick={() => void toggleTaskEnabled(task)}
+                            type="button"
+                          >
+                            {pendingToggleTaskId === task.id ? "处理中..." : Boolean(task.enabled) ? "停用" : "启用"}
+                          </button>
+                          <button
+                            aria-label={`删除任务 ${task.stock_code}`}
+                            className={styles.researchHubDeleteButton}
+                            disabled={pendingDeleteTaskId === task.id}
+                            onClick={() => requestDeleteTask(task)}
+                            title="删除任务"
+                            type="button"
+                          >
+                            {pendingDeleteTaskId === task.id ? (
+                              "…"
+                            ) : (
+                              <svg aria-hidden="true" viewBox="0 0 16 16" focusable="false">
+                                <path d="M5.5 2.5h5l.5 1.5H13a.75.75 0 0 1 0 1.5h-.45l-.55 7.02A1.75 1.75 0 0 1 10.26 14H5.74A1.75 1.75 0 0 1 4 12.52L3.45 5.5H3a.75.75 0 0 1 0-1.5h2.02l.48-1.5Zm.6 1.5-.16.5h4.12l-.16-.5H6.1Zm-1.14 1.5.53 6.9a.25.25 0 0 0 .25.22h4.52a.25.25 0 0 0 .25-.22l.53-6.9H4.96Zm2.04 1.25c.41 0 .75.34.75.75v3a.75.75 0 0 1-1.5 0v-3c0-.41.34-.75.75-.75Zm2 0c.41 0 .75.34.75.75v3a.75.75 0 0 1-1.5 0v-3c0-.41.34-.75.75-.75Z" />
+                              </svg>
+                            )}
+                          </button>
+                        </div>
                       </div>
                     </div>
                   );
@@ -1351,6 +1385,50 @@ export function SmartMonitorPage() {
           </ModuleCard>
         ) : null}
       </div>
+      {confirmDialogMeta ? (
+        <div
+          aria-modal="true"
+          className={styles.dialogBackdrop}
+          onClick={() => setConfirmAction(null)}
+          role="dialog"
+        >
+          <div
+            className={styles.dialogCard}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className={styles.dialogHeader}>
+              <strong>{confirmDialogMeta.title}</strong>
+              <button
+                aria-label="关闭确认弹窗"
+                className={styles.dialogCloseButton}
+                onClick={() => setConfirmAction(null)}
+                type="button"
+              >
+                ×
+              </button>
+            </div>
+            <div className={styles.dialogBody}>{confirmDialogMeta.description}</div>
+            <div className={styles.dialogActions}>
+              <button
+                className={styles.secondaryButton}
+                onClick={() => setConfirmAction(null)}
+                type="button"
+              >
+                取消
+              </button>
+              <button
+                className={styles.dangerButton}
+                onClick={() => {
+                  void handleConfirmAction();
+                }}
+                type="button"
+              >
+                {confirmDialogMeta.confirmLabel}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </PageFrame>
   );
 }

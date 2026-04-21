@@ -75,6 +75,9 @@ interface LonghubangResultLike {
 interface LonghubangReportDetailViewProps {
   result?: LonghubangResultLike | null;
   onExport: (kind: ExportKind) => void;
+  onLoadReports?: () => void;
+  isLoadingReports?: boolean;
+  hasDeferredReports?: boolean;
 }
 
 const AGENT_LABELS: Array<[string, string]> = [
@@ -123,6 +126,9 @@ function normalizeSymbol(value: unknown): string {
 export function LonghubangReportDetailView({
   result,
   onExport,
+  onLoadReports,
+  isLoadingReports = false,
+  hasDeferredReports = false,
 }: LonghubangReportDetailViewProps) {
   const [activeSection, setActiveSection] = useState<LonghubangSectionKey>("summary");
   const sectionTabsStyle = { "--nested-tab-count": 5 } as CSSProperties;
@@ -190,7 +196,6 @@ export function LonghubangReportDetailView({
     () =>
       AGENT_LABELS.map(([key, label]) => {
         const report = result?.agents_analysis?.[key];
-        const sections = splitReportSections(report?.analysis);
         return {
           key,
           label,
@@ -198,10 +203,8 @@ export function LonghubangReportDetailView({
           role: report?.agent_role || "",
           timestamp: report?.timestamp || result?.timestamp || "",
           rawContent: String(report?.analysis || "").trim(),
-          body: sections.body || report?.analysis || "",
-          reasoning: sections.reasoning,
         };
-      }).filter((item) => item.body || item.reasoning),
+      }).filter((item) => item.rawContent),
     [result?.agents_analysis, result?.timestamp],
   );
 
@@ -386,11 +389,29 @@ export function LonghubangReportDetailView({
           ) : null}
 
           {activeSection === "agents" ? (
-            <ReportWorkspace
-              ariaLabel="智瞰龙虎分析师报告"
-              emptyText="暂无分析师报告"
-              entries={reportEntries}
-            />
+            reportEntries.length ? (
+              <ReportWorkspace
+                ariaLabel="智瞰龙虎分析师报告"
+                emptyText="暂无分析师报告"
+                entries={reportEntries}
+              />
+            ) : hasDeferredReports ? (
+              <div className={styles.stack}>
+                <div className={styles.muted}>完整分析师正文按需加载，避免历史详情首屏拉取长文本。</div>
+                <div className={styles.actions}>
+                  <button
+                    className={styles.secondaryButton}
+                    disabled={isLoadingReports}
+                    onClick={onLoadReports}
+                    type="button"
+                  >
+                    {isLoadingReports ? "加载中..." : "加载完整报告"}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className={styles.muted}>暂无分析师报告</div>
+            )
           ) : null}
 
           {activeSection === "overview" ? (

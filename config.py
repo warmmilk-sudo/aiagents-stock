@@ -85,6 +85,7 @@ DEFAULT_MODEL_NAME = LIGHTWEIGHT_MODEL_NAME
 
 TUSHARE_TOKEN = _safe_str_env("TUSHARE_TOKEN")
 TUSHARE_URL = _safe_str_env("TUSHARE_URL", "https://api.tushare.pro")
+REDIS_URL = _safe_str_env("REDIS_URL")
 
 ADMIN_PASSWORD = _safe_str_env("ADMIN_PASSWORD")
 ADMIN_PASSWORD_HASH = _safe_str_env("ADMIN_PASSWORD_HASH")

@@ -23,6 +23,14 @@ interface PortfolioStock {
   name: string;
   account_name?: string;
   cost_price?: number;
+  current_price?: number;
+  market_value?: number;
+  cost_value?: number;
+  pnl?: number;
+  pnl_pct?: number;
+  weight?: number;
+  asset_weight?: number;
+  industry?: string;
   quantity?: number;
   note?: string;
   analysis_record_id?: number;
@@ -30,9 +38,11 @@ interface PortfolioStock {
 }
 
 interface PortfolioStockDistribution {
+  stock_id?: number;
   account_name?: string;
   code?: string;
   name?: string;
+  current_price?: number;
   market_value?: number;
   cost_value?: number;
   pnl?: number;
@@ -42,6 +52,7 @@ interface PortfolioStockDistribution {
 }
 
 interface HoldingMetricSummary {
+  currentPrice?: number;
   pnl?: number;
   pnlPct?: number;
   marketValue?: number;
@@ -99,6 +110,7 @@ interface AnalysisTaskRow {
 interface AnalysisTaskSummary {
   id: string;
   label?: string;
+  task_type?: string;
   status: string;
   message: string;
   current?: number;
@@ -140,6 +152,7 @@ const UI = {
 };
 
 const PAGE_CACHE_TTL_MS = 30_000;
+const RISK_REFRESH_URL = "/api/portfolio/risk?refresh=1";
 const PIE_COLORS = ["#c65d4b", "#db7c57", "#d6a45f", "#7f9b6d", "#4f7c82", "#6f6d9b", "#9a5f7c", "#8b7d64"];
 const PIE_CHART_OPTIONS = {
   responsive: true,
@@ -293,8 +306,48 @@ function todayDateInput() {
   return new Date().toLocaleDateString("en-CA");
 }
 
-function buildHoldingMetricKey(code?: string, name?: string) {
-  return `${code || ""}::${name || ""}`;
+function buildHoldingMetricKey(stockId?: number | null, code?: string, name?: string) {
+  if (typeof stockId === "number" && Number.isFinite(stockId) && stockId > 0) {
+    return `id:${stockId}`;
+  }
+  return `code:${code || ""}::${name || ""}`;
+}
+
+function mergeStocksWithRiskMetrics(stocks: PortfolioStock[], riskData: PortfolioRisk | null) {
+  if (!stocks.length) {
+    return [];
+  }
+
+  const distribution = riskData?.stock_distribution ?? [];
+  if (!distribution.length) {
+    return stocks.map((stock) => ({ ...stock }));
+  }
+
+  const metricsMap = new Map<string, PortfolioStockDistribution>();
+  distribution.forEach((item) => {
+    metricsMap.set(buildHoldingMetricKey(item.stock_id, item.code, item.name), item);
+    metricsMap.set(buildHoldingMetricKey(null, item.code, item.name), item);
+  });
+
+  return stocks.map((stock) => {
+    const metrics = (
+      metricsMap.get(buildHoldingMetricKey(stock.id, stock.code, stock.name))
+      ?? metricsMap.get(buildHoldingMetricKey(null, stock.code, stock.name))
+    );
+    if (!metrics) {
+      return { ...stock };
+    }
+    return {
+      ...stock,
+      current_price: metrics.current_price ?? stock.current_price,
+      market_value: metrics.market_value ?? stock.market_value,
+      cost_value: metrics.cost_value ?? stock.cost_value,
+      pnl: metrics.pnl ?? stock.pnl,
+      pnl_pct: metrics.pnl_pct ?? stock.pnl_pct,
+      weight: metrics.weight ?? stock.weight,
+      asset_weight: metrics.asset_weight ?? stock.asset_weight,
+    };
+  });
 }
 
 interface PortfolioDoughnutChartProps {
@@ -512,7 +565,18 @@ const PortfolioHoldingsTable = memo(function PortfolioHoldingsTable({
               <PortfolioHoldingRow
                 key={stock.id}
                 stock={stock}
-                metrics={holdingMetrics.get(buildHoldingMetricKey(stock.code, stock.name))}
+                metrics={
+                  holdingMetrics.get(buildHoldingMetricKey(stock.id, stock.code, stock.name))
+                  ?? holdingMetrics.get(buildHoldingMetricKey(null, stock.code, stock.name))
+                  ?? {
+                    currentPrice: stock.current_price,
+                    pnl: stock.pnl,
+                    pnlPct: stock.pnl_pct,
+                    marketValue: stock.market_value,
+                    assetWeight: stock.asset_weight,
+                    investedWeight: stock.weight,
+                  }
+                }
                 isMenuOpen={isMenuOpen}
                 activeHoldingPanel={activeHoldingPanel}
                 currentTradeType={currentTradeType}
@@ -549,6 +613,8 @@ export function PortfolioPage({ embedded = false }: PortfolioPageProps = {}) {
   const deepAnalysisAnalysts = useDeepAnalysisStore((state) => state.analysts);
   const schedulerTaskId = usePortfolioStore((state) => state.schedulerTaskId);
   const setSchedulerTaskId = usePortfolioStore((state) => state.setSchedulerTaskId);
+  const holdingsAnalysisTaskId = usePortfolioStore((state) => state.holdingsAnalysisTaskId);
+  const setHoldingsAnalysisTaskId = usePortfolioStore((state) => state.setHoldingsAnalysisTaskId);
   const cachedPage = usePortfolioStore((state) => state.pageCache ?? null);
   const setPageCache = usePortfolioStore((state) => state.setPageCache);
   const clearSmartMonitorPageCache = useSmartMonitorStore((state) => state.clearPageCache);
@@ -566,6 +632,7 @@ export function PortfolioPage({ embedded = false }: PortfolioPageProps = {}) {
   const [isSubmittingHoldingsAnalysis, setIsSubmittingHoldingsAnalysis] = useState(false);
   const [isSubmittingSingleAnalysis, setIsSubmittingSingleAnalysis] = useState(false);
   const [pendingSingleAnalysisSymbol, setPendingSingleAnalysisSymbol] = useState("");
+  const [holdingsAnalysisTask, setHoldingsAnalysisTask] = useState<AnalysisTaskSummary | null>(null);
   const [isSubmittingPosition, setIsSubmittingPosition] = useState(false);
   const [isSubmittingTrade, setIsSubmittingTrade] = useState(false);
   const [isUpdatingPosition, setIsUpdatingPosition] = useState(false);
@@ -579,15 +646,70 @@ export function PortfolioPage({ embedded = false }: PortfolioPageProps = {}) {
   const { message, error, clear, showError, showMessage } = usePageFeedback();
   const schedulerTerminalTaskRef = useRef<string>("");
   const singleAnalysisTerminalTaskRef = useRef<string>("");
+  const holdingsAnalysisTerminalTaskRef = useRef<string>("");
   const pageLoadRequestRef = useRef(0);
+  const stocksRef = useRef<PortfolioStock[]>(stocks);
+  const riskRef = useRef<PortfolioRisk | null>(risk);
+  const schedulerRef = useRef<SchedulerStatus | null>(scheduler);
+  const schedulerTimesRef = useRef(schedulerTimes);
   const deepAnalysisSelectedAnalysts = useMemo(
     () => normalizeAnalystKeys(analystConfigToKeys(deepAnalysisAnalysts)),
     [deepAnalysisAnalysts],
   );
 
+  useEffect(() => {
+    stocksRef.current = stocks;
+  }, [stocks]);
+
+  useEffect(() => {
+    riskRef.current = risk;
+  }, [risk]);
+
+  useEffect(() => {
+    schedulerRef.current = scheduler;
+  }, [scheduler]);
+
+  useEffect(() => {
+    schedulerTimesRef.current = schedulerTimes;
+  }, [schedulerTimes]);
+
   const applySchedulerState = (schedulerData: SchedulerStatus | null) => {
     setScheduler(schedulerData);
-    setSchedulerTimes((schedulerData?.schedule_times ?? [])[0] || DEFAULT_SCHEDULER_TIME);
+    schedulerRef.current = schedulerData;
+    const nextSchedulerTimes = (schedulerData?.schedule_times ?? [])[0] || DEFAULT_SCHEDULER_TIME;
+    setSchedulerTimes(nextSchedulerTimes);
+    schedulerTimesRef.current = nextSchedulerTimes;
+  };
+
+  const persistPageCache = (overrides?: {
+    stocks?: PortfolioStock[];
+    risk?: PortfolioRisk | null;
+    scheduler?: SchedulerStatus | null;
+    schedulerTimes?: string;
+  }) => {
+    setPageCache({
+      stocks: overrides?.stocks ?? stocksRef.current,
+      risk: overrides?.risk ?? riskRef.current,
+      scheduler: overrides?.scheduler ?? schedulerRef.current,
+      schedulerTimes: overrides?.schedulerTimes ?? schedulerTimesRef.current,
+      updatedAt: Date.now(),
+    });
+  };
+
+  const applyStocksData = (stockData: PortfolioStock[], riskData?: PortfolioRisk | null) => {
+    const mergedStocks = mergeStocksWithRiskMetrics(stockData, riskData ?? riskRef.current);
+    setStocks(mergedStocks);
+    stocksRef.current = mergedStocks;
+    return mergedStocks;
+  };
+
+  const applyRiskData = (riskData: PortfolioRisk | null, stockData?: PortfolioStock[]) => {
+    setRisk(riskData);
+    riskRef.current = riskData;
+    const mergedStocks = mergeStocksWithRiskMetrics(stockData ?? stocksRef.current, riskData);
+    setStocks(mergedStocks);
+    stocksRef.current = mergedStocks;
+    return mergedStocks;
   };
 
   const setSchedulerRunningOptimistically = (running: boolean) => {
@@ -607,8 +729,10 @@ export function PortfolioPage({ embedded = false }: PortfolioPageProps = {}) {
     if (!cache) {
       return;
     }
-    setStocks(cache.stocks as PortfolioStock[]);
-    setRisk((cache.risk as PortfolioRisk | null) ?? null);
+    const cachedRisk = (cache.risk as PortfolioRisk | null) ?? null;
+    setRisk(cachedRisk);
+    riskRef.current = cachedRisk;
+    applyStocksData((cache.stocks as PortfolioStock[]) ?? [], cachedRisk);
     applySchedulerState((cache.scheduler as SchedulerStatus | null) ?? null);
   };
 
@@ -624,9 +748,9 @@ export function PortfolioPage({ embedded = false }: PortfolioPageProps = {}) {
       const useFreshRequest = force || options?.background;
       const fetchStocks = useFreshRequest ? apiFetch<PortfolioStock[]> : apiFetchCached<PortfolioStock[]>;
       const fetchRisk = useFreshRequest ? apiFetch<PortfolioRisk> : apiFetchCached<PortfolioRisk>;
-      const [stockData, riskData, schedulerData] = await Promise.all([
+      const riskUrl = options?.background ? RISK_REFRESH_URL : "/api/portfolio/risk";
+      const [stockData, schedulerData] = await Promise.all([
         fetchStocks("/api/portfolio/stocks"),
-        fetchRisk("/api/portfolio/risk"),
         apiFetch<SchedulerStatus>("/api/portfolio/scheduler"),
       ]);
 
@@ -634,21 +758,34 @@ export function PortfolioPage({ embedded = false }: PortfolioPageProps = {}) {
         return;
       }
 
-      setStocks(stockData);
-      setRisk(riskData);
+      const mergedStockData = applyStocksData(stockData);
       applySchedulerState(schedulerData);
-      setPageCache({
-        stocks: stockData,
-        risk: riskData,
+      persistPageCache({
+        stocks: mergedStockData,
         scheduler: schedulerData,
         schedulerTimes: (schedulerData?.schedule_times ?? [])[0] || DEFAULT_SCHEDULER_TIME,
-        updatedAt: Date.now(),
       });
       setTradeForm((current) => {
         if (current.stock_id || !stockData[0]) {
           return current;
         }
         return { ...current, stock_id: String(stockData[0].id) };
+      });
+
+      if (pageLoadRequestRef.current === requestId) {
+        setIsRefreshingPage(false);
+      }
+
+      const riskData = await fetchRisk(riskUrl);
+      if (pageLoadRequestRef.current !== requestId) {
+        return;
+      }
+      const mergedStocksWithRisk = applyRiskData(riskData, stockData);
+      persistPageCache({
+        stocks: mergedStocksWithRisk,
+        risk: riskData,
+        scheduler: schedulerData,
+        schedulerTimes: (schedulerData?.schedule_times ?? [])[0] || DEFAULT_SCHEDULER_TIME,
       });
     } finally {
       if (pageLoadRequestRef.current === requestId) {
@@ -677,7 +814,7 @@ export function PortfolioPage({ embedded = false }: PortfolioPageProps = {}) {
     setPositionForm((current) => ({
       ...current,
       code: payload.symbol || "",
-      name: payload.stock_name || "",
+      name: "",
       cost_price: payload.default_cost_price !== undefined ? String(payload.default_cost_price) : "",
       note: payload.default_note || "",
       origin_analysis_id: payload.origin_analysis_id,
@@ -695,6 +832,12 @@ export function PortfolioPage({ embedded = false }: PortfolioPageProps = {}) {
     setPendingSingleAnalysisSymbol("");
     singleAnalysisTerminalTaskRef.current = "";
   };
+
+  const clearHoldingsAnalysisTask = useCallback(() => {
+    setHoldingsAnalysisTaskId(null);
+    setHoldingsAnalysisTask(null);
+    holdingsAnalysisTerminalTaskRef.current = "";
+  }, [setHoldingsAnalysisTaskId]);
 
   const clearSchedulerTask = () => {
     setSchedulerTaskId(null);
@@ -717,6 +860,41 @@ export function PortfolioPage({ embedded = false }: PortfolioPageProps = {}) {
       }
     }
   };
+
+  const loadHoldingsAnalysisTask = useCallback(async (taskIdOverride?: string | null) => {
+    const taskId = taskIdOverride ?? holdingsAnalysisTaskId;
+    if (taskId) {
+      try {
+        const task = await apiFetch<AnalysisTaskSummary>(`/api/tasks/${taskId}`);
+        if (task.task_type && task.task_type !== "portfolio_holdings_analysis") {
+          clearHoldingsAnalysisTask();
+          return;
+        }
+        setHoldingsAnalysisTask(task);
+        return;
+      } catch (requestError) {
+        if (requestError instanceof ApiRequestError && requestError.status === 404) {
+          clearHoldingsAnalysisTask();
+          return;
+        }
+      }
+    }
+
+    try {
+      const pendingTasks = await apiFetch<AnalysisTaskSummary[]>("/api/tasks/pending");
+      const holdingsTask = pendingTasks.find((task) => task.task_type === "portfolio_holdings_analysis") || null;
+      if (holdingsTask) {
+        setHoldingsAnalysisTaskId(holdingsTask.id);
+        setHoldingsAnalysisTask(holdingsTask);
+        return;
+      }
+      setHoldingsAnalysisTask(null);
+    } catch (requestError) {
+      if (requestError instanceof ApiRequestError && requestError.status === 404) {
+        clearHoldingsAnalysisTask();
+      }
+    }
+  }, [clearHoldingsAnalysisTask, holdingsAnalysisTaskId, setHoldingsAnalysisTaskId]);
 
   const loadSchedulerTask = async (taskIdOverride?: string | null) => {
     try {
@@ -745,6 +923,8 @@ export function PortfolioPage({ embedded = false }: PortfolioPageProps = {}) {
   const schedulerPollingIntervalMs = schedulerTaskId || schedulerTaskPending
     ? 2500
     : 15000;
+  const holdingsAnalysisTaskPending = isPendingTaskStatus(holdingsAnalysisTask?.status || "");
+  const holdingsAnalysisBusy = isSubmittingHoldingsAnalysis || holdingsAnalysisTaskPending;
 
   usePollingLoader({
     load: loadSchedulerTask,
@@ -754,6 +934,14 @@ export function PortfolioPage({ embedded = false }: PortfolioPageProps = {}) {
       || schedulerTaskPending,
     immediate: true,
     dependencies: [schedulerTaskId, schedulerTask?.status],
+  });
+
+  usePollingLoader({
+    load: loadHoldingsAnalysisTask,
+    intervalMs: 2500,
+    enabled: Boolean(holdingsAnalysisTaskId) || holdingsAnalysisTaskPending,
+    immediate: true,
+    dependencies: [holdingsAnalysisTaskId, holdingsAnalysisTask?.status],
   });
 
   usePollingLoader({
@@ -790,6 +978,24 @@ export function PortfolioPage({ embedded = false }: PortfolioPageProps = {}) {
     clearSmartMonitorPageCache();
   }, [clearSmartMonitorPageCache, singleAnalysisTask?.id, singleAnalysisTask?.status]);
 
+  useEffect(() => {
+    if (!holdingsAnalysisTask || isPendingTaskStatus(holdingsAnalysisTask.status)) {
+      return;
+    }
+    const terminalKey = `${holdingsAnalysisTask.id}:${holdingsAnalysisTask.status}`;
+    if (holdingsAnalysisTerminalTaskRef.current === terminalKey) {
+      return;
+    }
+    holdingsAnalysisTerminalTaskRef.current = terminalKey;
+    clearHoldingsAnalysisTask();
+    void loadAll(true).catch(() => undefined);
+    clearSmartMonitorPageCache();
+  }, [clearHoldingsAnalysisTask, clearSmartMonitorPageCache, holdingsAnalysisTask?.id, holdingsAnalysisTask?.status]);
+
+  useEffect(() => {
+    void loadHoldingsAnalysisTask().catch(() => undefined);
+  }, [loadHoldingsAnalysisTask]);
+
   const handleManualRefresh = () => {
     clear();
     void loadAll(true).catch((requestError) => {
@@ -800,18 +1006,20 @@ export function PortfolioPage({ embedded = false }: PortfolioPageProps = {}) {
   const riskWarnings = risk?.risk_warnings ?? [];
   const holdingMetrics = useMemo(() => {
     const distribution = risk?.stock_distribution ?? [];
-    return new Map<string, HoldingMetricSummary>(
-      distribution.map((item) => [
-        buildHoldingMetricKey(item.code, item.name),
-        {
-          pnl: item.pnl,
-          pnlPct: item.pnl_pct,
-          marketValue: item.market_value,
-          assetWeight: item.asset_weight,
-          investedWeight: item.weight,
-        },
-      ]),
-    );
+    const metricsMap = new Map<string, HoldingMetricSummary>();
+    distribution.forEach((item) => {
+      const summary = {
+        currentPrice: item.current_price,
+        pnl: item.pnl,
+        pnlPct: item.pnl_pct,
+        marketValue: item.market_value,
+        assetWeight: item.asset_weight,
+        investedWeight: item.weight,
+      };
+      metricsMap.set(buildHoldingMetricKey(item.stock_id, item.code, item.name), summary);
+      metricsMap.set(buildHoldingMetricKey(null, item.code, item.name), summary);
+    });
+    return metricsMap;
   }, [risk?.stock_distribution]);
 
   const industryPieData = useMemo(() => {
@@ -1076,6 +1284,9 @@ export function PortfolioPage({ embedded = false }: PortfolioPageProps = {}) {
       showError("当前没有可分析的持仓。");
       return;
     }
+    if (holdingsAnalysisBusy) {
+      return;
+    }
     clear();
     setIsSubmittingHoldingsAnalysis(true);
     try {
@@ -1087,6 +1298,17 @@ export function PortfolioPage({ embedded = false }: PortfolioPageProps = {}) {
           analysts: deepAnalysisAnalysts,
         }),
       });
+      if (taskData.task_id) {
+        setHoldingsAnalysisTaskId(taskData.task_id);
+        setHoldingsAnalysisTask({
+          id: taskData.task_id,
+          label: "持仓批量分析",
+          status: "queued",
+          message: "正在提交持仓批量分析任务...",
+          current: 0,
+          total: 0,
+        });
+      }
       showMessage(`已提交 ${stocks.length} 只持仓的深度分析任务${taskData.task_id ? `（任务 ${taskData.task_id}）` : ""}。`);
     } catch (requestError) {
       showError(requestError instanceof ApiRequestError ? requestError.message : "提交持仓深度分析失败");
@@ -1099,36 +1321,45 @@ export function PortfolioPage({ embedded = false }: PortfolioPageProps = {}) {
     event.preventDefault();
     clear();
     setIsSubmittingPosition(true);
+    const nextCode = positionForm.code.trim();
+    const nextName = "";
+    const nextCostPrice = positionForm.cost_price ? Number(positionForm.cost_price) : undefined;
+    const nextQuantity = positionForm.quantity ? Number(positionForm.quantity) : undefined;
+    const nextNote = positionForm.note;
+    const nextBuyDate = positionForm.buy_date || undefined;
+    const nextAutoMonitor = positionForm.auto_monitor;
+    const nextOriginAnalysisId = positionForm.origin_analysis_id;
     const nextPosition = {
       id: -Date.now(),
-      code: positionForm.code.trim(),
-      name: positionForm.name.trim() || positionForm.code.trim(),
-      cost_price: positionForm.cost_price ? Number(positionForm.cost_price) : undefined,
-      quantity: positionForm.quantity ? Number(positionForm.quantity) : undefined,
-      note: positionForm.note,
-      analysis_record_id: positionForm.origin_analysis_id,
-      last_trade_at: positionForm.buy_date || undefined,
+      code: nextCode,
+      name: nextName,
+      cost_price: nextCostPrice,
+      quantity: nextQuantity,
+      note: nextNote,
+      analysis_record_id: nextOriginAnalysisId,
+      last_trade_at: nextBuyDate,
     } satisfies PortfolioStock;
     setStocks((current) => [nextPosition, ...current]);
+    setPositionForm(defaultPositionForm);
+    setEditingStockId(null);
+    setActiveEditor(null);
+    closeHoldingPanel();
+    showMessage(`正在保存持仓：${nextCode}`);
     try {
       await apiFetch("/api/portfolio/stocks", {
         method: "POST",
         body: JSON.stringify({
-          code: positionForm.code,
-          name: positionForm.name || positionForm.code,
-          cost_price: positionForm.cost_price ? Number(positionForm.cost_price) : null,
-          quantity: positionForm.quantity ? Number(positionForm.quantity) : null,
-          note: positionForm.note,
-          buy_date: positionForm.buy_date || null,
-          auto_monitor: positionForm.auto_monitor,
-          origin_analysis_id: positionForm.origin_analysis_id ?? null,
+          code: nextCode,
+          name: nextName,
+          cost_price: nextCostPrice ?? null,
+          quantity: nextQuantity ?? null,
+          note: nextNote,
+          buy_date: nextBuyDate ?? null,
+          auto_monitor: nextAutoMonitor,
+          origin_analysis_id: nextOriginAnalysisId ?? null,
         }),
       });
-      setPositionForm(defaultPositionForm);
-      setEditingStockId(null);
-      setActiveEditor(null);
-      closeHoldingPanel();
-      showMessage(`持仓已新增：${positionForm.code}`);
+      showMessage(`持仓已新增：${nextCode}`);
       void loadAll(true).catch(() => undefined);
     } catch (requestError) {
       setStocks((current) => current.filter((item) => item.id !== nextPosition.id));
@@ -1198,6 +1429,7 @@ export function PortfolioPage({ embedded = false }: PortfolioPageProps = {}) {
     const nextName = positionForm.name.trim() || nextCode;
     const nextCostPrice = positionForm.cost_price ? Number(positionForm.cost_price) : undefined;
     const nextQuantity = positionForm.quantity ? Number(positionForm.quantity) : undefined;
+    const nextNote = positionForm.note;
     const nextBuyDate = positionForm.buy_date || undefined;
     const previousStock = stocks.find((item) => item.id === editingStockId) ?? null;
     setStocks((current) =>
@@ -1209,12 +1441,15 @@ export function PortfolioPage({ embedded = false }: PortfolioPageProps = {}) {
             name: nextName,
             cost_price: nextCostPrice,
             quantity: nextQuantity,
-            note: positionForm.note,
+            note: nextNote,
             last_trade_at: nextBuyDate ?? stock.last_trade_at,
           }
           : stock,
       ),
     );
+    resetPositionEditor();
+    closeHoldingPanel();
+    showMessage(`正在保存持仓：${nextCode}`);
     try {
       await apiFetch(`/api/portfolio/stocks/${editingStockId}`, {
         method: "PATCH",
@@ -1223,12 +1458,10 @@ export function PortfolioPage({ embedded = false }: PortfolioPageProps = {}) {
           name: nextName,
           cost_price: nextCostPrice ?? null,
           quantity: nextQuantity ?? null,
-          note: positionForm.note,
+          note: nextNote,
           buy_date: nextBuyDate ?? null,
         }),
       });
-      resetPositionEditor();
-      closeHoldingPanel();
       showMessage(`持仓已更新：${nextCode}`);
       void loadAll(true).catch(() => undefined);
     } catch (requestError) {
@@ -1283,16 +1516,6 @@ export function PortfolioPage({ embedded = false }: PortfolioPageProps = {}) {
     } finally {
       setDeletingStockId((current) => current === stockId ? null : current);
     }
-  };
-
-  const adjustTradeQuantity = (delta: number) => {
-    setTradeForm((current) => {
-      const nextQuantity = Math.max(0, (Number(current.quantity) || 0) + delta);
-      return {
-        ...current,
-        quantity: nextQuantity > 0 ? String(nextQuantity) : "",
-      };
-    });
   };
 
   const saveScheduler = async () => {
@@ -1351,10 +1574,6 @@ export function PortfolioPage({ embedded = false }: PortfolioPageProps = {}) {
         <div className={styles.field}>
           <label htmlFor="position-code">股票代码</label>
           <input id="position-code" onChange={(event) => setPositionForm((current) => ({ ...current, code: event.target.value }))} value={positionForm.code} />
-        </div>
-        <div className={styles.field}>
-          <label htmlFor="position-name">股票名称</label>
-          <input id="position-name" onChange={(event) => setPositionForm((current) => ({ ...current, name: event.target.value }))} value={positionForm.name} />
         </div>
         <div className={styles.field}>
           <label htmlFor="position-cost">成本价</label>
@@ -1494,27 +1713,11 @@ export function PortfolioPage({ embedded = false }: PortfolioPageProps = {}) {
         {tradeForm.trade_type !== "clear" ? (
           <div className={styles.field}>
             <label htmlFor="inline-trade-quantity">数量</label>
-            <div className={styles.dualToggleGrid}>
-              <button
-                className={styles.secondaryButton}
-                onClick={() => adjustTradeQuantity(-100)}
-                type="button"
-              >
-                -100
-              </button>
-              <input
-                id="inline-trade-quantity"
-                onChange={(event) => setTradeForm((current) => ({ ...current, quantity: event.target.value }))}
-                value={tradeForm.quantity}
-              />
-              <button
-                className={styles.secondaryButton}
-                onClick={() => adjustTradeQuantity(100)}
-                type="button"
-              >
-                +100
-              </button>
-            </div>
+            <input
+              id="inline-trade-quantity"
+              onChange={(event) => setTradeForm((current) => ({ ...current, quantity: event.target.value }))}
+              value={tradeForm.quantity}
+            />
           </div>
         ) : null}
         <div className={styles.field}>
@@ -1593,14 +1796,16 @@ export function PortfolioPage({ embedded = false }: PortfolioPageProps = {}) {
         title="持仓数据"
         summary="点击任一股票行展开横向操作菜单，处理修改、交易和分析。"
         toolbar={(
-          <button
-            className={styles.secondaryButton}
-            disabled={isRefreshingPage || isSubmittingHoldingsAnalysis || !stocks.length}
-            onClick={() => void handleAnalyzeAllHoldings()}
-            type="button"
-          >
-            {isSubmittingHoldingsAnalysis ? "提交中..." : "分析所有持仓"}
-          </button>
+          <div className={styles.holdingsAnalysisToolbar}>
+            <button
+              className={`${styles.secondaryButton} ${styles.holdingsAnalysisButton}`}
+              disabled={isRefreshingPage || holdingsAnalysisBusy || !stocks.length}
+              onClick={() => void handleAnalyzeAllHoldings()}
+              type="button"
+            >
+              {holdingsAnalysisBusy ? "分析中..." : "分析所有持仓"}
+            </button>
+          </div>
         )}
       >
         <div className={styles.moduleSection}>

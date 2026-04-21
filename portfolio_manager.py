@@ -7,6 +7,7 @@
 import time
 import re
 import math
+import threading
 from datetime import date, datetime, time as daytime, timedelta
 from typing import Any, Callable, Dict, List, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -29,6 +30,8 @@ class PortfolioManager:
     DEFAULT_RISK_FREE_RATE = 0.015
     DEFAULT_ANALYSIS_AGENTS = ["technical", "fundamental", "fund_flow", "risk"]
     REALTIME_QUOTE_CACHE_SECONDS = 60
+    SNAPSHOT_CACHE_SECONDS = 30
+    SNAPSHOT_STALE_SECONDS = 1800
     
     def __init__(self, model=None, lightweight_model=None, reasoning_model=None,
                  portfolio_store=None,
@@ -56,6 +59,9 @@ class PortfolioManager:
         self._basic_stock_info_cache: Dict[str, Dict[str, Any]] = {}
         self._realtime_quote_fetcher = None
         self._realtime_quote_cache: Dict[str, Dict[str, Any]] = {}
+        self._portfolio_snapshot_cache: Dict[str, Dict[str, Any]] = {}
+        self._portfolio_snapshot_refreshing: set[str] = set()
+        self._portfolio_snapshot_lock = threading.RLock()
 
     def get_default_smart_monitor_check_interval(self) -> int:
         metadata_value = getattr(self.smart_monitor_db, "monitoring_repository", None)
@@ -105,6 +111,7 @@ class PortfolioManager:
     def set_account_total_assets_settings(self, account_assets: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
         if hasattr(self.db, "set_account_total_assets_settings"):
             self.db.set_account_total_assets_settings(account_assets or {})
+        self._invalidate_snapshot_cache()
         return self.get_account_total_assets_settings()
 
     def _get_account_total_assets(self, account_name: Optional[str]) -> float:
@@ -285,6 +292,7 @@ class PortfolioManager:
                 warnings.append(lifecycle_message.split("（", 1)[1][:-1])
 
             self._mark_integrations_reconcile_pending()
+            self._invalidate_snapshot_cache(account_name)
             try:
                 self.capture_daily_snapshot(account_name=account_name, source="manual")
             except Exception as exc:
@@ -319,9 +327,12 @@ class PortfolioManager:
             success = self.db.update_stock(stock_id, **kwargs)
             if success:
                 self._mark_integrations_reconcile_pending()
+                self._invalidate_snapshot_cache(existing.get("account_name", DEFAULT_ACCOUNT_NAME))
                 updated_stock = self.db.get_stock(stock_id)
                 if old_code != updated_stock["code"]:
                     self.remove_managed_integrations_for_code(old_code)
+                if updated_stock and updated_stock.get("account_name") != existing.get("account_name"):
+                    self._invalidate_snapshot_cache(updated_stock.get("account_name", DEFAULT_ACCOUNT_NAME))
 
                 warning = ""
                 try:
@@ -357,6 +368,7 @@ class PortfolioManager:
             success = self.db.delete_stock(stock_id)
             if success:
                 self._mark_integrations_reconcile_pending()
+                self._invalidate_snapshot_cache(existing.get("account_name", DEFAULT_ACCOUNT_NAME))
                 self.capture_daily_snapshot(
                     account_name=existing.get("account_name", DEFAULT_ACCOUNT_NAME),
                     source="manual",
@@ -641,6 +653,7 @@ class PortfolioManager:
             if not success:
                 return False, message, None
             self._mark_integrations_reconcile_pending()
+            self._invalidate_snapshot_cache((updated_stock or stock).get("account_name", DEFAULT_ACCOUNT_NAME))
 
             warning = ""
             try:
@@ -909,17 +922,135 @@ class PortfolioManager:
             print(f"[WARN] 实时行情回补失败 ({normalized_code}): {e}")
             return {}
 
+    def _snapshot_cache_key(self, account_name: Optional[str]) -> str:
+        return normalize_account_name(account_name) or DEFAULT_ACCOUNT_NAME
+
+    def _invalidate_snapshot_cache(self, account_name: Optional[str] = None) -> None:
+        with self._portfolio_snapshot_lock:
+            if account_name is None:
+                self._portfolio_snapshot_cache.clear()
+                self._portfolio_snapshot_refreshing.clear()
+                return
+            cache_key = self._snapshot_cache_key(account_name)
+            self._portfolio_snapshot_cache.pop(cache_key, None)
+            self._portfolio_snapshot_refreshing.discard(cache_key)
+
+    def _get_cached_snapshot(self, account_name: Optional[str], *, allow_stale: bool = False) -> Dict[str, Any]:
+        cache_key = self._snapshot_cache_key(account_name)
+        with self._portfolio_snapshot_lock:
+            entry = self._portfolio_snapshot_cache.get(cache_key)
+            if not isinstance(entry, dict):
+                return {}
+            payload = entry.get("payload")
+            if not isinstance(payload, dict):
+                return {}
+            cached_at = float(entry.get("cached_at") or 0)
+            age = max(0.0, time.time() - cached_at)
+            if age > self.SNAPSHOT_STALE_SECONDS:
+                self._portfolio_snapshot_cache.pop(cache_key, None)
+                self._portfolio_snapshot_refreshing.discard(cache_key)
+                return {}
+            if not allow_stale and age > self.SNAPSHOT_CACHE_SECONDS:
+                return {}
+            return dict(payload)
+
+    def _store_snapshot_cache(self, account_name: Optional[str], payload: Dict[str, Any], *, source: str) -> Dict[str, Any]:
+        cache_key = self._snapshot_cache_key(account_name)
+        cached_payload = dict(payload)
+        cached_payload["snapshot_source"] = source
+        cached_payload["snapshot_cached_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with self._portfolio_snapshot_lock:
+            self._portfolio_snapshot_cache[cache_key] = {
+                "payload": cached_payload,
+                "cached_at": time.time(),
+                "source": source,
+            }
+            self._portfolio_snapshot_refreshing.discard(cache_key)
+        return dict(cached_payload)
+
+    def _build_portfolio_snapshot_for_account(
+        self,
+        account_name: Optional[str],
+        *,
+        live_fetch: bool,
+        source: str,
+    ) -> Dict[str, Any]:
+        stocks = self.get_all_stocks(account_name=account_name)
+        payload = self._build_portfolio_snapshot_payload(
+            stocks,
+            account_name=account_name,
+            live_fetch=live_fetch,
+        )
+        return self._store_snapshot_cache(account_name, payload, source=source)
+
+    def _schedule_snapshot_refresh(self, account_name: Optional[str]) -> None:
+        cache_key = self._snapshot_cache_key(account_name)
+        with self._portfolio_snapshot_lock:
+            if cache_key in self._portfolio_snapshot_refreshing:
+                return
+            self._portfolio_snapshot_refreshing.add(cache_key)
+
+        def runner() -> None:
+            try:
+                self._build_portfolio_snapshot_for_account(
+                    account_name,
+                    live_fetch=True,
+                    source="background_refresh",
+                )
+            except Exception as exc:
+                print(f"[WARN] 持仓快照后台刷新失败 ({cache_key}): {exc}")
+                with self._portfolio_snapshot_lock:
+                    self._portfolio_snapshot_refreshing.discard(cache_key)
+
+        threading.Thread(target=runner, daemon=True).start()
+
+    def get_portfolio_snapshot(
+        self,
+        account_name: Optional[str] = None,
+        *,
+        refresh: bool = False,
+    ) -> Dict[str, Any]:
+        if refresh:
+            return self._build_portfolio_snapshot_for_account(
+                account_name,
+                live_fetch=True,
+                source="foreground_refresh",
+            )
+
+        fresh_snapshot = self._get_cached_snapshot(account_name, allow_stale=False)
+        if fresh_snapshot:
+            return fresh_snapshot
+
+        stale_snapshot = self._get_cached_snapshot(account_name, allow_stale=True)
+        if stale_snapshot:
+            self._schedule_snapshot_refresh(account_name)
+            stale_snapshot["snapshot_source"] = stale_snapshot.get("snapshot_source") or "stale_cache"
+            return stale_snapshot
+
+        quick_snapshot = self._build_portfolio_snapshot_for_account(
+            account_name,
+            live_fetch=False,
+            source="quick_cache",
+        )
+        self._schedule_snapshot_refresh(account_name)
+        return quick_snapshot
+
     def _get_latest_price_and_industry(
         self,
         stock: Dict,
         latest_analysis: Optional[Dict] = None,
+        *,
+        live_fetch: bool = True,
     ) -> Tuple[float, str]:
         current_price = 0.0
         industry = self._extract_industry_from_payload(stock) or "未知行业"
         normalized_code = self._normalize_stock_code(str(stock.get("code") or stock.get("symbol") or ""))
 
-        # Prefer real-time quote (TDX when enabled) for valuation freshness.
-        realtime_quote = self._get_realtime_quote(normalized_code)
+        realtime_quote = (
+            self._get_realtime_quote(normalized_code)
+            if live_fetch
+            else self._get_cached_realtime_quote(normalized_code, allow_stale=True)
+        )
         if realtime_quote:
             realtime_price = self._extract_first_number(
                 realtime_quote.get("current_price", realtime_quote.get("price")),
@@ -937,15 +1068,26 @@ class PortfolioManager:
         if current_price <= 0 or industry == "未知行业":
             latest_analysis = latest_analysis or self.get_latest_analysis(stock["id"])
             if latest_analysis:
+                analysis_price = self._extract_first_number(latest_analysis.get("current_price"), allow_zero=True) or 0.0
+                if current_price <= 0 and analysis_price > 0:
+                    current_price = analysis_price
                 latest_stock_info = latest_analysis.get("stock_info")
                 if isinstance(latest_stock_info, dict):
+                    if current_price <= 0:
+                        current_price = (
+                            self._extract_first_number(
+                                latest_stock_info.get("current_price", latest_stock_info.get("price")),
+                                allow_zero=True,
+                            )
+                            or current_price
+                        )
                     industry = self._extract_industry_from_payload(latest_stock_info) or industry
 
         if industry == "未知行业":
             basic_info = self._get_basic_stock_info(stock.get("code") or stock.get("symbol"))
             industry = self._extract_industry_from_payload(basic_info) or industry
 
-        if current_price <= 0 or industry == "未知行业":
+        if live_fetch and (current_price <= 0 or industry == "未知行业"):
             try:
                 realtime_quote = self._get_stock_data_fetcher().get_realtime_quote(normalized_code)
             except Exception as exc:
@@ -962,7 +1104,7 @@ class PortfolioManager:
                     )
                 industry = self._extract_industry_from_payload(realtime_quote) or industry
 
-        if industry == "未知行业":
+        if live_fetch and industry == "未知行业":
             try:
                 stock_info = self._get_stock_data_fetcher().get_stock_info(
                     normalized_code,
@@ -982,7 +1124,13 @@ class PortfolioManager:
 
         return current_price, industry
 
-    def _build_portfolio_snapshot_payload(self, stocks: List[Dict], account_name: Optional[str] = None) -> Dict:
+    def _build_portfolio_snapshot_payload(
+        self,
+        stocks: List[Dict],
+        account_name: Optional[str] = None,
+        *,
+        live_fetch: bool = True,
+    ) -> Dict:
         total_market_value = 0.0
         total_cost_value = 0.0
         holdings = []
@@ -1005,6 +1153,7 @@ class PortfolioManager:
             current_price, industry = self._get_latest_price_and_industry(
                 stock,
                 latest_analysis=latest_analysis_map.get(int(stock["id"])) if stock.get("id") else None,
+                live_fetch=live_fetch,
             )
             market_value = current_price * quantity
             cost_value = cost_price * quantity
@@ -1059,7 +1208,9 @@ class PortfolioManager:
         payload = self._build_portfolio_snapshot_payload(
             stocks,
             account_name=account_name,
+            live_fetch=True,
         )
+        self._store_snapshot_cache(account_name, payload, source=f"daily_snapshot:{source}")
         return self.db.upsert_daily_snapshot(
             account_name=account_name,
             snapshot_date=snapshot_date,
@@ -2723,7 +2874,7 @@ class PortfolioManager:
         if not stocks:
             return {"status": "error", "message": "没有持仓记录，无法评估风险"}
 
-        snapshot = self._build_portfolio_snapshot_payload(stocks, account_name)
+        snapshot = self.get_portfolio_snapshot(account_name=account_name)
         total_market_value = snapshot["total_market_value"]
         total_cost_value = snapshot["total_cost_value"]
         total_assets = float(snapshot.get("total_assets") or 0.0)
@@ -2741,8 +2892,10 @@ class PortfolioManager:
         for holding in snapshot["holdings"]:
             stock_values.append(
                 {
+                    "stock_id": holding.get("stock_id"),
                     "code": holding["code"],
                     "name": holding["name"],
+                    "current_price": holding.get("current_price"),
                     "market_value": holding["market_value"],
                     "cost_value": holding["cost_value"],
                     "pnl": holding["pnl"],

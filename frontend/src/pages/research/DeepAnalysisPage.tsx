@@ -7,7 +7,6 @@ import { PageFeedback } from "../../components/common/PageFeedback";
 import { PageFrame } from "../../components/common/PageFrame";
 import { TaskProgressBar } from "../../components/common/TaskProgressBar";
 import type { ActionPayload } from "../../components/research/AnalysisActionButtons";
-import { type AnalysisRecordDetail } from "../../components/research/AnalysisDetailPanel";
 import { ANALYST_OPTIONS, analystConfigToKeys, analystKeysToConfig, type AnalystKey } from "../../constants/analysts";
 import { usePageFeedback } from "../../hooks/usePageFeedback";
 import { usePollingLoader } from "../../hooks/usePollingLoader";
@@ -71,18 +70,6 @@ const sectionTabs = [
   { key: "watchlist", label: "关注中" },
   { key: "viewed", label: "看过" },
 ];
-
-function buildSingleRecordFromTask(task: TaskDetail | null): AnalysisRecordDetail | null {
-  const result = task?.result;
-  if (!result || result.mode !== "single") {
-    return null;
-  }
-  return {
-    id: result.record_id,
-    symbol: result.symbol,
-    stock_name: result.stock_info?.name || result.symbol,
-  };
-}
 
 function isWatchlistAsset(asset: FollowupAsset) {
   return asset.followup_status_label === "关注中" || asset.status === "watchlist";
@@ -198,7 +185,6 @@ export function DeepAnalysisPage({ startOnly = false }: DeepAnalysisPageProps = 
   const [section, setSection] = useState<SectionKey>("start");
   const [task, setTask] = useState<TaskDetail | null>(null);
   const [queuedTasks, setQueuedTasks] = useState<TaskDetail[]>([]);
-  const [singleRecord, setSingleRecord] = useState<AnalysisRecordDetail | null>(null);
   const [followupAssets, setFollowupAssets] = useState<FollowupAsset[]>([]);
   const [followupSearch, setFollowupSearch] = useState("");
   const [isSubmittingAnalysis, setIsSubmittingAnalysis] = useState(false);
@@ -212,23 +198,12 @@ export function DeepAnalysisPage({ startOnly = false }: DeepAnalysisPageProps = 
   );
 
   const loadTask = async () => {
-    const [active, latest, pending] = await Promise.all([
+    const [active, pending] = await Promise.all([
       apiFetch<TaskDetail | null>("/api/tasks/active"),
-      apiFetch<TaskDetail | null>("/api/tasks/latest"),
       apiFetch<TaskDetail[]>("/api/tasks/pending"),
     ]);
     setTask(active);
     setQueuedTasks((pending ?? []).filter((item) => item.status === "queued" && item.id !== active?.id));
-    if (latest?.status === "success" && latest.result?.mode === "single" && latest.result.record_id) {
-      const record = await apiFetch<AnalysisRecordDetail>(`/api/analysis-history/${latest.result.record_id}`);
-      setSingleRecord(record);
-      return;
-    }
-    if (latest?.status === "success") {
-      setSingleRecord(buildSingleRecordFromTask(latest));
-      return;
-    }
-    setSingleRecord(null);
   };
 
   const loadFollowupAssets = async () => {
@@ -441,26 +416,6 @@ export function DeepAnalysisPage({ startOnly = false }: DeepAnalysisPageProps = 
       </form>
 
       {task ? taskSection : null}
-
-      {singleRecord?.id ? (
-        <div className={styles.moduleSection}>
-          <div className={styles.listItem}>
-            <strong>分析已完成</strong>
-            <p className={styles.muted}>
-              {singleRecord.stock_name || singleRecord.symbol} 的详细报告不在当前页展开显示。
-            </p>
-            <div className={styles.actions}>
-              <button
-                className={styles.secondaryButton}
-                onClick={() => navigate(`/research/history?recordId=${singleRecord.id}`)}
-                type="button"
-              >
-                查看分析历史
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
     </ModuleCard>
   );
 

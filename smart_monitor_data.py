@@ -783,8 +783,33 @@ class SmartMonitorDataFetcher:
             
             # 计算均线
             df['ma5'] = df['收盘'].rolling(window=5).mean()
+            df['ma10'] = df['收盘'].rolling(window=10).mean()
             df['ma20'] = df['收盘'].rolling(window=20).mean()
             df['ma60'] = df['收盘'].rolling(window=60).mean()
+
+            prev_close = df['收盘'].shift(1)
+            true_range = pd.concat(
+                [
+                    (df['最高'] - df['最低']).abs(),
+                    (df['最高'] - prev_close).abs(),
+                    (df['最低'] - prev_close).abs(),
+                ],
+                axis=1,
+            ).max(axis=1)
+            df['atr14'] = true_range.rolling(window=14).mean()
+            df['pct_change'] = df['收盘'].pct_change() * 100
+            df['is_limit_up'] = df['pct_change'] >= 9.7
+            streak = []
+            current_streak = 0
+            for is_limit_up in df['is_limit_up'].fillna(False):
+                if bool(is_limit_up):
+                    current_streak += 1
+                else:
+                    current_streak = 0
+                streak.append(current_streak)
+            df['limit_up_streak'] = streak
+            df['prev_20d_high'] = df['最高'].shift(1).rolling(window=20).max()
+            df['prev_60d_high'] = df['最高'].shift(1).rolling(window=60).max()
             
             # 计算MACD
             df = self._calculate_macd(df)
@@ -808,8 +833,11 @@ class SmartMonitorDataFetcher:
             # 判断趋势
             current_price = float(latest['收盘'])
             ma5 = float(latest['ma5'])
+            ma10 = float(latest['ma10'])
             ma20 = float(latest['ma20'])
             ma60 = float(latest['ma60'])
+            atr14 = float(latest['atr14']) if pd.notna(latest['atr14']) else None
+            atr14_pct = (atr14 / current_price * 100) if atr14 and current_price > 0 else None
             
             if current_price > ma5 > ma20 > ma60:
                 trend = 'up'
@@ -870,9 +898,12 @@ class SmartMonitorDataFetcher:
             
             return {
                 'ma5': ma5,
+                'ma10': ma10,
                 'ma20': ma20,
                 'ma60': ma60,
                 'trend': trend,
+                'atr14': atr14,
+                'atr14_pct': atr14_pct,
                 'macd_dif': float(latest['dif']),
                 'macd_dea': float(latest['dea']),
                 'macd': float(latest['macd']),
@@ -887,6 +918,9 @@ class SmartMonitorDataFetcher:
                 'boll_lower': boll_lower,
                 'boll_position': boll_position,
                 'vol_ma5': float(latest['vol_ma5']),
+                'prev_20d_high': float(latest['prev_20d_high']) if pd.notna(latest['prev_20d_high']) else None,
+                'prev_60d_high': float(latest['prev_60d_high']) if pd.notna(latest['prev_60d_high']) else None,
+                'recent_limit_up_streak': int(latest['limit_up_streak']) if pd.notna(latest['limit_up_streak']) else 0,
                 'volume_ratio_vs_vol_ma5': float(latest['成交量']) / float(latest['vol_ma5']) if latest['vol_ma5'] > 0 else None,
                 'semantic_labels': semantic_labels  # 新增语义标签
             }

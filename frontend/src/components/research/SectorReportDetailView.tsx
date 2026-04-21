@@ -440,6 +440,8 @@ interface SectorReportDetailViewProps {
   backLabel: string;
   onBack: () => void;
   onExport: (kind: ExportKind) => void;
+  onLoadRawReports: () => void;
+  isLoadingRawReports?: boolean;
   reportView?: SectorStrategyReportView | null;
   dailyHeatPanel?: { available?: boolean; board_date?: string; total_count?: number; items?: Array<Record<string, unknown>> | null } | null;
 }
@@ -449,6 +451,8 @@ export function SectorReportDetailView({
   backLabel,
   onBack,
   onExport,
+  onLoadRawReports,
+  isLoadingRawReports = false,
   reportView,
   dailyHeatPanel,
 }: SectorReportDetailViewProps) {
@@ -614,7 +618,23 @@ export function SectorReportDetailView({
       </DetailSection>
 
       <DetailSection title="原始报告">
-        <FixedReportWorkspace reports={reportView?.raw_reports || null} />
+        {reportView?.raw_reports ? (
+          <FixedReportWorkspace reports={reportView.raw_reports} />
+        ) : (
+          <div className={styles.stack}>
+            <div className={styles.muted}>原始报告默认按需加载，避免首屏解析长文本。</div>
+            <div className={styles.actions}>
+              <button
+                className={styles.secondaryButton}
+                disabled={isLoadingRawReports}
+                onClick={onLoadRawReports}
+                type="button"
+              >
+                {isLoadingRawReports ? "加载中..." : "加载原始报告"}
+              </button>
+            </div>
+          </div>
+        )}
         {predictions?.raw_fallback_text ? (
           <div className={`${styles.noticeCard} ${styles.noticeInfo}`}>
             <strong>原始预测文本</strong>

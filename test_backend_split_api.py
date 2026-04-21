@@ -1,6 +1,8 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
+from fastapi_cache import FastAPICache
+from fastapi_cache.backends.inmemory import InMemoryBackend
 from fastapi.testclient import TestClient
 
 from backend.main import app
@@ -14,9 +16,11 @@ class BackendSplitApiTests(unittest.TestCase):
         self.password_hash_patcher = patch("backend.auth.config.ADMIN_PASSWORD_HASH", "")
         self.password_patcher.start()
         self.password_hash_patcher.start()
+        FastAPICache.init(InMemoryBackend(), prefix="test-cache")
         self.client = TestClient(app)
 
     def tearDown(self) -> None:
+        FastAPICache.reset()
         self.password_patcher.stop()
         self.password_hash_patcher.stop()
 
@@ -137,6 +141,22 @@ class BackendSplitApiTests(unittest.TestCase):
         self.assertEqual(response.json()["data"]["task_id"], "task-longhubang")
         mocked.assert_called_once()
 
+    def test_longhubang_history_detail_uses_service(self):
+        self.login()
+        with patch("backend.services.get_longhubang_report", return_value={"id": 11}) as mocked:
+            response = self.client.get("/api/strategies/longhubang/history/11")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["id"], 11)
+        mocked.assert_called_once_with(11, include_reports=False)
+
+    def test_longhubang_history_detail_supports_report_flag(self):
+        self.login()
+        with patch("backend.services.get_longhubang_report", return_value={"id": 11}) as mocked:
+            response = self.client.get("/api/strategies/longhubang/history/11?include_reports=1")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["id"], 11)
+        mocked.assert_called_once_with(11, include_reports=True)
+
     def test_submit_small_cap_task_uses_service(self):
         self.login()
         with patch("backend.services.submit_small_cap_selection_task", return_value="task-small-cap") as mocked:
@@ -220,6 +240,22 @@ class BackendSplitApiTests(unittest.TestCase):
         self.assertEqual(response.json()["data"]["task_id"], "task-macro-analysis")
         mocked.assert_called_once()
 
+    def test_macro_cycle_history_detail_uses_service(self):
+        self.login()
+        with patch("backend.services.get_macro_cycle_report", return_value={"id": 5}) as mocked:
+            response = self.client.get("/api/strategies/macro-cycle/history/5")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["id"], 5)
+        mocked.assert_called_once_with(5, include_reports=False)
+
+    def test_macro_cycle_history_detail_supports_report_flag(self):
+        self.login()
+        with patch("backend.services.get_macro_cycle_report", return_value={"id": 5}) as mocked:
+            response = self.client.get("/api/strategies/macro-cycle/history/5?include_reports=1")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["id"], 5)
+        mocked.assert_called_once_with(5, include_reports=True)
+
     def test_submit_news_flow_task_uses_service(self):
         self.login()
         with patch("backend.services.submit_news_flow_task", return_value="task-news-flow") as mocked:
@@ -227,6 +263,22 @@ class BackendSplitApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["data"]["task_id"], "task-news-flow")
         mocked.assert_called_once()
+
+    def test_news_flow_dashboard_uses_service(self):
+        self.login()
+        with patch("backend.services.get_news_flow_dashboard", return_value={"ok": True}) as mocked:
+            response = self.client.get("/api/strategies/news-flow/dashboard")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["ok"], True)
+        mocked.assert_called_once()
+
+    def test_news_flow_history_detail_uses_service(self):
+        self.login()
+        with patch("backend.services.get_news_flow_snapshot_detail", return_value={"id": 9}) as mocked:
+            response = self.client.get("/api/strategies/news-flow/history/9")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["id"], 9)
+        mocked.assert_called_once_with(9)
 
     def test_update_smart_selection_scheduler_passes_max_workers(self):
         self.login()
@@ -281,6 +333,28 @@ class BackendSplitApiTests(unittest.TestCase):
         self.assertEqual(response.json()["data"]["task_id"], "rebuild-task-3")
         self.assertTrue(response.json()["data"]["reused"])
         mocked.assert_called_once_with(reason="manual")
+
+    def test_sector_strategy_latest_task_supports_lightweight_flags(self):
+        self.login()
+        with patch(
+            "backend.services.get_latest_sector_strategy_task",
+            return_value={"id": "task-1", "status": "success"},
+        ) as mocked:
+            response = self.client.get("/api/strategies/sector-strategy/tasks/latest?full=1&include_raw_reports=1")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["id"], "task-1")
+        mocked.assert_called_once_with(full=True, include_raw_reports=True)
+
+    def test_sector_strategy_history_detail_supports_raw_report_flag(self):
+        self.login()
+        with patch(
+            "backend.services.get_sector_strategy_report",
+            return_value={"id": 7, "report_view": {"raw_reports": {}}},
+        ) as mocked:
+            response = self.client.get("/api/strategies/sector-strategy/history/7?include_raw_reports=1")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["id"], 7)
+        mocked.assert_called_once_with(7, include_raw_reports=True)
 
     def test_run_smart_monitor_tasks_once_retries_each_task_sequentially(self):
         tasks = [

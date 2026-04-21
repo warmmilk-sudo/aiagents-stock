@@ -130,6 +130,10 @@ class SectorStrategyScheduler:
             if not result.get("success"):
                 print("[智策定时] ✗ 分析失败")
                 raise RuntimeError(result.get("error") or "AI分析失败")
+
+            from backend.services import invalidate_report_cache
+
+            invalidate_report_cache("sector:list:", "sector:lifecycle:latest")
             
             print("[智策定时] ✓ 分析完成")
             
@@ -654,4 +658,3 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("\n停止测试...")
         sector_strategy_scheduler.stop()
-

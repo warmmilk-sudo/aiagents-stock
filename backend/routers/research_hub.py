@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 
 from backend.api import ApiError, success_payload
 from backend.auth import require_session
@@ -12,14 +12,20 @@ router = APIRouter(prefix="/api/watchlist-hub", tags=["research-hub"])
 
 
 @router.get("/overview")
-def get_overview(request: Request) -> dict:
-    require_session(request)
+def get_overview(
+    request: Request,
+    _session: dict = Depends(require_session),
+) -> dict:
     return success_payload(research_hub_service.get_hub_overview())
 
 
 @router.get("/assets")
-def list_assets(request: Request, pool: str = "", search_term: str = "") -> dict:
-    require_session(request)
+def list_assets(
+    request: Request,
+    _session: dict = Depends(require_session),
+    pool: str = "",
+    search_term: str = "",
+) -> dict:
     return success_payload(research_hub_service.list_hub_assets(pool=pool or None, search_term=search_term))
 
 
@@ -73,8 +79,10 @@ def quick_analyze(request: Request, payload: ResearchHubQuickAnalyzeRequest) -> 
 
 
 @router.get("/sector-strategy/latest")
-def get_sector_strategy_latest(request: Request) -> dict:
-    require_session(request)
+def get_sector_strategy_latest(
+    request: Request,
+    _session: dict = Depends(require_session),
+) -> dict:
     return success_payload(research_hub_service.get_recent_sector_strategy_report())
 
 

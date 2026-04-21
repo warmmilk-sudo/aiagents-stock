@@ -3,6 +3,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import json
 import os
+import re
 from typing import Dict, Optional
 from urllib.parse import urlparse
 
@@ -27,10 +28,10 @@ class NotificationService:
     def _normalize_notification_class(value) -> str:
         normalized = str(value or "").strip().lower().replace("-", "_")
         aliases = {
-            "focus": "focus_alert",
-            "focus_alert": "focus_alert",
-            "关注": "focus_alert",
-            "关注提醒": "focus_alert",
+            "focus": "price_alert",
+            "focus_alert": "price_alert",
+            "关注": "price_alert",
+            "关注提醒": "price_alert",
             "price": "price_alert",
             "price_alert": "price_alert",
             "价格": "price_alert",
@@ -57,7 +58,6 @@ class NotificationService:
     def _notification_label_for_class(cls, value) -> str:
         normalized = cls._normalize_notification_class(value)
         labels = {
-            "focus_alert": "关注提醒",
             "price_alert": "价格提醒",
             "risk_alert": "风险预警",
             "profit_alert": "收益信号",
@@ -98,12 +98,53 @@ class NotificationService:
 
     @staticmethod
     def _short_reason(value, limit: int = 150) -> str:
-        text = " ".join(str(value or "").split()).strip()
+        text = NotificationService._normalize_notification_text(value)
         if not text:
             return "盘中出现新的执行信号，请结合实时价格与阈值复核。"
-        if len(text) <= limit:
-            return text
-        return text[: limit - 1].rstrip("，,；;。.") + "…"
+        return text
+
+    @staticmethod
+    def _normalize_notification_text(value) -> str:
+        text = " ".join(str(value or "").split()).strip()
+        if not text:
+            return ""
+        text = re.sub(r"(?:\.{3,}|…+)(?:（已截断）)?", "。", text)
+        text = re.sub(r"。{2,}", "。", text)
+        return text.strip()
+
+    @staticmethod
+    def _ensure_sentence(text: str) -> str:
+        cleaned = NotificationService._normalize_notification_text(text)
+        if not cleaned:
+            return ""
+        if cleaned[-1] not in "。！？.!?":
+            return f"{cleaned}。"
+        return cleaned
+
+    @classmethod
+    def _build_notification_explanation(cls, notification: Dict, notification_class: str) -> str:
+        explicit = cls._short_reason(
+            notification.get("notification_explanation")
+            or notification.get("notification_reason"),
+            limit=120,
+        )
+        if explicit:
+            return cls._ensure_sentence(explicit)
+
+        trigger_summary = self._normalize_notification_text(
+            notification.get("trigger_summary") or notification.get("message")
+        )
+        base_explanations = {
+            "price_alert": "当前价格接近或进入预设区间，建议结合入场区间、止盈位和止损位复核。",
+            "risk_alert": "价格已经触及或逼近风险条件，系统会提示你优先检查止损和防守策略。",
+            "profit_alert": "价格已经接近或达到收益目标，系统会提示你考虑止盈或锁定利润。",
+            "system_alert": "这是系统同步、测试或修复类通知，用于确认监控链路正常。",
+            "other_alert": "当前信号无法稳定归类，建议先查看原始内容再决定下一步。",
+        }
+        explanation = base_explanations.get(notification_class, "系统已识别到一条通知，请结合原始内容判断含义。")
+        if trigger_summary:
+            return cls._ensure_sentence(f"{trigger_summary}，因此{explanation.rstrip('。')}")
+        return cls._ensure_sentence(explanation)
 
     def build_smart_monitor_notification_message(self, notification: Dict) -> Dict[str, str]:
         notification_class = self._normalize_notification_class(
@@ -121,9 +162,11 @@ class NotificationService:
         ).strip()
         symbol = str(notification.get("symbol") or "").strip()
         name = str(notification.get("name") or symbol).strip() or symbol
-        action_text = str(notification.get("action_text") or notification.get("action") or "").strip() or "观望"
-        action_detail = str(notification.get("action_detail") or action_text).strip() or action_text
-        trigger_summary = str(notification.get("trigger_summary") or notification.get("message") or "").strip()
+        action_text = self._normalize_notification_text(notification.get("action_text") or notification.get("action")) or "观望"
+        action_detail = self._normalize_notification_text(notification.get("action_detail") or action_text) or action_text
+        trigger_summary = self._normalize_notification_text(
+            notification.get("trigger_summary") or notification.get("message")
+        )
         rating = str(notification.get("rating") or "持有").strip() or "持有"
         confidence = notification.get("confidence_level")
         entry_range = self._stringify_entry_range(notification.get("entry_range"))
@@ -139,6 +182,7 @@ class NotificationService:
         reasoning_summary = self._short_reason(
             notification.get("notification_reason") or notification.get("details")
         )
+        explanation = self._build_notification_explanation(notification, notification_class)
 
         message = f"{notification_label} - {name}({symbol})"
         if trigger_summary:
@@ -158,6 +202,7 @@ class NotificationService:
             f"持仓状态: {notification.get('position_status') or 'N/A'}",
             f"浮动盈亏: {profit_loss_text}",
             f"触发摘要: {trigger_summary or '盘中出现新的交易计划信号'}",
+            f"解释说明: {explanation}",
             f"核心理由: {reasoning_summary}",
             f"触发时间: {notification.get('triggered_at') or ''}",
         ]
@@ -170,6 +215,7 @@ class NotificationService:
         return {
             "message": message,
             "content": "\n".join(content_lines),
+            "explanation": explanation,
         }
     
     def _load_config(self) -> Dict:
@@ -305,6 +351,12 @@ class NotificationService:
             msg['From'] = self.config['email_from']
             msg['To'] = self.config['email_to']
             msg['Subject'] = f"股票监测提醒 - {notification['symbol']}"
+            explanation = self._ensure_sentence(
+                notification.get("notification_explanation")
+                or notification.get("notification_reason")
+                or notification.get("details")
+                or ""
+            ) or "当前信号已由系统归类，请结合原始内容判断。"
             
             # 邮件正文
             body = f"""
@@ -313,6 +365,7 @@ class NotificationService:
             <p><strong>股票名称:</strong> {notification['name']}</p>
             <p><strong>提醒类型:</strong> {notification['type']}</p>
             <p><strong>提醒内容:</strong> {notification['message']}</p>
+            <p><strong>解释说明:</strong> {explanation}</p>
             <p><strong>触发时间:</strong> {notification['triggered_at']}</p>
             <hr>
             <p><em>此邮件由AI股票分析系统自动发送</em></p>
@@ -542,7 +595,10 @@ class NotificationService:
                 or notification.get("type")
                 or "提醒"
             ).strip()
-            trigger_summary = str(notification.get("trigger_summary") or notification.get("message") or "").strip()
+            trigger_summary = self._normalize_notification_text(
+                notification.get("trigger_summary") or notification.get("message")
+            )
+            explanation = self._build_notification_explanation(notification, notification_class)
             swing_label = str(notification.get("swing_execution_label") or "").strip()
             
             message_lines = [
@@ -560,6 +616,10 @@ class NotificationService:
                     f"**📣 触发摘要**: {trigger_summary}",
                     "",
                 ])
+            message_lines.extend([
+                f"**🧭 解释说明**: {explanation}",
+                "",
+            ])
             if swing_label:
                 message_lines.extend([
                     f"**📌 波段类型**: {swing_label}",
@@ -672,12 +732,7 @@ class NotificationService:
             import requests
 
             def _short_text(value, limit):
-                text = " ".join(str(value or "").split()).strip()
-                if not text:
-                    return ""
-                if len(text) <= limit:
-                    return text
-                return text[: limit - 1].rstrip("，,；;。.") + "…"
+                return self._normalize_notification_text(value)
 
             keyword = str(self.config.get('webhook_keyword') or '').strip()
             title_prefix = f"{keyword} - " if keyword else ""
@@ -695,6 +750,10 @@ class NotificationService:
                 or "提醒"
             ).strip()
             trigger_summary = _short_text(notification.get("trigger_summary") or notification.get("message"), 30)
+            explanation = _short_text(
+                self._build_notification_explanation(notification, notification_class),
+                40,
+            )
             swing_label = str(notification.get("swing_execution_label") or "").strip()
             triggered_at = str(notification.get("triggered_at") or "").strip()
             symbol = str(notification.get("symbol") or "").strip()
@@ -717,7 +776,14 @@ class NotificationService:
                         {
                             "tag": "div",
                             "text": {
-                                "content": f"**摘要**\n{trigger_summary or '盘中出现新的价格/关注信号'}",
+                                "content": f"**摘要**\n{trigger_summary or '盘中出现新的价格信号'}",
+                                "tag": "lark_md"
+                            }
+                        },
+                        {
+                            "tag": "div",
+                            "text": {
+                                "content": f"**解释说明**\n{explanation or '当前信号已由系统归类，请结合原始内容判断。'}",
                                 "tag": "lark_md"
                             }
                         },

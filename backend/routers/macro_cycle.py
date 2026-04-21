@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
+from fastapi_cache.decorator import cache
 
 from backend import services
 from backend.api import ApiError, success_payload
@@ -46,15 +47,24 @@ def get_task(request: Request, task_id: str) -> dict:
 
 
 @router.get("/history")
-def list_history(request: Request, limit: int = 20) -> dict:
-    require_session(request)
+@cache(expire=15, namespace="macro-cycle")
+def list_history(
+    request: Request,
+    _session: dict = Depends(require_session),
+    limit: int = 20,
+) -> dict:
     return success_payload(services.list_macro_cycle_reports(limit=limit))
 
 
 @router.get("/history/{report_id}")
-def get_history_report(request: Request, report_id: int) -> dict:
-    require_session(request)
-    report = services.get_macro_cycle_report(report_id)
+@cache(expire=15, namespace="macro-cycle")
+def get_history_report(
+    request: Request,
+    report_id: int,
+    _session: dict = Depends(require_session),
+    include_reports: bool = False,
+) -> dict:
+    report = services.get_macro_cycle_report(report_id, include_reports=include_reports)
     if not report:
         raise ApiError(404, "未找到宏观周期历史报告", error_code="macro_cycle_report_not_found")
     return success_payload(report)

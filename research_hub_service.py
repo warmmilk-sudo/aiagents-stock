@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
+import threading
 import time
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
@@ -32,6 +34,7 @@ SELECTION_NEGATIVE_KEYWORDS = ("减持", "监管函", "立案", "处罚", "问�
 RISK_NEWS_LOOKBACK_DAYS = 2
 RISK_EVENT_LOOKAHEAD_DAYS = 2
 RISK_ITEM_LIMIT = 6
+HUB_CACHE_TTL_SECONDS = 300
 
 SELECTION_MARKET_STATE_ICE = "ice"
 SELECTION_MARKET_STATE_RANGE = "range"
@@ -44,6 +47,56 @@ SELECTION_MARKET_STATE_LABELS = {
     SELECTION_MARKET_STATE_MOMO: "主升浪",
     SELECTION_MARKET_STATE_RETREAT: "高位退潮期",
 }
+
+_HUB_CACHE_LOCK = threading.RLock()
+_HUB_CACHE: Dict[str, Dict[str, Any]] = {}
+
+
+def _hub_cache_namespaced_key(cache_key: str) -> str:
+    return f"{os.getcwd()}::{cache_key}"
+
+
+def _hub_cache_get(cache_key: str) -> Optional[Any]:
+    namespaced_key = _hub_cache_namespaced_key(cache_key)
+    now = time.time()
+    with _HUB_CACHE_LOCK:
+        entry = _HUB_CACHE.get(namespaced_key)
+        if not isinstance(entry, dict):
+            return None
+        if now >= float(entry.get("expires_at") or 0):
+            _HUB_CACHE.pop(namespaced_key, None)
+            return None
+        return entry.get("value")
+
+
+def _hub_cache_set(cache_key: str, value: Any, ttl_seconds: int = HUB_CACHE_TTL_SECONDS) -> Any:
+    namespaced_key = _hub_cache_namespaced_key(cache_key)
+    with _HUB_CACHE_LOCK:
+        _HUB_CACHE[namespaced_key] = {
+            "value": value,
+            "expires_at": time.time() + max(1, int(ttl_seconds or HUB_CACHE_TTL_SECONDS)),
+        }
+    return value
+
+
+def _hub_cache_get_or_build(cache_key: str, builder, ttl_seconds: int = HUB_CACHE_TTL_SECONDS):
+    cached = _hub_cache_get(cache_key)
+    if cached is not None:
+        return cached
+    return _hub_cache_set(cache_key, builder(), ttl_seconds=ttl_seconds)
+
+
+def invalidate_hub_cache(*prefixes: str) -> None:
+    if not prefixes:
+        return
+    namespace_prefix = f"{os.getcwd()}::"
+    with _HUB_CACHE_LOCK:
+        for cache_key in list(_HUB_CACHE.keys()):
+            if not cache_key.startswith(namespace_prefix):
+                continue
+            local_key = cache_key[len(namespace_prefix):]
+            if any(local_key.startswith(prefix) for prefix in prefixes):
+                _HUB_CACHE.pop(cache_key, None)
 
 SELECTION_AGENT_PROFILES: Dict[str, Dict[str, Any]] = {
     SELECTION_MARKET_STATE_MOMO: {
@@ -545,27 +598,30 @@ def _get_sector_strategy_report_light(report_id: int) -> Optional[Dict[str, Any]
 
 
 def get_recent_sector_strategy_report() -> Dict[str, Any]:
-    latest = _get_latest_sector_strategy_report_light()
-    if not latest:
-        return {"available": False, "reused": False, "max_age_hours": SECTOR_REPORT_MAX_AGE_HOURS}
-    report_time = _parse_dt(latest.get("analysis_date") or latest.get("created_at"))
-    is_fresh = False
-    if report_time is not None:
-        is_fresh = datetime.now() - report_time <= timedelta(hours=SECTOR_REPORT_MAX_AGE_HOURS)
-    summary_data = latest.get("summary_data") or {}
-    return {
-        "available": True,
-        "fresh": bool(is_fresh),
-        "reused": bool(is_fresh),
-        "report_id": latest.get("id"),
-        "analysis_date": latest.get("analysis_date") or latest.get("created_at"),
-        "headline": summary_data.get("headline") or latest.get("summary") or "智策板块报告",
-        "market_view": summary_data.get("market_view") or "暂无",
-        "major_risk": summary_data.get("major_risk") or "暂无",
-        "strategy": summary_data.get("strategy") or "暂无",
-        "heat": _extract_sector_heat(latest),
-        "max_age_hours": SECTOR_REPORT_MAX_AGE_HOURS,
-    }
+    def builder() -> Dict[str, Any]:
+        latest = _get_latest_sector_strategy_report_light()
+        if not latest:
+            return {"available": False, "reused": False, "max_age_hours": SECTOR_REPORT_MAX_AGE_HOURS}
+        report_time = _parse_dt(latest.get("analysis_date") or latest.get("created_at"))
+        is_fresh = False
+        if report_time is not None:
+            is_fresh = datetime.now() - report_time <= timedelta(hours=SECTOR_REPORT_MAX_AGE_HOURS)
+        summary_data = latest.get("summary_data") or {}
+        return {
+            "available": True,
+            "fresh": bool(is_fresh),
+            "reused": bool(is_fresh),
+            "report_id": latest.get("id"),
+            "analysis_date": latest.get("analysis_date") or latest.get("created_at"),
+            "headline": summary_data.get("headline") or latest.get("summary") or "智策板块报告",
+            "market_view": summary_data.get("market_view") or "暂无",
+            "major_risk": summary_data.get("major_risk") or "暂无",
+            "strategy": summary_data.get("strategy") or "暂无",
+            "heat": _extract_sector_heat(latest),
+            "max_age_hours": SECTOR_REPORT_MAX_AGE_HOURS,
+        }
+
+    return _hub_cache_get_or_build("sector-report:recent", builder, ttl_seconds=120)
 
 
 def _wait_for_sector_strategy_task(task_id: str) -> Dict[str, Any]:
@@ -702,143 +758,160 @@ def _build_asset_item(asset: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def list_hub_assets(*, pool: Optional[str] = None, search_term: str = "") -> List[Dict[str, Any]]:
-    if pool == STATUS_RESEARCH:
-        statuses = [STATUS_HOLDING, STATUS_FOCUS, STATUS_RESEARCH]
-    elif pool in {STATUS_FOCUS, STATUS_HOLDING}:
-        statuses = [pool]
-    else:
-        statuses = [STATUS_HOLDING, STATUS_FOCUS, STATUS_RESEARCH]
-    items: List[Dict[str, Any]] = []
-    search = str(search_term or "").strip().lower()
-    for status in statuses:
-        assets = asset_repository.list_assets(status=status, include_deleted=False)
-        for asset in assets:
-            item = _build_asset_item(asset)
-            if search:
-                haystack = " ".join(
-                    [
-                        str(item.get("symbol") or ""),
-                        str(item.get("name") or ""),
-                        str(item.get("latest_analysis_summary") or ""),
-                        str(item.get("pool_reason") or ""),
-                        " ".join(str(tag or "") for tag in item.get("display_tags") or []),
-                    ]
-                ).lower()
-                if search not in haystack:
-                    continue
-            items.append(item)
-    items.sort(
-        key=lambda item: (
-            1 if item.get("manual_pin") else 0,
-            2 if item.get("status") == STATUS_HOLDING else 1 if item.get("status") == STATUS_FOCUS else 0,
-            (_parse_dt(item.get("latest_analysis_time")) or datetime.min) if item.get("status") == STATUS_RESEARCH else datetime.min,
-            _safe_float(item.get("last_funnel_score")),
-            str(item.get("updated_at") or ""),
-            int(item.get("id") or 0),
-        ),
-        reverse=True,
+    normalized_pool = str(pool or "").strip().lower() or "all"
+    normalized_search = str(search_term or "").strip().lower()
+
+    def builder() -> List[Dict[str, Any]]:
+        if pool == STATUS_RESEARCH:
+            statuses = [STATUS_HOLDING, STATUS_FOCUS, STATUS_RESEARCH]
+        elif pool in {STATUS_FOCUS, STATUS_HOLDING}:
+            statuses = [pool]
+        else:
+            statuses = [STATUS_HOLDING, STATUS_FOCUS, STATUS_RESEARCH]
+        items: List[Dict[str, Any]] = []
+        for status in statuses:
+            assets = asset_repository.list_assets(status=status, include_deleted=False)
+            for asset in assets:
+                item = _build_asset_item(asset)
+                if normalized_search:
+                    haystack = " ".join(
+                        [
+                            str(item.get("symbol") or ""),
+                            str(item.get("name") or ""),
+                            str(item.get("latest_analysis_summary") or ""),
+                            str(item.get("pool_reason") or ""),
+                            " ".join(str(tag or "") for tag in item.get("display_tags") or []),
+                        ]
+                    ).lower()
+                    if normalized_search not in haystack:
+                        continue
+                items.append(item)
+        items.sort(
+            key=lambda item: (
+                1 if item.get("manual_pin") else 0,
+                2 if item.get("status") == STATUS_HOLDING else 1 if item.get("status") == STATUS_FOCUS else 0,
+                (_parse_dt(item.get("latest_analysis_time")) or datetime.min) if item.get("status") == STATUS_RESEARCH else datetime.min,
+                _safe_float(item.get("last_funnel_score")),
+                str(item.get("updated_at") or ""),
+                int(item.get("id") or 0),
+            ),
+            reverse=True,
+        )
+        return items
+
+    return _hub_cache_get_or_build(
+        f"assets:{normalized_pool}:{normalized_search}",
+        builder,
     )
-    return items
 
 
 def get_hub_overview() -> Dict[str, Any]:
-    assets = list_hub_assets()
-    grouped = {
-        STATUS_HOLDING: [item for item in assets if item.get("status") == STATUS_HOLDING],
-        STATUS_FOCUS: [item for item in assets if item.get("status") == STATUS_FOCUS],
-        STATUS_RESEARCH: [item for item in assets if item.get("status") == STATUS_RESEARCH],
-    }
-    return {
-        "counts": {
-            "holding": len(grouped[STATUS_HOLDING]),
-            "focus": len(grouped[STATUS_FOCUS]),
-            "research": len(grouped[STATUS_RESEARCH]),
-            "manual_pin": sum(1 for item in assets if item.get("manual_pin")),
-        },
-        "focus_capacity": FOCUS_CAPACITY,
-        "top_focus": grouped[STATUS_FOCUS][:FOCUS_CAPACITY],
-        "holdings": grouped[STATUS_HOLDING],
-        "sector_report": get_recent_sector_strategy_report(),
-    }
+    def builder() -> Dict[str, Any]:
+        assets = list_hub_assets()
+        grouped = {
+            STATUS_HOLDING: [item for item in assets if item.get("status") == STATUS_HOLDING],
+            STATUS_FOCUS: [item for item in assets if item.get("status") == STATUS_FOCUS],
+            STATUS_RESEARCH: [item for item in assets if item.get("status") == STATUS_RESEARCH],
+        }
+        return {
+            "counts": {
+                "holding": len(grouped[STATUS_HOLDING]),
+                "focus": len(grouped[STATUS_FOCUS]),
+                "research": len(grouped[STATUS_RESEARCH]),
+                "manual_pin": sum(1 for item in assets if item.get("manual_pin")),
+            },
+            "focus_capacity": FOCUS_CAPACITY,
+            "top_focus": grouped[STATUS_FOCUS][:FOCUS_CAPACITY],
+            "holdings": grouped[STATUS_HOLDING],
+            "sector_report": get_recent_sector_strategy_report(),
+        }
+
+    return _hub_cache_get_or_build("overview", builder)
 
 
 def get_hub_asset_detail(asset_id: int) -> Optional[Dict[str, Any]]:
-    asset = asset_repository.get_asset(int(asset_id))
-    if not asset:
-        return None
-    item = _build_asset_item(asset)
-    latest_record = analysis_repository.get_latest_strategy_context(asset_id=asset_id, symbol=asset.get("symbol")) or {}
-    latest_decisions = _list_ai_decisions(asset.get("symbol"), limit=1)
-    item["memory_summary"] = _get_agent_memory_service().db.get_memory_summary(asset.get("symbol"))
-    item["recent_trades"] = asset_repository.get_trade_history(asset_id, limit=10)
-    item["pending_actions"] = asset_repository.list_pending_actions(asset_id=asset_id, limit=10)
-    item["latest_strategy_context"] = latest_record
-    item["latest_decision"] = latest_decisions[0] if latest_decisions else None
-    return item
+    def builder() -> Optional[Dict[str, Any]]:
+        asset = asset_repository.get_asset(int(asset_id))
+        if not asset:
+            return None
+        item = _build_asset_item(asset)
+        latest_record = analysis_repository.get_latest_strategy_context(asset_id=asset_id, symbol=asset.get("symbol")) or {}
+        latest_decisions = _list_ai_decisions(asset.get("symbol"), limit=1)
+        item["memory_summary"] = _get_agent_memory_service().db.get_memory_summary(asset.get("symbol"))
+        item["recent_trades"] = asset_repository.get_trade_history(asset_id, limit=10)
+        item["pending_actions"] = asset_repository.list_pending_actions(asset_id=asset_id, limit=10)
+        item["latest_strategy_context"] = latest_record
+        item["latest_decision"] = latest_decisions[0] if latest_decisions else None
+        return item
+
+    return _hub_cache_get_or_build(f"detail:{int(asset_id)}", builder)
 
 
 def get_hub_asset_timeline(asset_id: int) -> List[Dict[str, Any]]:
-    asset = asset_repository.get_asset(int(asset_id))
-    if not asset:
-        return []
-    symbol = asset.get("symbol")
-    events: List[Dict[str, Any]] = []
-    for record in analysis_repository.list_record_summaries(symbol=symbol, asset_id=asset_id, limit=20):
-        events.append(
-            {
-                "event_type": "analysis_added",
-                "title": "入研究池",
-                "time": record.get("analysis_date"),
-                "summary": record.get("summary") or record.get("rating") or "已完成分析",
-                "payload": {
-                    "record_id": record.get("id"),
-                    "rating": record.get("rating"),
-                    "analysis_scope": record.get("analysis_scope"),
-                },
-            }
-        )
-    for trade in asset_repository.get_trade_history(asset_id, limit=20):
-        trade_type = str(trade.get("trade_type") or "").lower()
-        event_type = "position_opened" if trade_type == "buy" else "position_closed_to_research" if trade_type == "sell" else "position_adjusted"
-        title = "建仓与调仓" if trade_type == "buy" else "清仓回研究池" if not asset.get("quantity") else "建仓与调仓"
-        events.append(
-            {
-                "event_type": event_type,
-                "title": title,
-                "time": trade.get("trade_date"),
-                "summary": f"{'买入' if trade_type == 'buy' else '卖出'} {trade.get('quantity')} 股 @ {trade.get('price')}",
-                "payload": trade,
-            }
-        )
-    for action in asset_repository.list_pending_actions(asset_id=asset_id, limit=20):
-        events.append(
-            {
-                "event_type": "position_adjusted",
-                "title": "待办动作",
-                "time": action.get("created_at"),
-                "summary": f"{action.get('action_type')} | {action.get('status')}",
-                "payload": action,
-            }
-        )
-    decisions = _list_ai_decisions(symbol, limit=20)
-    for decision in decisions:
-        action = str(decision.get("action") or "").upper()
-        title = "清仓回研究池" if action == "SELL" else "晋级备选" if action == "BUY" else "建仓与调仓"
-        events.append(
-            {
-                "event_type": "focus_promoted" if action == "BUY" else "position_closed_to_research" if action == "SELL" else "position_adjusted",
-                "title": title,
-                "time": decision.get("decision_time"),
-                "summary": decision.get("reasoning") or decision.get("action_detail") or action,
-                "payload": {
-                    "decision_id": decision.get("id"),
-                    "action": action,
-                    "risk_level": decision.get("risk_level"),
-                },
-            }
-        )
-    events.sort(key=lambda item: str(item.get("time") or ""), reverse=True)
-    return events
+    def builder() -> List[Dict[str, Any]]:
+        asset = asset_repository.get_asset(int(asset_id))
+        if not asset:
+            return []
+        symbol = asset.get("symbol")
+        events: List[Dict[str, Any]] = []
+        for record in analysis_repository.list_record_summaries(symbol=symbol, asset_id=asset_id, limit=20):
+            events.append(
+                {
+                    "event_type": "analysis_added",
+                    "title": "入研究池",
+                    "time": record.get("analysis_date"),
+                    "summary": record.get("summary") or record.get("rating") or "已完成分析",
+                    "payload": {
+                        "record_id": record.get("id"),
+                        "rating": record.get("rating"),
+                        "analysis_scope": record.get("analysis_scope"),
+                    },
+                }
+            )
+        for trade in asset_repository.get_trade_history(asset_id, limit=20):
+            trade_type = str(trade.get("trade_type") or "").lower()
+            event_type = "position_opened" if trade_type == "buy" else "position_closed_to_research" if trade_type == "sell" else "position_adjusted"
+            title = "建仓与调仓" if trade_type == "buy" else "清仓回研究池" if not asset.get("quantity") else "建仓与调仓"
+            events.append(
+                {
+                    "event_type": event_type,
+                    "title": title,
+                    "time": trade.get("trade_date"),
+                    "summary": f"{'买入' if trade_type == 'buy' else '卖出'} {trade.get('quantity')} 股 @ {trade.get('price')}",
+                    "payload": trade,
+                }
+            )
+        for action in asset_repository.list_pending_actions(asset_id=asset_id, limit=20):
+            events.append(
+                {
+                    "event_type": "position_adjusted",
+                    "title": "待办动作",
+                    "time": action.get("created_at"),
+                    "summary": f"{action.get('action_type')} | {action.get('status')}",
+                    "payload": action,
+                }
+            )
+        decisions = _list_ai_decisions(symbol, limit=20)
+        for decision in decisions:
+            action = str(decision.get("action") or "").upper()
+            title = "清仓回研究池" if action == "SELL" else "晋级备选" if action == "BUY" else "建仓与调仓"
+            events.append(
+                {
+                    "event_type": "focus_promoted" if action == "BUY" else "position_closed_to_research" if action == "SELL" else "position_adjusted",
+                    "title": title,
+                    "time": decision.get("decision_time"),
+                    "summary": decision.get("reasoning") or decision.get("action_detail") or action,
+                    "payload": {
+                        "decision_id": decision.get("id"),
+                        "action": action,
+                        "risk_level": decision.get("risk_level"),
+                    },
+                }
+            )
+        events.sort(key=lambda item: str(item.get("time") or ""), reverse=True)
+        return events
+
+    return _hub_cache_get_or_build(f"timeline:{int(asset_id)}", builder)
 
 
 def update_hub_asset(
@@ -884,6 +957,7 @@ def update_hub_asset(
             )
         elif target_status == STATUS_HOLDING:
             raise ValueError("持仓状态只能通过交易记录变更")
+    invalidate_hub_cache("overview", "assets:", f"detail:{int(asset_id)}", f"timeline:{int(asset_id)}", "sector-report:recent")
     return get_hub_asset_detail(asset_id)
 
 
@@ -895,7 +969,10 @@ def delete_hub_asset(asset_id: int) -> bool:
         raise ValueError("仅支持删除研究池卡片")
 
     asset_service.sync_managed_monitors(asset_id)
-    return asset_repository.soft_delete_asset(asset_id)
+    deleted = asset_repository.soft_delete_asset(asset_id)
+    if deleted:
+        invalidate_hub_cache("overview", "assets:", f"detail:{int(asset_id)}", f"timeline:{int(asset_id)}", "sector-report:recent")
+    return deleted
 
 
 def quick_analyze_and_add_to_research(symbol: str) -> Dict[str, Any]:
@@ -913,6 +990,7 @@ def quick_analyze_and_add_to_research(symbol: str) -> Dict[str, Any]:
         raise RuntimeError(result.get("error") or f"{normalized_symbol} 分析失败")
     record_id = result.get("record_id")
     asset = asset_repository.get_asset_by_symbol(normalized_symbol)
+    invalidate_hub_cache("overview", "assets:", "sector-report:recent")
     return {
         "symbol": normalized_symbol,
         "record_id": record_id,
@@ -2404,6 +2482,7 @@ def _persist_selection_results(
             }
         )
 
+    invalidate_hub_cache("overview", "assets:")
     return demoted
 
 

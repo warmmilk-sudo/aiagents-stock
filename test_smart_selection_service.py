@@ -140,6 +140,16 @@ class SmartSelectionServiceTests(unittest.TestCase):
         self.assertEqual(result["market_context"]["state"], "momentum")
         watch_pool = self.service.list_watch_pool()
         self.assertEqual([item["symbol"] for item in watch_pool], ["600001"])
+        selected = result["final_selected"][0]
+        self.assertAlmostEqual(selected["agent_composite_score"], 160.0, places=2)
+        self.assertGreater(selected["execution_composite_score"], 0)
+        expected_score = round(
+            selected["agent_composite_score"] * selected["score_fusion_weights"]["agent"]
+            + selected["execution_composite_score"] * selected["score_fusion_weights"]["execution"]
+            + selected["readiness_adjustment"],
+            2,
+        )
+        self.assertAlmostEqual(selected["score"], expected_score, places=2)
 
     def test_import_replaces_existing_focus(self):
         run_id = self.service._insert_run(trigger_source="manual", lightweight_model=None, reasoning_model=None)
@@ -189,7 +199,7 @@ class SmartSelectionServiceTests(unittest.TestCase):
         self.assertTrue(score_calls)
         self.assertTrue(all(call[1].get("market_context", {}).get("state") == "momentum" for call in score_calls))
 
-    def test_pipeline_requires_tail_session_for_final_selection(self):
+    def test_scheduled_pipeline_requires_tail_session_for_final_selection(self):
         run_id = self.service._insert_run(trigger_source="manual", lightweight_model=None, reasoning_model=None)
 
         def non_tail_candidate(asset, context, lifecycle_snapshot):
@@ -200,10 +210,46 @@ class SmartSelectionServiceTests(unittest.TestCase):
 
         common_patches = self._run_with_common_patches(score_side_effect=non_tail_candidate)
         with common_patches[0], common_patches[1], common_patches[2], common_patches[3], common_patches[4], common_patches[5], common_patches[6], common_patches[7]:
-            result = self.service._run_pipeline(run_id)
+            result = self.service._run_pipeline(run_id, trigger_source="scheduled")
 
         self.assertEqual(result["final_selected"], [])
         self.assertTrue(any("未到尾盘时段" in warning for warning in result["warnings"]))
+
+    def test_manual_pipeline_relaxes_tail_session_requirement(self):
+        run_id = self.service._insert_run(trigger_source="manual", lightweight_model=None, reasoning_model=None)
+
+        def non_tail_candidate(asset, context, lifecycle_snapshot):
+            candidate = self._fake_candidate(asset, context, lifecycle_snapshot)
+            candidate["technical_metrics"]["tail_session"] = False
+            candidate["technical_metrics"]["latest_minute_time"] = "13:20"
+            return candidate
+
+        common_patches = self._run_with_common_patches(score_side_effect=non_tail_candidate)
+        with common_patches[0], common_patches[1], common_patches[2], common_patches[3], common_patches[4], common_patches[5], common_patches[6], common_patches[7]:
+            result = self.service._run_pipeline(run_id, trigger_source="manual")
+
+        self.assertEqual([item["symbol"] for item in result["final_selected"]], ["600002"])
+        self.assertFalse(result["final_selected"][0]["execution_ready"])
+        self.assertTrue(any("盘中探索模式" in warning for warning in result["warnings"]))
+
+    def test_scheduled_pipeline_records_execution_gate_items(self):
+        run_id = self.service._insert_run(trigger_source="manual", lightweight_model=None, reasoning_model=None)
+
+        def gated_candidate(asset, context, lifecycle_snapshot):
+            candidate = self._fake_candidate(asset, context, lifecycle_snapshot)
+            if asset["symbol"] == "600002":
+                candidate["technical_metrics"]["tail_session"] = False
+                candidate["technical_metrics"]["latest_minute_time"] = "13:20"
+            return candidate
+
+        common_patches = self._run_with_common_patches(score_side_effect=gated_candidate)
+        with common_patches[0], common_patches[1], common_patches[2], common_patches[3], common_patches[4], common_patches[5], common_patches[6], common_patches[7]:
+            result = self.service._run_pipeline(run_id, trigger_source="scheduled")
+
+        self.assertEqual(result["final_selected"], [])
+        self.assertEqual([item["symbol"] for item in result["excluded_by_execution_gate"]], ["600002"])
+        self.assertEqual(result["excluded_by_execution_gate"][0]["execution_gate_type"], "tail_session")
+        self.assertIn("未到尾盘执行时段", result["excluded_by_execution_gate"][0]["execution_gate_reason"])
 
     def test_pipeline_applies_individual_risk_veto(self):
         run_id = self.service._insert_run(trigger_source="manual", lightweight_model=None, reasoning_model=None)
@@ -220,6 +266,78 @@ class SmartSelectionServiceTests(unittest.TestCase):
         self.assertEqual(result["final_selected"], [])
         self.assertEqual([item["symbol"] for item in result["excluded_by_risk_veto"]], ["600002"])
         self.assertIn("个股风控否决", result["excluded_by_risk_veto"][0]["reason"])
+
+    def test_decay_candidates_are_not_silently_dropped(self):
+        run_id = self.service._insert_run(trigger_source="manual", lightweight_model=None, reasoning_model=None)
+        lifecycle_snapshot = [
+            {
+                "sector_name": "算力租赁",
+                "heat_score": 82,
+                "lifecycle_stage": "startup",
+                "defense_line_type": "MA10",
+                "selection_veto": False,
+                "trajectory": [{"day_offset": -2, "score": 65}, {"day_offset": 0, "score": 82}],
+                "delta_1": 5.0,
+                "delta_2": 12.0,
+                "action_hint": "启动期观察",
+            },
+            {
+                "sector_name": "机器人",
+                "heat_score": 95,
+                "lifecycle_stage": "explosive",
+                "defense_line_type": "MA5",
+                "selection_veto": False,
+                "trajectory": [{"day_offset": -2, "score": 80}, {"day_offset": 0, "score": 95}],
+                "delta_1": 8.0,
+                "delta_2": 15.0,
+                "action_hint": "爆发期执行",
+            },
+            {
+                "sector_name": "高位题材",
+                "heat_score": 78,
+                "lifecycle_stage": "decay",
+                "defense_line_type": "NONE",
+                "selection_veto": False,
+                "trajectory": [{"day_offset": -2, "score": 92}, {"day_offset": 0, "score": 78}],
+                "delta_1": -6.0,
+                "delta_2": -14.0,
+                "action_hint": "衰退期观察",
+            },
+        ]
+        common_patches = self._run_with_common_patches()
+        with common_patches[0], common_patches[1], common_patches[2], common_patches[3], common_patches[4], common_patches[5], common_patches[6], common_patches[7], patch.object(
+            self.service.sector_strategy_db,
+            "get_lifecycle_items_for_analysis",
+            return_value=lifecycle_snapshot,
+        ):
+            result = self.service._run_pipeline(run_id)
+
+        self.assertEqual([item["symbol"] for item in result["observed_decay_candidates"]], ["600003"])
+        self.assertEqual([item["symbol"] for item in result["excluded_by_lifecycle_veto"]], [])
+        self.assertIn("保留观察", result["observed_decay_candidates"][0]["reason"])
+
+    def test_selection_sector_snapshot_supports_fuzzy_lifecycle_match(self):
+        selection_sectors, lifecycle_by_name = self.service._build_selection_sector_snapshot(
+            extracted_sectors=[{"sector": "通航", "heat_score": 88, "source": "heat.hottest"}],
+            lifecycle_snapshot=[
+                {
+                    "sector_name": "通用航空",
+                    "heat_score": 76,
+                    "lifecycle_stage": "explosive",
+                    "defense_line_type": "MA5",
+                    "selection_veto": False,
+                    "trajectory": [],
+                    "delta_1": 4.0,
+                    "delta_2": 9.0,
+                    "action_hint": "爆发期执行",
+                }
+            ],
+            warnings=[],
+        )
+
+        self.assertEqual(selection_sectors[0]["sector"], "通航")
+        self.assertEqual(selection_sectors[0]["lifecycle_sector"], "通用航空")
+        self.assertEqual(lifecycle_by_name["通航"]["sector_name"], "通用航空")
 
 
 if __name__ == "__main__":

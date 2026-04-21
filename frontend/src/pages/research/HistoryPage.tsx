@@ -1,12 +1,14 @@
-import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 
 import { PageFeedback } from "../../components/common/PageFeedback";
 import { PageFrame } from "../../components/common/PageFrame";
 import { MarkdownReport } from "../../components/research/MarkdownReport";
 import { usePageFeedback } from "../../hooks/usePageFeedback";
-import { apiFetch, buildQuery } from "../../lib/api";
+import { markAnalysisViewed } from "../../lib/analysisReadState";
+import { apiFetch, apiFetchCached, buildQuery } from "../../lib/api";
 import { formatDateTime } from "../../lib/datetime";
+import { useArchiveStore } from "../../stores/archiveStore";
 import styles from "../ConsolePage.module.scss";
 
 interface ActionPayload {
@@ -93,6 +95,15 @@ interface RawReportEntry {
 
 type ReportCategory = "technical" | "fundamental" | "fund_flow" | "market" | "news" | "risk" | "team";
 type ArchiveCategory = "持仓" | "关注" | "研究池";
+
+const ARCHIVE_LIST_CACHE_TTL_MS = 60_000;
+const ARCHIVE_PROFILE_CACHE_TTL_MS = 60_000;
+const ARCHIVE_DETAIL_CACHE_TTL_MS = 120_000;
+const ARCHIVE_LOCAL_CACHE_MAX_AGE_MS = 12 * 60 * 60 * 1000;
+
+function isArchiveCacheUsable(updatedAt?: number) {
+  return Number.isFinite(updatedAt) && Date.now() - Number(updatedAt) <= ARCHIVE_LOCAL_CACHE_MAX_AGE_MS;
+}
 
 interface StockArchiveContentProps {
   embedded?: boolean;
@@ -336,10 +347,17 @@ function HistoryDetailSection({
   );
 }
 
-function StockMemoryPanel({ symbol, archive, onUpdate }: { symbol: string, archive: MemoryArchive | null, onUpdate: () => void }) {
+function StockMemoryPanel({
+  symbol,
+  archive,
+  onUpdate,
+}: {
+  symbol: string,
+  archive: MemoryArchive | null,
+  onUpdate: () => void,
+}) {
   const [editingProfile, setEditingProfile] = useState(false);
   const [profileText, setProfileText] = useState("");
-  const [isRebuilding, setIsRebuilding] = useState(false);
   const { showError, showMessage } = usePageFeedback();
 
   if (!archive) {
@@ -368,35 +386,10 @@ function StockMemoryPanel({ symbol, archive, onUpdate }: { symbol: string, archi
 
   const activeFacts = archive.factual_memories.filter((f) => !f.is_ignored);
 
-  const handleRebuild = async () => {
-    if (!window.confirm(`确定要为 ${symbol} 重建全部核心事实和底色记忆吗？此操作将发送请求给大模型，可能需要耗居几十秒或一分钟等较长时间。`)) {
-      return;
-    }
-    setIsRebuilding(true);
-    try {
-      await apiFetch(`/api/memory/${symbol}/rebuild`, { method: "POST" });
-      showMessage("记忆重建已完成");
-      onUpdate();
-    } catch (e) {
-      showError(e instanceof Error ? e.message : "重建记忆失败");
-    } finally {
-      setIsRebuilding(false);
-    }
-  };
-
   return (
     <section className={styles.card}>
-      <div className={styles.historyDetailSummary} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <span>多智能体记忆库</span>
-        <button
-          onClick={handleRebuild}
-          disabled={isRebuilding}
-          className={styles.secondaryButton}
-          style={{ padding: '4px 10px', fontSize: '0.9rem' }}
-          type="button"
-        >
-          {isRebuilding ? '正在重建...' : '重建记忆'}
-        </button>
+      <div className={styles.historyDetailSummary}>
+        多智能体记忆库
       </div>
       <div className={styles.historyDetailPanelBody} style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginTop: '1rem' }}>
         <div style={{ backgroundColor: '#2a2a2a', padding: '1rem', borderRadius: '8px' }}>
@@ -528,16 +521,39 @@ function RawReportWorkspace({
 
 export function StockArchiveContent({ embedded = false, initialSymbol = "", onBackToHub }: StockArchiveContentProps = {}) {
   const [searchParams, setSearchParams] = useSearchParams();
+  const initialSelectedSymbol = initialSymbol || searchParams.get("symbol") || "";
+  const initialSelectedRecordId = Number(searchParams.get("recordId") || 0);
+  const initialArchiveState = useArchiveStore.getState();
+  const initialSummaryCache = initialArchiveState.summaryCacheByQuery[""] ?? null;
+  const initialProfileCache = initialSelectedSymbol
+    ? initialArchiveState.profileCacheBySymbol[initialSelectedSymbol.toUpperCase()] ?? null
+    : null;
+  const initialDetailCache = initialSelectedRecordId
+    ? initialArchiveState.detailCacheById[String(initialSelectedRecordId)] ?? null
+    : null;
 
   // States for Level 1 (Stock Summaries)
-  const [stockSummaries, setStockSummaries] = useState<AnalysisHistoryStockSummary[]>([]);
+  const [stockSummaries, setStockSummaries] = useState<AnalysisHistoryStockSummary[]>(
+    () => (initialSummaryCache?.items as AnalysisHistoryStockSummary[]) ?? [],
+  );
 
   // States for Level 2 (Stock Profile)
-  const [stockRecords, setStockRecords] = useState<AnalysisHistoryItem[]>([]);
-  const [memoryArchive, setMemoryArchive] = useState<MemoryArchive | null>(null);
+  const [stockRecords, setStockRecords] = useState<AnalysisHistoryItem[]>(
+    () => (initialProfileCache?.records as AnalysisHistoryItem[]) ?? [],
+  );
+  const [memoryArchive, setMemoryArchive] = useState<MemoryArchive | null>(
+    () => (initialProfileCache?.memoryArchive as MemoryArchive | null) ?? null,
+  );
 
   // States for Level 3 (Record Detail)
-  const [recordDetails, setRecordDetails] = useState<Record<number, AnalysisRecordDetail>>({});
+  const [recordDetails, setRecordDetails] = useState<Record<number, AnalysisRecordDetail>>(() => {
+    if (!initialSelectedRecordId || !initialDetailCache?.detail) {
+      return {};
+    }
+    return {
+      [initialSelectedRecordId]: initialDetailCache.detail as AnalysisRecordDetail,
+    };
+  });
 
   // Filters
   const [archiveCategory, setArchiveCategory] = useState<ArchiveCategory>("持仓");
@@ -548,6 +564,23 @@ export function StockArchiveContent({ embedded = false, initialSymbol = "", onBa
   // Navigation state derived from URL
   const selectedSymbol = initialSymbol || searchParams.get("symbol") || "";
   const selectedRecordId = Number(searchParams.get("recordId") || 0);
+  const summaryCacheKey = searchTerm.trim();
+  const summaryCache = useArchiveStore((state) => state.summaryCacheByQuery[summaryCacheKey] ?? null);
+  const profileCache = useArchiveStore((state) =>
+    selectedSymbol ? state.profileCacheBySymbol[selectedSymbol.toUpperCase()] ?? null : null,
+  );
+  const detailCache = useArchiveStore((state) =>
+    selectedRecordId ? state.detailCacheById[String(selectedRecordId)] ?? null : null,
+  );
+  const setSummaryCache = useArchiveStore((state) => state.setSummaryCache);
+  const setProfileCache = useArchiveStore((state) => state.setProfileCache);
+  const setDetailCache = useArchiveStore((state) => state.setDetailCache);
+  const clearSummaryCache = useArchiveStore((state) => state.clearSummaryCache);
+  const clearProfileCache = useArchiveStore((state) => state.clearProfileCache);
+  const clearDetailCache = useArchiveStore((state) => state.clearDetailCache);
+  const summaryRequestRef = useRef(0);
+  const profileRequestRef = useRef(0);
+  const detailRequestRef = useRef(0);
   const selectedRecord = selectedRecordId ? (recordDetails[selectedRecordId] ?? null) : null;
   const archiveCategoryCounts = useMemo(() => {
     const counts: Record<ArchiveCategory, number> = {
@@ -566,60 +599,140 @@ export function StockArchiveContent({ embedded = false, initialSymbol = "", onBa
   );
 
   // Level 1: Load stock summaries
-  const loadStockSummaries = async () => {
-    const data = await apiFetch<AnalysisHistoryStockSummary[]>(
-      `/api/analysis-history/stocks${buildQuery({
-        search_term: searchTerm,
-      })}`,
-    );
+  const loadStockSummaries = async (options?: { background?: boolean }) => {
+    const requestId = summaryRequestRef.current + 1;
+    summaryRequestRef.current = requestId;
+    const requestPath = `/api/analysis-history/stocks${buildQuery({
+      search_term: searchTerm,
+    })}`;
+    const data = options?.background
+      ? await apiFetch<AnalysisHistoryStockSummary[]>(requestPath)
+      : await apiFetchCached<AnalysisHistoryStockSummary[]>(requestPath, {}, { ttlMs: ARCHIVE_LIST_CACHE_TTL_MS });
+    if (summaryRequestRef.current !== requestId) {
+      return;
+    }
     setStockSummaries(data);
+    setSummaryCache(summaryCacheKey, {
+      items: data,
+      updatedAt: Date.now(),
+    });
   };
 
   // Level 2: Load stock records and memory
-  const loadStockProfile = async (symbol: string) => {
+  const loadStockProfile = async (symbol: string, options?: { background?: boolean }) => {
     if (!symbol) return;
+    const requestId = profileRequestRef.current + 1;
+    profileRequestRef.current = requestId;
     try {
-      const records = await apiFetch<AnalysisHistoryItem[]>(
-        `/api/analysis-history/stocks/${encodeURIComponent(symbol)}`,
-      );
+      const recordsPath = `/api/analysis-history/stocks/${encodeURIComponent(symbol)}`;
+      const records = options?.background
+        ? await apiFetch<AnalysisHistoryItem[]>(recordsPath)
+        : await apiFetchCached<AnalysisHistoryItem[]>(recordsPath, {}, { ttlMs: ARCHIVE_PROFILE_CACHE_TTL_MS });
+      if (profileRequestRef.current !== requestId) {
+        return;
+      }
       setStockRecords(records);
 
+      let nextMemoryArchive: MemoryArchive | null = null;
       try {
-        const memArchive = await apiFetch<MemoryArchive>(`/api/memory/${encodeURIComponent(symbol)}`);
-        setMemoryArchive(memArchive);
+        const memoryPath = `/api/memory/${encodeURIComponent(symbol)}`;
+        nextMemoryArchive = options?.background
+          ? await apiFetch<MemoryArchive>(memoryPath)
+          : await apiFetchCached<MemoryArchive>(memoryPath, {}, { ttlMs: ARCHIVE_PROFILE_CACHE_TTL_MS });
       } catch (memError) {
         console.warn("Memory not available for", symbol, memError);
-        setMemoryArchive(null);
+        nextMemoryArchive = null;
       }
+
+      if (profileRequestRef.current !== requestId) {
+        return;
+      }
+      setMemoryArchive(nextMemoryArchive);
+      setProfileCache(symbol, {
+        records,
+        memoryArchive: nextMemoryArchive,
+        updatedAt: Date.now(),
+      });
     } catch (err) {
       showError(err instanceof Error ? err.message : "获取档案失败");
     }
   };
 
   // Level 3: Load record detail
-  const loadDetail = async (recordId: number) => {
+  const loadDetail = async (recordId: number, options?: { background?: boolean }) => {
     if (!recordId) return;
-    const data = await apiFetch<AnalysisRecordDetail>(`/api/analysis-history/${recordId}`);
+    const requestId = detailRequestRef.current + 1;
+    detailRequestRef.current = requestId;
+    const requestPath = `/api/analysis-history/${recordId}`;
+    const data = options?.background
+      ? await apiFetch<AnalysisRecordDetail>(requestPath)
+      : await apiFetchCached<AnalysisRecordDetail>(requestPath, {}, { ttlMs: ARCHIVE_DETAIL_CACHE_TTL_MS });
+    if (detailRequestRef.current !== requestId) {
+      return;
+    }
     setRecordDetails((current) => ({ ...current, [recordId]: data }));
+    setDetailCache(recordId, {
+      detail: data,
+      updatedAt: Date.now(),
+    });
   };
 
   useEffect(() => {
     if (!selectedSymbol && !selectedRecordId) {
-      void loadStockSummaries();
+      if (summaryCache && isArchiveCacheUsable(summaryCache.updatedAt)) {
+        setStockSummaries((summaryCache.items as AnalysisHistoryStockSummary[]) ?? []);
+      } else {
+        setStockSummaries([]);
+      }
+    }
+  }, [searchTerm, selectedSymbol, selectedRecordId, summaryCache]);
+
+  useEffect(() => {
+    if (!selectedSymbol && !selectedRecordId) {
+      void loadStockSummaries({ background: Boolean(summaryCache && isArchiveCacheUsable(summaryCache.updatedAt)) });
     }
   }, [searchTerm, selectedSymbol, selectedRecordId]);
 
   useEffect(() => {
     if (selectedSymbol && !selectedRecordId) {
-      void loadStockProfile(selectedSymbol);
+      if (profileCache && isArchiveCacheUsable(profileCache.updatedAt)) {
+        setStockRecords((profileCache.records as AnalysisHistoryItem[]) ?? []);
+        setMemoryArchive((profileCache.memoryArchive as MemoryArchive | null) ?? null);
+      } else {
+        setStockRecords([]);
+        setMemoryArchive(null);
+      }
+    }
+  }, [selectedSymbol, selectedRecordId, profileCache]);
+
+  useEffect(() => {
+    if (selectedSymbol && !selectedRecordId) {
+      void loadStockProfile(selectedSymbol, { background: Boolean(profileCache && isArchiveCacheUsable(profileCache.updatedAt)) });
     }
   }, [selectedSymbol, selectedRecordId]);
 
   useEffect(() => {
-    if (selectedRecordId && !recordDetails[selectedRecordId]) {
-      void loadDetail(selectedRecordId);
+    if (selectedRecordId) {
+      if (detailCache?.detail && isArchiveCacheUsable(detailCache.updatedAt)) {
+        setRecordDetails((current) => ({
+          ...current,
+          [selectedRecordId]: detailCache.detail as AnalysisRecordDetail,
+        }));
+      }
     }
-  }, [selectedRecordId, recordDetails]);
+  }, [selectedRecordId, detailCache]);
+
+  useEffect(() => {
+    if (selectedRecordId) {
+      void loadDetail(selectedRecordId, { background: Boolean(detailCache?.detail && isArchiveCacheUsable(detailCache.updatedAt)) });
+    }
+  }, [selectedRecordId]);
+
+  useEffect(() => {
+    if (selectedRecord?.id && selectedRecord.symbol) {
+      markAnalysisViewed(selectedRecord.symbol, selectedRecord.id);
+    }
+  }, [selectedRecord?.id, selectedRecord?.symbol]);
 
   // Navigation handlers
   const openStock = (symbol: string) => {
@@ -674,11 +787,18 @@ export function StockArchiveContent({ embedded = false, initialSymbol = "", onBa
     });
     try {
       await apiFetch(`/api/analysis-history/${recordId}`, { method: "DELETE" });
+      clearDetailCache(recordId);
+      clearSummaryCache();
+      if (selectedSymbol) {
+        clearProfileCache(selectedSymbol);
+      }
       if (selectedRecordId === recordId) {
         goBackToProfile();
       }
-      if (!selectedSymbol) {
-        void loadStockSummaries().catch(() => undefined);
+      if (selectedSymbol) {
+        void loadStockProfile(selectedSymbol, { background: true }).catch(() => undefined);
+      } else {
+        void loadStockSummaries({ background: true }).catch(() => undefined);
       }
       showMessage("历史记录已删除");
     } catch (requestError) {
@@ -775,7 +895,14 @@ export function StockArchiveContent({ embedded = false, initialSymbol = "", onBa
               </div>
             </section>
 
-            <StockMemoryPanel symbol={selectedSymbol} archive={memoryArchive} onUpdate={() => loadStockProfile(selectedSymbol)} />
+            <StockMemoryPanel
+              symbol={selectedSymbol}
+              archive={memoryArchive}
+              onUpdate={() => {
+                clearProfileCache(selectedSymbol);
+                void loadStockProfile(selectedSymbol, { background: true });
+              }}
+            />
 
             <section className={styles.card}>
               <div className={styles.historyDetailSummary} style={{ marginBottom: '1rem' }}>档案记录 ({stockRecords.length})</div>

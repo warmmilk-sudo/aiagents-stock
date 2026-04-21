@@ -4,7 +4,8 @@ import { PageFeedback } from "../../components/common/PageFeedback";
 import { PageFrame } from "../../components/common/PageFrame";
 import { MacroCycleReportDetailView } from "../../components/research/MacroCycleReportDetailView";
 import { splitReportSections } from "../../components/research/FormattedReport";
-import { ApiRequestError, apiFetch, downloadApiFile } from "../../lib/api";
+import { usePollingLoader } from "../../hooks/usePollingLoader";
+import { ApiRequestError, apiFetch, apiFetchCached, downloadApiFile } from "../../lib/api";
 import { formatDateTime } from "../../lib/datetime";
 import { asText } from "../../lib/market";
 import styles from "../ConsolePage.module.scss";
@@ -16,6 +17,8 @@ const sectionTabs = [
   { key: "analysis", label: "周期分析" },
   { key: "history", label: "历史报告" },
 ];
+const HISTORY_CACHE_TTL_MS = 60_000;
+const HISTORY_DETAIL_CACHE_TTL_MS = 30 * 60_000;
 
 interface TaskDetail<T> {
   id: string;
@@ -57,6 +60,7 @@ interface MacroHistoryRecord {
   summary?: string;
   chief_summary?: string;
   created_at?: string;
+  has_deferred_reports?: boolean;
   result_parsed?: MacroResult;
 }
 
@@ -116,7 +120,9 @@ export function MacroCyclePage() {
   const [error, setError] = useState("");
   const [isSubmittingAnalysis, setIsSubmittingAnalysis] = useState(false);
   const [deletingHistoryId, setDeletingHistoryId] = useState<number | null>(null);
+  const [isLoadingSelectedReport, setIsLoadingSelectedReport] = useState(false);
   const lastTerminalTaskRef = useRef<string>("");
+  const shouldPollTask = !task || task.status === "queued" || task.status === "running";
 
   const loadTask = async () => {
     const data = await apiFetch<TaskDetail<MacroTaskPayload> | null>("/api/strategies/macro-cycle/tasks/latest");
@@ -124,15 +130,32 @@ export function MacroCyclePage() {
   };
 
   const loadHistory = async () => {
-    const data = await apiFetch<MacroHistoryRecord[]>("/api/strategies/macro-cycle/history");
+    const data = await apiFetchCached<MacroHistoryRecord[]>(
+      "/api/strategies/macro-cycle/history",
+      {},
+      { ttlMs: HISTORY_CACHE_TTL_MS },
+    );
     setHistory(data);
+  };
+  const loadHistoryDetail = async (reportId: number, options?: { includeReports?: boolean }) => {
+    const params = new URLSearchParams();
+    if (options?.includeReports) {
+      params.set("include_reports", "1");
+    }
+    const query = params.toString();
+    return apiFetchCached<MacroHistoryRecord>(
+      query
+        ? `/api/strategies/macro-cycle/history/${reportId}?${query}`
+        : `/api/strategies/macro-cycle/history/${reportId}`,
+      {},
+      { ttlMs: HISTORY_DETAIL_CACHE_TTL_MS },
+    );
   };
 
   useEffect(() => {
-    void Promise.all([loadTask(), loadHistory()]);
-    const timer = window.setInterval(() => void loadTask(), 2000);
-    return () => window.clearInterval(timer);
+    void loadHistory();
   }, []);
+  usePollingLoader({ load: loadTask, intervalMs: 2000, enabled: shouldPollTask });
 
   const analysisResult = task?.status === "success" ? task.result?.result ?? null : null;
   const historyResult = selectedReport?.result_parsed ?? null;
@@ -231,11 +254,28 @@ export function MacroCyclePage() {
     setMessage("");
     setError("");
     try {
-      const data = await apiFetch<MacroHistoryRecord>(`/api/strategies/macro-cycle/history/${reportId}`);
+      const data = await loadHistoryDetail(reportId);
       setSelectedReport(data);
       setPanel("history");
     } catch (requestError) {
       setError(requestError instanceof ApiRequestError ? requestError.message : "加载历史报告失败");
+    }
+  };
+
+  const ensureSelectedHistoryReportWithReports = async (): Promise<MacroHistoryRecord | null> => {
+    if (!selectedReport?.id) {
+      return null;
+    }
+    if (selectedReport.result_parsed?.agents_analysis && Object.keys(selectedReport.result_parsed.agents_analysis).length) {
+      return selectedReport;
+    }
+    setIsLoadingSelectedReport(true);
+    try {
+      const data = await loadHistoryDetail(selectedReport.id, { includeReports: true });
+      setSelectedReport(data);
+      return data;
+    } finally {
+      setIsLoadingSelectedReport(false);
     }
   };
 
@@ -285,6 +325,17 @@ export function MacroCyclePage() {
         body: JSON.stringify({ result }),
       });
       setMessage(kind === "pdf" ? "宏观周期 PDF 已开始下载" : "宏观周期 Markdown 已开始下载");
+    } catch (requestError) {
+      setError(requestError instanceof ApiRequestError ? requestError.message : "导出宏观周期报告失败");
+    }
+  };
+
+  const exportSelectedHistoryResult = async (kind: "pdf" | "markdown") => {
+    setMessage("");
+    setError("");
+    try {
+      const detail = await ensureSelectedHistoryReportWithReports();
+      await exportResult(detail?.result_parsed ?? null, kind);
     } catch (requestError) {
       setError(requestError instanceof ApiRequestError ? requestError.message : "导出宏观周期报告失败");
     }
@@ -389,8 +440,11 @@ export function MacroCyclePage() {
 
                 {historyResult ? (
                   <MacroCycleReportDetailView
+                    hasDeferredReports={Boolean(selectedReport.has_deferred_reports)}
                     headline={historyHeadline}
-                    onExport={(kind) => void exportResult(historyResult, kind)}
+                    isLoadingReports={isLoadingSelectedReport}
+                    onExport={(kind) => void exportSelectedHistoryResult(kind)}
+                    onLoadReports={() => void ensureSelectedHistoryReportWithReports()}
                     result={{
                       ...historyResult,
                       timestamp: historyResult.timestamp ?? selectedReport.analysis_date,

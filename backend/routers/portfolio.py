@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
+from fastapi_cache.decorator import cache
 
 import config
 from backend.api import ApiError, success_payload
@@ -22,8 +23,12 @@ router = APIRouter(prefix="/api/portfolio", tags=["portfolio"])
 
 
 @router.get("/stocks")
-def list_stocks(request: Request, account_name: Optional[str] = None) -> dict:
-    require_session(request)
+@cache(expire=15, namespace="portfolio")
+def list_stocks(
+    request: Request,
+    _session: dict = Depends(require_session),
+    account_name: Optional[str] = None,
+) -> dict:
     return success_payload(services.list_portfolio_stocks(account_name=account_name))
 
 
@@ -76,14 +81,15 @@ def record_trade(request: Request, stock_id: int, payload: TradeRecordCreateRequ
 
 
 @router.get("/trades")
+@cache(expire=15, namespace="portfolio")
 def list_trades(
     request: Request,
+    _session: dict = Depends(require_session),
     account_name: Optional[str] = None,
     limit: Optional[int] = 120,
     page: Optional[int] = None,
     page_size: Optional[int] = None,
 ) -> dict:
-    require_session(request)
     return success_payload(
         services.list_portfolio_trade_records(
             account_name=account_name,
@@ -95,9 +101,14 @@ def list_trades(
 
 
 @router.get("/risk")
-def get_risk(request: Request, account_name: Optional[str] = None) -> dict:
-    require_session(request)
-    return success_payload(services.get_portfolio_risk(account_name=account_name))
+@cache(expire=15, namespace="portfolio")
+def get_risk(
+    request: Request,
+    _session: dict = Depends(require_session),
+    account_name: Optional[str] = None,
+    refresh: bool = False,
+) -> dict:
+    return success_payload(services.get_portfolio_risk(account_name=account_name, refresh=refresh))
 
 
 @router.get("/account-assets")
@@ -139,8 +150,11 @@ def submit_portfolio_analysis_task(request: Request, payload: PortfolioAnalysisT
 
 
 @router.get("/scheduler")
-def get_scheduler_status(request: Request) -> dict:
-    require_session(request)
+@cache(expire=15, namespace="portfolio")
+def get_scheduler_status(
+    request: Request,
+    _session: dict = Depends(require_session),
+) -> dict:
     return success_payload(services.get_portfolio_scheduler_status())
 
 

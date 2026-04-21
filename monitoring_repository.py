@@ -1,6 +1,7 @@
 import json
 import math
 import os
+import re
 import sqlite3
 from datetime import datetime, timedelta
 from typing import Dict, Iterable, List, Optional
@@ -36,7 +37,6 @@ class MonitoringRepository:
     ACCOUNT_RISK_PROFILE_KEY_PREFIX = "smart_monitor_account_risk_profile::"
     SHARED_RISK_PROFILE_KEY = "smart_monitor_shared_risk_profile"
     NOTIFICATION_CLASS_LABELS = {
-        "focus_alert": "关注提醒",
         "price_alert": "价格提醒",
         "risk_alert": "风险预警",
         "profit_alert": "收益信号",
@@ -44,7 +44,6 @@ class MonitoringRepository:
         "other_alert": "其他提醒",
     }
     NOTIFICATION_CLASS_TONES = {
-        "focus_alert": "info",
         "price_alert": "warning",
         "risk_alert": "danger",
         "profit_alert": "success",
@@ -52,10 +51,10 @@ class MonitoringRepository:
         "other_alert": "warning",
     }
     NOTIFICATION_CLASS_ALIASES = {
-        "focus": "focus_alert",
-        "focus_alert": "focus_alert",
-        "关注": "focus_alert",
-        "关注提醒": "focus_alert",
+        "focus": "price_alert",
+        "focus_alert": "price_alert",
+        "关注": "price_alert",
+        "关注提醒": "price_alert",
         "price": "price_alert",
         "price_alert": "price_alert",
         "价格": "price_alert",
@@ -163,6 +162,15 @@ class MonitoringRepository:
         normalized = cls._normalize_notification_class_value(value)
         return cls.NOTIFICATION_CLASS_TONES.get(normalized, "warning")
 
+    @staticmethod
+    def _normalize_notification_text(value: Optional[object]) -> str:
+        text = " ".join(str(value or "").split()).strip()
+        if not text:
+            return ""
+        text = re.sub(r"(?:\.{3,}|…+)(?:（已截断）)?", "。", text)
+        text = re.sub(r"。{2,}", "。", text)
+        return text.strip()
+
     @classmethod
     def _derive_notification_class(
         cls,
@@ -265,7 +273,7 @@ class MonitoringRepository:
         if any(keyword in lowered for keyword in profit_keywords):
             return "profit_alert"
         if any(keyword in text for keyword in focus_keywords):
-            return "focus_alert"
+            return "price_alert"
         if any(keyword in text for keyword in price_keywords):
             return "price_alert"
         return "price_alert"
@@ -287,8 +295,14 @@ class MonitoringRepository:
         enriched["notification_class"] = notification_class
         enriched["notification_class_label"] = cls._notification_class_label(notification_class)
         enriched["notification_tone"] = cls._notification_class_tone(notification_class)
-        if not str(enriched.get("notification_category") or "").strip():
-            enriched["notification_category"] = "focus" if notification_class == "focus_alert" else "price"
+        current_category = str(enriched.get("notification_category") or "").strip().lower()
+        if current_category in {"", "focus", "focus_alert", "关注", "关注提醒"}:
+            enriched["notification_category"] = "price"
+        for key in ("message", "trigger_summary", "notification_reason", "notification_explanation"):
+            if key in enriched:
+                normalized_text = cls._normalize_notification_text(enriched.get(key))
+                if normalized_text:
+                    enriched[key] = normalized_text
         return enriched
     VALID_MONITOR_TYPES = {"ai_task", "price_alert"}
     VALID_SOURCES = {"manual", "portfolio", "ai_monitor", "legacy_conflict"}

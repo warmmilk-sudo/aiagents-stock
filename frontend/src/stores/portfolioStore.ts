@@ -19,9 +19,11 @@ export interface PortfolioPageCache {
 interface PortfolioState {
   draftPosition: DraftPosition | null;
   schedulerTaskId: string | null;
+  holdingsAnalysisTaskId: string | null;
   pageCache: PortfolioPageCache | null;
   setDraftPosition: (draft: DraftPosition | null) => void;
   setSchedulerTaskId: (taskId: string | null) => void;
+  setHoldingsAnalysisTaskId: (taskId: string | null) => void;
   setPageCache: (cache: PortfolioPageCache) => void;
   clearPageCache: () => void;
 }
@@ -31,9 +33,11 @@ export const usePortfolioStore = create<PortfolioState>()(
     (set) => ({
       draftPosition: null,
       schedulerTaskId: null,
+      holdingsAnalysisTaskId: null,
       pageCache: null,
       setDraftPosition: (draftPosition) => set({ draftPosition }),
       setSchedulerTaskId: (schedulerTaskId) => set({ schedulerTaskId }),
+      setHoldingsAnalysisTaskId: (holdingsAnalysisTaskId) => set({ holdingsAnalysisTaskId }),
       setPageCache: (pageCache) => set({ pageCache }),
       clearPageCache: () => set({ pageCache: null }),
     }),
@@ -45,11 +49,13 @@ export const usePortfolioStore = create<PortfolioState>()(
         return {
           ...currentState,
           ...typedState,
-          pageCache: currentState.pageCache,
+          pageCache: typedState.pageCache ?? currentState.pageCache,
         };
       },
       partialize: (state) => ({
         schedulerTaskId: state.schedulerTaskId,
+        holdingsAnalysisTaskId: state.holdingsAnalysisTaskId,
+        pageCache: state.pageCache,
       }),
     },
   ),

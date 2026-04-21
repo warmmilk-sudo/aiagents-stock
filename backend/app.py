@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.api import register_exception_handlers, success_payload
+from backend.redis_manager import close_cache, init_cache
 from backend.routers import (
     agent_memory,
     analysis,
@@ -53,7 +54,11 @@ NO_CACHE_HTML_HEADERS = {
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     ensure_runtime_started()
-    yield
+    await init_cache()
+    try:
+        yield
+    finally:
+        await close_cache()
 
 
 def create_app() -> FastAPI:

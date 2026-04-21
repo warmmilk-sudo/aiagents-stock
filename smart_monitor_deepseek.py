@@ -16,10 +16,14 @@ import pytz
 import requests
 
 import config
-from investment_action_utils import normalize_strategy_context
+from investment_action_utils import normalize_strategy_context, normalize_swing_type, swing_type_label
 from investment_db_utils import DEFAULT_ACCOUNT_NAME
 from model_routing import ModelTier, resolve_model_name
 from prompt_registry import build_messages, render_prompt
+
+
+class DecisionValidationError(ValueError):
+    """Structured decision payload is internally inconsistent."""
 
 
 class SmartMonitorDeepSeek:
@@ -84,6 +88,10 @@ class SmartMonitorDeepSeek:
         self.reasoning_max_tokens = max(
             1500,
             int(getattr(config, "SMART_MONITOR_REASONING_MAX_TOKENS", 3000) or 3000),
+        )
+        self.decision_repair_attempts = max(
+            0,
+            int(getattr(config, "SMART_MONITOR_DECISION_REPAIR_ATTEMPTS", 1) or 1),
         )
 
     def set_model_overrides(self, model: str = None,
@@ -245,35 +253,188 @@ class SmartMonitorDeepSeek:
         return cls._count_weekday_holding_days(start_date, reference_date)
 
     @staticmethod
-    def _classify_swing_holding_stage(
-        holding_days: Optional[int],
-        strategy_context: Optional[Dict[str, Any]] = None,
+    def _coerce_optional_float(value: Any) -> Optional[float]:
+        try:
+            if value in (None, ""):
+                return None
+            numeric = float(value)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(numeric):
+            return None
+        return numeric
+
+    @staticmethod
+    def _coerce_optional_bool(value: Any) -> Optional[bool]:
+        if value in (None, ""):
+            return None
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return bool(value)
+        normalized = str(value).strip().lower()
+        if normalized in {"true", "1", "yes", "y", "on", "是"}:
+            return True
+        if normalized in {"false", "0", "no", "n", "off", "否"}:
+            return False
+        return None
+
+    @staticmethod
+    def _normalize_structure_state(value: Any) -> str:
+        text = str(value or "").strip()
+        aliases = {
+            "宽幅震荡洗盘": "宽幅震荡洗盘",
+            "洗盘": "宽幅震荡洗盘",
+            "趋势突破确认": "趋势突破确认",
+            "突破确认": "趋势突破确认",
+            "主升加速段": "主升加速段",
+            "主升": "主升加速段",
+            "筑顶高位派发": "筑顶高位派发",
+            "高位派发": "筑顶高位派发",
+        }
+        return aliases.get(text, "结构状态未明确")
+
+    @staticmethod
+    def _normalize_feature_beacons(value: Any) -> List[str]:
+        allowed = (
+            "limit_up_hit",
+            "consecutive_limit_up",
+            "stage_new_high",
+            "breakout_20d_high_with_2x_volume",
+            "low_volume_pullback_above_ma20",
+        )
+        if isinstance(value, dict):
+            raw_items = [key for key, enabled in value.items() if enabled]
+        elif isinstance(value, list):
+            raw_items = value
+        else:
+            raw_items = [segment.strip() for segment in str(value or "").split(",") if segment.strip()]
+        normalized: List[str] = []
+        for item in raw_items:
+            beacon = str(item or "").strip()
+            if beacon in allowed and beacon not in normalized:
+                normalized.append(beacon)
+        return normalized
+
+    @classmethod
+    def _resolve_effective_swing_type_code(
+        cls,
+        strategy_context: Optional[Dict[str, Any]],
+        decision: Optional[Dict[str, Any]] = None,
     ) -> str:
-        if holding_days is None or holding_days <= 0:
-            return "阶段未知（缺少可靠持仓日期）"
+        upgraded = normalize_swing_type((decision or {}).get("upgraded_swing_type"))
+        if upgraded:
+            return upgraded
+        return normalize_swing_type((strategy_context or {}).get("swing_type_code") or (strategy_context or {}).get("swing_type"))
 
-        swing_type_code = str((strategy_context or {}).get("swing_type_code") or "").strip().lower()
-        if swing_type_code == "micro_swing":
-            if holding_days <= 2:
-                return "触发确认期（前1-2个交易日，优先确认突破或事件驱动是否成立）"
-            if holding_days <= 4:
-                return "加速兑现期（第3-4个交易日，只保留最强流动性主段）"
-            if holding_days <= 5:
-                return "尾段兑现期（第5个交易日前后，兑现效率优先）"
-            return "超期持有区（超过5个交易日，微波段逻辑显著钝化）"
+    @classmethod
+    def _select_trend_anchor(
+        cls,
+        market_data: Optional[Dict[str, Any]],
+    ) -> tuple[str, Optional[float]]:
+        atr14_pct = cls._coerce_optional_float((market_data or {}).get("atr14_pct"))
+        anchor_type = "MA20" if atr14_pct is not None and atr14_pct > 4.0 else "MA10"
+        anchor_key = "ma20" if anchor_type == "MA20" else "ma10"
+        anchor_value = cls._coerce_optional_float((market_data or {}).get(anchor_key))
+        return anchor_type, anchor_value
 
-        if swing_type_code != "standard_swing":
-            return "阶段未明确（基线未明确波段类型，不自动套用固定持仓阶段）"
+    @classmethod
+    def _derive_feature_beacons(cls, market_data: Optional[Dict[str, Any]]) -> List[str]:
+        market_data = market_data if isinstance(market_data, dict) else {}
+        current_price = cls._coerce_optional_float(market_data.get("current_price"))
+        change_pct = cls._coerce_optional_float(market_data.get("change_pct"))
+        ma20 = cls._coerce_optional_float(market_data.get("ma20"))
+        volume_ratio = cls._coerce_optional_float(
+            market_data.get("volume_ratio") if market_data.get("volume_ratio") not in (None, "") else market_data.get("volume_ratio_vs_vol_ma5")
+        )
+        prev_20d_high = cls._coerce_optional_float(market_data.get("prev_20d_high"))
+        prev_60d_high = cls._coerce_optional_float(market_data.get("prev_60d_high"))
+        limit_up_streak = int(cls._coerce_optional_float(market_data.get("recent_limit_up_streak")) or 0)
 
-        if holding_days <= 2:
-            return "试错观察期（前2个交易日，优先确认逻辑是否被快速证伪）"
-        if holding_days <= 4:
-            return "趋势确认期（第3-4个交易日，观察是否进入顺畅主升/主跌）"
-        if holding_days <= 8:
-            return "主持有期（第5-8个交易日，优先让盈利段延续）"
-        if holding_days <= 15:
-            return "兑现观察期（第9-15个交易日，更重视锁盈与去弱留强）"
-        return "超期持有区（超过15个交易日，继续持有需要更强趋势证据）"
+        beacons: List[str] = []
+        if change_pct is not None and change_pct >= 9.7:
+            beacons.append("limit_up_hit")
+        if limit_up_streak >= 2 or ("limit_up_hit" in beacons and limit_up_streak >= 1):
+            beacons.append("consecutive_limit_up")
+        if current_price is not None and prev_60d_high is not None and current_price >= prev_60d_high:
+            beacons.append("stage_new_high")
+        if (
+            current_price is not None
+            and prev_20d_high is not None
+            and current_price >= prev_20d_high
+            and volume_ratio is not None
+            and volume_ratio >= 2.0
+        ):
+            beacons.append("breakout_20d_high_with_2x_volume")
+        if (
+            current_price is not None
+            and ma20 is not None
+            and current_price > ma20
+            and change_pct is not None
+            and change_pct < 0
+            and volume_ratio is not None
+            and volume_ratio <= 0.8
+        ):
+            beacons.append("low_volume_pullback_above_ma20")
+        return beacons
+
+    @classmethod
+    def _calculate_atr_stop_floor(
+        cls,
+        *,
+        current_price: Optional[float],
+        atr14: Optional[float],
+        swing_type_code: str,
+    ) -> Optional[float]:
+        if current_price is None or atr14 is None:
+            return None
+        multiplier = 2.5 if swing_type_code == "standard_swing" else 1.2
+        return round(float(current_price) - float(atr14) * multiplier, 3)
+
+    @classmethod
+    def _derive_position_runtime_metrics(
+        cls,
+        *,
+        market_data: Optional[Dict[str, Any]],
+        strategy_context: Optional[Dict[str, Any]],
+        holding_days: Optional[int],
+        profit_loss_pct: Optional[float],
+    ) -> Dict[str, Any]:
+        market_data = market_data if isinstance(market_data, dict) else {}
+        strategy_context = strategy_context if isinstance(strategy_context, dict) else {}
+        feature_beacons = cls._derive_feature_beacons(market_data)
+        anchor_type, anchor_value = cls._select_trend_anchor(market_data)
+        swing_type_code = cls._resolve_effective_swing_type_code(strategy_context)
+        atr14 = cls._coerce_optional_float(market_data.get("atr14"))
+        atr14_pct = cls._coerce_optional_float(market_data.get("atr14_pct"))
+        current_price = cls._coerce_optional_float(market_data.get("current_price"))
+        atr_stop_floor = cls._calculate_atr_stop_floor(
+            current_price=current_price,
+            atr14=atr14,
+            swing_type_code=swing_type_code,
+        )
+        prior_state = cls._normalize_structure_state(strategy_context.get("structure_state"))
+        trend_following_active = bool(
+            swing_type_code == "standard_swing"
+            and holding_days is not None
+            and holding_days >= 10
+            and profit_loss_pct is not None
+            and atr14_pct is not None
+            and profit_loss_pct >= atr14_pct * 2
+            and current_price is not None
+            and anchor_value is not None
+            and current_price >= anchor_value
+            and prior_state != "筑顶高位派发"
+        )
+        return {
+            "feature_beacons": feature_beacons,
+            "trend_anchor_type": anchor_type,
+            "trend_anchor_value": anchor_value,
+            "atr14": atr14,
+            "atr14_pct": atr14_pct,
+            "atr_stop_floor": atr_stop_floor,
+            "trend_following_active": trend_following_active,
+        }
 
     @classmethod
     def _compact_system_prompt(cls, text: str, max_chars: int) -> str:
@@ -1440,20 +1601,46 @@ class SmartMonitorDeepSeek:
         )
 
         try:
-            response = self.chat_completion(
-                messages,
-                temperature=0.1,
-                max_tokens=1600,
-                tier=ModelTier.LIGHTWEIGHT,
-            )
-            ai_response = response['choices'][0]['message']['content']
-            
-            # 解析JSON决策
-            decision = self._parse_decision(
-                ai_response,
-                risk_profile=resolved_risk_profile,
-                has_position=has_position,
-            )
+            ai_response = ""
+            decision = None
+            active_messages = list(messages)
+            for attempt_index in range(self.decision_repair_attempts + 1):
+                response = self.chat_completion(
+                    active_messages,
+                    temperature=0.1,
+                    max_tokens=1600,
+                    tier=ModelTier.LIGHTWEIGHT,
+                )
+                ai_response = response['choices'][0]['message']['content']
+                try:
+                    decision = self._parse_decision_strict(
+                        ai_response,
+                        risk_profile=resolved_risk_profile,
+                        has_position=has_position,
+                    )
+                    break
+                except Exception as exc:
+                    if attempt_index >= self.decision_repair_attempts:
+                        self.logger.error("盘中决策解析/校验失败，修正次数耗尽: %s", exc)
+                        decision = self._build_invalid_decision_fallback(
+                            error=exc,
+                            risk_profile=resolved_risk_profile,
+                            has_position=has_position,
+                        )
+                        break
+                    self.logger.warning("盘中决策解析/校验失败，准备请求模型修正: %s", exc)
+                    active_messages = self._build_repair_messages(
+                        messages=active_messages,
+                        ai_response=ai_response,
+                        validation_error=str(exc),
+                    )
+            if decision is None:
+                decision = self._build_invalid_decision_fallback(
+                    error=RuntimeError("decision_repair_exhausted"),
+                    risk_profile=resolved_risk_profile,
+                    has_position=has_position,
+                )
+
             decision = self._enforce_action_policy(
                 decision,
                 has_position=has_position,
@@ -2089,9 +2276,12 @@ class SmartMonitorDeepSeek:
         technical_section = render_prompt(
             self.SECTION_TECHNICAL_TEMPLATE,
             ma5=_fmt_money(market_data.get("ma5")),
+            ma10=_fmt_money(market_data.get("ma10")),
             ma20=_fmt_money(market_data.get("ma20")),
             ma60=_fmt_money(market_data.get("ma60")),
             trend_label="多头排列" if market_data.get("trend") == "up" else "空头排列" if market_data.get("trend") == "down" else "N/A",
+            atr14=_fmt_money(market_data.get("atr14")),
+            atr14_pct=_fmt_pct(market_data.get("atr14_pct")),
             macd_dif=_fmt_number(market_data.get("macd_dif"), digits=4),
             macd_dea=_fmt_number(market_data.get("macd_dea"), digits=4),
             macd=_fmt_number(market_data.get("macd"), digits=4),
@@ -2176,6 +2366,9 @@ class SmartMonitorDeepSeek:
         ))
         if strategy_context:
             summary_text = self._build_strategy_summary_brief(strategy_context)
+            feature_beacons_text = "、".join(
+                self._normalize_feature_beacons(strategy_context.get("feature_beacons"))
+            ) or "无"
             optional_sections.append(render_prompt(
                 self.SECTION_STRATEGY_CONTEXT_TEMPLATE,
                 analysis_date=strategy_context.get("analysis_date", "N/A"),
@@ -2194,6 +2387,15 @@ class SmartMonitorDeepSeek:
                 entry_max=strategy_context.get("entry_max", "N/A"),
                 take_profit=strategy_context.get("take_profit", "N/A"),
                 stop_loss=strategy_context.get("stop_loss", "N/A"),
+                structure_state=strategy_context.get("structure_state", "N/A") or "N/A",
+                atr14=_fmt_money(strategy_context.get("atr14")),
+                atr14_pct=_fmt_pct(strategy_context.get("atr14_pct")),
+                trend_anchor_type=strategy_context.get("trend_anchor_type", "N/A") or "N/A",
+                trend_anchor_value=_fmt_money(strategy_context.get("trend_anchor_value")),
+                trend_following_active_text=(
+                    "是" if self._coerce_optional_bool(strategy_context.get("trend_following_active")) else "否"
+                ),
+                feature_beacons_text=feature_beacons_text,
             ))
         if intraday_context:
             optional_sections.append(render_prompt(
@@ -2259,24 +2461,36 @@ class SmartMonitorDeepSeek:
                 if estimated_holding_days is not None
                 else "N/A"
             )
-            swing_holding_stage = self._classify_swing_holding_stage(estimated_holding_days, strategy_context)
 
             position_cost_text = "N/A"
             profit_loss_text = "N/A"
+            profit_loss_pct_value: Optional[float] = None
             if position_cost and position_cost > 0:
                 position_cost_text = f"¥{position_cost:.2f}"
                 cost_total = position_cost * position_quantity
                 profit_loss = (current_total - cost_total) if current_total is not None else None
-                profit_loss_pct = (profit_loss / cost_total * 100) if profit_loss is not None and cost_total > 0 else None
-                if profit_loss is not None and profit_loss_pct is not None:
-                    profit_loss_text = f"¥{profit_loss:,.2f} ({profit_loss_pct:+.2f}%)"
+                profit_loss_pct_value = (profit_loss / cost_total * 100) if profit_loss is not None and cost_total > 0 else None
+                if profit_loss is not None and profit_loss_pct_value is not None:
+                    profit_loss_text = f"¥{profit_loss:,.2f} ({profit_loss_pct_value:+.2f}%)"
+
+            runtime_metrics = self._derive_position_runtime_metrics(
+                market_data=market_data,
+                strategy_context=strategy_context,
+                holding_days=estimated_holding_days,
+                profit_loss_pct=profit_loss_pct_value,
+            )
+            feature_beacons_text = "、".join(runtime_metrics["feature_beacons"]) if runtime_metrics["feature_beacons"] else "无"
+            trend_anchor_text = (
+                f'{runtime_metrics["trend_anchor_type"]} @ {_fmt_money(runtime_metrics["trend_anchor_value"])}'
+                if runtime_metrics.get("trend_anchor_value") is not None
+                else runtime_metrics["trend_anchor_type"]
+            )
 
             position_section = render_prompt(
                 self.SECTION_POSITION_HOLDING_TEMPLATE,
                 stock_code=stock_code,
                 position_date=resolved_position_date,
                 holding_days_text=holding_days_text,
-                swing_holding_stage=swing_holding_stage,
                 swing_type_label=strategy_context.get("swing_horizon_label", "未明确"),
                 swing_horizon_days_text=strategy_context.get("swing_horizon_days_text", "未明确"),
                 strategy_style_summary=strategy_context.get("strategy_style_summary", "未明确"),
@@ -2288,6 +2502,11 @@ class SmartMonitorDeepSeek:
                 current_total=current_total_text,
                 profit_loss_text=profit_loss_text,
                 stop_loss_pct=resolved_risk_profile["stop_loss_pct"],
+                atr14_text=_fmt_money(runtime_metrics.get("atr14")),
+                atr14_pct_text=_fmt_pct(runtime_metrics.get("atr14_pct")),
+                atr_stop_floor_text=_fmt_money(runtime_metrics.get("atr_stop_floor")),
+                trend_anchor_text=trend_anchor_text,
+                feature_beacons_text=feature_beacons_text,
             )
         else:
             position_section = render_prompt(
@@ -2911,6 +3130,18 @@ class SmartMonitorDeepSeek:
             )), 2),
             "risk_level": self._normalize_risk_level(decision.get("risk_level")),
             "key_price_levels": self._normalize_key_price_levels(decision.get("key_price_levels")),
+            "structure_state": self._normalize_structure_state(decision.get("structure_state")),
+            "structure_state_reason": str(decision.get("structure_state_reason") or "").strip(),
+            "trend_following_active": bool(self._coerce_optional_bool(decision.get("trend_following_active"))),
+            "trend_anchor_type": str(decision.get("trend_anchor_type") or "").strip().upper(),
+            "trend_anchor_value": self._coerce_optional_float(decision.get("trend_anchor_value")),
+            "atr14": self._coerce_optional_float(decision.get("atr14")),
+            "atr14_pct": self._coerce_optional_float(decision.get("atr14_pct")),
+            "atr_stop_floor": self._coerce_optional_float(decision.get("atr_stop_floor")),
+            "swing_type_upgrade": bool(self._coerce_optional_bool(decision.get("swing_type_upgrade"))),
+            "upgraded_swing_type": swing_type_label(decision.get("upgraded_swing_type")),
+            "upgrade_reason": str(decision.get("upgrade_reason") or "").strip(),
+            "feature_beacons": self._normalize_feature_beacons(decision.get("feature_beacons")),
         }
         normalized["swing_execution_mode"] = self._resolve_swing_execution_mode(
             decision.get("swing_execution_mode"),
@@ -2998,24 +3229,133 @@ class SmartMonitorDeepSeek:
         """解析AI决策响应。"""
         resolved_risk_profile = self._resolve_risk_profile(risk_profile)
         try:
-            decoded = self._decode_decision_text(ai_response)
-            return self._normalize_decision_payload(
-                decoded,
+            return self._parse_decision_strict(
+                ai_response,
                 risk_profile=resolved_risk_profile,
                 has_position=has_position,
             )
         except Exception as e:
             self.logger.error("解析AI决策失败: %s; response=%s", e, str(ai_response or "")[:300])
-            return {
-                'action': 'HOLD',
-                'confidence': 0,
-                'reasoning': f'AI响应解析失败: {str(e)}',
-                'position_size_pct': 0,
-                'stop_loss_pct': float(resolved_risk_profile["stop_loss_pct"]),
-                'take_profit_pct': float(resolved_risk_profile["take_profit_pct"]),
-                'risk_level': 'high',
-                'key_price_levels': {},
-            }
+            return self._build_invalid_decision_fallback(
+                error=e,
+                risk_profile=resolved_risk_profile,
+                has_position=has_position,
+            )
+
+    def _build_invalid_decision_fallback(
+        self,
+        *,
+        error: Exception,
+        risk_profile: Optional[Dict[str, Any]] = None,
+        has_position: bool = False,
+    ) -> Dict[str, Any]:
+        resolved_risk_profile = self._resolve_risk_profile(risk_profile)
+        return {
+            'action': 'HOLD',
+            'action_detail': '持有' if has_position else '观望',
+            'swing_execution_mode': 'watch_hold' if has_position else 'watch_hold',
+            'confidence': 0,
+            'reasoning': f'AI响应解析/校验失败，已降级为HOLD: {str(error)}',
+            'position_size_pct': 0,
+            'stop_loss_pct': float(resolved_risk_profile["stop_loss_pct"]),
+            'take_profit_pct': float(resolved_risk_profile["take_profit_pct"]),
+            'risk_level': 'high',
+            'key_price_levels': {},
+            'action_ratio_pct': None,
+        }
+
+    @staticmethod
+    def _reasoning_vetoes_buy(reasoning: Any) -> bool:
+        text = str(reasoning or "").strip()
+        if not text:
+            return False
+        veto_patterns = (
+            r"暂不(?:执行)?(?:加仓|买入)",
+            r"不(?:宜|建议|执行).{0,6}(?:加仓|买入)",
+            r"等待.{0,30}(?:再|后再)考虑.{0,12}(?:加仓|买入)",
+            r"(?:建议|应|宜)?(?:维持|继续)持有",
+            r"暂不执行",
+        )
+        return any(re.search(pattern, text) for pattern in veto_patterns)
+
+    @staticmethod
+    def _reasoning_vetoes_sell(reasoning: Any) -> bool:
+        text = str(reasoning or "").strip()
+        if not text:
+            return False
+        veto_patterns = (
+            r"暂不(?:执行)?(?:减仓|卖出|清仓)",
+            r"不(?:宜|建议|执行).{0,6}(?:减仓|卖出|清仓)",
+            r"等待.{0,30}(?:再|后再)考虑.{0,12}(?:减仓|卖出|清仓)",
+            r"(?:建议|应|宜)?(?:维持|继续)持有",
+            r"暂不执行",
+        )
+        return any(re.search(pattern, text) for pattern in veto_patterns)
+
+    def _validate_decision_consistency(
+        self,
+        decision: Dict[str, Any],
+        *,
+        has_position: bool = False,
+    ) -> None:
+        action = str(decision.get("action") or "").strip().upper()
+        reasoning = str(decision.get("reasoning") or "").strip()
+        action_detail = self._resolve_action_detail(
+            decision.get("action_detail"),
+            action=action,
+            has_position=has_position,
+        )
+        if action == "BUY" and self._reasoning_vetoes_buy(reasoning):
+            raise DecisionValidationError(
+                "action=BUY 与 reasoning 冲突：理由明确表示暂不执行买入/加仓或应维持持有。"
+            )
+        if action == "SELL" and self._reasoning_vetoes_sell(reasoning):
+            raise DecisionValidationError(
+                "action=SELL 与 reasoning 冲突：理由明确表示暂不执行卖出/减仓或应维持持有。"
+            )
+        if action == "BUY" and action_detail == "建仓" and has_position:
+            raise DecisionValidationError("当前已有持仓时，action=BUY 不得输出 action_detail=建仓。")
+        if action == "HOLD" and self._normalize_action_detail_value(decision.get("action_detail")) in {"加仓", "建仓", "减仓", "清仓"}:
+            raise DecisionValidationError("action=HOLD 时，action_detail 只能是 持有/观望。")
+
+    def _parse_decision_strict(
+        self,
+        ai_response: str,
+        risk_profile: Optional[Dict[str, Any]] = None,
+        *,
+        has_position: bool = False,
+    ) -> Dict[str, Any]:
+        resolved_risk_profile = self._resolve_risk_profile(risk_profile)
+        decoded = self._decode_decision_text(ai_response)
+        normalized = self._normalize_decision_payload(
+            decoded,
+            risk_profile=resolved_risk_profile,
+            has_position=has_position,
+        )
+        self._validate_decision_consistency(normalized, has_position=has_position)
+        return normalized
+
+    @staticmethod
+    def _build_repair_messages(
+        *,
+        messages: List[Dict[str, str]],
+        ai_response: str,
+        validation_error: str,
+    ) -> List[Dict[str, str]]:
+        repair_prompt = (
+            "上一条回答未通过结构校验。\n"
+            f"失败原因：{validation_error}\n"
+            "请基于同一份行情与基线信息，重新输出一个自洽的最终执行 JSON。\n"
+            "要求：\n"
+            "- action 表示最终可执行动作，不是候选动作。\n"
+            "- 若理由表示暂不执行、继续持有、等待再考虑，则 action 必须为 HOLD。\n"
+            "- 只返回一个 JSON 对象，不要解释，不要 Markdown。"
+        )
+        return [
+            *messages,
+            {"role": "assistant", "content": str(ai_response or "")},
+            {"role": "user", "content": repair_prompt},
+        ]
 
     @staticmethod
     def _normalize_monitor_levels(decision: Dict) -> Optional[Dict]:

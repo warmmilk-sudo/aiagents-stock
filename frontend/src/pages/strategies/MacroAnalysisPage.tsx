@@ -190,13 +190,14 @@ export function MacroAnalysisPage() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [isSubmittingAnalysis, setIsSubmittingAnalysis] = useState(false);
+  const shouldPollTask = !task || task.status === "queued" || task.status === "running";
 
   const loadTask = async () => {
     const data = await apiFetch<TaskDetail<MacroTaskPayload> | null>("/api/strategies/macro-analysis/tasks/latest");
     setTask(data);
   };
 
-  usePollingLoader({ load: loadTask, intervalMs: 2000 });
+  usePollingLoader({ load: loadTask, intervalMs: 2000, enabled: shouldPollTask });
 
   const currentResult = task?.status === "success" ? task.result?.result ?? null : null;
   const currentChiefSections = useMemo(
