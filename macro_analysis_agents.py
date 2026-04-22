@@ -9,7 +9,7 @@ import re
 import time
 from typing import Any
 
-from deepseek_client import DeepSeekClient
+from llm_client import LLMClient
 from model_routing import ModelTier
 
 
@@ -17,7 +17,7 @@ class MacroAnalysisAgents:
     """宏观分析多智能体"""
 
     def __init__(self, model: str | None = None, lightweight_model: str | None = None, reasoning_model: str | None = None) -> None:
-        self.client = DeepSeekClient(
+        self.client = LLMClient(
             model=model,
             lightweight_model=lightweight_model,
             reasoning_model=reasoning_model,

@@ -6,7 +6,7 @@
 import re
 from typing import Any, Dict
 
-from deepseek_client import DeepSeekClient
+from llm_client import LLMClient
 from model_routing import ModelTier
 from prompt_registry import build_messages
 import time
@@ -19,7 +19,7 @@ class SectorStrategyAgents:
         self.model = model
         self.lightweight_model = lightweight_model
         self.reasoning_model = reasoning_model
-        self.llm_client = DeepSeekClient(
+        self.llm_client = LLMClient(
             model=model,
             lightweight_model=lightweight_model,
             reasoning_model=reasoning_model,

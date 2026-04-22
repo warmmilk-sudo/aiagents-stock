@@ -84,6 +84,22 @@ class BackendSplitApiTests(unittest.TestCase):
         self.assertEqual(payload["realtime_data_source"], "tdx")
         self.assertEqual(payload["industry"], "白酒")
 
+    def test_json_responses_sanitize_nan_values(self):
+        self.login()
+        with patch(
+            "backend.services.get_portfolio_risk",
+            return_value={
+                "ratio": float("nan"),
+                "nested": [1, float("nan")],
+            },
+        ):
+            response = self.client.get("/api/portfolio/risk")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertIsNone(payload["data"]["ratio"])
+        self.assertIsNone(payload["data"]["nested"][1])
+
     def test_submit_main_force_task_requires_auth_and_calls_service(self):
         self.login()
         with patch("backend.services.submit_main_force_selection_task", return_value="task-main-force") as mocked:

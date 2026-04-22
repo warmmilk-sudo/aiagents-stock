@@ -3,7 +3,7 @@
 包含四位专业分析师：康波周期分析师、美林时钟分析师、中国政策分析师、首席宏观策略师
 """
 
-from deepseek_client import DeepSeekClient
+from llm_client import LLMClient
 from model_routing import ModelTier
 from prompt_registry import build_messages
 from typing import Dict, Any
@@ -17,7 +17,7 @@ class MacroCycleAgents:
         self.model = model
         self.lightweight_model = lightweight_model
         self.reasoning_model = reasoning_model
-        self.llm_client = DeepSeekClient(
+        self.llm_client = LLMClient(
             model=model,
             lightweight_model=lightweight_model,
             reasoning_model=reasoning_model,

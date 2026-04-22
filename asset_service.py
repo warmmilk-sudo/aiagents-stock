@@ -51,6 +51,64 @@ class AssetService:
             account_name=DEFAULT_ACCOUNT_NAME,
         )
 
+    def _resolve_stock_name(self, asset: Dict, strategy_context: Optional[Dict] = None) -> str:
+        symbol = str(asset.get("symbol") or "").strip()
+        candidates = [
+            asset.get("name"),
+            strategy_context.get("stock_name") if isinstance(strategy_context, dict) else None,
+            strategy_context.get("symbol") if isinstance(strategy_context, dict) else None,
+            asset.get("symbol"),
+        ]
+        normalized_symbol = symbol.upper()
+        for candidate in candidates:
+            text = str(candidate or "").strip()
+            if not text:
+                continue
+            normalized_text = text.upper()
+            invalid_names = {
+                "N/A",
+                "NA",
+                "未知",
+                normalized_symbol,
+                f"股票{normalized_symbol}",
+                f"港股{normalized_symbol}",
+                f"美股{normalized_symbol}",
+            }
+            if text not in invalid_names and normalized_text != normalized_symbol:
+                return text
+        if symbol:
+            try:
+                from data_source_manager import data_source_manager
+
+                basic_info = data_source_manager.get_stock_basic_info(symbol)
+                if isinstance(basic_info, dict):
+                    candidates.extend(
+                        [
+                            basic_info.get("name"),
+                            basic_info.get("股票名称"),
+                            basic_info.get("股票简称"),
+                    ]
+                    )
+            except Exception:
+                pass
+        for candidate in candidates:
+            text = str(candidate or "").strip()
+            if not text:
+                continue
+            normalized_text = text.upper()
+            invalid_names = {
+                "N/A",
+                "NA",
+                "未知",
+                normalized_symbol,
+                f"股票{normalized_symbol}",
+                f"港股{normalized_symbol}",
+                f"美股{normalized_symbol}",
+            }
+            if text not in invalid_names and normalized_text != normalized_symbol:
+                return text
+        return symbol
+
     def _analyze_initial_holding_baseline(
         self,
         *,
@@ -158,9 +216,10 @@ class AssetService:
         status = asset.get("status")
         account_risk = self._resolve_account_risk_profile(DEFAULT_ACCOUNT_NAME)
         monitor_mode = "exit" if status == STATUS_HOLDING else "entry"
+        resolved_name = self._resolve_stock_name(asset, strategy_context)
         return {
             "symbol": asset["symbol"],
-            "name": asset.get("name") or asset["symbol"],
+            "name": resolved_name,
             "monitor_type": "ai_task",
             "source": "portfolio" if status == STATUS_HOLDING else "ai_monitor",
             "enabled": bool(asset.get("monitor_enabled", True)),
@@ -175,7 +234,7 @@ class AssetService:
             "portfolio_stock_id": asset["id"] if status == STATUS_HOLDING else None,
             "origin_analysis_id": asset.get("origin_analysis_id"),
             "config": {
-                "task_name": existing_config.get("task_name") or f"{asset.get('name') or asset['symbol']}盯盘",
+                "task_name": existing_config.get("task_name") or f"{resolved_name}盯盘",
                 "monitor_mode": monitor_mode,
                 "position_size_pct": account_risk["position_size_pct"],
                 "total_position_pct": account_risk["total_position_pct"],

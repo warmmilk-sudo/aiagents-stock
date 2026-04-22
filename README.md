@@ -48,22 +48,25 @@
 
 ---
 
-## ⭐ 2026.2.27更新 - AI模型自由切换 🤖
+## ⭐ 2026.2.27更新 - AI模型配置化 🤖
 
-**重大改进：AI模型全局可配置化**
+**重大改进：AI模型配置从代码迁移到 `.env`**
 
-将所有硬编码的模型名称统一改为从 `.env` 文件动态读取，一键切换任意 OpenAI 兼容大模型，无需修改代码！
+现在轻量任务和推理任务分别读取各自的模型名称，OpenAI 兼容 API 则通过 `WARMMILK_CONFIG` 和 `VOICE_CONFIG` 统一管理。
 
 **核心变化：**
-- ✅ **新增 `DEFAULT_MODEL_NAME`** — 在 `.env` 中配置默认 AI 模型
+- ✅ **轻量/推理模型可分别配置** — 在 `.env` 中直接调整 `LIGHTWEIGHT_MODEL_NAME` 与 `REASONING_MODEL_NAME`
+- ✅ **API 配置统一使用 JSON** — 通过 `WARMMILK_CONFIG` / `VOICE_CONFIG` 维护 API Key 和 Base URL
 - ✅ **移除所有模型选择下拉框** — 龙虎榜、主力选股、智策板块等页面不再需要手动选模型
-- ✅ **环境配置 UI 新增模型输入** — 在「环境配置」中可直接输入模型名称，附常用模型参考
-- ✅ **支持任意 OpenAI 兼容模型** — DeepSeek、通义千问、GPT-4o 等一键切换
+- ✅ **支持任意 OpenAI 兼容模型** — DeepSeek、通义千问、GPT-4o 等均可接入
 
-**切换模型只需一步：**
+**切换模型示例：**
 ```env
 # .env 文件
-DEFAULT_MODEL_NAME="qwen-plus"  # 或 deepseek-chat, gpt-4o 等
+LIGHTWEIGHT_MODEL_NAME="gemini-3-flash"    # 轻量任务
+REASONING_MODEL_NAME="doubao-2-0-pro"      # 推理任务
+WARMMILK_CONFIG={"API_KEY":"your_key","BASE_URL":"https://generativelanguage.googleapis.com/v1beta/openai/"}
+VOICE_CONFIG={"API_KEY":"your_key","BASE_URL":"https://api.deepseek.com/v1"}
 ```
 
 > 💡 修改后重启应用即可生效，侧边栏会显示当前使用的模型名称。
@@ -543,7 +546,7 @@ StockAPI龙虎榜接口（每日更新，免费1000次）
 ### 前置要求
 - Docker 20.10+
 - Docker Compose 2.0+（推荐）
-- DeepSeek API Key
+- OpenAI 兼容 API Key
 
 ### 快速开始
 
@@ -564,9 +567,9 @@ Copy-Item .env.example .env
 cp .env.example .env
 ```
 
-编辑 `.env` 文件，填入您的 DeepSeek API Key：
+编辑 `.env` 文件，填入您的配置：
 ```env
-LLM_API_KEY=sk-your-actual-api-key-here
+WARMMILK_CONFIG={"API_KEY":"sk-your-actual-api-key-here","BASE_URL":"https://generativelanguage.googleapis.com/v1beta/openai/"}
 ```
 
 #### 3. 启动服务
@@ -615,7 +618,7 @@ docker-compose restart
 - Python 3.8+(微软store或官网，推荐3.12)
 - Node.js 16+ (微软store或官网，pywencai需要)
 - 稳定的网络连接（大陆网络请关闭vpn）
-- DeepSeek API Key
+- OpenAI 兼容 API Key
 
 ### 2. 安装依赖
 创建激活虚拟环境（powershell）并安装依赖
@@ -639,13 +642,17 @@ cp .env.example .env
 
 2. 编辑 `.env` 文件，设置您的配置（也可在前端web界面-环境配置中设置）：
 ```env
-# DeepSeek API配置（必需）
-LLM_API_KEY=your_actual_deepseek_api_key_here
-LLM_BASE_URL=https://api.deepseek.com/v1
+# WARMMILK 配置（Gemini 默认）
+WARMMILK_CONFIG={"API_KEY":"your_actual_gemini_api_key_here","BASE_URL":"https://generativelanguage.googleapis.com/v1beta/openai/"}
 
-# AI模型名称（可选，支持OpenAI兼容模型）
-# 常用：deepseek-chat, deepseek-reasoner, qwen-plus, gpt-4o
-DEFAULT_MODEL_NAME=deepseek-chat
+# VOICE 配置（Doubao / DeepSeek 共用）
+VOICE_CONFIG={"API_KEY":"your_voice_api_key_here","BASE_URL":"https://api.deepseek.com/v1"}
+
+# 轻量 / 推理模型名称（可选，支持OpenAI兼容模型）
+LIGHTWEIGHT_MODEL_NAME=gemini-3-flash
+REASONING_MODEL_NAME=doubao-2-0-pro
+LIGHTWEIGHT_MODEL_OPTIONS=gemini-3-flash,doubao-2-0-mini,doubao-2-0-lite
+REASONING_MODEL_OPTIONS=deepseek-v3-2,doubao-2-0-pro
 
 # Tushare配置（可选）- 作为降级数据源
 TUSHARE_TOKEN=your_tushare_token       # 在 https://tushare.pro 注册获取
@@ -668,8 +675,8 @@ WEBHOOK_KEYWORD=股票  # 钉钉自定义关键词，飞书可留空
 
 #### 方法二：设置系统环境变量
 您也可以直接在系统环境变量中设置：
-- 变量名：`LLM_API_KEY`
-- 变量值：您的API密钥
+- 变量名：`WARMMILK_CONFIG` 或 `VOICE_CONFIG`
+- 变量值：JSON 里的 `API_KEY` 和 `BASE_URL`
 
 **注意**：环境变量文件的优先级高于系统环境变量。
 
@@ -1146,7 +1153,7 @@ AI股票分析系统
 ├── frontend/                       # React 前端
 │   ├── src/                        # 页面与组件源码
 │   └── dist/                       # 前端构建产物（生产由后端托管）
-├── deepseek_client.py              # DeepSeek API客户端
+├── llm_client.py                   # 通用 LLM API 客户端
 ├── ai_agents.py                    # AI智能体分析模块
 ├── monitor_service.py              # 监测服务后台
 ├── monitor_db.py                   # 监测数据库管理
@@ -1178,7 +1185,7 @@ AI股票分析系统
 - 最终决策生成
 - 财务数据深度解读
 
-#### 🔗 API客户端 (deepseek_client.py)
+#### 🔗 API客户端 (llm_client.py)
 - DeepSeek API封装
 - 智能对话管理
 - 错误处理和重试
@@ -1360,9 +1367,8 @@ AI股票分析系统
 - **技术指标**：TA-Lib技术分析库
 - **降级机制**：TDX → Tushare → AKShare 多层数据源保障
 
-### AI模型
 - **语言模型**：支持任意 OpenAI 兼容模型（DeepSeek、通义千问、GPT-4o 等）
-- **模型配置**：通过 `.env` 文件中的 `DEFAULT_MODEL_NAME` 一键切换
+- **模型配置**：通过 `.env` 文件中的 `LIGHTWEIGHT_MODEL_NAME` / `REASONING_MODEL_NAME` 切换
 - **分析框架**：多智能体协作
 - **决策逻辑**：综合评分机制
 
@@ -1381,9 +1387,10 @@ AI股票分析系统
 ### API配置
 ```env
 # .env 文件
-LLM_API_KEY=your_api_key
-LLM_BASE_URL=https://api.deepseek.com/v1
-DEFAULT_MODEL_NAME=deepseek-chat   # 支持任意OpenAI兼容模型
+WARMMILK_CONFIG={"API_KEY":"your_api_key","BASE_URL":"https://generativelanguage.googleapis.com/v1beta/openai/"}
+VOICE_CONFIG={"API_KEY":"your_voice_api_key","BASE_URL":"https://api.deepseek.com/v1"}
+LIGHTWEIGHT_MODEL_NAME=gemini-3-flash   # 轻量任务模型
+REASONING_MODEL_NAME=doubao-2-0-pro     # 推理任务模型
 ```
 
 **重要提示**：
@@ -1407,7 +1414,7 @@ DEFAULT_INTERVAL = "1d"    # 默认数据间隔
 ### 常见问题
 
 1. **API Key错误**
-   - 检查.env文件中的LLM_API_KEY设置
+   - 检查 `.env` 文件中的 `WARMMILK_CONFIG` 或 `VOICE_CONFIG` 设置
    - 确保.env文件存在且格式正确
    - 确保API Key有效且有足够余额
 
@@ -1514,10 +1521,10 @@ DEFAULT_INTERVAL = "1d"    # 默认数据间隔
      - AKShare数据源可能暂时不可用，稍后重试
      - 查看终端日志确认具体错误信息
    - **AI分析超时或失败**：
-     - 检查DeepSeek API Key是否有效
+     - 检查 `WARMMILK_CONFIG` 或 `VOICE_CONFIG` 中的 API Key 是否有效
      - 确认API余额充足
-     - deepseek-reasoner模型较慢（3-5分钟），请耐心等待
-     - 可切换到deepseek-chat模型（2-3分钟）
+     - 推理模型通常较慢（3-5分钟），请耐心等待
+     - 可切换到轻量模型以缩短响应时间
    - **定时任务未运行**：
      - 确认程序持续运行（本地部署不要关闭窗口）
      - 检查定时任务状态是否显示"✅ 运行中"

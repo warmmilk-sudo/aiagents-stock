@@ -1,11 +1,14 @@
 """Environment configuration manager."""
 
+import json
 import importlib
 import re
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 import requests
+
+import config as app_config
 
 
 class ConfigManager:
@@ -20,20 +23,55 @@ class ConfigManager:
         r"(?P<separator>\s*=\s*)(?P<value>.*?)(?P<newline>\r?\n?)$"
     )
 
+    @staticmethod
+    def _default_api_config_value(api_key: str, base_url: str) -> str:
+        return json.dumps(
+            {
+                "API_KEY": api_key,
+                "BASE_URL": base_url,
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+
+    @staticmethod
+    def _parse_json_field_value(value: Any) -> Optional[dict[str, Any]]:
+        raw_value = str(value or "").strip()
+        if not raw_value:
+            return {}
+        try:
+            parsed = json.loads(raw_value)
+        except Exception:
+            return None
+        return parsed if isinstance(parsed, dict) else None
+
+    def _normalize_json_field_value(self, value: Any, *, mask_api_key: bool = False) -> str:
+        payload = self._parse_json_field_value(value)
+        if payload is None:
+            return self._normalize_env_value(value)
+
+        canonical_payload = {
+            "API_KEY": str(payload.get("API_KEY", payload.get("api_key", "")) or "").strip(),
+            "BASE_URL": str(payload.get("BASE_URL", payload.get("base_url", "")) or "").strip(),
+        }
+        if mask_api_key and canonical_payload["API_KEY"]:
+            canonical_payload["API_KEY"] = self._MASKED_PASSWORD_VALUE
+        return json.dumps(canonical_payload, ensure_ascii=False, separators=(",", ":"))
+
     def __init__(self, env_file: str = ".env"):
         self.env_file = Path(env_file)
         self.default_config = {
-            "LLM_API_KEY": {
-                "value": "",
-                "description": "LLM API 密钥",
-                "required": True,
-                "type": "password",
-            },
-            "LLM_BASE_URL": {
-                "value": "https://api.deepseek.com/v1",
-                "description": "LLM API 地址",
+            "WARMMILK_CONFIG": {
+                "value": self._default_api_config_value(app_config.WARMMILK_API_KEY, app_config.WARMMILK_BASE_URL),
+                "description": "WARMMILK 模型配置（JSON）",
                 "required": False,
-                "type": "text",
+                "type": "json",
+            },
+            "VOICE_CONFIG": {
+                "value": self._default_api_config_value(app_config.VOICE_API_KEY, app_config.VOICE_BASE_URL),
+                "description": "VOICE 模型配置（JSON）",
+                "required": False,
+                "type": "json",
             },
             "SMART_MONITOR_HTTP_TIMEOUT_SECONDS": {
                 "value": "30",
@@ -96,25 +134,25 @@ class ConfigManager:
                 "type": "text",
             },
             "LIGHTWEIGHT_MODEL_NAME": {
-                "value": "deepseek-chat",
+                "value": "gemini-3-flash",
                 "description": "轻量模型名称（技术/情绪/新闻/批量筛选等任务）",
                 "required": False,
                 "type": "text",
             },
             "LIGHTWEIGHT_MODEL_OPTIONS": {
-                "value": "",
+                "value": "gemini-3-flash,doubao-2-0-mini,doubao-2-0-lite",
                 "description": "轻量模型下拉候选（逗号或换行分隔）",
                 "required": False,
                 "type": "text",
             },
             "REASONING_MODEL_NAME": {
-                "value": "deepseek-reasoner",
+                "value": "doubao-2-0-pro",
                 "description": "推理模型名称（基本面/风险/宏观/策略等任务）",
                 "required": False,
                 "type": "text",
             },
             "REASONING_MODEL_OPTIONS": {
-                "value": "",
+                "value": "deepseek-v3-2,doubao-2-0-pro",
                 "description": "推理模型下拉候选（逗号或换行分隔）",
                 "required": False,
                 "type": "text",
@@ -294,9 +332,12 @@ class ConfigManager:
                 options.append(normalized)
         return options
 
-    def _fetch_available_llm_models(self, config: Dict[str, str]) -> Optional[list[str]]:
-        api_key = str(config.get("LLM_API_KEY", "")).strip()
-        base_url = str(config.get("LLM_BASE_URL", "")).strip()
+    def _fetch_available_llm_models(
+        self,
+        config_values: Dict[str, str],
+        model_name: Optional[str] = None,
+    ) -> Optional[list[str]]:
+        api_key, base_url = app_config.get_model_api_credentials(model_name, config_values)
         if not api_key or not base_url:
             return None
 
@@ -321,31 +362,59 @@ class ConfigManager:
                 models.append(model_id)
         return models or None
 
-    def _validate_llm_models(self, config: Dict[str, str]) -> tuple[bool, str]:
-        available_models = self._fetch_available_llm_models(config)
-        if not available_models:
-            return True, "配置验证通过"
-
-        available_model_set = set(available_models)
+    def _validate_llm_models(self, config_values: Dict[str, str]) -> tuple[bool, str]:
+        available_models_cache: dict[tuple[str, str], Optional[list[str]]] = {}
         invalid_entries: list[str] = []
 
+        def _get_available_models(model_name: str) -> Optional[list[str]]:
+            api_key, base_url = app_config.get_model_api_credentials(model_name, config_values)
+            if not api_key or not base_url:
+                return None
+            cache_key = (api_key, base_url)
+            if cache_key not in available_models_cache:
+                available_models_cache[cache_key] = self._fetch_available_llm_models(config_values, model_name)
+            return available_models_cache[cache_key]
+
         for key in ("LIGHTWEIGHT_MODEL_NAME", "REASONING_MODEL_NAME"):
-            value = str(config.get(key, "")).strip()
-            if value and value not in available_model_set:
+            value = str(config_values.get(key, "")).strip()
+            if not value:
+                continue
+            api_key, base_url = app_config.get_model_api_credentials(value, config_values)
+            if not api_key or not base_url:
+                invalid_entries.append(f"{key}={value}")
+                continue
+            available_models = _get_available_models(value)
+            api_model_name = app_config.get_model_api_name(value, config_values)
+            if available_models and api_model_name not in available_models:
                 invalid_entries.append(f"{key}={value}")
 
         for key in ("LIGHTWEIGHT_MODEL_OPTIONS", "REASONING_MODEL_OPTIONS"):
-            invalid_options = [
-                item for item in self._parse_model_options_value(config.get(key, ""))
-                if item not in available_model_set
-            ]
+            invalid_options = []
+            for item in self._parse_model_options_value(config_values.get(key, "")):
+                api_key, base_url = app_config.get_model_api_credentials(item, config_values)
+                if not api_key or not base_url:
+                    invalid_options.append(item)
+                    continue
+                available_models = _get_available_models(item)
+                api_model_name = app_config.get_model_api_name(item, config_values)
+                if available_models and api_model_name not in available_models:
+                    invalid_options.append(item)
             if invalid_options:
                 invalid_entries.append(f"{key} 包含 {', '.join(invalid_options)}")
 
         if not invalid_entries:
             return True, "配置验证通过"
 
-        available_preview = ", ".join(sorted(available_models)[:10])
+        available_preview = ", ".join(
+            sorted(
+                {
+                    item
+                    for models in available_models_cache.values()
+                    if models
+                    for item in models
+                }
+            )[:10]
+        )
         return (
             False,
             "当前 LLM 网关不支持以下模型配置："
@@ -372,6 +441,28 @@ class ConfigManager:
         for key, value in updates.items():
             if self._is_password_field(key) and value == self._MASKED_PASSWORD_VALUE:
                 resolved[key] = existing_values.get(key, "")
+            elif self.default_config.get(key, {}).get("type") == "json":
+                if value == self._MASKED_PASSWORD_VALUE:
+                    resolved[key] = existing_values.get(key, "")
+                    continue
+                parsed_value = self._parse_json_field_value(value)
+                if parsed_value is None:
+                    resolved[key] = value
+                    continue
+                existing_payload = self._parse_json_field_value(existing_values.get(key, ""))
+                if isinstance(existing_payload, dict):
+                    if str(parsed_value.get("API_KEY", parsed_value.get("api_key", "")) or "").strip() == self._MASKED_PASSWORD_VALUE:
+                        parsed_value["API_KEY"] = existing_payload.get("API_KEY", existing_payload.get("api_key", ""))
+                    if str(parsed_value.get("BASE_URL", parsed_value.get("base_url", "")) or "").strip() == self._MASKED_PASSWORD_VALUE:
+                        parsed_value["BASE_URL"] = existing_payload.get("BASE_URL", existing_payload.get("base_url", ""))
+                resolved[key] = json.dumps(
+                    {
+                        "API_KEY": str(parsed_value.get("API_KEY", parsed_value.get("api_key", "")) or "").strip(),
+                        "BASE_URL": str(parsed_value.get("BASE_URL", parsed_value.get("base_url", "")) or "").strip(),
+                    },
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
             else:
                 resolved[key] = value
 
@@ -532,7 +623,11 @@ class ConfigManager:
         """Update managed configuration in `.env` while preserving existing layout."""
         try:
             updates = {
-                key: self._normalize_env_value(value)
+                key: (
+                    self._normalize_json_field_value(value)
+                    if self.default_config.get(key, {}).get("type") == "json"
+                    else self._normalize_env_value(value)
+                )
                 for key, value in config.items()
                 if key in self.default_config
             }
@@ -565,6 +660,8 @@ class ConfigManager:
             value = current_values.get(key, info["value"])
             if self._is_password_field(key) and value:
                 value = self._MASKED_PASSWORD_VALUE
+            elif info.get("type") == "json":
+                value = self._normalize_json_field_value(value, mask_api_key=True)
             config_info[key] = {
                 "value": value,
                 "description": info["description"],
@@ -581,6 +678,25 @@ class ConfigManager:
         for key, info in self.default_config.items():
             if info["required"] and not config.get(key):
                 return False, f"必填项 {info['description']} 不能为空"
+            if info.get("type") == "json":
+                raw_value = str(config.get(key, "") or "").strip()
+                if raw_value and self._parse_json_field_value(raw_value) is None:
+                    return False, f"{info['description']} 必须是合法的 JSON"
+
+        lightweight_model = str(
+            config.get("LIGHTWEIGHT_MODEL_NAME") or getattr(app_config, "LIGHTWEIGHT_MODEL_NAME", "")
+        ).strip()
+        reasoning_model = str(
+            config.get("REASONING_MODEL_NAME") or getattr(app_config, "REASONING_MODEL_NAME", "")
+        ).strip()
+        for model_name in (lightweight_model, reasoning_model):
+            if not model_name:
+                continue
+            if not app_config.get_model_config_env_key(model_name):
+                continue
+            api_key, base_url = app_config.get_model_api_credentials(model_name, config)
+            if not api_key or not base_url:
+                return False, "请先为当前轻量/推理模型配置可用的 API 密钥和 BASE_URL"
 
         if str(config.get("TDX_ENABLED", "false")).strip().lower() == "true":
             if not str(config.get("TDX_BASE_URL", "")).strip():

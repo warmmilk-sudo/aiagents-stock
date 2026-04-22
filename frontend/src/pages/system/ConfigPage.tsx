@@ -18,7 +18,8 @@ const sectionTabs = [
 ];
 
 const BASIC_PANELS = [
-  { title: "基础连接", keys: ["LLM_API_KEY", "LLM_BASE_URL"] },
+  { title: "WARMMILK 连接", keys: ["WARMMILK_CONFIG"] },
+  { title: "VOICE 连接", keys: ["VOICE_CONFIG"] },
   {
     title: "模型配置",
     keys: ["LIGHTWEIGHT_MODEL_NAME", "LIGHTWEIGHT_MODEL_OPTIONS", "REASONING_MODEL_NAME", "REASONING_MODEL_OPTIONS"],
@@ -96,6 +97,14 @@ function renderField(
           <option value="true">开启</option>
           <option value="false">关闭</option>
         </select>
+      ) : field.type === "json" ? (
+        <textarea
+          id={key}
+          onChange={(event) => setValue(key, event.target.value)}
+          rows={4}
+          spellCheck={false}
+          value={field.value}
+        />
       ) : (
         <input
           id={key}

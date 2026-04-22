@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional
 from analysis_repository import analysis_repository
 from asset_repository import STATUS_FOCUS, STATUS_HOLDING, STATUS_RESEARCH, asset_repository
 from asset_service import asset_service
-from deepseek_client import DeepSeekClient
+from llm_client import LLMClient
 from investment_db_utils import connect_sqlite
 from model_routing import ModelTier
 from prompt_registry import build_messages
@@ -353,6 +353,37 @@ def _split_display_tags(tags: List[str], *, core_limit: int = 5) -> Dict[str, An
         "core_concepts": core_concepts,
         "extra_tags_count": extra_tags_count,
         "display_tag_summary": display_tag_summary,
+    }
+
+
+def _canonicalize_asset_sector_tags(tags: List[str], *, core_limit: int = 3) -> Dict[str, Any]:
+    normalized: List[str] = []
+    for tag in tags:
+        text = str(tag or "").strip()
+        if text and text not in normalized:
+            normalized.append(text)
+
+    tag_view = _split_display_tags(normalized, core_limit=core_limit)
+    matching_tags: List[str] = []
+    if tag_view.get("primary_industry"):
+        matching_tags.append(str(tag_view["primary_industry"]))
+    matching_tags.extend(str(tag) for tag in tag_view.get("core_concepts") or [])
+    if not matching_tags:
+        matching_tags = normalized[: max(1, core_limit + 1)]
+
+    deduped_matching_tags: List[str] = []
+    for tag in matching_tags:
+        text = str(tag or "").strip()
+        if text and text not in deduped_matching_tags:
+            deduped_matching_tags.append(text)
+
+    return {
+        "raw_tags": normalized,
+        "primary_industry": tag_view.get("primary_industry") or "",
+        "core_concepts": tag_view.get("core_concepts") or [],
+        "extra_tags_count": tag_view.get("extra_tags_count", 0),
+        "display_tag_summary": tag_view.get("display_tag_summary") or [],
+        "matching_tags": deduped_matching_tags[: max(1, core_limit + 1)],
     }
 
 
@@ -1082,7 +1113,7 @@ def _extract_structured_selection_sectors(report: Dict[str, Any]) -> List[Dict[s
 def _extract_selection_sectors_with_llm(
     report: Dict[str, Any],
     *,
-    client: Optional[DeepSeekClient] = None,
+    client: Optional[LLMClient] = None,
 ) -> List[Dict[str, Any]]:
     summary_data = report.get("summary_data") or {}
     structured_heat = _extract_sector_heat(report)
@@ -1101,7 +1132,7 @@ def _extract_selection_sectors_with_llm(
         recommended_payload=json.dumps(recommended, ensure_ascii=False, indent=2),
         report_excerpt=report_excerpt,
     )
-    llm_client = client or DeepSeekClient()
+    llm_client = client or LLMClient()
     response = llm_client.call_api(
         messages,
         max_tokens=1200,
@@ -1124,7 +1155,7 @@ def _review_selection_candidates_with_llm(
     if not ranked_top15 or not final_selected:
         return {}
 
-    client = DeepSeekClient(
+    client = LLMClient(
         lightweight_model=lightweight_model,
         reasoning_model=reasoning_model,
     )
@@ -1196,7 +1227,7 @@ def _extract_selection_sectors(
         return structured[:5]
 
     try:
-        fallback_client = DeepSeekClient(
+        fallback_client = LLMClient(
             lightweight_model=lightweight_model,
             reasoning_model=reasoning_model,
         )
@@ -1261,6 +1292,7 @@ def _collect_asset_match_context(asset: Dict[str, Any], warnings: List[str]) -> 
         for tag in _maybe_backfill_asset_tags(asset, warnings):
             if tag not in tags:
                 tags.append(tag)
+    tag_view = _canonicalize_asset_sector_tags(tags, core_limit=3)
     texts = [
         str(asset.get("name") or ""),
         str(asset.get("note") or ""),
@@ -1271,7 +1303,12 @@ def _collect_asset_match_context(asset: Dict[str, Any], warnings: List[str]) -> 
     return {
         "latest_record": latest_record,
         "strategy_context": strategy_context,
-        "tags": tags,
+        "tags": tag_view["matching_tags"],
+        "raw_tags": tag_view["raw_tags"],
+        "primary_industry": tag_view["primary_industry"],
+        "core_concepts": tag_view["core_concepts"],
+        "extra_tags_count": tag_view["extra_tags_count"],
+        "display_tag_summary": tag_view["display_tag_summary"],
         "haystack": " ".join(texts),
     }
 
@@ -2296,7 +2333,7 @@ def _intelligent_risk_assessment_with_llm(
     supplemental_news: List[Dict[str, Any]],
     structured_events: Dict[str, List[Dict[str, Any]]],
     longhubang_note: str,
-    client: Optional[DeepSeekClient],
+    client: Optional[LLMClient],
 ) -> Dict[str, Any]:
     if client is None:
         return {}
@@ -2353,7 +2390,7 @@ def _evaluate_risk_for_symbol(
     longhubang_map: Dict[str, List[Dict[str, Any]]],
     warnings: List[str],
     *,
-    risk_client: Optional[DeepSeekClient] = None,
+    risk_client: Optional[LLMClient] = None,
 ) -> Dict[str, Any]:
     lhb_records = longhubang_map.get(symbol) or []
 

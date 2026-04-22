@@ -22,7 +22,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 
 from agent_memory_db import AgentMemoryDB, agent_memory_db
-from deepseek_client import DeepSeekClient, EmbeddingClient
+from llm_client import EmbeddingClient, LLMClient
 from model_routing import ModelTier
 from prompt_registry import build_messages
 
@@ -116,7 +116,7 @@ class AgentMemoryService:
         self,
         db: Optional[AgentMemoryDB] = None,
         embedding_client: Optional[EmbeddingClient] = None,
-        llm_client: Optional[DeepSeekClient] = None,
+        llm_client: Optional[LLMClient] = None,
     ):
         self.db = db or agent_memory_db
         self._embedding_client = embedding_client
@@ -129,9 +129,9 @@ class AgentMemoryService:
         return self._embedding_client
 
     @property
-    def llm_client(self) -> DeepSeekClient:
+    def llm_client(self) -> LLMClient:
         if self._llm_client is None:
-            self._llm_client = DeepSeekClient()
+            self._llm_client = LLMClient()
         return self._llm_client
 
     # ------------------------------------------------------------------

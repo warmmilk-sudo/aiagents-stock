@@ -10,8 +10,8 @@ class ModelTier(str, Enum):
 
 
 _TIER_DEFAULTS = {
-    ModelTier.LIGHTWEIGHT: "deepseek-chat",
-    ModelTier.REASONING: "deepseek-reasoner",
+    ModelTier.LIGHTWEIGHT: "gemini-3-flash",
+    ModelTier.REASONING: "doubao-2-0-pro",
 }
 
 
@@ -65,6 +65,64 @@ def resolve_model_name(
             return model_name
 
     return get_env_model_name(parsed_tier)
+
+
+def get_model_fallback_candidates(
+    tier: Optional[Union[ModelTier, str]] = None,
+    explicit_model: Optional[str] = None,
+    forced_model: Optional[str] = None,
+    lightweight_model: Optional[str] = None,
+    reasoning_model: Optional[str] = None,
+) -> list[str]:
+    """Return the ordered model names to try for a request.
+
+    The primary model is derived from the normal routing rules. The remaining
+    candidates follow the configured per-tier options before falling back to
+    the tier defaults and then the opposite tier as a last resort.
+    """
+
+    parsed_tier = parse_tier(tier)
+    candidates: list[str] = []
+
+    def add_candidate(name: Optional[str]) -> None:
+        normalized = normalize_model_name(name)
+        if normalized and normalized not in candidates:
+            candidates.append(normalized)
+
+    add_candidate(
+        resolve_model_name(
+            tier=parsed_tier,
+            explicit_model=explicit_model,
+            forced_model=forced_model,
+            lightweight_model=lightweight_model,
+            reasoning_model=reasoning_model,
+        )
+    )
+
+    if parsed_tier == ModelTier.REASONING:
+        for item in config.REASONING_MODEL_OPTIONS:
+            add_candidate(item)
+        add_candidate(reasoning_model)
+        add_candidate(config.REASONING_MODEL_NAME)
+        add_candidate(_TIER_DEFAULTS[ModelTier.REASONING])
+        for item in config.LIGHTWEIGHT_MODEL_OPTIONS:
+            add_candidate(item)
+        add_candidate(lightweight_model)
+        add_candidate(config.LIGHTWEIGHT_MODEL_NAME)
+        add_candidate(_TIER_DEFAULTS[ModelTier.LIGHTWEIGHT])
+    else:
+        for item in config.LIGHTWEIGHT_MODEL_OPTIONS:
+            add_candidate(item)
+        add_candidate(lightweight_model)
+        add_candidate(config.LIGHTWEIGHT_MODEL_NAME)
+        add_candidate(_TIER_DEFAULTS[ModelTier.LIGHTWEIGHT])
+        for item in config.REASONING_MODEL_OPTIONS:
+            add_candidate(item)
+        add_candidate(reasoning_model)
+        add_candidate(config.REASONING_MODEL_NAME)
+        add_candidate(_TIER_DEFAULTS[ModelTier.REASONING])
+
+    return candidates
 
 
 def describe_model_selection(

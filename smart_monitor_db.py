@@ -399,6 +399,13 @@ class SmartMonitorDB:
             elif "account_name" in account_info:
                 account_info.pop("account_name", None)
             payload["account_info"] = account_info
+        payload["stock_name"] = self._resolve_stock_name_for_write(
+            payload.get("stock_code") or "",
+            stock_name=payload.get("stock_name"),
+            account_name=payload.get("account_name"),
+            asset_id=payload.get("asset_id"),
+            portfolio_stock_id=payload.get("portfolio_stock_id"),
+        )
         payload["decision_context"] = self._extract_decision_context_snapshot(payload)
 
         action = str(payload.get("action") or "").upper()
@@ -865,6 +872,118 @@ class SmartMonitorDB:
             "strategy_context": strategy_context if isinstance(strategy_context, dict) else {},
         }
 
+    @staticmethod
+    def _normalize_stock_name_text(value: object) -> str:
+        return str(value or "").strip()
+
+    @classmethod
+    def _is_valid_stock_name(cls, name: object, code: object) -> bool:
+        normalized_name = cls._normalize_stock_name_text(name)
+        normalized_code = str(code or "").strip().upper()
+        if not normalized_name:
+            return False
+        invalid_names = {
+            "",
+            "N/A",
+            "NA",
+            "未知",
+            "股票",
+            f"股票{normalized_code}",
+            f"港股{normalized_code}",
+            f"美股{normalized_code}",
+        }
+        return normalized_name not in invalid_names and normalized_name.upper() != normalized_code
+
+    def _resolve_stock_display_name(
+        self,
+        stock_code: str,
+        *,
+        stock_name: Optional[object] = None,
+        account_name: Optional[str] = None,
+        asset_id: Optional[int] = None,
+        portfolio_stock_id: Optional[int] = None,
+    ) -> str:
+        normalized_code = str(stock_code or "").strip()
+        candidates = [stock_name]
+
+        asset = None
+        target_asset_id = asset_id if asset_id is not None else portfolio_stock_id
+        if target_asset_id is not None:
+            asset = self.asset_repository.get_asset(int(target_asset_id))
+        if asset is None and normalized_code:
+            asset = self.asset_repository.get_asset_by_symbol(normalized_code, account_name or DEFAULT_ACCOUNT_NAME)
+        if asset:
+            candidates.extend([asset.get("name"), asset.get("symbol"), asset.get("code")])
+
+        latest_context = self.analysis_repository.get_latest_strategy_context(
+            asset_id=asset_id,
+            portfolio_stock_id=portfolio_stock_id,
+            symbol=normalized_code or None,
+            account_name=account_name,
+        )
+        if isinstance(latest_context, dict):
+            candidates.extend([latest_context.get("stock_name"), latest_context.get("symbol")])
+
+        for candidate in candidates:
+            if self._is_valid_stock_name(candidate, normalized_code):
+                return self._normalize_stock_name_text(candidate)
+        return normalized_code
+
+    def _resolve_stock_name_for_write(
+        self,
+        stock_code: str,
+        *,
+        stock_name: Optional[object] = None,
+        account_name: Optional[str] = None,
+        asset_id: Optional[int] = None,
+        portfolio_stock_id: Optional[int] = None,
+    ) -> str:
+        normalized_code = str(stock_code or "").strip()
+        candidates = [stock_name]
+
+        asset = None
+        target_asset_id = asset_id if asset_id is not None else portfolio_stock_id
+        if target_asset_id is not None:
+            asset = self.asset_repository.get_asset(int(target_asset_id))
+        if asset is None and normalized_code:
+            asset = self.asset_repository.get_asset_by_symbol(normalized_code, account_name or DEFAULT_ACCOUNT_NAME)
+        if asset:
+            candidates.extend([asset.get("name"), asset.get("symbol"), asset.get("code")])
+
+        latest_context = self.analysis_repository.get_latest_strategy_context(
+            asset_id=asset_id,
+            portfolio_stock_id=portfolio_stock_id,
+            symbol=normalized_code or None,
+            account_name=account_name,
+        )
+        if isinstance(latest_context, dict):
+            candidates.extend([latest_context.get("stock_name"), latest_context.get("symbol")])
+
+        for candidate in candidates:
+            if self._is_valid_stock_name(candidate, normalized_code):
+                return self._normalize_stock_name_text(candidate)
+
+        if normalized_code:
+            try:
+                from data_source_manager import data_source_manager
+
+                basic_info = data_source_manager.get_stock_basic_info(normalized_code)
+                if isinstance(basic_info, dict):
+                    candidates.extend(
+                        [
+                            basic_info.get("name"),
+                            basic_info.get("股票名称"),
+                            basic_info.get("股票简称"),
+                        ]
+                    )
+            except Exception as exc:
+                self.logger.debug("股票名称写入解析失败 (%s): %s", normalized_code, exc)
+
+        for candidate in candidates:
+            if self._is_valid_stock_name(candidate, normalized_code):
+                return self._normalize_stock_name_text(candidate)
+        return normalized_code
+
     def _item_to_task(self, item: Dict) -> Dict:
         config = item.get("config") or {}
         account_name = self._normalize_account_name_value(item.get("account_name")) or DEFAULT_ACCOUNT_NAME
@@ -885,7 +1004,13 @@ class SmartMonitorDB:
             "id": item["id"],
             "task_name": config.get("task_name") or f"{item['symbol']} AI监控任务",
             "stock_code": item["symbol"],
-            "stock_name": item.get("name"),
+            "stock_name": self._resolve_stock_display_name(
+                item.get("symbol") or "",
+                stock_name=item.get("name"),
+                account_name=account_name,
+                asset_id=item.get("asset_id"),
+                portfolio_stock_id=item.get("portfolio_stock_id"),
+            ),
             "enabled": 1 if item.get("enabled", True) else 0,
             "check_interval": interval_minutes * 60,
             "trading_hours_only": 1 if item.get("trading_hours_only", True) else 0,
@@ -918,10 +1043,16 @@ class SmartMonitorDB:
             raise ValueError("stock_code 不能为空")
         account_name = self._normalize_account_name_value(task_data.get("account_name")) or DEFAULT_ACCOUNT_NAME
         asset_id = task_data.get("asset_id")
+        resolved_stock_name = self._resolve_stock_name_for_write(
+            stock_code,
+            stock_name=task_data.get("stock_name"),
+            account_name=account_name,
+            asset_id=asset_id,
+        )
         if asset_id is None:
             _, _, asset_id = self.asset_service.promote_to_watchlist(
                 symbol=stock_code,
-                stock_name=task_data.get("stock_name") or stock_code,
+                stock_name=resolved_stock_name,
                 account_name=account_name,
                 note="",
                 origin_analysis_id=task_data.get("origin_analysis_id"),
@@ -929,7 +1060,7 @@ class SmartMonitorDB:
         return self.monitoring_repository.create_item(
             {
                 "symbol": stock_code,
-                "name": task_data.get("stock_name"),
+                "name": resolved_stock_name,
                 "monitor_type": "ai_task",
                 "source": "portfolio" if task_data.get("managed_by_portfolio") else "ai_monitor",
                 "enabled": bool(task_data.get("enabled", 1)),
@@ -1110,16 +1241,26 @@ class SmartMonitorDB:
         account_name = self._normalize_account_name_value(task_data.get("account_name")) or DEFAULT_ACCOUNT_NAME
         asset_id = task_data.get("asset_id")
         target_enabled = bool(task_data.get("enabled", 1))
+        resolved_stock_name = self._resolve_stock_name_for_write(
+            stock_code,
+            stock_name=task_data.get("stock_name"),
+            account_name=account_name,
+            asset_id=asset_id,
+        )
         if asset_id is None:
             _, _, asset_id = self.asset_service.promote_to_watchlist(
                 symbol=stock_code,
-                stock_name=task_data.get("stock_name") or stock_code,
+                stock_name=resolved_stock_name,
                 account_name=account_name,
                 note="",
                 origin_analysis_id=task_data.get("origin_analysis_id"),
                 monitor_enabled=target_enabled,
             )
-        elif "enabled" in task_data:
+        else:
+            asset = self.asset_repository.get_asset(int(asset_id))
+            if asset and self._is_valid_stock_name(resolved_stock_name, stock_code) and not self._is_valid_stock_name(asset.get("name"), stock_code):
+                self.asset_repository.update_asset(int(asset_id), name=resolved_stock_name)
+        if "enabled" in task_data:
             self.asset_repository.update_asset(int(asset_id), monitor_enabled=target_enabled)
         existing = self.monitoring_repository.get_item_by_symbol(
             stock_code,
@@ -1134,7 +1275,7 @@ class SmartMonitorDB:
         task_id = self.monitoring_repository.upsert_item(
             {
                 "symbol": stock_code,
-                "name": task_data.get("stock_name"),
+                "name": resolved_stock_name,
                 "monitor_type": "ai_task",
                 "source": "portfolio" if managed_sync else "ai_monitor",
                 "enabled": target_enabled,
@@ -1153,6 +1294,12 @@ class SmartMonitorDB:
         )
         if asset_id is not None:
             self.asset_service.sync_managed_monitors(int(asset_id))
+        strategy_context = task_data.get("strategy_context")
+        if isinstance(strategy_context, dict) and strategy_context:
+            self.monitoring_repository.update_item(
+                int(task_id),
+                {"config": self._task_config_from_data(task_data)},
+            )
         return task_id
 
     def delete_monitor_task(self, task_id: int):
@@ -1310,6 +1457,13 @@ class SmartMonitorDB:
                 )
                 if normalized_info_account:
                     decision["account_info"]["account_name"] = normalized_info_account
+            decision["stock_name"] = self._resolve_stock_display_name(
+                decision.get("stock_code") or "",
+                stock_name=decision.get("stock_name"),
+                account_name=decision.get("account_name"),
+                asset_id=decision.get("asset_id"),
+                portfolio_stock_id=decision.get("portfolio_stock_id"),
+            )
             decision_context = decision.get("decision_context") if isinstance(decision.get("decision_context"), dict) else {}
             if decision_context:
                 decision["swing_execution_mode"] = decision_context.get("swing_execution_mode")

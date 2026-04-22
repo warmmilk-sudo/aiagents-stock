@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from backend.api import register_exception_handlers, success_payload
+from backend.api import SafeJSONResponse, register_exception_handlers, success_payload
 from backend.redis_manager import close_cache, init_cache
 from backend.routers import (
     agent_memory,
@@ -66,6 +66,7 @@ def create_app() -> FastAPI:
         title="aiagents-stock API",
         version="1.0.0",
         lifespan=lifespan,
+        default_response_class=SafeJSONResponse,
     )
     app.add_middleware(
         CORSMiddleware,

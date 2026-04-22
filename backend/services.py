@@ -105,6 +105,20 @@ def _clamp_int(value: Any, minimum: int, maximum: int, default: int) -> int:
     return max(minimum, min(maximum, numeric))
 
 
+def _models_have_api_credentials(*model_names: Optional[str]) -> bool:
+    resolved_models = [
+        model_name
+        for model_name in model_names
+        if str(model_name or "").strip()
+    ]
+    if not resolved_models:
+        resolved_models = [
+            getattr(config, "LIGHTWEIGHT_MODEL_NAME", ""),
+            getattr(config, "REASONING_MODEL_NAME", ""),
+        ]
+    return config.has_api_credentials_for_models(*resolved_models)
+
+
 def _default_intraday_decision_interval_minutes() -> int:
     return _clamp_int(getattr(config, "SMART_MONITOR_AI_INTERVAL_MINUTES", 60), 10, 120, 60)
 
@@ -414,8 +428,8 @@ def submit_research_analysis_task(
         raise ValueError("请输入有效的股票代码")
     if not any(analysts.values()):
         raise ValueError("请至少选择一位分析师参与分析")
-    if not getattr(config, "LLM_API_KEY", ""):
-        raise ValueError("请先配置 LLM API Key")
+    if not _models_have_api_credentials(lightweight_model, reasoning_model):
+        raise ValueError("请先配置当前模型对应的 API Key 和 BASE_URL")
     if batch_mode == "多线程并行":
         raise ValueError("深度分析暂不支持并行执行，请使用顺序分析")
 
@@ -543,8 +557,8 @@ def submit_portfolio_analysis_task(
     normalized_account = normalize_account_name(account_name) or DEFAULT_ACCOUNT_NAME
     if not any(analysts.values()):
         raise ValueError("请至少选择一位分析师参与分析")
-    if not getattr(config, "LLM_API_KEY", ""):
-        raise ValueError("请先配置 LLM API Key")
+    if not _models_have_api_credentials(lightweight_model, reasoning_model):
+        raise ValueError("请先配置当前模型对应的 API Key 和 BASE_URL")
 
     selected_analysts = _selected_analyst_keys(analysts)
     worker_count = _clamp_int(max_workers, 1, 5, 3)
@@ -728,8 +742,8 @@ def submit_main_force_selection_task(
     lightweight_model: Optional[str],
     reasoning_model: Optional[str],
 ) -> str:
-    if not getattr(config, "LLM_API_KEY", ""):
-        raise ValueError("请先配置 LLM API Key")
+    if not _models_have_api_credentials(lightweight_model, reasoning_model):
+        raise ValueError("请先配置当前模型对应的 API Key 和 BASE_URL")
     parsed_start_date = _parse_main_force_start_date(start_date)
     normalized_days_ago = None if parsed_start_date else int(days_ago or 90)
 
@@ -795,8 +809,8 @@ def submit_main_force_batch_task(
     normalized_symbols = [str(item or "").strip().upper() for item in symbols if str(item or "").strip()]
     if not normalized_symbols:
         raise ValueError("请先提供需要批量分析的股票代码")
-    if not getattr(config, "LLM_API_KEY", ""):
-        raise ValueError("请先配置 LLM API Key")
+    if not _models_have_api_credentials(lightweight_model, reasoning_model):
+        raise ValueError("请先配置当前模型对应的 API Key 和 BASE_URL")
 
     normalized_mode = "parallel" if analysis_mode == "parallel" else "sequential"
     worker_count = max(1, min(int(max_workers or 1), 5))
@@ -975,8 +989,8 @@ def submit_sector_strategy_task(
     lightweight_model: Optional[str],
     reasoning_model: Optional[str],
 ) -> str:
-    if not getattr(config, "LLM_API_KEY", ""):
-        raise ValueError("请先配置 LLM API Key")
+    if not _models_have_api_credentials(lightweight_model, reasoning_model):
+        raise ValueError("请先配置当前模型对应的 API Key 和 BASE_URL")
 
     def runner(_task_id: str, report_progress) -> dict[str, Any]:
         report_progress(current=5, total=100, message="正在获取市场数据...")
@@ -1482,8 +1496,8 @@ def submit_longhubang_task(
     lightweight_model: Optional[str],
     reasoning_model: Optional[str],
 ) -> str:
-    if not getattr(config, "LLM_API_KEY", ""):
-        raise ValueError("请先配置 LLM API Key")
+    if not _models_have_api_credentials(lightweight_model, reasoning_model):
+        raise ValueError("请先配置当前模型对应的 API Key 和 BASE_URL")
     normalized_date = str(date_value or "").strip() or None
     normalized_days = max(1, min(int(days or 1), 10))
 
@@ -1527,8 +1541,8 @@ def submit_longhubang_batch_task(
     normalized_symbols = [str(item or "").strip().upper() for item in symbols if str(item or "").strip()]
     if not normalized_symbols:
         raise ValueError("请先提供需要批量分析的股票代码")
-    if not getattr(config, "LLM_API_KEY", ""):
-        raise ValueError("请先配置 LLM API Key")
+    if not _models_have_api_credentials(lightweight_model, reasoning_model):
+        raise ValueError("请先配置当前模型对应的 API Key 和 BASE_URL")
 
     normalized_mode = "parallel" if analysis_mode == "parallel" else "sequential"
     worker_count = max(1, min(int(max_workers or 1), 5))
@@ -2834,7 +2848,7 @@ def get_system_status() -> dict[str, Any]:
     ensure_runtime_started()
     scheduler = monitor_service.get_scheduler()
     return {
-        "api_key_configured": bool(getattr(config, "LLM_API_KEY", "")),
+        "api_key_configured": bool(_models_have_api_credentials()),
         "record_count": analysis_history_service.count_records(),
         "followup_count": len(asset_service.list_followup_assets(limit=None)),
         "models": {
@@ -3617,8 +3631,8 @@ def submit_smart_monitor_baseline_refresh_task(
     stale_tasks = [task for task in unique_tasks if _is_smart_monitor_analysis_stale(task)]
     if not unique_tasks:
         raise ValueError("当前筛选范围内没有可更新基线的盯盘任务")
-    if stale_tasks and not getattr(config, "LLM_API_KEY", ""):
-        raise ValueError("存在过期基线，但未配置 LLM API Key，无法补跑深度分析")
+    if stale_tasks and not _models_have_api_credentials():
+        raise ValueError("存在过期基线，但未配置可用的模型 API Key 和 BASE_URL，无法补跑深度分析")
 
     stale_symbols = [str(task.get("stock_code") or "").strip().upper() for task in stale_tasks if task.get("stock_code")]
     fresh_count = max(0, len(unique_tasks) - len(stale_symbols))

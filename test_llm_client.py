@@ -11,14 +11,14 @@ sys.modules.setdefault(
     ),
 )
 
-from deepseek_client import DeepSeekClient
+from llm_client import LLMClient
 from model_routing import ModelTier
 from prompt_registry import build_messages
 
 
-class DeepSeekClientTests(unittest.TestCase):
+class LLMClientTests(unittest.TestCase):
     def test_call_api_raises_runtime_error_on_api_failure(self):
-        client = DeepSeekClient.__new__(DeepSeekClient)
+        client = LLMClient.__new__(LLMClient)
         client.model = None
         client.lightweight_model = None
         client.reasoning_model = None
@@ -34,7 +34,7 @@ class DeepSeekClientTests(unittest.TestCase):
             client.call_api([{"role": "user", "content": "hello"}])
 
     def test_call_api_omits_reasoning_when_disabled(self):
-        client = DeepSeekClient.__new__(DeepSeekClient)
+        client = LLMClient.__new__(LLMClient)
         client.model = None
         client.lightweight_model = None
         client.reasoning_model = None
@@ -56,7 +56,7 @@ class DeepSeekClientTests(unittest.TestCase):
         self.assertEqual(result, '{"ok":true}')
 
     def test_call_api_omits_reasoning_by_default(self):
-        client = DeepSeekClient.__new__(DeepSeekClient)
+        client = LLMClient.__new__(LLMClient)
         client.model = None
         client.lightweight_model = None
         client.reasoning_model = None
@@ -75,7 +75,7 @@ class DeepSeekClientTests(unittest.TestCase):
         self.assertEqual(result, "最终正文")
 
     def test_call_api_retries_transient_failure_then_succeeds(self):
-        client = DeepSeekClient.__new__(DeepSeekClient)
+        client = LLMClient.__new__(LLMClient)
         client.model = None
         client.lightweight_model = None
         client.reasoning_model = None
@@ -93,7 +93,7 @@ class DeepSeekClientTests(unittest.TestCase):
             )
         )
 
-        with patch("deepseek_client.time.sleep", return_value=None) as mocked_sleep:
+        with patch("llm_client.time.sleep", return_value=None) as mocked_sleep:
             result = client.call_api([{"role": "user", "content": "hello"}])
 
         self.assertEqual(result, "恢复成功")
@@ -101,7 +101,7 @@ class DeepSeekClientTests(unittest.TestCase):
         mocked_sleep.assert_called_once()
 
     def test_call_api_retries_empty_response_then_succeeds(self):
-        client = DeepSeekClient.__new__(DeepSeekClient)
+        client = LLMClient.__new__(LLMClient)
         client.model = None
         client.lightweight_model = None
         client.reasoning_model = None
@@ -120,12 +120,41 @@ class DeepSeekClientTests(unittest.TestCase):
             )
         )
 
-        with patch("deepseek_client.time.sleep", return_value=None) as mocked_sleep:
+        with patch("llm_client.time.sleep", return_value=None) as mocked_sleep:
             result = client.call_api([{"role": "user", "content": "hello"}])
 
         self.assertEqual(result, "团队讨论恢复成功")
         self.assertEqual(create.call_count, 2)
         mocked_sleep.assert_called_once()
+
+    def test_call_api_does_not_fall_back_when_model_is_not_found(self):
+        client = LLMClient.__new__(LLMClient)
+        client.model = None
+        client.lightweight_model = None
+        client.reasoning_model = None
+        client.api_retry_count = 0
+        client.api_retry_base_delay_seconds = 0.01
+        not_found_error = RuntimeError(
+            "Error code: 404 - {'error': {'code': 'InvalidEndpointOrModel.NotFound', "
+            "'message': 'The model or endpoint doubao-2-0-pro does not exist or you do not have access to it.'}}"
+        )
+        create = MagicMock(side_effect=not_found_error)
+        client.client = types.SimpleNamespace(
+            chat=types.SimpleNamespace(
+                completions=types.SimpleNamespace(
+                    create=create
+                )
+            )
+        )
+
+        with patch.object(
+            client,
+            "_get_client_for_model",
+            return_value=client.client,
+        ), self.assertRaisesRegex(RuntimeError, "LLM API调用失败"):
+            client.call_api([{"role": "user", "content": "hello"}], tier=ModelTier.REASONING)
+
+        self.assertEqual(create.call_count, 1)
 
     def test_build_messages_renders_external_prompt_templates(self):
         messages = build_messages(
@@ -150,7 +179,7 @@ class DeepSeekClientTests(unittest.TestCase):
 
     def test_technical_analysis_uses_external_prompt_template(self):
         captured = {}
-        client = DeepSeekClient.__new__(DeepSeekClient)
+        client = LLMClient.__new__(LLMClient)
 
         def fake_call_api(
             self,
@@ -196,7 +225,7 @@ class DeepSeekClientTests(unittest.TestCase):
 
     def test_final_decision_uses_reasoning_tier(self):
         captured = {}
-        client = DeepSeekClient.__new__(DeepSeekClient)
+        client = LLMClient.__new__(LLMClient)
 
         def fake_call_api(
             self,
@@ -243,7 +272,7 @@ class DeepSeekClientTests(unittest.TestCase):
 
     def test_final_decision_uses_position_rating_options_for_portfolio_stock(self):
         captured = {}
-        client = DeepSeekClient.__new__(DeepSeekClient)
+        client = LLMClient.__new__(LLMClient)
 
         def fake_call_api(
             self,
@@ -271,7 +300,7 @@ class DeepSeekClientTests(unittest.TestCase):
 
     def test_final_decision_includes_existing_holding_swing_baseline_constraints(self):
         captured = {}
-        client = DeepSeekClient.__new__(DeepSeekClient)
+        client = LLMClient.__new__(LLMClient)
 
         def fake_call_api(
             self,
@@ -306,7 +335,7 @@ class DeepSeekClientTests(unittest.TestCase):
 
     def test_fundamental_analysis_uses_expanded_token_budget_and_business_summary(self):
         captured = {}
-        client = DeepSeekClient.__new__(DeepSeekClient)
+        client = LLMClient.__new__(LLMClient)
 
         def fake_call_api(
             self,
@@ -353,7 +382,7 @@ class DeepSeekClientTests(unittest.TestCase):
         self.assertIn("制冷空调电器零部件与汽车热管理系统零部件双主业。", captured["messages"][1]["content"])
 
     def test_final_decision_extracts_json_from_wrapped_text(self):
-        client = DeepSeekClient.__new__(DeepSeekClient)
+        client = LLMClient.__new__(LLMClient)
 
         def fake_call_api(
             self,
@@ -377,7 +406,7 @@ class DeepSeekClientTests(unittest.TestCase):
         self.assertEqual(result["rating"], "买入")
 
     def test_final_decision_raises_on_invalid_json(self):
-        client = DeepSeekClient.__new__(DeepSeekClient)
+        client = LLMClient.__new__(LLMClient)
 
         def fake_call_api(
             self,

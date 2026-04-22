@@ -4,7 +4,7 @@ import os
 import time
 from typing import Any, Dict, Optional
 
-from deepseek_client import DeepSeekClient
+from llm_client import LLMClient
 from investment_action_utils import build_holding_strategy_prompt_block
 from model_routing import ModelTier
 from prompt_registry import build_messages
@@ -23,7 +23,7 @@ class StockAnalysisAgents:
         self.model = model
         self.lightweight_model = lightweight_model
         self.reasoning_model = reasoning_model
-        self.llm_client = DeepSeekClient(
+        self.llm_client = LLMClient(
             model=model,
             lightweight_model=lightweight_model,
             reasoning_model=reasoning_model,

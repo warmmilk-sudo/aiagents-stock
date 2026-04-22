@@ -197,6 +197,128 @@ class SmartMonitorDBTests(unittest.TestCase):
         self.assertEqual(decisions[0]["delta_summary"], "动作由观望变为建仓20%；新增盘中标签：量能回升")
         self.assertEqual(decisions[0]["new_intraday_signal_labels"], ["量能回升"])
 
+    def test_get_ai_decisions_resolves_stock_name_from_asset_when_placeholder_is_stored(self):
+        success, _, asset_id = self.db.asset_service.promote_to_watchlist(
+            symbol="600519",
+            stock_name="贵州茅台",
+            account_name=DEFAULT_ACCOUNT_NAME,
+        )
+        self.assertTrue(success)
+        self.assertIsNotNone(asset_id)
+
+        decision_id = self.db.save_ai_decision(
+            {
+                "stock_code": "600519",
+                "stock_name": "600519",
+                "account_name": DEFAULT_ACCOUNT_NAME,
+                "asset_id": asset_id,
+                "portfolio_stock_id": asset_id,
+                "decision_time": "2026-04-10 11:15:00",
+                "trading_session": "上午盘",
+                "action": "HOLD",
+                "confidence": 80,
+                "reasoning": "名称字段被历史脏数据写成了代码。",
+                "account_info": {"account_name": DEFAULT_ACCOUNT_NAME},
+            }
+        )
+
+        decisions = self.db.get_ai_decisions(stock_code="600519", limit=5)
+        conn = self.db._connect()
+        cursor = conn.cursor()
+        cursor.execute("SELECT stock_name FROM ai_decisions WHERE id = ?", (decision_id,))
+        raw_row = cursor.fetchone()
+        conn.close()
+
+        self.assertEqual(decisions[0]["id"], decision_id)
+        self.assertEqual(decisions[0]["stock_name"], "贵州茅台")
+        self.assertIsNotNone(raw_row)
+        self.assertEqual(raw_row["stock_name"], "贵州茅台")
+
+    def test_get_ai_decisions_resolves_stock_name_from_latest_analysis_when_asset_name_is_placeholder(self):
+        success, _, asset_id = self.db.asset_service.promote_to_watchlist(
+            symbol="301217",
+            stock_name="铜冠铜箔",
+            account_name=DEFAULT_ACCOUNT_NAME,
+        )
+        self.assertTrue(success)
+        self.assertIsNotNone(asset_id)
+
+        analysis_id = self.db.analysis_repository.save_record(
+            symbol="301217",
+            stock_name="铜冠铜箔",
+            account_name=DEFAULT_ACCOUNT_NAME,
+            period="1y",
+            stock_info={"symbol": "301217", "name": "铜冠铜箔", "current_price": 20.5},
+            agents_results={"technical": {"analysis": "最新分析基线"}},
+            discussion_result="最新分析基线",
+            final_decision={
+                "rating": "持有",
+                "entry_min": 19.5,
+                "entry_max": 20.8,
+                "take_profit": 23.0,
+                "stop_loss": 18.2,
+            },
+            analysis_scope="portfolio",
+            analysis_source="manual",
+            analysis_date="2026-04-10 10:30:00",
+            asset_id=asset_id,
+            portfolio_stock_id=asset_id,
+        )
+        self.assertGreater(analysis_id, 0)
+
+        self.db.asset_repository.update_asset(int(asset_id), name="301217")
+
+        decision_id = self.db.save_ai_decision(
+            {
+                "stock_code": "301217",
+                "stock_name": "301217",
+                "account_name": DEFAULT_ACCOUNT_NAME,
+                "asset_id": asset_id,
+                "portfolio_stock_id": asset_id,
+                "decision_time": "2026-04-10 11:20:00",
+                "trading_session": "上午盘",
+                "action": "BUY",
+                "confidence": 81,
+                "reasoning": "资产名称被回填之前是代码占位。",
+                "account_info": {"account_name": DEFAULT_ACCOUNT_NAME},
+            }
+        )
+
+        decisions = self.db.get_ai_decisions(stock_code="301217", limit=5)
+        conn = self.db._connect()
+        cursor = conn.cursor()
+        cursor.execute("SELECT stock_name FROM ai_decisions WHERE id = ?", (decision_id,))
+        raw_row = cursor.fetchone()
+        conn.close()
+
+        self.assertEqual(decisions[0]["id"], decision_id)
+        self.assertEqual(decisions[0]["stock_name"], "铜冠铜箔")
+        self.assertIsNotNone(raw_row)
+        self.assertEqual(raw_row["stock_name"], "铜冠铜箔")
+
+    def test_upsert_monitor_task_stores_stock_name_in_raw_task_name_when_input_is_code(self):
+        success, _, asset_id = self.db.asset_service.promote_to_watchlist(
+            symbol="600519",
+            stock_name="贵州茅台",
+            account_name=DEFAULT_ACCOUNT_NAME,
+        )
+        self.assertTrue(success)
+        self.assertIsNotNone(asset_id)
+
+        task_id = self.db.upsert_monitor_task(
+            {
+                "stock_code": "600519",
+                "stock_name": "600519",
+                "account_name": DEFAULT_ACCOUNT_NAME,
+                "enabled": 1,
+                "trading_hours_only": 1,
+            }
+        )
+
+        raw_task = self.db.monitoring_repository.get_item(task_id)
+        self.assertIsNotNone(raw_task)
+        self.assertEqual(raw_task["name"], "贵州茅台")
+
     def test_get_ai_decision_intraday_summary_groups_actions_and_biases(self):
         self.db.save_ai_decision(
             {
@@ -343,8 +465,8 @@ class SmartMonitorDBTests(unittest.TestCase):
     def test_monitor_task_preserves_intent_strategy_context_when_no_history_exists(self):
         task_id = self.db.upsert_monitor_task(
             {
-                "stock_code": "300308",
-                "stock_name": "中际旭创",
+                "stock_code": "002999",
+                "stock_name": "测试标的",
                 "account_name": "默认账户",
                 "enabled": 1,
                 "trading_hours_only": 1,
@@ -362,7 +484,7 @@ class SmartMonitorDBTests(unittest.TestCase):
             }
         )
 
-        task = self.db.get_monitor_task_by_code("300308", account_name="默认账户")
+        task = self.db.get_monitor_task_by_code("002999", account_name="默认账户")
 
         self.assertEqual(task_id, task["id"])
         self.assertEqual(task["origin_analysis_id"], 123)

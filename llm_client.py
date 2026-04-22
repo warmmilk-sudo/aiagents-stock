@@ -3,17 +3,35 @@ import os
 import time
 from typing import Any, Dict, List, Optional
 from datetime import datetime
+from types import SimpleNamespace
 
-import openai
+try:
+    import openai
+except ImportError:  # pragma: no cover - optional dependency in test envs
+    class _MissingOpenAIClient:
+        def __init__(self, *args, **kwargs):
+            self.chat = SimpleNamespace(
+                completions=SimpleNamespace(create=self._raise_missing_dependency)
+            )
+
+        @staticmethod
+        def _raise_missing_dependency(*args, **kwargs):
+            raise ImportError("openai package is not installed")
+
+    openai = SimpleNamespace(OpenAI=_MissingOpenAIClient)
 
 import config
 from final_decision_calibration import calibrate_final_decision
 from investment_action_utils import build_holding_strategy_prompt_block
-from model_routing import ModelTier, describe_model_selection, resolve_model_name
+from model_routing import (
+    ModelTier,
+    describe_model_selection,
+    resolve_model_name,
+)
 from prompt_registry import build_messages
 
 
-class DeepSeekClient:
+class LLMClient:
     """LLM API客户端"""
 
     def __init__(self, model=None, lightweight_model=None, reasoning_model=None):
@@ -21,9 +39,11 @@ class DeepSeekClient:
         self.model = model
         self.lightweight_model = lightweight_model
         self.reasoning_model = reasoning_model
+        self._client_cache: dict[tuple[str, str], openai.OpenAI] = {}
+        self._default_client_credentials = (config.WARMMILK_API_KEY, config.WARMMILK_BASE_URL)
         self.client = openai.OpenAI(
-            api_key=config.LLM_API_KEY,
-            base_url=config.LLM_BASE_URL,
+            api_key=config.WARMMILK_API_KEY,
+            base_url=config.WARMMILK_BASE_URL,
             timeout=config.LLM_API_TIMEOUT_SECONDS,
         )
         self.api_retry_count = max(0, int(os.getenv("LLM_API_RETRY_COUNT", "2") or 2))
@@ -105,6 +125,30 @@ class DeepSeekClient:
 - 最近5日均量/近20日均量：{volume_ratio_5_to_20}
 """
 
+    def _get_client_for_model(self, model_name: str):
+        if not hasattr(self, "_client_cache"):
+            return getattr(self, "client")
+
+        api_key, base_url = config.get_model_api_credentials(model_name)
+        if not api_key or not base_url:
+            raise RuntimeError(f"模型 {model_name} 未配置可用的 API Key 和 BASE_URL")
+        credentials = (api_key, base_url)
+
+        if hasattr(self, "_default_client_credentials") and credentials == self._default_client_credentials:
+            return self.client
+
+        cached_client = self._client_cache.get(credentials)
+        if cached_client is not None:
+            return cached_client
+
+        client = openai.OpenAI(
+            api_key=api_key,
+            base_url=base_url,
+            timeout=config.LLM_API_TIMEOUT_SECONDS,
+        )
+        self._client_cache[credentials] = client
+        return client
+
     def call_api(
         self,
         messages: List[Dict[str, str]],
@@ -122,22 +166,23 @@ class DeepSeekClient:
             lightweight_model=self.lightweight_model,
             reasoning_model=self.reasoning_model,
         )
-
-        # 对于 reasoner 模型，自动增加 max_tokens
-        if "reasoner" in model_to_use.lower() and max_tokens <= 2000:
-            max_tokens = 8000  # reasoner 模型需要更多 tokens 来输出推理过程
-
+        api_model_to_use = config.get_model_api_name(model_to_use)
         total_attempts = max(1, int(getattr(self, "api_retry_count", 2)) + 1)
         base_delay = max(0.2, float(getattr(self, "api_retry_base_delay_seconds", 0.8)))
         last_error: Exception | None = None
+        client = self._get_client_for_model(model_to_use)
+
+        candidate_max_tokens = max_tokens
+        if "reasoner" in model_to_use.lower() and candidate_max_tokens <= 2000:
+            candidate_max_tokens = 8000  # reasoner 模型需要更多 tokens 来输出推理过程
 
         for attempt in range(1, total_attempts + 1):
             try:
-                response = self.client.chat.completions.create(
-                    model=model_to_use,
+                response = client.chat.completions.create(
+                    model=api_model_to_use,
                     messages=messages,
                     temperature=temperature,
-                    max_tokens=max_tokens
+                    max_tokens=candidate_max_tokens,
                 )
 
                 # 处理 reasoner 模型的响应
@@ -148,7 +193,7 @@ class DeepSeekClient:
                 result = ""
 
                 # 检查是否有推理内容
-                if include_reasoning and hasattr(message, 'reasoning_content') and message.reasoning_content:
+                if include_reasoning and hasattr(message, "reasoning_content") and message.reasoning_content:
                     result += f"【推理过程】\n{message.reasoning_content}\n\n"
 
                 # 添加最终内容
@@ -160,12 +205,14 @@ class DeepSeekClient:
                 raise self.EmptyResponseError("llm_empty_response")
             except Exception as e:
                 last_error = e
+                if self._is_model_not_found_error(e):
+                    break
                 if attempt >= total_attempts or not self._is_retryable_llm_error(e):
                     break
                 delay_seconds = base_delay * (2 ** (attempt - 1))
                 print(
                     f"[LLM] 调用失败，正在重试 ({attempt}/{total_attempts - 1})，"
-                    f"model={model_to_use}，{delay_seconds:.1f}s 后重试：{self._format_error_message(e)}"
+                    f"model={model_to_use} -> {api_model_to_use}，{delay_seconds:.1f}s 后重试：{self._format_error_message(e)}"
                 )
                 time.sleep(delay_seconds)
 
@@ -217,6 +264,26 @@ class DeepSeekClient:
             "try again",
         )
         return any(marker in message for marker in transient_markers)
+
+    @staticmethod
+    def _is_model_not_found_error(error: Exception) -> bool:
+        status_code = getattr(error, "status_code", None)
+        response = getattr(error, "response", None)
+        if status_code is None and response is not None:
+            status_code = getattr(response, "status_code", None)
+        if status_code == 404:
+            return True
+
+        message = str(error).lower()
+        return any(
+            marker in message
+            for marker in (
+                "invalidendpointormodel.notfound",
+                "does not exist or you do not have access",
+                "model not found",
+                "endpoint not found",
+            )
+        )
 
     def technical_analysis(self, stock_info: Dict, stock_data: Any, indicators: Dict) -> str:
         """技术面分析"""

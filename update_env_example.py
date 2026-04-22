@@ -11,15 +11,15 @@ env_example_content = """# =====================================================
 # ============================================================
 
 # ========== AI模型 API配置 ==========
-# AI模型 API密钥（必填）
-AI_MODEL_API_KEY=your_actual_ai_model_api_key_here
+# WARMMILK 配置（Gemini 默认）
+WARMMILK_CONFIG={"API_KEY":"your_gemini_api_key_here","BASE_URL":"https://generativelanguage.googleapis.com/v1beta/openai/"}
 
-# AI模型 API基础URL（可选，使用默认值即可）
-AI_MODEL_BASE_URL=https://api.deepseek.com/v1
+# VOICE 配置（Doubao / DeepSeek 共用）
+VOICE_CONFIG={"API_KEY":"your_voice_api_key_here","BASE_URL":"https://api.deepseek.com/v1"}
 
 # 双模型配置（可选）
-LIGHTWEIGHT_MODEL_NAME=deepseek-chat
-REASONING_MODEL_NAME=deepseek-reasoner
+LIGHTWEIGHT_MODEL_NAME=gemini-3-flash
+REASONING_MODEL_NAME=doubao-2-0-pro
 
 
 # ========== 网站备案配置 ==========

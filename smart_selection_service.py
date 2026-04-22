@@ -950,7 +950,7 @@ class SmartSelectionService:
         def evaluate_item_risk(item: dict[str, Any]) -> tuple[str, dict[str, Any], list[str]]:
             symbol = str(item.get("symbol") or "")
             local_warnings: list[str] = []
-            client = research_hub_service.DeepSeekClient(
+            client = research_hub_service.LLMClient(
                 lightweight_model=lightweight_model,
                 reasoning_model=reasoning_model,
             )

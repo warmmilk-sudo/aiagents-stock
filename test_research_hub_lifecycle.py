@@ -532,6 +532,39 @@ class ResearchHubLifecycleTests(unittest.TestCase):
         self.assertEqual(refreshed["name"], "贵州茅台")
         self.assertIn("白酒", refreshed["sector_tags"])
 
+    def test_asset_match_context_limits_core_concepts_for_selection_matching(self):
+        repo = AssetRepository(str(self.base / "investment.db"))
+        asset_id = repo.create_or_update_research_asset(symbol="600123", name="概念过多示例", note="概念测试")
+        repo.update_asset(
+            asset_id,
+            sector_tags_json=["通信", "算力租赁", "机器人", "固态电池", "半导体设备"],
+        )
+        asset = repo.get_asset(asset_id)
+
+        with patch("research_hub_service.asset_repository", repo), patch(
+            "research_hub_service.analysis_repository.get_latest_strategy_context",
+            return_value={},
+        ), patch(
+            "research_hub_service._get_latest_analysis_record",
+            return_value={},
+        ):
+            context = research_hub_service._collect_asset_match_context(asset, [])
+            matches = research_hub_service._match_asset_to_themes(
+                asset,
+                context,
+                [
+                    {"sector": "半导体设备", "heat_score": 90},
+                    {"sector": "机器人", "heat_score": 88},
+                    {"sector": "固态电池", "heat_score": 85},
+                ],
+            )
+
+        self.assertEqual(context["raw_tags"], ["通信", "算力租赁", "机器人", "固态电池", "半导体设备"])
+        self.assertEqual(context["tags"], ["通信", "算力租赁", "机器人", "固态电池"])
+        self.assertEqual(context["core_concepts"], ["算力租赁", "机器人", "固态电池"])
+        self.assertNotIn("半导体设备", context["tags"])
+        self.assertEqual({item["sector"] for item in matches}, {"机器人", "固态电池"})
+
     def test_research_pool_cards_prioritize_most_recent_analysis(self):
         repo = AssetRepository(str(self.base / "investment.db"))
         analysis_repo = AnalysisRepository(str(self.base / "investment.db"))

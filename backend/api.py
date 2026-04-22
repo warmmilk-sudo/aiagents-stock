@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import logging
+import json
+import math
+import numbers
 from typing import Any
 
 from fastapi import FastAPI, Request
@@ -26,6 +29,36 @@ class ApiError(Exception):
         self.details = details
 
 
+def _sanitize_json_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: _sanitize_json_value(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_sanitize_json_value(item) for item in value]
+    if isinstance(value, tuple):
+        return [_sanitize_json_value(item) for item in value]
+    if isinstance(value, set):
+        return [_sanitize_json_value(item) for item in value]
+    if isinstance(value, numbers.Real) and not isinstance(value, bool):
+        numeric = float(value)
+        if math.isfinite(numeric):
+            if isinstance(value, numbers.Integral):
+                return int(value)
+            return numeric
+        return None
+    return value
+
+
+class SafeJSONResponse(JSONResponse):
+    def render(self, content: Any) -> bytes:
+        safe_content = _sanitize_json_value(content)
+        return json.dumps(
+            safe_content,
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+
+
 def success_payload(data: Any = None, message: str = "ok") -> dict[str, Any]:
     return {
         "success": True,
@@ -37,7 +70,7 @@ def success_payload(data: Any = None, message: str = "ok") -> dict[str, Any]:
 def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(ApiError)
     async def handle_api_error(_request: Request, exc: ApiError) -> JSONResponse:
-        return JSONResponse(
+        return SafeJSONResponse(
             status_code=exc.status_code,
             content={
                 "success": False,
@@ -50,7 +83,7 @@ def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(Exception)
     async def handle_unexpected_error(_request: Request, exc: Exception) -> JSONResponse:
         logger.exception("Unhandled backend error", exc_info=exc)
-        return JSONResponse(
+        return SafeJSONResponse(
             status_code=500,
             content={
                 "success": False,
@@ -59,4 +92,3 @@ def register_exception_handlers(app: FastAPI) -> None:
                 "details": None,
             },
         )
-

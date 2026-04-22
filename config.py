@@ -1,4 +1,5 @@
 import os
+import json
 import time as time_module
 
 try:
@@ -56,16 +57,33 @@ def _parse_model_options_env(key: str, fallback_model: str) -> list[str]:
     return options
 
 
-LLM_API_KEY = _safe_str_env("LLM_API_KEY")
-LLM_BASE_URL = _safe_str_env("LLM_BASE_URL", "https://api.deepseek.com/v1")
+WARMMILK_CONFIG = _safe_str_env("WARMMILK_CONFIG")
+VOICE_CONFIG = _safe_str_env("VOICE_CONFIG")
 LLM_API_TIMEOUT_SECONDS = max(30, _safe_int_env("LLM_API_TIMEOUT_SECONDS", 180))
 ANALYSIS_TASK_TIMEOUT_SECONDS = max(
     LLM_API_TIMEOUT_SECONDS + 120,
     _safe_int_env("ANALYSIS_TASK_TIMEOUT_SECONDS", 600),
 )
 
-LIGHTWEIGHT_MODEL_NAME = _safe_str_env("LIGHTWEIGHT_MODEL_NAME", "deepseek-chat")
-REASONING_MODEL_NAME = _safe_str_env("REASONING_MODEL_NAME", "deepseek-reasoner")
+MODEL_CONFIG_ENV_BY_NAME = {
+    "gemini-3-flash": "WARMMILK_CONFIG",
+    "doubao-2-0-mini": "VOICE_CONFIG",
+    "doubao-2-0-lite": "VOICE_CONFIG",
+    "deepseek-v3-2": "VOICE_CONFIG",
+    "doubao-2-0-pro": "VOICE_CONFIG",
+}
+MODEL_API_NAME_BY_CONFIG_ENV = {
+    "VOICE_CONFIG": {
+        "doubao-2-0-mini": "doubao-seed-2-0-mini-260215",
+        "doubao-2-0-lite": "doubao-seed-2-0-lite-260215",
+        "deepseek-v3-2": "deepseek-v3-2-251201",
+        "doubao-2-0-pro": "doubao-seed-2-0-pro-260215",
+    },
+}
+SUPPORTED_LLM_MODEL_NAMES = tuple(MODEL_CONFIG_ENV_BY_NAME.keys())
+
+LIGHTWEIGHT_MODEL_NAME = _safe_str_env("LIGHTWEIGHT_MODEL_NAME", "gemini-3-flash")
+REASONING_MODEL_NAME = _safe_str_env("REASONING_MODEL_NAME", "doubao-2-0-pro")
 LIGHTWEIGHT_MODEL_OPTIONS = _parse_model_options_env(
     "LIGHTWEIGHT_MODEL_OPTIONS",
     LIGHTWEIGHT_MODEL_NAME,
@@ -80,8 +98,102 @@ EMBEDDING_API_KEY = _safe_str_env("EMBEDDING_API_KEY")
 EMBEDDING_BASE_URL = _safe_str_env("EMBEDDING_BASE_URL", "https://api.siliconflow.cn/v1")
 EMBEDDING_MODEL_NAME = _safe_str_env("EMBEDDING_MODEL_NAME", "BAAI/bge-m3")
 
-# Backward compatible alias for older callers.
-DEFAULT_MODEL_NAME = LIGHTWEIGHT_MODEL_NAME
+def _parse_json_api_config(raw_value: str) -> tuple[str, str]:
+    if not raw_value:
+        return "", ""
+    try:
+        payload = json.loads(raw_value)
+    except Exception:
+        return "", ""
+    if not isinstance(payload, dict):
+        return "", ""
+    api_key = str(payload.get("API_KEY", payload.get("api_key", "")) or "").strip()
+    base_url = str(payload.get("BASE_URL", payload.get("base_url", "")) or "").strip()
+    return api_key, base_url
+
+
+_warmmilk_api_key, _warmmilk_base_url = _parse_json_api_config(WARMMILK_CONFIG)
+_voice_api_key, _voice_base_url = _parse_json_api_config(VOICE_CONFIG)
+
+WARMMILK_API_KEY = _warmmilk_api_key
+WARMMILK_BASE_URL = _warmmilk_base_url or "https://generativelanguage.googleapis.com/v1beta/openai/"
+VOICE_API_KEY = _voice_api_key
+VOICE_BASE_URL = _voice_base_url or "https://api.deepseek.com/v1"
+
+
+def get_model_config_env_key(model_name: str | None = None) -> str | None:
+    """Return the env var name that stores a model JSON config."""
+    normalized = str(model_name or "").strip()
+    return MODEL_CONFIG_ENV_BY_NAME.get(normalized)
+
+
+def _lookup_config_value(key: str, overrides: dict[str, str] | None = None) -> str:
+    if overrides is not None and key in overrides:
+        return (overrides.get(key) or "").strip()
+    return _safe_str_env(key)
+
+
+def get_model_api_credentials(
+    model_name: str | None = None,
+    overrides: dict[str, str] | None = None,
+) -> tuple[str, str]:
+    """Return the API key and base URL for an explicitly mapped model."""
+    config_key = get_model_config_env_key(model_name)
+    if not config_key:
+        return "", ""
+
+    api_key, base_url = _parse_json_api_config(_lookup_config_value(config_key, overrides))
+    if api_key and base_url:
+        return api_key, base_url
+    return "", ""
+
+
+def get_model_api_name(
+    model_name: str | None = None,
+    overrides: dict[str, str] | None = None,
+) -> str:
+    """Return the concrete upstream API model id for a configured model name."""
+    normalized = str(model_name or "").strip()
+    if not normalized:
+        return ""
+
+    config_key = get_model_config_env_key(normalized)
+    if not config_key:
+        return normalized
+
+    if not all(get_model_api_credentials(normalized, overrides)):
+        return normalized
+
+    return MODEL_API_NAME_BY_CONFIG_ENV.get(config_key, {}).get(normalized, normalized)
+
+
+def has_any_api_credentials(overrides: dict[str, str] | None = None) -> bool:
+    """Return whether any configured model family has a complete credential pair."""
+    return has_api_credentials_for_models(
+        LIGHTWEIGHT_MODEL_NAME,
+        REASONING_MODEL_NAME,
+        overrides=overrides,
+    )
+
+
+def has_model_api_credentials(
+    model_name: str | None = None,
+    overrides: dict[str, str] | None = None,
+) -> bool:
+    """Return whether a model can be resolved to a usable API credential pair."""
+    api_key, base_url = get_model_api_credentials(model_name, overrides)
+    return bool(api_key and base_url)
+
+
+def has_api_credentials_for_models(
+    *model_names: str | None,
+    overrides: dict[str, str] | None = None,
+) -> bool:
+    """Return whether every requested model name can be resolved to credentials."""
+    normalized_models = [model_name for model_name in model_names if str(model_name or "").strip()]
+    if not normalized_models:
+        return has_any_api_credentials(overrides)
+    return all(has_model_api_credentials(model_name, overrides) for model_name in normalized_models)
 
 TUSHARE_TOKEN = _safe_str_env("TUSHARE_TOKEN")
 TUSHARE_URL = _safe_str_env("TUSHARE_URL", "https://api.tushare.pro")

@@ -17,7 +17,6 @@ from smart_monitor_deepseek import SmartMonitorDeepSeek
 from smart_monitor_data import SmartMonitorDataFetcher
 from smart_monitor_db import SmartMonitorDB
 from notification_service import notification_service  # 复用主程序的通知服务
-from config_manager import config_manager  # 复用主程序的配置管理器
 from asset_repository import STATUS_PORTFOLIO
 from investment_action_utils import normalize_strategy_context, normalize_swing_type, swing_type_label
 from investment_db_utils import DEFAULT_ACCOUNT_NAME, normalize_account_name
@@ -50,12 +49,10 @@ class SmartMonitorEngine:
         """
         self.logger = logging.getLogger(__name__)
         
-        # 从配置管理器读取配置
-        env_config = config_manager.read_env()
-
         # LLM API
         if llm_api_key is None:
-            llm_api_key = env_config.get('LLM_API_KEY', '')
+            llm_api_key = config.WARMMILK_API_KEY
+        llm_base_url = config.WARMMILK_BASE_URL
 
         self.model = model
         self.lightweight_model = lightweight_model
@@ -64,6 +61,7 @@ class SmartMonitorEngine:
         # 初始化各个模块
         self.llm_client = SmartMonitorDeepSeek(
             llm_api_key,
+            base_url=llm_base_url,
             model=model,
             lightweight_model=lightweight_model,
             reasoning_model=reasoning_model,
@@ -2262,7 +2260,7 @@ if __name__ == '__main__':
     )
     
     engine = SmartMonitorEngine(
-        llm_api_key=config.LLM_API_KEY,
+        llm_api_key=config.WARMMILK_API_KEY,
     )
     
     # 测试分析贵州茅台

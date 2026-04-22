@@ -610,6 +610,11 @@ export function ResearchHubPage() {
             {tag}
           </span>
         ))}
+        {item.extra_tags_count ? (
+          <span className={styles.researchHubTagMuted} title="还有更多概念标签未展开">
+            +{item.extra_tags_count}
+          </span>
+        ) : null}
         {hiddenTags.length ? (
           expanded ? (
             <>

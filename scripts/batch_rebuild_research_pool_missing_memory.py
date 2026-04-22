@@ -16,7 +16,7 @@ import config
 from agent_memory_db import agent_memory_db
 from agent_memory_service import AgentMemoryService
 from asset_repository import STATUS_RESEARCH, asset_repository
-from deepseek_client import DeepSeekClient
+from llm_client import LLMClient
 
 
 def parse_args() -> argparse.Namespace:
@@ -67,7 +67,7 @@ def load_missing_research_pool_stocks() -> list[dict[str, object]]:
 def rebuild_one_target(symbol: str, name: str, skip_compress: bool) -> dict[str, object]:
     service = AgentMemoryService(
         db=agent_memory_db,
-        llm_client=DeepSeekClient(model=config.LIGHTWEIGHT_MODEL_NAME),
+        llm_client=LLMClient(model=config.LIGHTWEIGHT_MODEL_NAME),
     )
     result = service.backfill_from_analysis_history(
         stock_code=symbol,

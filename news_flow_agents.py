@@ -9,7 +9,7 @@ import re
 import time
 from datetime import datetime
 from typing import Dict, List, Optional
-from deepseek_client import DeepSeekClient
+from llm_client import LLMClient
 from model_routing import ModelTier
 from prompt_registry import build_messages
 
@@ -36,7 +36,7 @@ class NewsFlowAgents:
     def _init_client(self):
         """初始化 LLM 客户端"""
         try:
-            self.llm_client = DeepSeekClient(
+            self.llm_client = LLMClient(
                 model=self.model,
                 lightweight_model=self.lightweight_model,
                 reasoning_model=self.reasoning_model,

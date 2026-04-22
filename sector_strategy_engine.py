@@ -11,7 +11,7 @@ from typing import Any, Callable, Dict, Optional
 
 from sector_strategy_agents import SectorStrategyAgents
 from sector_strategy_db import SectorStrategyDatabase
-from deepseek_client import DeepSeekClient
+from llm_client import LLMClient
 from model_routing import ModelTier
 from prompt_registry import build_messages
 from sector_strategy_normalization import (
@@ -37,7 +37,7 @@ class SectorStrategyEngine:
             lightweight_model=lightweight_model,
             reasoning_model=reasoning_model,
         )
-        self.llm_client = DeepSeekClient(
+        self.llm_client = LLMClient(
             model=model,
             lightweight_model=lightweight_model,
             reasoning_model=reasoning_model,

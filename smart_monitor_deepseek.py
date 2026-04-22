@@ -59,7 +59,7 @@ class SmartMonitorDeepSeek:
     SECTION_POSITION_HOLDING_TEMPLATE = "smart_monitor/sections/position_holding.txt"
     SECTION_POSITION_EMPTY_TEMPLATE = "smart_monitor/sections/position_empty.txt"
 
-    def __init__(self, api_key: str, model: str = None,
+    def __init__(self, api_key: str, base_url: str = None, model: str = None,
                  lightweight_model: str = None, reasoning_model: str = None):
         """
         初始化LLM客户端
@@ -68,13 +68,13 @@ class SmartMonitorDeepSeek:
             api_key: LLM API密钥
         """
         self.api_key = api_key
+        self.base_url = base_url or config.WARMMILK_BASE_URL
         self.model = model
         self.lightweight_model = lightweight_model
         self.reasoning_model = reasoning_model
-        self.base_url = config.LLM_BASE_URL
         self.headers = {
             "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
         }
         self.logger = logging.getLogger(__name__)
         self.http_timeout_seconds = max(
@@ -93,6 +93,14 @@ class SmartMonitorDeepSeek:
             0,
             int(getattr(config, "SMART_MONITOR_DECISION_REPAIR_ATTEMPTS", 1) or 1),
         )
+
+    def _resolve_request_credentials(self, model_name: str) -> tuple[str, str]:
+        api_key, base_url = config.get_model_api_credentials(model_name)
+        if not api_key:
+            api_key = self.api_key
+        if not base_url:
+            base_url = self.base_url
+        return api_key, base_url
 
     def set_model_overrides(self, model: str = None,
                             lightweight_model: str = None,
@@ -1482,7 +1490,12 @@ class SmartMonitorDeepSeek:
                 len(messages),
             )
         
-        endpoint = f"{self.base_url.rstrip('/')}/chat/completions"
+        api_key, base_url = self._resolve_request_credentials(model_to_use)
+        endpoint = f"{base_url.rstrip('/')}/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
         request_timeout = (10, self.http_timeout_seconds)
         total_attempts = self.http_retry_count + 1
         retryable_errors = (requests.exceptions.Timeout, requests.exceptions.ConnectionError)
@@ -1492,7 +1505,7 @@ class SmartMonitorDeepSeek:
             try:
                 response = requests.post(
                     endpoint,
-                    headers=self.headers,
+                    headers=headers,
                     json=payload,
                     timeout=request_timeout
                 )
