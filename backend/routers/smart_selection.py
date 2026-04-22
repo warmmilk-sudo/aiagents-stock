@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
+from fastapi_cache.decorator import cache
 
 from backend import services
 from backend.api import ApiError, success_payload
@@ -16,8 +17,11 @@ router = APIRouter(prefix="/api/smart-selection", tags=["smart-selection"])
 
 
 @router.get("/overview")
-def get_overview(request: Request) -> dict:
-    require_session(request)
+@cache(expire=5, namespace="smart-selection")
+def get_overview(
+    request: Request,
+    _session: dict = Depends(require_session),
+) -> dict:
     return success_payload(services.get_smart_selection_overview())
 
 
@@ -65,8 +69,12 @@ def import_run_selection(request: Request, payload: SmartSelectionImportRequest)
 
 
 @router.get("/watch-pool")
-def list_watch_pool(request: Request, active_only: bool = True) -> dict:
-    require_session(request)
+@cache(expire=5, namespace="smart-selection")
+def list_watch_pool(
+    request: Request,
+    active_only: bool = True,
+    _session: dict = Depends(require_session),
+) -> dict:
     return success_payload(services.list_smart_selection_watch_pool(active_only=active_only))
 
 

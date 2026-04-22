@@ -16,7 +16,7 @@ cd agentsstock1
 
 # 配置环境变量
 cp .env.example .env
-# 编辑 .env，填入 LLM_API_KEY
+# 编辑 .env，填入 WARMMILK_CONFIG
 
 # 构建镜像（使用国内源版）
 docker build -f "Dockerfile国内源版" -t agentsstock1:latest .

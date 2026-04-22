@@ -5,6 +5,7 @@ import { splitReportSections } from "../../components/research/FormattedReport";
 import { PageFeedback } from "../../components/common/PageFeedback";
 import { PageFrame } from "../../components/common/PageFrame";
 import { TaskProgressBar } from "../../components/common/TaskProgressBar";
+import { useSelectedModels } from "../../hooks/useSelectedModels";
 import { usePollingLoader } from "../../hooks/usePollingLoader";
 import { ApiRequestError, apiFetch } from "../../lib/api";
 import { formatDateTime } from "../../lib/datetime";
@@ -185,6 +186,7 @@ function taskProgressTone(task: TaskDetail<MacroTaskPayload> | null): "running" 
 }
 
 export function MacroAnalysisPage() {
+  const { lightweightModel, reasoningModel } = useSelectedModels();
   const [panel, setPanel] = useState<Panel>("overview");
   const [task, setTask] = useState<TaskDetail<MacroTaskPayload> | null>(null);
   const [message, setMessage] = useState("");
@@ -219,7 +221,10 @@ export function MacroAnalysisPage() {
     try {
       const data = await apiFetch<{ task_id: string }>("/api/strategies/macro-analysis/tasks", {
         method: "POST",
-        body: JSON.stringify({}),
+        body: JSON.stringify({
+          lightweight_model: lightweightModel || undefined,
+          reasoning_model: reasoningModel || undefined,
+        }),
       });
       setPanel("overview");
       setMessage(`宏观分析任务已提交: ${data.task_id}`);

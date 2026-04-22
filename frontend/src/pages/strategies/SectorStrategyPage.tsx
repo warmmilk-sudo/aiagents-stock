@@ -5,7 +5,9 @@ import { PageFeedback } from "../../components/common/PageFeedback";
 import { PageFrame } from "../../components/common/PageFrame";
 import { StatusBadge } from "../../components/common/StatusBadge";
 import { TaskProgressBar } from "../../components/common/TaskProgressBar";
+import { useSelectedModels } from "../../hooks/useSelectedModels";
 import {
+  SectorReportOverviewPanels,
   SectorReportDetailView,
   type SectorStrategyReportView,
   type SectorStrategySummaryView,
@@ -51,6 +53,23 @@ interface SectorHistoryDetail extends SectorHistoryRecord {
   report_view?: SectorStrategyReportView | null;
   lifecycle_items?: Array<Record<string, unknown>> | null;
   lifecycle_summary?: Record<string, unknown> | null;
+  daily_heat_panel?: {
+    available?: boolean;
+    board_date?: string;
+    total_count?: number;
+    items?: Array<Record<string, unknown>>;
+  } | null;
+}
+
+interface LatestSectorReportOverview {
+  available: boolean;
+  report_id?: number | null;
+  analysis_date?: string;
+  created_at?: string;
+  data_date_range?: string;
+  summary?: string;
+  summary_data?: SectorStrategySummaryView | null;
+  report_view?: SectorStrategyReportView | null;
   daily_heat_panel?: {
     available?: boolean;
     board_date?: string;
@@ -117,6 +136,13 @@ function taskProgressTone(task: TaskDetail<SectorTaskPayload> | null): "running"
   return "running";
 }
 
+function isActiveTask(task: TaskDetail<SectorTaskPayload> | null): boolean {
+  if (!task) {
+    return false;
+  }
+  return !["success", "failed", "cancelled"].includes(task.status);
+}
+
 function buildLatestTaskUrl(options?: { full?: boolean; includeRawReports?: boolean }): string {
   const params = new URLSearchParams();
   if (options?.full) {
@@ -141,10 +167,12 @@ function buildHistoryDetailUrl(reportId: number, options?: { includeRawReports?:
 }
 
 export function SectorStrategyPage() {
+  const { lightweightModel, reasoningModel } = useSelectedModels();
   const [searchParams, setSearchParams] = useSearchParams();
   const [task, setTask] = useState<TaskDetail<SectorTaskPayload> | null>(null);
   const [history, setHistory] = useState<SectorHistoryRecord[]>([]);
   const [historyDetails, setHistoryDetails] = useState<Record<number, SectorHistoryDetail>>({});
+  const [latestOverview, setLatestOverview] = useState<LatestSectorReportOverview | null>(null);
   const [latestDetailReportViewOverride, setLatestDetailReportViewOverride] = useState<SectorStrategyReportView | null>(null);
   const [latestDetailRawResult, setLatestDetailRawResult] = useState<Record<string, unknown> | null>(null);
   const [scheduler, setScheduler] = useState<SchedulerStatus | null>(null);
@@ -164,8 +192,8 @@ export function SectorStrategyPage() {
   const detailSource = searchParams.get("source");
   const detailReportId = Number(searchParams.get("reportId") || 0);
   const historyDetail = detailReportId ? (historyDetails[detailReportId] ?? null) : null;
-  const latestReportView = task?.result?.report_view ?? null;
-  const latestReportIdentity = `${task?.id || ""}:${Number(task?.result?.result?.report_id ?? 0)}:${latestReportView?.meta?.timestamp || ""}`;
+  const latestReportView = latestDetailReportViewOverride ?? latestOverview?.report_view ?? null;
+  const latestReportIdentity = `${Number(latestOverview?.report_id ?? 0)}:${latestOverview?.analysis_date || latestOverview?.created_at || ""}`;
 
   const loadTask = async (options?: { full?: boolean; includeRawReports?: boolean }) => {
     const data = await apiFetch<TaskDetail<SectorTaskPayload> | null>(buildLatestTaskUrl(options));
@@ -180,6 +208,16 @@ export function SectorStrategyPage() {
       { ttlMs: HISTORY_CACHE_TTL_MS },
     );
     setHistory(data);
+  };
+
+  const loadLatestOverview = async () => {
+    const data = await apiFetchCached<LatestSectorReportOverview>(
+      "/api/strategies/sector-strategy/latest-report",
+      {},
+      { ttlMs: HISTORY_CACHE_TTL_MS },
+    );
+    setLatestOverview(data);
+    return data;
   };
 
   const loadScheduler = async () => {
@@ -222,12 +260,14 @@ export function SectorStrategyPage() {
   };
 
   useEffect(() => {
-    void Promise.all([loadTask(), loadHistory(), loadScheduler(), loadLifecycle()]);
+    void Promise.all([loadTask(), loadLatestOverview(), loadHistory(), loadScheduler(), loadLifecycle()]);
     const taskTimer = window.setInterval(() => void loadTask(), 2000);
+    const latestReportTimer = window.setInterval(() => void loadLatestOverview(), 10000);
     const schedulerTimer = window.setInterval(() => void loadScheduler(), 10000);
     const lifecycleTimer = window.setInterval(() => void loadLifecycle(), 10000);
     return () => {
       window.clearInterval(taskTimer);
+      window.clearInterval(latestReportTimer);
       window.clearInterval(schedulerTimer);
       window.clearInterval(lifecycleTimer);
     };
@@ -239,14 +279,14 @@ export function SectorStrategyPage() {
       return;
     }
     syncedHistoryReportIdRef.current = reportId;
-    void loadHistory().catch(() => undefined);
+    void Promise.all([loadLatestOverview(), loadHistory(), loadLifecycle()]).catch(() => undefined);
   }, [task?.status, task?.result?.result?.report_id]);
 
   useEffect(() => {
     if (!detailReportId || historyDetails[detailReportId]) {
       return;
     }
-    void loadHistoryDetail(detailReportId);
+    void loadHistoryDetail(detailReportId, { includeRawReports: true });
   }, [detailReportId, historyDetails]);
 
   useEffect(() => {
@@ -267,12 +307,16 @@ export function SectorStrategyPage() {
     }
   }, [detailReportId, detailSource, detailView]);
 
-  const latestSummary = latestReportView?.summary ?? null;
+  const latestSummary = latestOverview?.summary_data ?? latestReportView?.summary ?? null;
+  const activeTaskRunning = isActiveTask(task);
   const detailReportView =
     detailSource === "latest"
-      ? latestDetailReportViewOverride ?? latestReportView
+      ? latestReportView
       : historyDetail?.report_view ?? null;
-  const detailDailyHeatPanel = detailSource === "latest" ? latestLifecycle?.daily_heat_panel ?? null : historyDetail?.daily_heat_panel ?? null;
+  const detailDailyHeatPanel =
+    detailSource === "latest"
+      ? latestOverview?.daily_heat_panel ?? latestLifecycle?.daily_heat_panel ?? null
+      : historyDetail?.daily_heat_panel ?? null;
   const detailRawResult =
     detailSource === "latest"
       ? latestDetailRawResult ?? null
@@ -303,8 +347,13 @@ export function SectorStrategyPage() {
     if (detailSource === "latest") {
       setLoadingRawReportsTarget("latest");
       try {
-        const data = await loadTask({ includeRawReports: true });
-        setLatestDetailReportViewOverride(data?.result?.report_view ?? null);
+        const latestReportId = Number(latestOverview?.report_id ?? 0);
+        if (!latestReportId) {
+          return;
+        }
+        const data = await loadHistoryDetail(latestReportId, { includeRawReports: true });
+        setLatestDetailReportViewOverride(data?.report_view ?? null);
+        setLatestDetailRawResult(data?.analysis_content_parsed ?? null);
       } finally {
         setLoadingRawReportsTarget((current) => (current === "latest" ? null : current));
       }
@@ -327,8 +376,12 @@ export function SectorStrategyPage() {
     if (latestDetailRawResult) {
       return latestDetailRawResult;
     }
-    const data = await loadTask({ full: true });
-    const rawResult = data?.result?.result ?? null;
+    const latestReportId = Number(latestOverview?.report_id ?? 0);
+    if (!latestReportId) {
+      return null;
+    }
+    const data = await loadHistoryDetail(latestReportId);
+    const rawResult = data?.analysis_content_parsed ?? null;
     if (rawResult && typeof rawResult === "object") {
       const normalized = rawResult as Record<string, unknown>;
       setLatestDetailRawResult(normalized);
@@ -344,12 +397,15 @@ export function SectorStrategyPage() {
     try {
       const data = await apiFetch<{ task_id: string }>("/api/strategies/sector-strategy/tasks", {
         method: "POST",
-        body: JSON.stringify({}),
+        body: JSON.stringify({
+          lightweight_model: lightweightModel || undefined,
+          reasoning_model: reasoningModel || undefined,
+        }),
       });
       closeDetail();
       setSection("overview");
       setMessage(`智策分析任务已提交: ${data.task_id}`);
-      void loadTask().catch(() => undefined);
+      void Promise.all([loadTask(), loadLatestOverview()]).catch(() => undefined);
     } catch (requestError) {
       setError(requestError instanceof ApiRequestError ? requestError.message : "提交智策分析失败");
     } finally {
@@ -387,7 +443,7 @@ export function SectorStrategyPage() {
       setSection("overview");
       closeDetail();
       setMessage("已提交一次智策后台分析");
-      void loadTask().catch(() => undefined);
+      void Promise.all([loadTask(), loadLatestOverview()]).catch(() => undefined);
     } catch (requestError) {
       setError(requestError instanceof ApiRequestError ? requestError.message : "提交后台分析失败");
     } finally {
@@ -480,6 +536,7 @@ export function SectorStrategyPage() {
             onLoadRawReports={() => void loadRawReportsForCurrentDetail()}
             reportView={detailReportView}
             title={detailTitle}
+            mode={detailSource === "latest" ? "full" : "rawOnly"}
           />
         ) : (
           <>
@@ -498,27 +555,31 @@ export function SectorStrategyPage() {
                 </div>
               </section>
 
-              <section className={styles.card}>
-                <div className={styles.cardHeader}>
-                  <div>
-                    <h2>任务状态</h2>
-                    <p className={styles.helperText}>{task?.message || "等待智策任务状态..."}</p>
+              {activeTaskRunning ? (
+                <section className={styles.card}>
+                  <div className={styles.cardHeader}>
+                    <div>
+                      <h2>任务状态</h2>
+                      <p className={styles.helperText}>{task?.message || "等待智策任务状态..."}</p>
+                    </div>
                   </div>
-                </div>
-                <TaskProgressBar
-                  current={task?.current ?? (task?.status === "success" ? task?.total ?? 100 : 0)}
-                  total={task?.total ?? 100}
-                  message={task?.message || "等待智策任务状态..."}
-                  tone={taskProgressTone(task)}
-                />
-                {task?.error ? <div className={styles.dangerText}>{task.error}</div> : null}
-              </section>
+                  <TaskProgressBar
+                    current={task?.current ?? 0}
+                    total={task?.total ?? 100}
+                    message={task?.message || "等待智策任务状态..."}
+                    tone={taskProgressTone(task)}
+                  />
+                  {task?.error ? <div className={styles.dangerText}>{task.error}</div> : null}
+                </section>
+              ) : null}
 
               <section className={styles.card}>
                 <div className={styles.cardHeader}>
                   <div>
                     <h2>最新报告摘要</h2>
-                    <p className={styles.helperText}>{formatDateTime(latestReportView?.meta?.timestamp, "暂无时间")}</p>
+                    <p className={styles.helperText}>
+                      {formatDateTime(latestOverview?.analysis_date ?? latestOverview?.created_at, "暂无时间")}
+                    </p>
                   </div>
                   {latestReportView ? (
                     <button className={styles.secondaryButton} onClick={openLatestDetail} type="button">
@@ -528,40 +589,10 @@ export function SectorStrategyPage() {
                 </div>
 
                 {latestSummary ? (
-                  <div className={styles.historyRecordCard}>
-                    <div className={styles.historyListBody}>
-                      <strong className={styles.historyRecordTitle}>{latestSummary.headline || "智策板块分析报告"}</strong>
-                      <div className={styles.historyListMetrics}>
-                        <span className={styles.historyListMetric}>
-                          风险等级：<strong>{asText(latestSummary.risk_level)}</strong>
-                        </span>
-                        <span className={styles.historyListMetric}>
-                          市场展望：<strong>{asText(latestSummary.market_outlook)}</strong>
-                        </span>
-                        <span className={styles.historyListMetric}>
-                          信心度：<strong>{formatConfidence(latestSummary.confidence_score)}</strong>
-                        </span>
-                      </div>
-                      <div className={styles.strategySummaryGrid}>
-                        <div className={styles.historySummaryCell}>
-                          <span>市场观点</span>
-                          <strong>{asText(latestSummary.market_view)}</strong>
-                        </div>
-                        <div className={styles.historySummaryCell}>
-                          <span>核心机会</span>
-                          <strong>{asText(latestSummary.key_opportunity)}</strong>
-                        </div>
-                        <div className={styles.historySummaryCell}>
-                          <span>主要风险</span>
-                          <strong>{asText(latestSummary.major_risk)}</strong>
-                        </div>
-                        <div className={styles.historySummaryCell}>
-                          <span>整体策略</span>
-                          <strong>{asText(latestSummary.strategy)}</strong>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
+                  <SectorReportOverviewPanels
+                    dailyHeatPanel={latestOverview?.daily_heat_panel ?? latestLifecycle?.daily_heat_panel ?? null}
+                    reportView={latestReportView}
+                  />
                 ) : (
                   <div className={styles.muted}>暂无最新智策报告。</div>
                 )}
@@ -601,18 +632,7 @@ export function SectorStrategyPage() {
                     </div>
 
                     <div className={styles.historyListBody}>
-                      <div className={styles.historyListMetrics}>
-                        <span className={styles.historyListMetric}>
-                          风险等级：<strong>{asText(item.summary_data?.risk_level)}</strong>
-                        </span>
-                        <span className={styles.historyListMetric}>
-                          市场展望：<strong>{asText(item.summary_data?.market_outlook)}</strong>
-                        </span>
-                        <span className={styles.historyListMetric}>
-                          信心度：<strong>{formatConfidence(item.summary_data?.confidence_score)}</strong>
-                        </span>
-                      </div>
-                      <p className={styles.historyListSummary}>{item.summary_data?.market_view || item.summary || "暂无摘要"}</p>
+                      <p className={styles.historyListSummary}>{item.summary || "查看本次分析的原始报告解析结果"}</p>
                     </div>
                   </div>
                 ))}

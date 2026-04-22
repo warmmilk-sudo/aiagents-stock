@@ -9,6 +9,7 @@ import { analystConfigToKeys, analystKeysToConfig, normalizeAnalystKeys } from "
 import { DEFAULT_SCHEDULER_TIME } from "../../constants/scheduler";
 import { usePageFeedback } from "../../hooks/usePageFeedback";
 import { usePollingLoader } from "../../hooks/usePollingLoader";
+import { useSelectedModels } from "../../hooks/useSelectedModels";
 import { StatusBadge } from "../../components/common/StatusBadge";
 import { ApiRequestError, apiFetch, apiFetchCached } from "../../lib/api";
 import { decodeIntent } from "../../lib/intents";
@@ -609,6 +610,7 @@ interface PortfolioPageProps {
 }
 
 export function PortfolioPage({ embedded = false }: PortfolioPageProps = {}) {
+  const { lightweightModel, reasoningModel } = useSelectedModels();
   const [searchParams, setSearchParams] = useSearchParams();
   const deepAnalysisAnalysts = useDeepAnalysisStore((state) => state.analysts);
   const schedulerTaskId = usePortfolioStore((state) => state.schedulerTaskId);
@@ -1256,6 +1258,8 @@ export function PortfolioPage({ embedded = false }: PortfolioPageProps = {}) {
           batch_mode: "顺序分析",
           max_workers: 1,
           analysts: deepAnalysisAnalysts,
+          lightweight_model: lightweightModel || undefined,
+          reasoning_model: reasoningModel || undefined,
         }),
       });
       const taskId = result.task_id || null;
@@ -1296,6 +1300,8 @@ export function PortfolioPage({ embedded = false }: PortfolioPageProps = {}) {
           batch_mode: "顺序分析",
           max_workers: 1,
           analysts: deepAnalysisAnalysts,
+          lightweight_model: lightweightModel || undefined,
+          reasoning_model: reasoningModel || undefined,
         }),
       });
       if (taskData.task_id) {

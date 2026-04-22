@@ -1,4 +1,5 @@
 import os
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -338,6 +339,72 @@ class SmartSelectionServiceTests(unittest.TestCase):
         self.assertEqual(selection_sectors[0]["sector"], "通航")
         self.assertEqual(selection_sectors[0]["lifecycle_sector"], "通用航空")
         self.assertEqual(lifecycle_by_name["通航"]["sector_name"], "通用航空")
+
+    def test_pipeline_persists_daily_sector_heat_scores_for_lifecycle(self):
+        run_id = self.service._insert_run(trigger_source="manual", lightweight_model=None, reasoning_model=None)
+        common_patches = self._run_with_common_patches()
+        with common_patches[0], common_patches[1], common_patches[2], common_patches[3], common_patches[4], common_patches[5], common_patches[6], common_patches[7]:
+            result = self.service._run_pipeline(run_id)
+
+        self.assertGreaterEqual(result.get("saved_sector_heat_count", 0), 3)
+
+        conn = sqlite3.connect(str(Path(self.temp_dir.name) / "investment.db"))
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT board_date, sector_name, heat_score, lifecycle_stage, selection_veto
+                FROM smart_selection_sector_heat_daily
+                ORDER BY board_date ASC, rank_order ASC, id ASC
+                """
+            )
+            rows = cursor.fetchall()
+        finally:
+            conn.close()
+
+        self.assertEqual(len(rows), 3)
+        self.assertEqual(rows[0][0], "2026-04-03")
+        sector_names = [row[1] for row in rows]
+        self.assertIn("机器人", sector_names)
+        self.assertIn("算力租赁", sector_names)
+        self.assertIn("高位题材", sector_names)
+        lifecycle_by_sector = {row[1]: row[3] for row in rows}
+        self.assertEqual(lifecycle_by_sector["机器人"], "explosive")
+        self.assertEqual(lifecycle_by_sector["算力租赁"], "startup")
+        self.assertEqual(lifecycle_by_sector["高位题材"], "decay")
+        veto_by_sector = {row[1]: bool(row[4]) for row in rows}
+        self.assertTrue(veto_by_sector["高位题材"])
+
+    def test_backfill_sector_heat_daily_from_history_persists_existing_reports(self):
+        result = self.service.backfill_sector_heat_daily_from_history()
+
+        self.assertEqual(result["processed_reports"], 3)
+        self.assertEqual(result["board_dates"], 3)
+        self.assertGreaterEqual(result["saved_rows"], 9)
+
+        conn = sqlite3.connect(str(Path(self.temp_dir.name) / "investment.db"))
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT COUNT(*)
+                FROM smart_selection_sector_heat_daily
+                """
+            )
+            total_rows = int(cursor.fetchone()[0])
+            cursor.execute(
+                """
+                SELECT DISTINCT board_date
+                FROM smart_selection_sector_heat_daily
+                ORDER BY board_date ASC
+                """
+            )
+            board_dates = [row[0] for row in cursor.fetchall()]
+        finally:
+            conn.close()
+
+        self.assertGreaterEqual(total_rows, 9)
+        self.assertEqual(board_dates, ["2026-04-01", "2026-04-02", "2026-04-03"])
 
 
 if __name__ == "__main__":

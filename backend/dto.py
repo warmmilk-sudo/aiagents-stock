@@ -36,6 +36,8 @@ class PortfolioAnalysisTaskRequest(BaseModel):
     batch_mode: Literal["顺序分析", "多线程并行"] = "顺序分析"
     max_workers: int = 3
     analysts: AnalystConfig = Field(default_factory=AnalystConfig)
+    lightweight_model: Optional[str] = None
+    reasoning_model: Optional[str] = None
 
 
 class MainForceSelectionTaskRequest(BaseModel):

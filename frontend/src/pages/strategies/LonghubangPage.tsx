@@ -4,6 +4,7 @@ import { PageFeedback } from "../../components/common/PageFeedback";
 import { PageFrame } from "../../components/common/PageFrame";
 import { AnalysisActionButtons, type ActionPayload } from "../../components/research/AnalysisActionButtons";
 import { LonghubangReportDetailView } from "../../components/research/LonghubangReportDetailView";
+import { useSelectedModels } from "../../hooks/useSelectedModels";
 import { usePollingLoader } from "../../hooks/usePollingLoader";
 import { ApiRequestError, apiFetch, apiFetchCached, downloadApiFile } from "../../lib/api";
 import styles from "../ConsolePage.module.scss";
@@ -213,6 +214,7 @@ function batchActionPayload(item: BatchItem): ActionPayload | null {
 }
 
 export function LonghubangPage() {
+  const { lightweightModel, reasoningModel } = useSelectedModels();
   const [panel, setPanel] = useState<Panel>("analysis");
   const [analysisMode, setAnalysisMode] = useState<"specified" | "recent">("specified");
   const [selectedDate, setSelectedDate] = useState(localDateText());
@@ -340,7 +342,12 @@ export function LonghubangPage() {
       }
       const data = await apiFetch<{ task_id: string }>("/api/strategies/longhubang/tasks", {
         method: "POST",
-        body: JSON.stringify({ date: analysisMode === "specified" ? selectedDate : null, days: analysisMode === "recent" ? Math.max(1, Math.min(10, Number(days) || 1)) : 1 }),
+        body: JSON.stringify({
+          date: analysisMode === "specified" ? selectedDate : null,
+          days: analysisMode === "recent" ? Math.max(1, Math.min(10, Number(days) || 1)) : 1,
+          lightweight_model: lightweightModel || undefined,
+          reasoning_model: reasoningModel || undefined,
+        }),
       });
       setDismissedTaskId("");
       setPanel("analysis");
@@ -360,7 +367,13 @@ export function LonghubangPage() {
     try {
       const data = await apiFetch<{ task_id: string }>("/api/strategies/longhubang/batch-tasks", {
         method: "POST",
-        body: JSON.stringify({ symbols: batchSymbols, analysis_mode: batchMode, max_workers: Math.max(1, Math.min(5, Number(maxWorkers) || 1)) }),
+        body: JSON.stringify({
+          symbols: batchSymbols,
+          analysis_mode: batchMode,
+          max_workers: Math.max(1, Math.min(5, Number(maxWorkers) || 1)),
+          lightweight_model: lightweightModel || undefined,
+          reasoning_model: reasoningModel || undefined,
+        }),
       });
       setDismissedBatchTaskId("");
       setMessage(`龙虎榜 TOP 批量分析任务已提交: ${data.task_id}`);

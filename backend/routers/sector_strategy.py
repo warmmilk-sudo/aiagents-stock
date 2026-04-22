@@ -99,6 +99,15 @@ def list_history(
     return success_payload(services.list_sector_strategy_reports(limit=limit))
 
 
+@router.get("/latest-report")
+@cache(expire=15, namespace="sector-strategy")
+def get_latest_report(
+    request: Request,
+    _session: dict = Depends(require_session),
+) -> dict:
+    return success_payload(services.get_latest_sector_strategy_report_overview())
+
+
 @router.get("/history/{report_id}")
 @cache(expire=15, namespace="sector-strategy")
 def get_history_report(

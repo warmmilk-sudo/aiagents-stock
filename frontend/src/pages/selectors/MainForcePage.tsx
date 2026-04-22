@@ -4,6 +4,7 @@ import { PageFeedback } from "../../components/common/PageFeedback";
 import { PageFrame } from "../../components/common/PageFrame";
 import { StatusBadge } from "../../components/common/StatusBadge";
 import { AnalysisActionButtons, type ActionPayload } from "../../components/research/AnalysisActionButtons";
+import { useSelectedModels } from "../../hooks/useSelectedModels";
 import { ApiRequestError, apiFetch, downloadApiFile } from "../../lib/api";
 import styles from "../ConsolePage.module.scss";
 
@@ -218,6 +219,7 @@ function renderTextBlock(title: string, value: string | undefined) {
 }
 
 export function MainForcePage() {
+  const { lightweightModel, reasoningModel } = useSelectedModels();
   const [dateMode, setDateMode] = useState("90");
   const [customDate, setCustomDate] = useState("");
   const [finalN, setFinalN] = useState("5");
@@ -330,6 +332,8 @@ export function MainForcePage() {
         max_change: Number(maxChange) || 30,
         min_cap: Number(minCap) || 50,
         max_cap: Number(maxCap) || 5000,
+        lightweight_model: lightweightModel || undefined,
+        reasoning_model: reasoningModel || undefined,
       };
       const data = await apiFetch<{ task_id: string }>("/api/selectors/main-force/tasks", {
         method: "POST",
@@ -357,6 +361,8 @@ export function MainForcePage() {
           symbols: topCandidateSymbols,
           analysis_mode: batchMode,
           max_workers: Number(maxWorkers) || 1,
+          lightweight_model: lightweightModel || undefined,
+          reasoning_model: reasoningModel || undefined,
         }),
       });
       setLoadedHistoryRecord(null);

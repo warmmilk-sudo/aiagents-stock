@@ -31,7 +31,7 @@ sudo sh get-docker.sh
 cp .env.template .env
 
 # 编辑 .env 文件，填入你的 DeepSeek API Key
-# LLM_API_KEY=sk-your-actual-api-key-here
+# WARMMILK_CONFIG={"API_KEY":"sk-your-actual-api-key-here","BASE_URL":"https://generativelanguage.googleapis.com/v1beta/openai/"}
 ```
 
 ### 3️⃣ 启动服务
@@ -257,4 +257,3 @@ server {
 ---
 
 **Docker让部署更简单！祝您使用愉快！** 🚀🐳
-

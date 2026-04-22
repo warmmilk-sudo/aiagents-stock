@@ -33,10 +33,6 @@ import smart_monitor_engine as smart_monitor_engine_module
 class SmartMonitorEngineTimeoutTests(unittest.TestCase):
     def test_engine_uses_configured_data_fetch_timeout(self):
         with patch.object(
-            smart_monitor_engine_module.config_manager,
-            "read_env",
-            return_value={"LLM_API_KEY": "stub"},
-        ), patch.object(
             smart_monitor_engine_module.config,
             "SMART_MONITOR_DATA_FETCH_TIMEOUT_SECONDS",
             52,

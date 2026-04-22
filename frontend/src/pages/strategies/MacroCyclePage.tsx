@@ -4,6 +4,7 @@ import { PageFeedback } from "../../components/common/PageFeedback";
 import { PageFrame } from "../../components/common/PageFrame";
 import { MacroCycleReportDetailView } from "../../components/research/MacroCycleReportDetailView";
 import { splitReportSections } from "../../components/research/FormattedReport";
+import { useSelectedModels } from "../../hooks/useSelectedModels";
 import { usePollingLoader } from "../../hooks/usePollingLoader";
 import { ApiRequestError, apiFetch, apiFetchCached, downloadApiFile } from "../../lib/api";
 import { formatDateTime } from "../../lib/datetime";
@@ -112,6 +113,7 @@ function historyPreview(record: MacroHistoryRecord): string {
 }
 
 export function MacroCyclePage() {
+  const { lightweightModel, reasoningModel } = useSelectedModels();
   const [panel, setPanel] = useState<Panel>("analysis");
   const [task, setTask] = useState<TaskDetail<MacroTaskPayload> | null>(null);
   const [history, setHistory] = useState<MacroHistoryRecord[]>([]);
@@ -237,7 +239,10 @@ export function MacroCyclePage() {
     try {
       const data = await apiFetch<{ task_id: string }>("/api/strategies/macro-cycle/tasks", {
         method: "POST",
-        body: JSON.stringify({}),
+        body: JSON.stringify({
+          lightweight_model: lightweightModel || undefined,
+          reasoning_model: reasoningModel || undefined,
+        }),
       });
       setSelectedReport(null);
       setPanel("analysis");

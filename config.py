@@ -120,6 +120,9 @@ WARMMILK_BASE_URL = _warmmilk_base_url or "https://generativelanguage.googleapis
 VOICE_API_KEY = _voice_api_key
 VOICE_BASE_URL = _voice_base_url or "https://api.deepseek.com/v1"
 
+# Backward-compatible alias for older tests and scripts.
+LLM_API_KEY = WARMMILK_API_KEY or VOICE_API_KEY
+
 
 def get_model_config_env_key(model_name: str | None = None) -> str | None:
     """Return the env var name that stores a model JSON config."""

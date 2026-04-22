@@ -137,7 +137,7 @@ print(f"RSI: {indicators['rsi6']:.2f}")
 
 ```env
 # DeepSeek AI配置（必需）
-LLM_API_KEY=sk-your-api-key
+WARMMILK_CONFIG=sk-your-api-key
 
 # TDX数据源配置（可选，提升实时监测性能）
 TDX_ENABLED=true

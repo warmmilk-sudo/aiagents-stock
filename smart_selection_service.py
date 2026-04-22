@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import json
+import re
 import threading
 import uuid
 from datetime import datetime
@@ -162,6 +163,43 @@ class SmartSelectionService:
                 """
                 CREATE INDEX IF NOT EXISTS idx_smart_selection_watch_pool_active_seen
                 ON smart_selection_watch_pool(active, datetime(last_seen_at) DESC, datetime(updated_at) DESC)
+                """
+            )
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS smart_selection_sector_heat_daily (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    run_id TEXT,
+                    sector_report_id INTEGER,
+                    board_date TEXT NOT NULL,
+                    sector_name TEXT NOT NULL,
+                    normalized_sector_name TEXT NOT NULL,
+                    source_type TEXT NOT NULL DEFAULT '',
+                    heat_score REAL NOT NULL DEFAULT 0,
+                    rank_order INTEGER NOT NULL DEFAULT 0,
+                    lifecycle_stage TEXT,
+                    defense_line_type TEXT,
+                    delta_1 REAL,
+                    delta_2 REAL,
+                    trajectory_json TEXT,
+                    action_hint TEXT,
+                    selection_veto INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(board_date, normalized_sector_name, source_type)
+                )
+                """
+            )
+            cursor.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_smart_selection_sector_heat_daily_date
+                ON smart_selection_sector_heat_daily(board_date, rank_order)
+                """
+            )
+            cursor.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_smart_selection_sector_heat_daily_sector
+                ON smart_selection_sector_heat_daily(normalized_sector_name, board_date DESC)
                 """
             )
             conn.commit()
@@ -707,6 +745,211 @@ class SmartSelectionService:
         finally:
             conn.close()
 
+    @staticmethod
+    def _resolve_board_date(report: dict[str, Any]) -> str:
+        for value in (
+            report.get("board_date"),
+            report.get("data_date_range"),
+            report.get("analysis_date"),
+            report.get("created_at"),
+        ):
+            match = re.search(r"(\d{4}-\d{2}-\d{2})", str(value or ""))
+            if match:
+                return match.group(1)
+        return str(report.get("analysis_date") or report.get("created_at") or "")[:10]
+
+    def _save_sector_heat_daily_snapshot(
+        self,
+        *,
+        run_id: str,
+        sector_report_id: int,
+        report: dict[str, Any],
+        lifecycle_snapshot: list[dict[str, Any]],
+    ) -> int:
+        board_date = self._resolve_board_date(report)
+        if not board_date:
+            return 0
+
+        daily_panel = self.sector_strategy_db.get_daily_heat_panel(board_date=board_date, limit=500)
+        panel_items = daily_panel.get("items") if isinstance(daily_panel, dict) else []
+        lifecycle_by_name = {
+            str(
+                item.get("normalized_sector_name")
+                or research_hub_service._normalize_sector_text(item.get("sector_name"))
+                or ""
+            ): item
+            for item in lifecycle_snapshot
+            if str(
+                item.get("normalized_sector_name")
+                or research_hub_service._normalize_sector_text(item.get("sector_name"))
+                or ""
+            )
+        }
+
+        rows: list[dict[str, Any]] = []
+        if isinstance(panel_items, list) and panel_items:
+            for panel_item in panel_items:
+                if not isinstance(panel_item, dict):
+                    continue
+                sector_name = str(panel_item.get("sector_name") or panel_item.get("sector") or "").strip()
+                normalized_name = str(
+                    panel_item.get("normalized_sector_name")
+                    or research_hub_service._normalize_sector_text(sector_name)
+                    or ""
+                ).strip()
+                if not sector_name or not normalized_name:
+                    continue
+                lifecycle_item = lifecycle_by_name.get(normalized_name, {})
+                rows.append(
+                    {
+                        "sector_name": sector_name,
+                        "normalized_sector_name": normalized_name,
+                        "source_type": str(panel_item.get("source_type") or lifecycle_item.get("source_type") or "").strip(),
+                        "heat_score": _safe_float(panel_item.get("heat_score"), 0.0),
+                        "rank_order": _safe_int(panel_item.get("rank_order"), len(rows) + 1),
+                        "lifecycle_stage": lifecycle_item.get("lifecycle_stage"),
+                        "defense_line_type": lifecycle_item.get("defense_line_type"),
+                        "delta_1": lifecycle_item.get("delta_1"),
+                        "delta_2": lifecycle_item.get("delta_2"),
+                        "trajectory": lifecycle_item.get("trajectory") or [],
+                        "action_hint": lifecycle_item.get("action_hint") or "",
+                        "selection_veto": bool(lifecycle_item.get("selection_veto")),
+                    }
+                )
+
+        if not rows:
+            ranked_lifecycle_items = sorted(
+                [item for item in lifecycle_snapshot if isinstance(item, dict)],
+                key=lambda item: _safe_float(item.get("heat_score"), 0.0),
+                reverse=True,
+            )
+            for index, item in enumerate(ranked_lifecycle_items, 1):
+                sector_name = str(item.get("sector_name") or "").strip()
+                normalized_name = str(
+                    item.get("normalized_sector_name")
+                    or research_hub_service._normalize_sector_text(sector_name)
+                    or ""
+                ).strip()
+                if not sector_name or not normalized_name:
+                    continue
+                rows.append(
+                    {
+                        "sector_name": sector_name,
+                        "normalized_sector_name": normalized_name,
+                        "source_type": str(item.get("source_type") or "").strip(),
+                        "heat_score": _safe_float(item.get("heat_score"), 0.0),
+                        "rank_order": index,
+                        "lifecycle_stage": item.get("lifecycle_stage"),
+                        "defense_line_type": item.get("defense_line_type"),
+                        "delta_1": item.get("delta_1"),
+                        "delta_2": item.get("delta_2"),
+                        "trajectory": item.get("trajectory") or [],
+                        "action_hint": item.get("action_hint") or "",
+                        "selection_veto": bool(item.get("selection_veto")),
+                    }
+                )
+
+        if not rows:
+            return 0
+
+        with self._db_lock:
+            conn = self._connect()
+            try:
+                cursor = conn.cursor()
+                now_text = _now_text()
+                for row in rows:
+                    cursor.execute(
+                        """
+                        INSERT INTO smart_selection_sector_heat_daily (
+                            run_id, sector_report_id, board_date, sector_name, normalized_sector_name,
+                            source_type, heat_score, rank_order, lifecycle_stage, defense_line_type,
+                            delta_1, delta_2, trajectory_json, action_hint, selection_veto,
+                            created_at, updated_at
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(board_date, normalized_sector_name, source_type) DO UPDATE SET
+                            run_id = excluded.run_id,
+                            sector_report_id = excluded.sector_report_id,
+                            sector_name = excluded.sector_name,
+                            heat_score = excluded.heat_score,
+                            rank_order = excluded.rank_order,
+                            lifecycle_stage = excluded.lifecycle_stage,
+                            defense_line_type = excluded.defense_line_type,
+                            delta_1 = excluded.delta_1,
+                            delta_2 = excluded.delta_2,
+                            trajectory_json = excluded.trajectory_json,
+                            action_hint = excluded.action_hint,
+                            selection_veto = excluded.selection_veto,
+                            updated_at = excluded.updated_at
+                        """,
+                        (
+                            run_id,
+                            int(sector_report_id or 0),
+                            board_date,
+                            row.get("sector_name"),
+                            row.get("normalized_sector_name"),
+                            str(row.get("source_type") or ""),
+                            _safe_float(row.get("heat_score"), 0.0),
+                            _safe_int(row.get("rank_order"), 0),
+                            row.get("lifecycle_stage"),
+                            row.get("defense_line_type"),
+                            _safe_float(row.get("delta_1"), 0.0) if row.get("delta_1") is not None else None,
+                            _safe_float(row.get("delta_2"), 0.0) if row.get("delta_2") is not None else None,
+                            json.dumps(row.get("trajectory") or [], ensure_ascii=False),
+                            row.get("action_hint"),
+                            1 if row.get("selection_veto") else 0,
+                            now_text,
+                            now_text,
+                        ),
+                    )
+                conn.commit()
+                return len(rows)
+            finally:
+                conn.close()
+
+    def backfill_sector_heat_daily_from_history(self) -> dict[str, Any]:
+        reports_df = self.sector_strategy_db.get_analysis_reports(limit=1000000)
+        if hasattr(reports_df, "to_dict"):
+            reports = reports_df.to_dict(orient="records")
+        else:
+            reports = list(reports_df or [])
+        ordered_reports = sorted(
+            [report for report in reports if isinstance(report, dict) and int(report.get("id") or 0)],
+            key=lambda report: (
+                str(report.get("analysis_date") or report.get("created_at") or ""),
+                int(report.get("id") or 0),
+            ),
+        )
+
+        processed_reports = 0
+        saved_rows = 0
+        board_dates: set[str] = set()
+        for report_row in ordered_reports:
+            report_id = int(report_row.get("id") or 0)
+            if not report_id:
+                continue
+            report = self.sector_strategy_db.get_analysis_report(report_id)
+            if not isinstance(report, dict):
+                continue
+            lifecycle_snapshot = report.get("lifecycle_items") if isinstance(report.get("lifecycle_items"), list) else []
+            saved_count = self._save_sector_heat_daily_snapshot(
+                run_id=f"history-backfill-{report_id}",
+                sector_report_id=report_id,
+                report=report,
+                lifecycle_snapshot=lifecycle_snapshot,
+            )
+            processed_reports += 1
+            saved_rows += int(saved_count or 0)
+            board_date = self._resolve_board_date(report)
+            if board_date:
+                board_dates.add(board_date)
+
+        return {
+            "processed_reports": processed_reports,
+            "saved_rows": saved_rows,
+            "board_dates": len(board_dates),
+        }
+
     def list_watch_pool(self, active_only: bool = True) -> list[dict[str, Any]]:
         conn = self._connect()
         try:
@@ -756,12 +999,19 @@ class SmartSelectionService:
         market_context = research_hub_service._build_selection_market_context(report)
         report_id = int(sector_info.get("report_id") or 0)
         lifecycle_snapshot = self.sector_strategy_db.get_lifecycle_items_for_analysis(report_id) if report_id else []
+        saved_sector_heat_count = self._save_sector_heat_daily_snapshot(
+            run_id=run_id,
+            sector_report_id=report_id,
+            report=report if isinstance(report, dict) else {},
+            lifecycle_snapshot=lifecycle_snapshot,
+        )
         if not lifecycle_snapshot:
             warnings.append("最新智策报告缺少生命周期数据，智能选股降级为空结果")
             lifecycle_summary = self.sector_strategy_db.build_lifecycle_summary([])
             return {
                 "sector_strategy_report_id": report_id,
                 "sector_strategy_reused": bool(sector_info.get("reused")),
+                "saved_sector_heat_count": saved_sector_heat_count,
                 "lifecycle_summary": lifecycle_summary,
                 "observed_startup_candidates": [],
                 "observed_decay_candidates": [],
@@ -791,6 +1041,7 @@ class SmartSelectionService:
                 "market_context": market_context,
                 "extracted_sectors": extracted_sectors,
                 "selection_sectors": [],
+                "saved_sector_heat_count": saved_sector_heat_count,
                 "lifecycle_summary": lifecycle_summary,
                 "observed_startup_candidates": [],
                 "observed_decay_candidates": [],
@@ -1034,6 +1285,7 @@ class SmartSelectionService:
             "market_context": market_context,
             "extracted_sectors": extracted_sectors,
             "selection_sectors": selection_sectors,
+            "saved_sector_heat_count": saved_sector_heat_count,
             "lifecycle_summary": lifecycle_summary,
             "observed_startup_candidates": observed_startup_candidates,
             "observed_decay_candidates": observed_decay_candidates,
@@ -1078,6 +1330,7 @@ class SmartSelectionService:
                 result_summary_json={
                     "lifecycle_summary": result.get("lifecycle_summary") or {},
                     "watch_pool_size": result.get("watch_pool_size", 0),
+                    "saved_sector_heat_count": result.get("saved_sector_heat_count", 0),
                 },
                 warnings_json=result.get("warnings") or [],
             )

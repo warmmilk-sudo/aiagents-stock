@@ -8,6 +8,7 @@ import { StatusBadge } from "../../components/common/StatusBadge";
 import { TaskProgressBar } from "../../components/common/TaskProgressBar";
 import { usePageFeedback } from "../../hooks/usePageFeedback";
 import { usePollingLoader } from "../../hooks/usePollingLoader";
+import { useSelectedModels } from "../../hooks/useSelectedModels";
 import { getViewedAnalysisId, isAnalysisUnread, markAnalysisViewed } from "../../lib/analysisReadState";
 import { ApiRequestError, apiFetch, apiFetchCached, buildQuery } from "../../lib/api";
 import { formatDateTime } from "../../lib/datetime";
@@ -255,6 +256,7 @@ function PoolPanel({
 }
 
 export function ResearchHubPage() {
+  const { lightweightModel, reasoningModel } = useSelectedModels();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const cachedPage = useResearchStore((state) => state.hubPageCache);
@@ -435,7 +437,13 @@ export function ResearchHubPage() {
   const handleRunSelection = async () => {
     clear();
     try {
-      const result = await apiFetch<{ task_id: string }>("/api/watchlist-hub/selection/run", { method: "POST" });
+      const result = await apiFetch<{ task_id: string }>("/api/watchlist-hub/selection/run", {
+        method: "POST",
+        body: JSON.stringify({
+          lightweight_model: lightweightModel || undefined,
+          reasoning_model: reasoningModel || undefined,
+        }),
+      });
       showMessage(`已提交智能选股任务 ${result.task_id}`);
       await loadSelectionTask();
     } catch (requestError) {

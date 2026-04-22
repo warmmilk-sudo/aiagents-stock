@@ -444,37 +444,22 @@ interface SectorReportDetailViewProps {
   isLoadingRawReports?: boolean;
   reportView?: SectorStrategyReportView | null;
   dailyHeatPanel?: { available?: boolean; board_date?: string; total_count?: number; items?: Array<Record<string, unknown>> | null } | null;
+  mode?: "full" | "rawOnly";
 }
 
-export function SectorReportDetailView({
-  title,
-  backLabel,
-  onBack,
-  onExport,
-  onLoadRawReports,
-  isLoadingRawReports = false,
+function SectorReportStructuredPanels({
   reportView,
   dailyHeatPanel,
-}: SectorReportDetailViewProps) {
-  if (!reportView) {
-    return (
-      <div className={`${styles.stack} ${styles.historyDetailPageStack}`}>
-        <section className={styles.card}>
-          <div className={styles.actions}>
-            <button className={styles.secondaryButton} onClick={onBack} type="button">
-              {backLabel}
-            </button>
-          </div>
-        </section>
-
-        <section className={styles.card}>
-          <h2>{title}</h2>
-          <div className={styles.muted}>加载报告中...</div>
-        </section>
-      </div>
-    );
-  }
-
+  showRawReports = false,
+  onLoadRawReports,
+  isLoadingRawReports = false,
+}: {
+  reportView?: SectorStrategyReportView | null;
+  dailyHeatPanel?: { available?: boolean; board_date?: string; total_count?: number; items?: Array<Record<string, unknown>> | null } | null;
+  showRawReports?: boolean;
+  onLoadRawReports?: (() => void) | null;
+  isLoadingRawReports?: boolean;
+}) {
   const summary = reportView?.summary;
   const predictions = reportView?.predictions;
   const warnings = reportView?.warnings;
@@ -482,25 +467,7 @@ export function SectorReportDetailView({
   const dataTimestamp = reportView?.meta?.data_timestamp;
 
   return (
-    <div className={`${styles.stack} ${styles.historyDetailPageStack}`}>
-      <section className={styles.card}>
-        <div className={styles.reportHeaderStack}>
-          <div className={styles.actions}>
-            <button className={styles.secondaryButton} onClick={onBack} type="button">
-              {backLabel}
-            </button>
-          </div>
-          <div className={styles.reportExportGrid}>
-            <button className={styles.secondaryButton} onClick={() => onExport("markdown")} type="button">
-              导出 Markdown
-            </button>
-            <button className={styles.secondaryButton} onClick={() => onExport("pdf")} type="button">
-              导出 PDF
-            </button>
-          </div>
-        </div>
-      </section>
-
+    <>
       <section className={styles.card}>
         <p className={styles.helperText}>
           {formatDateTime(reportView?.meta?.timestamp, "暂无时间")}
@@ -617,31 +584,134 @@ export function SectorReportDetailView({
         )}
       </DetailSection>
 
-      <DetailSection title="原始报告">
-        {reportView?.raw_reports ? (
-          <FixedReportWorkspace reports={reportView.raw_reports} />
-        ) : (
-          <div className={styles.stack}>
-            <div className={styles.muted}>原始报告默认按需加载，避免首屏解析长文本。</div>
-            <div className={styles.actions}>
-              <button
-                className={styles.secondaryButton}
-                disabled={isLoadingRawReports}
-                onClick={onLoadRawReports}
-                type="button"
-              >
-                {isLoadingRawReports ? "加载中..." : "加载原始报告"}
-              </button>
+      {showRawReports ? (
+        <DetailSection title="原始报告">
+          {reportView?.raw_reports ? (
+            <FixedReportWorkspace reports={reportView.raw_reports} />
+          ) : (
+            <div className={styles.stack}>
+              <div className={styles.muted}>原始报告默认按需加载，避免首屏解析长文本。</div>
+              <div className={styles.actions}>
+                <button
+                  className={styles.secondaryButton}
+                  disabled={isLoadingRawReports}
+                  onClick={onLoadRawReports ?? undefined}
+                  type="button"
+                >
+                  {isLoadingRawReports ? "加载中..." : "加载原始报告"}
+                </button>
+              </div>
             </div>
+          )}
+          {predictions?.raw_fallback_text ? (
+            <div className={`${styles.noticeCard} ${styles.noticeInfo}`}>
+              <strong>原始预测文本</strong>
+              <div className={styles.code}>{predictions.raw_fallback_text}</div>
+            </div>
+          ) : null}
+        </DetailSection>
+      ) : null}
+    </>
+  );
+}
+
+export function SectorReportOverviewPanels({
+  reportView,
+  dailyHeatPanel,
+}: {
+  reportView?: SectorStrategyReportView | null;
+  dailyHeatPanel?: { available?: boolean; board_date?: string; total_count?: number; items?: Array<Record<string, unknown>> | null } | null;
+}) {
+  if (!reportView) {
+    return <div className={styles.muted}>暂无最新智策报告。</div>;
+  }
+  return <SectorReportStructuredPanels dailyHeatPanel={dailyHeatPanel} reportView={reportView} />;
+}
+
+export function SectorReportDetailView({
+  title,
+  backLabel,
+  onBack,
+  onExport,
+  onLoadRawReports,
+  isLoadingRawReports = false,
+  reportView,
+  dailyHeatPanel,
+  mode = "full",
+}: SectorReportDetailViewProps) {
+  if (!reportView) {
+    return (
+      <div className={`${styles.stack} ${styles.historyDetailPageStack}`}>
+        <section className={styles.card}>
+          <div className={styles.actions}>
+            <button className={styles.secondaryButton} onClick={onBack} type="button">
+              {backLabel}
+            </button>
           </div>
-        )}
-        {predictions?.raw_fallback_text ? (
-          <div className={`${styles.noticeCard} ${styles.noticeInfo}`}>
-            <strong>原始预测文本</strong>
-            <div className={styles.code}>{predictions.raw_fallback_text}</div>
+        </section>
+
+        <section className={styles.card}>
+          <h2>{title}</h2>
+          <div className={styles.muted}>加载报告中...</div>
+        </section>
+      </div>
+    );
+  }
+
+  return (
+    <div className={`${styles.stack} ${styles.historyDetailPageStack}`}>
+      <section className={styles.card}>
+        <div className={styles.reportHeaderStack}>
+          <div className={styles.actions}>
+            <button className={styles.secondaryButton} onClick={onBack} type="button">
+              {backLabel}
+            </button>
           </div>
-        ) : null}
-      </DetailSection>
+          <div className={styles.reportExportGrid}>
+            <button className={styles.secondaryButton} onClick={() => onExport("markdown")} type="button">
+              导出 Markdown
+            </button>
+            <button className={styles.secondaryButton} onClick={() => onExport("pdf")} type="button">
+              导出 PDF
+            </button>
+          </div>
+        </div>
+      </section>
+
+      {mode === "rawOnly" ? (
+        <section className={styles.card}>
+          <p className={styles.helperText}>{formatDateTime(reportView?.meta?.timestamp, "暂无时间")}</p>
+          <h2>{title}</h2>
+          <div className={styles.muted} style={{ marginTop: 8 }}>历史报告仅展示本次分析的原始报告解析结果。</div>
+          <div style={{ marginTop: 16 }}>
+            {reportView?.raw_reports ? (
+              <FixedReportWorkspace reports={reportView.raw_reports} />
+            ) : (
+              <div className={styles.stack}>
+                <div className={styles.muted}>原始报告默认按需加载，避免首屏解析长文本。</div>
+                <div className={styles.actions}>
+                  <button
+                    className={styles.secondaryButton}
+                    disabled={isLoadingRawReports}
+                    onClick={onLoadRawReports}
+                    type="button"
+                  >
+                    {isLoadingRawReports ? "加载中..." : "加载原始报告"}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </section>
+      ) : (
+        <SectorReportStructuredPanels
+          dailyHeatPanel={dailyHeatPanel}
+          isLoadingRawReports={isLoadingRawReports}
+          onLoadRawReports={onLoadRawReports}
+          reportView={reportView}
+          showRawReports
+        />
+      )}
     </div>
   );
 }

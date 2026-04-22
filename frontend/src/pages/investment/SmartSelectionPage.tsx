@@ -4,6 +4,7 @@ import { PageFeedback } from "../../components/common/PageFeedback";
 import { PageFrame, type PageFrameSectionTab } from "../../components/common/PageFrame";
 import { StatusBadge } from "../../components/common/StatusBadge";
 import { TaskProgressBar } from "../../components/common/TaskProgressBar";
+import { useSelectedModels } from "../../hooks/useSelectedModels";
 import { usePollingLoader } from "../../hooks/usePollingLoader";
 import { ApiRequestError, apiFetch } from "../../lib/api";
 import { formatDateTime } from "../../lib/datetime";
@@ -192,6 +193,7 @@ function formatScore(value?: number | null, digits = 2) {
 }
 
 export function SmartSelectionPage() {
+  const { lightweightModel, reasoningModel } = useSelectedModels();
   const [section, setSection] = useState<PageSectionKey>("overview");
   const [overview, setOverview] = useState<OverviewPayload | null>(null);
   const [latestRun, setLatestRun] = useState<SmartSelectionRun | null>(null);
@@ -304,7 +306,11 @@ export function SmartSelectionPage() {
     try {
       const result = await apiFetch<{ run_id: string }>("/api/smart-selection/runs", {
         method: "POST",
-        body: JSON.stringify({ trigger_source: "manual" }),
+        body: JSON.stringify({
+          trigger_source: "manual",
+          lightweight_model: lightweightModel || undefined,
+          reasoning_model: reasoningModel || undefined,
+        }),
       });
       setMessage(`智能选股任务已提交：${result.run_id}`);
       await loadOverview();
@@ -487,7 +493,7 @@ export function SmartSelectionPage() {
         <div className={styles.cardHeader}>
           <div>
             <h2>运行总览</h2>
-            <p className={styles.helperText}>先看最新任务状态和最终执行池，再回头看上游生命周期与候选流转。</p>
+            <p className={styles.helperText}>先看最终执行池，再回头看上游生命周期与候选流转。</p>
           </div>
         </div>
         <div className={styles.actions}>
@@ -496,34 +502,38 @@ export function SmartSelectionPage() {
           </button>
         </div>
 
-        <div className={styles.noticeMeta}>
-          <div>
-            <strong>最新任务</strong>
-            <div className={styles.muted}>
-              最新完成：{formatDateTime(latestRun?.finished_at || latestRun?.created_at, "-")} |{" "}
-              {latestRun?.sector_report_reused ? "复用 12 小时内智策报告" : "按最新智策报告执行"}
-            </div>
-          </div>
-          <StatusBadge label={taskStatus.label} tone={taskStatus.tone} />
-        </div>
-
-        <TaskProgressBar
-          current={taskProgressCurrent}
-          total={latestRun?.total ?? 100}
-          message={latestRun?.message || "等待智能选股任务状态..."}
-          tone={taskProgressTone(latestRun)}
-        />
-
-        {latestRun?.error ? <div className={styles.dangerText}>{latestRun.error}</div> : null}
-        {latestRun?.warnings?.length ? (
-          <div className={styles.list}>
-            {latestRun.warnings.map((warning) => (
-              <div className={styles.listItem} key={warning}>
-                <strong>执行告警</strong>
-                <div className={styles.muted}>{warning}</div>
+        {taskPending ? (
+          <>
+            <div className={styles.noticeMeta}>
+              <div>
+                <strong>最新任务</strong>
+                <div className={styles.muted}>
+                  最新完成：{formatDateTime(latestRun?.finished_at || latestRun?.created_at, "-")} |{" "}
+                  {latestRun?.sector_report_reused ? "复用 12 小时内智策报告" : "按最新智策报告执行"}
+                </div>
               </div>
-            ))}
-          </div>
+              <StatusBadge label={taskStatus.label} tone={taskStatus.tone} />
+            </div>
+
+            <TaskProgressBar
+              current={taskProgressCurrent}
+              total={latestRun?.total ?? 100}
+              message={latestRun?.message || "等待智能选股任务状态..."}
+              tone={taskProgressTone(latestRun)}
+            />
+
+            {latestRun?.error ? <div className={styles.dangerText}>{latestRun.error}</div> : null}
+            {latestRun?.warnings?.length ? (
+              <div className={styles.list}>
+                {latestRun.warnings.map((warning) => (
+                  <div className={styles.listItem} key={warning}>
+                    <strong>执行告警</strong>
+                    <div className={styles.muted}>{warning}</div>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </>
         ) : null}
       </section>
 
@@ -535,11 +545,6 @@ export function SmartSelectionPage() {
           </div>
         </div>
         <div className={styles.summaryMetricGrid}>
-          <button className={styles.historySummaryCellButtonActive} onClick={() => setSection("overview")} type="button">
-            <span>最终执行</span>
-            <strong>{finalSelected.length}</strong>
-            <div className={styles.muted}>尾盘执行池</div>
-          </button>
           <button className={styles.historySummaryCellButton} onClick={() => setSection("pipeline")} type="button">
             <span>启动期观察</span>
             <strong>{observedStartupCandidates.length}</strong>
@@ -567,93 +572,81 @@ export function SmartSelectionPage() {
             <strong>{overview?.watch_pool_count ?? 0}</strong>
             <div className={styles.muted}>保留启动期线索</div>
           </button>
+          <button
+            className={`${styles.historySummaryCellButtonActive} ${styles.summaryMetricGridWideItem}`}
+            onClick={() => setSection("overview")}
+            type="button"
+          >
+            <span>最终执行</span>
+            <strong>{finalSelected.length}</strong>
+            <div className={styles.muted}>尾盘执行池</div>
+          </button>
         </div>
       </section>
 
       <section className={styles.card}>
         <div className={styles.selectionResultGrid}>
           {renderFinalSelectionCard()}
-
-          <section className={`${styles.selectionResultCard} ${styles.selectionResultWide}`}>
-            <div className={styles.cardHeader}>
-              <div>
-                <strong>当日热度面板</strong>
-                <p className={styles.helperText}>
-                  面板日期 {formatDateTime(overview?.daily_heat_panel?.board_date, "-")}，用于确认市场热度是否和生命周期判断一致。
-                </p>
-              </div>
-            </div>
-            <div className={styles.selectionCompactList}>
-              {(overview?.daily_heat_panel?.items ?? []).slice(0, 8).map((item, index) => (
-                <div className={styles.selectionCompactItem} key={`daily-heat-${index}`}>
-                  <strong>{String(item.sector_name ?? "-")}</strong>
-                  <div className={styles.muted}>
-                    热度 {formatScore(Number(item.heat_score ?? 0))} | 涨跌幅 {formatScore(Number(item.change_pct ?? 0))}% | 来源{" "}
-                    {String(item.source_type ?? "-")}
-                  </div>
-                </div>
-              ))}
-              {!(overview?.daily_heat_panel?.items ?? []).length ? <div className={styles.muted}>暂无当日热度面板</div> : null}
-            </div>
-          </section>
         </div>
       </section>
 
-      <details className={styles.historyDetailPanel}>
-        <summary className={styles.historyDetailSummary}>生命周期观察</summary>
-        <div className={styles.historyDetailPanelBody}>
-          <div className={styles.cardHeader} style={{ marginBottom: 12 }}>
-            <div>
-              <strong>生命周期依据</strong>
-              <p className={styles.helperText}>
-                智策时间 {formatDateTime(overview?.lifecycle?.analysis_date, "-")}，这是智能选股最上游的市场判断。
-              </p>
+      <section className={styles.card}>
+        <details className={styles.historyDetailPanel}>
+          <summary className={styles.historyDetailSummary}>生命周期观察</summary>
+          <div className={styles.historyDetailPanelBody}>
+            <div className={styles.cardHeader} style={{ marginBottom: 12 }}>
+              <div>
+                <strong>生命周期依据</strong>
+                <p className={styles.helperText}>
+                  智策时间 {formatDateTime(overview?.lifecycle?.analysis_date, "-")}，这是智能选股最上游的市场判断。
+                </p>
+              </div>
             </div>
+            <div className={styles.summaryMetricGrid}>
+              <button
+                className={activeLifecycleDetail === "startup" ? styles.historySummaryCellButtonActive : styles.historySummaryCellButton}
+                onClick={() => setActiveLifecycleDetail("startup")}
+                type="button"
+              >
+                <span>启动期</span>
+                <strong>{lifecycleCounts.startup ?? 0}</strong>
+                <div className={styles.muted}>适合观察和跟踪</div>
+              </button>
+              <button
+                className={activeLifecycleDetail === "explosive" ? styles.historySummaryCellButtonActive : styles.historySummaryCellButton}
+                onClick={() => setActiveLifecycleDetail("explosive")}
+                type="button"
+              >
+                <span>爆发期</span>
+                <strong>{lifecycleCounts.explosive ?? 0}</strong>
+                <div className={styles.muted}>适合进入候选</div>
+              </button>
+              <button
+                className={activeLifecycleDetail === "decay" ? styles.historySummaryCellButtonActive : styles.historySummaryCellButton}
+                onClick={() => setActiveLifecycleDetail("decay")}
+                type="button"
+              >
+                <span>衰退期</span>
+                <strong>{lifecycleCounts.decay ?? 0}</strong>
+                <div className={styles.muted}>一票否决来源</div>
+              </button>
+              <button
+                className={activeLifecycleDetail === "watch-pool" ? styles.historySummaryCellButtonActive : styles.historySummaryCellButton}
+                onClick={() => setActiveLifecycleDetail("watch-pool")}
+                type="button"
+              >
+                <span>MA10观察池</span>
+                <strong>{overview?.watch_pool_count ?? 0}</strong>
+                <div className={styles.muted}>启动期延续观察</div>
+              </button>
+            </div>
+            <section className={`${styles.selectionResultCard} ${styles.selectionResultWide}`}>
+              <strong>{lifecycleDetailTitle}</strong>
+              {renderLifecycleDetail()}
+            </section>
           </div>
-          <div className={styles.summaryMetricGrid}>
-            <button
-              className={activeLifecycleDetail === "startup" ? styles.historySummaryCellButtonActive : styles.historySummaryCellButton}
-              onClick={() => setActiveLifecycleDetail("startup")}
-              type="button"
-            >
-              <span>启动期</span>
-              <strong>{lifecycleCounts.startup ?? 0}</strong>
-              <div className={styles.muted}>适合观察和跟踪</div>
-            </button>
-            <button
-              className={activeLifecycleDetail === "explosive" ? styles.historySummaryCellButtonActive : styles.historySummaryCellButton}
-              onClick={() => setActiveLifecycleDetail("explosive")}
-              type="button"
-            >
-              <span>爆发期</span>
-              <strong>{lifecycleCounts.explosive ?? 0}</strong>
-              <div className={styles.muted}>适合进入候选</div>
-            </button>
-            <button
-              className={activeLifecycleDetail === "decay" ? styles.historySummaryCellButtonActive : styles.historySummaryCellButton}
-              onClick={() => setActiveLifecycleDetail("decay")}
-              type="button"
-            >
-              <span>衰退期</span>
-              <strong>{lifecycleCounts.decay ?? 0}</strong>
-              <div className={styles.muted}>一票否决来源</div>
-            </button>
-            <button
-              className={activeLifecycleDetail === "watch-pool" ? styles.historySummaryCellButtonActive : styles.historySummaryCellButton}
-              onClick={() => setActiveLifecycleDetail("watch-pool")}
-              type="button"
-            >
-              <span>MA10观察池</span>
-              <strong>{overview?.watch_pool_count ?? 0}</strong>
-              <div className={styles.muted}>启动期延续观察</div>
-            </button>
-          </div>
-          <section className={`${styles.selectionResultCard} ${styles.selectionResultWide}`}>
-            <strong>{lifecycleDetailTitle}</strong>
-            {renderLifecycleDetail()}
-          </section>
-        </div>
-      </details>
+        </details>
+      </section>
     </div>
   );
 

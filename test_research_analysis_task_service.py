@@ -34,7 +34,11 @@ stub_specs = {
         "SectorStrategyDataFetcher": type("SectorStrategyDataFetcher", (), {}),
     },
     "sector_strategy_db": {
-        "SectorStrategyDatabase": type("SectorStrategyDatabase", (), {}),
+        "SectorStrategyDatabase": type(
+            "SectorStrategyDatabase",
+            (),
+            {"get_lifecycle_items_for_analysis": lambda self, analysis_id: []},
+        ),
     },
     "sector_strategy_engine": {
         "SectorStrategyEngine": type("SectorStrategyEngine", (), {}),
@@ -101,7 +105,7 @@ class ResearchAnalysisTaskServiceTests(unittest.TestCase):
             captured.update(kwargs)
             return "sector-task-1"
 
-        with patch.object(services.config, "LLM_API_KEY", "test-key"), \
+        with patch.object(services.config, "has_api_credentials_for_models", return_value=True), \
              patch.object(services, "start_ui_analysis_task", side_effect=fake_start_ui_analysis_task):
             task_id = services.submit_sector_strategy_task(
                 lightweight_model=None,
@@ -149,7 +153,7 @@ class ResearchAnalysisTaskServiceTests(unittest.TestCase):
             captured.update(kwargs)
             return "task-staged"
 
-        with patch.object(services.config, "LLM_API_KEY", "test-key"), \
+        with patch.object(services.config, "has_api_credentials_for_models", return_value=True), \
              patch.object(services.portfolio_analysis_task_manager, "get_active_task_any", return_value=None), \
              patch.object(services.portfolio_analysis_task_manager, "start_task", side_effect=fake_start_task):
             services.submit_research_analysis_task(
@@ -208,7 +212,7 @@ class ResearchAnalysisTaskServiceTests(unittest.TestCase):
             captured.update(kwargs)
             return "task-queued"
 
-        with patch.object(services.config, "LLM_API_KEY", "test-key"), \
+        with patch.object(services.config, "has_api_credentials_for_models", return_value=True), \
              patch.object(services.portfolio_analysis_task_manager, "start_task", side_effect=fake_start_task):
             task_id = services.submit_research_analysis_task(
                 session_key="session-queue",
@@ -226,7 +230,7 @@ class ResearchAnalysisTaskServiceTests(unittest.TestCase):
         self.assertEqual(captured["label"], "深度分析 600519")
 
     def test_submit_research_analysis_task_rejects_parallel_batch_mode(self):
-        with patch.object(services.config, "LLM_API_KEY", "test-key"), \
+        with patch.object(services.config, "has_api_credentials_for_models", return_value=True), \
              patch.object(services.portfolio_analysis_task_manager, "start_task") as start_task:
             with self.assertRaisesRegex(ValueError, "暂不支持并行执行"):
                 services.submit_research_analysis_task(
@@ -249,7 +253,7 @@ class ResearchAnalysisTaskServiceTests(unittest.TestCase):
             captured.update(kwargs)
             return "task-123"
 
-        with patch.object(services.config, "LLM_API_KEY", "test-key"), \
+        with patch.object(services.config, "has_api_credentials_for_models", return_value=True), \
              patch.object(services.portfolio_analysis_task_manager, "start_task", side_effect=fake_start_task):
             task_id = services.submit_research_analysis_task(
                 session_key="session-a",
@@ -268,7 +272,7 @@ class ResearchAnalysisTaskServiceTests(unittest.TestCase):
         self.assertEqual(captured["metadata"]["symbols"], ["600519", "000001"])
 
     def test_submit_research_analysis_task_rejects_duplicate_symbol_against_running_task(self):
-        with patch.object(services.config, "LLM_API_KEY", "test-key"), \
+        with patch.object(services.config, "has_api_credentials_for_models", return_value=True), \
              patch.object(
                  services.portfolio_analysis_task_manager,
                  "get_pending_tasks",
@@ -296,7 +300,7 @@ class ResearchAnalysisTaskServiceTests(unittest.TestCase):
         start_task.assert_not_called()
 
     def test_submit_research_analysis_task_rejects_duplicate_symbol_against_queued_batch_task(self):
-        with patch.object(services.config, "LLM_API_KEY", "test-key"), \
+        with patch.object(services.config, "has_api_credentials_for_models", return_value=True), \
              patch.object(
                  services.portfolio_analysis_task_manager,
                  "get_pending_tasks",
@@ -330,7 +334,7 @@ class ResearchAnalysisTaskServiceTests(unittest.TestCase):
             captured.update(kwargs)
             return "task-dedup"
 
-        with patch.object(services.config, "LLM_API_KEY", "test-key"), \
+        with patch.object(services.config, "has_api_credentials_for_models", return_value=True), \
              patch.object(services.portfolio_analysis_task_manager, "get_pending_tasks", return_value=[]), \
              patch.object(services.portfolio_analysis_task_manager, "start_task", side_effect=fake_start_task):
             task_id = services.submit_research_analysis_task(
@@ -355,7 +359,7 @@ class ResearchAnalysisTaskServiceTests(unittest.TestCase):
             captured.update(kwargs)
             return "task-789"
 
-        with patch.object(services.config, "LLM_API_KEY", "test-key"), \
+        with patch.object(services.config, "has_api_credentials_for_models", return_value=True), \
              patch.object(services.portfolio_analysis_task_manager, "start_task", side_effect=fake_start_task):
             services.submit_research_analysis_task(
                 session_key="session-c",
@@ -387,7 +391,7 @@ class ResearchAnalysisTaskServiceTests(unittest.TestCase):
             captured.update(kwargs)
             return "portfolio-task-queued"
 
-        with patch.object(services.config, "LLM_API_KEY", "test-key"), \
+        with patch.object(services.config, "has_api_credentials_for_models", return_value=True), \
              patch.object(
                  services.portfolio_analysis_task_manager,
                  "get_active_task",
@@ -406,6 +410,30 @@ class ResearchAnalysisTaskServiceTests(unittest.TestCase):
 
         self.assertEqual(task_id, "portfolio-task-queued")
         self.assertEqual(captured["session_key"], "session-portfolio")
+        self.assertEqual(captured["label"], "zfy持仓批量分析")
+
+    def test_submit_portfolio_analysis_task_uses_configured_models(self):
+        captured: dict = {}
+
+        def fake_start_task(session_key, **kwargs):
+            captured["session_key"] = session_key
+            captured.update(kwargs)
+            return "portfolio-task-models"
+
+        with patch.object(services.config, "has_api_credentials_for_models", return_value=True), \
+             patch.object(services.portfolio_manager, "get_stock_count", return_value=2), \
+             patch.object(services.portfolio_analysis_task_manager, "start_task", side_effect=fake_start_task):
+            task_id = services.submit_portfolio_analysis_task(
+                session_key="session-models",
+                account_name=None,
+                period="1y",
+                batch_mode="顺序分析",
+                max_workers=1,
+                analysts={"technical": True, "fundamental": False, "fund_flow": False, "risk": False, "sentiment": False, "news": False},
+            )
+
+        self.assertEqual(task_id, "portfolio-task-models")
+        self.assertEqual(captured["session_key"], "session-models")
         self.assertEqual(captured["label"], "zfy持仓批量分析")
 
 

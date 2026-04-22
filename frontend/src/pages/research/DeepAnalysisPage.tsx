@@ -13,6 +13,7 @@ import { usePollingLoader } from "../../hooks/usePollingLoader";
 import { ApiRequestError, apiFetch, buildQuery } from "../../lib/api";
 import { formatDateTime } from "../../lib/datetime";
 import { encodeIntent } from "../../lib/intents";
+import { useSelectedModels } from "../../hooks/useSelectedModels";
 import { useDeepAnalysisStore } from "../../stores/deepAnalysisStore";
 import { useSmartMonitorStore } from "../../stores/smartMonitorStore";
 import styles from "../ConsolePage.module.scss";
@@ -175,6 +176,7 @@ function FollowupAssetList({
 }
 
 export function DeepAnalysisPage({ startOnly = false }: DeepAnalysisPageProps = {}) {
+  const { lightweightModel, reasoningModel } = useSelectedModels();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const analysts = useDeepAnalysisStore((state) => state.analysts);
@@ -256,6 +258,8 @@ export function DeepAnalysisPage({ startOnly = false }: DeepAnalysisPageProps = 
           batch_mode: "顺序分析",
           max_workers: 1,
           analysts,
+          lightweight_model: lightweightModel || undefined,
+          reasoning_model: reasoningModel || undefined,
         }),
       });
       showMessage("分析任务已提交，正在准备执行...");
@@ -281,6 +285,8 @@ export function DeepAnalysisPage({ startOnly = false }: DeepAnalysisPageProps = 
           batch_mode: "顺序分析",
           max_workers: 1,
           analysts,
+          lightweight_model: lightweightModel || undefined,
+          reasoning_model: reasoningModel || undefined,
         }),
       });
       showMessage(`已重新提交 ${symbol} 的分析任务`);

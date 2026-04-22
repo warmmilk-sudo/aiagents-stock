@@ -16,6 +16,7 @@ import { PageFeedback } from "../../components/common/PageFeedback";
 import { PageFrame } from "../../components/common/PageFrame";
 import { TaskProgressBar } from "../../components/common/TaskProgressBar";
 import { TopicBubbleCloud, filterMeaningfulTopics } from "../../components/strategies/TopicBubbleCloud";
+import { useSelectedModels } from "../../hooks/useSelectedModels";
 import { usePageFeedback } from "../../hooks/usePageFeedback";
 import { usePollingLoader } from "../../hooks/usePollingLoader";
 import { asDisplayTextArray, asRecord, asRecordArray } from "../../lib/normalizers";
@@ -277,6 +278,7 @@ function hasKeys(record: Record<string, unknown> | null | undefined): record is 
 }
 
 export function NewsFlowPage() {
+  const { lightweightModel, reasoningModel } = useSelectedModels();
   const syncedSuccessTaskIdRef = useRef("");
   const [panel, setPanel] = useState<Panel>("dashboard");
   const [task, setTask] = useState<TaskDetail<NewsFlowTaskPayload> | null>(null);
@@ -537,7 +539,11 @@ export function NewsFlowPage() {
     try {
       await apiFetch<{ task_id: string }>("/api/strategies/news-flow/tasks", {
         method: "POST",
-        body: JSON.stringify({ category: category || null }),
+        body: JSON.stringify({
+          category: category || null,
+          lightweight_model: lightweightModel || undefined,
+          reasoning_model: reasoningModel || undefined,
+        }),
       });
       setPanel("analysis");
       showMessage("新闻流量分析任务已提交，正在准备分析...");

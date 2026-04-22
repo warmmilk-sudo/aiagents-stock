@@ -143,6 +143,8 @@ def submit_portfolio_analysis_task(request: Request, payload: PortfolioAnalysisT
             batch_mode=payload.batch_mode,
             max_workers=payload.max_workers,
             analysts=services.build_analyst_config(payload.analysts),
+            lightweight_model=payload.lightweight_model,
+            reasoning_model=payload.reasoning_model,
         )
     except ValueError as exc:
         raise ApiError(400, str(exc), error_code="portfolio_analysis_invalid_request") from exc

@@ -66,7 +66,7 @@ cp .env.example .env
 
 3. **编辑 `.env` 文件，填入您的配置**
 ```env
-LLM_API_KEY=sk-your-actual-api-key-here
+WARMMILK_CONFIG={"API_KEY":"sk-your-actual-api-key-here","BASE_URL":"https://generativelanguage.googleapis.com/v1beta/openai/"}
 EMAIL_ENABLED=false
 # ... 其他配置
 ```
@@ -324,7 +324,7 @@ services:
     secrets:
       - deepseek_api_key
     environment:
-      - LLM_API_KEY_FILE=/run/secrets/deepseek_api_key
+      - WARMMILK_CONFIG_FILE=/run/secrets/deepseek_api_key
 
 secrets:
   deepseek_api_key:
@@ -401,4 +401,3 @@ services:
 ---
 
 **享受 Docker 带来的便捷部署体验！** 🚀
-

@@ -190,6 +190,10 @@
   box-sizing: border-box;
 }
 
+.summaryMetricGridWideItem {
+  grid-column: 1 / -1;
+}
+
 .researchHubLayout {
   display: grid;
   gap: 3px;
@@ -1906,11 +1910,14 @@ details>.historyDetailSummary:hover {
 .selectionResultCard {
   display: grid;
   gap: 8px;
+  width: 100%;
+  max-width: 100%;
   padding: 10px;
   border: 1px solid var(--line-soft);
   border-radius: 14px;
   background: color-mix(in srgb, var(--bg-panel-strong) 95%, transparent);
   min-width: 0;
+  box-sizing: border-box;
 }
 
 .selectionResultCard>strong {
@@ -1921,6 +1928,8 @@ details>.historyDetailSummary:hover {
 .selectionCompactList {
   display: grid;
   gap: 8px;
+  width: 100%;
+  max-width: 100%;
   min-width: 0;
 }
 
@@ -1963,6 +1972,8 @@ details>.historyDetailSummary:hover {
 
 .selectionResultWide {
   grid-column: 1 / -1;
+  width: 100%;
+  max-width: 100%;
 }
 
 .strategyBoardList {

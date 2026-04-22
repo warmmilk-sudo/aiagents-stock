@@ -553,6 +553,8 @@ def submit_portfolio_analysis_task(
     batch_mode: str,
     max_workers: int,
     analysts: dict[str, bool],
+    lightweight_model: Optional[str] = None,
+    reasoning_model: Optional[str] = None,
 ) -> str:
     normalized_account = normalize_account_name(account_name) or DEFAULT_ACCOUNT_NAME
     if not any(analysts.values()):
@@ -1020,7 +1022,7 @@ def submit_sector_strategy_task(
         if not result.get("success"):
             raise RuntimeError(result.get("error") or "智策分析失败")
 
-        invalidate_report_cache("sector:list:", "sector:lifecycle:latest")
+        invalidate_report_cache("sector:list:", "sector:latest-overview", "sector:lifecycle:latest")
         report_progress(current=100, total=100, message="智策分析完成，正在同步结果...")
         data_summary = {
             "from_cache": bool(data.get("from_cache")),
@@ -1096,6 +1098,73 @@ def list_sector_strategy_reports(limit: int = 20) -> list[dict[str, Any]]:
     return _get_or_build_report_cache(
         "sector:list",
         limit,
+        builder=builder,
+        ttl_seconds=_REPORT_LIST_CACHE_TTL_SECONDS,
+    )
+
+
+def get_latest_sector_strategy_report_overview() -> dict[str, Any]:
+    def builder() -> dict[str, Any]:
+        reports_df = sector_strategy_db.get_analysis_reports(limit=1)
+        if pd is not None and isinstance(reports_df, pd.DataFrame):
+            reports = reports_df.to_dict(orient="records")
+        else:
+            reports = list(reports_df or [])
+
+        latest = reports[0] if reports else None
+        latest_id = int(latest.get("id") or 0) if isinstance(latest, dict) else 0
+        if not latest_id:
+            return {
+                "available": False,
+                "report_id": None,
+                "summary_data": None,
+                "report_view": None,
+                "daily_heat_panel": {"available": False, "board_date": None, "total_count": 0, "items": []},
+            }
+
+        report = sector_strategy_db.get_analysis_report(latest_id)
+        if not report:
+            return {
+                "available": False,
+                "report_id": None,
+                "summary_data": None,
+                "report_view": None,
+                "daily_heat_panel": {"available": False, "board_date": None, "total_count": 0, "items": []},
+            }
+
+        embedded_data_summary = {}
+        analysis_payload = report.get("analysis_content_parsed") if isinstance(report.get("analysis_content_parsed"), dict) else {}
+        if isinstance(analysis_payload, dict):
+            embedded_data_summary = analysis_payload.get("data_summary") if isinstance(analysis_payload.get("data_summary"), dict) else {}
+        if not embedded_data_summary:
+            report_date = str(report.get("analysis_date") or report.get("created_at") or "").strip()[:10]
+            if report_date:
+                embedded_data_summary = sector_strategy_db.build_data_summary(data_date=report_date)
+
+        report_view = normalize_sector_strategy_result(
+            report,
+            data_summary=embedded_data_summary,
+            include_raw_reports=False,
+        )
+        return {
+            "available": True,
+            "report_id": latest_id,
+            "analysis_date": report.get("analysis_date"),
+            "created_at": report.get("created_at"),
+            "data_date_range": report.get("data_date_range"),
+            "summary": report.get("summary"),
+            "summary_data": _extract_sector_strategy_summary(report_view),
+            "report_view": _json_safe(report_view),
+            "daily_heat_panel": _json_safe(
+                sector_strategy_db.get_daily_heat_panel(
+                    board_date=str(report.get("board_date") or report.get("analysis_date") or report.get("created_at") or "")[:10],
+                    limit=30,
+                )
+            ),
+        }
+
+    return _get_or_build_report_cache(
+        "sector:latest-overview",
         builder=builder,
         ttl_seconds=_REPORT_LIST_CACHE_TTL_SECONDS,
     )
@@ -1209,6 +1278,7 @@ def delete_sector_strategy_report(report_id: int) -> bool:
     if deleted:
         invalidate_report_cache(
             "sector:list:",
+            "sector:latest-overview",
             f"sector:detail:{report_id}:",
             "sector:lifecycle:latest",
         )
