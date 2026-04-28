@@ -316,6 +316,24 @@ class SmartMonitorDeepSeekTests(unittest.TestCase):
         else:
             self.assertNotIn("top_p", mock_post.call_args.kwargs["json"])
 
+    @patch("smart_monitor_deepseek.requests.post")
+    def test_chat_completion_uses_provider_api_model_name_for_mapped_alias(self, mock_post):
+        response = MagicMock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {"ok": True}
+        mock_post.return_value = response
+
+        client = SmartMonitorDeepSeek(api_key="test-key")
+        client.chat_completion(
+            messages=[{"role": "user", "content": "test"}],
+            model="doubao-2-0-mini",
+        )
+
+        self.assertEqual(
+            mock_post.call_args.kwargs["json"]["model"],
+            "doubao-seed-2-0-mini-260215",
+        )
+
     @patch("smart_monitor_deepseek.time_module.sleep", return_value=None)
     @patch("smart_monitor_deepseek.requests.post")
     def test_chat_completion_retries_timeout_and_uses_reasoner_budget(self, mock_post, _mock_sleep):
@@ -910,10 +928,10 @@ class SmartMonitorDeepSeekTests(unittest.TestCase):
         )
 
         self.assertIn("本轮盘中决策只依据当前盘面、持仓状态、风险约束和战略基线判断，不参考上一轮盘中决策", messages[0]["content"])
-        self.assertIn("[EVIDENCE_SUMMARY] 跨层证据摘要", messages[1]["content"])
+        self.assertIn("[INTRADAY_FLOW] TDX分时行为与执行映射（实时参考）", messages[1]["content"])
         self.assertIn("一致性判断:", messages[1]["content"])
         self.assertIn("执行支持:", messages[1]["content"])
-        self.assertIn("不执行约束:", messages[1]["content"])
+        self.assertNotIn("不执行约束:", messages[1]["content"])
         self.assertIn("变化触发器:", messages[1]["content"])
         self.assertNotIn("[PREVIOUS_DECISION]", messages[1]["content"])
         self.assertNotIn("上轮锚点:", messages[1]["content"])
@@ -1387,7 +1405,6 @@ class SmartMonitorDeepSeekTests(unittest.TestCase):
         self.assertIn("15/30/60分钟节奏: 15/30/60分钟整体走强，未见持续走坏", prompt)
         self.assertIn("承接状态: 承接优化，回踩后仍有资金接力", prompt)
         self.assertIn("止盈动态提示: 空仓场景，以入场节奏判断为主", prompt)
-        self.assertIn("[EVIDENCE_SUMMARY] 跨层证据摘要", prompt)
         self.assertIn("盘中偏向: 高位放量延续，短线趋势偏强", prompt)
         self.assertIn("执行支持: 价格运行在分时均价上方", prompt)
         self.assertIn("不执行约束: 高位放量延续", prompt)
@@ -1512,9 +1529,54 @@ class SmartMonitorDeepSeekTests(unittest.TestCase):
         }, ensure_ascii=False))
 
         self.assertLess(payload_chars, 7200)
-        self.assertIn("[EVIDENCE_SUMMARY]", messages[1]["content"])
+        self.assertIn("[INTRADAY_FLOW]", messages[1]["content"])
         self.assertIn("[STRATEGY_CONTEXT]", messages[1]["content"])
         self.assertNotIn("[PREVIOUS_DECISION]", messages[1]["content"])
+
+    def test_build_prompt_omits_empty_lines_for_partial_context(self):
+        client = SmartMonitorDeepSeek(api_key="test-key")
+
+        prompt = client._build_a_stock_prompt(
+            stock_code="600519",
+            market_data={
+                "name": "贵州茅台",
+                "current_price": 1650.0,
+                "intraday_context": {
+                    "intraday_bias_text": "分时均价附近反复拉锯",
+                },
+                "realtime_freshness": {
+                    "overall_status": "degraded",
+                },
+            },
+            account_info={
+                "available_cash": 100000.0,
+                "total_value": 300000.0,
+                "total_market_value": 200000.0,
+                "position_usage_pct": 0.66,
+                "positions_count": 3,
+            },
+            has_position=False,
+            session_info={
+                "session": "上午盘",
+                "volatility": "high",
+                "recommendation": "交易活跃，波动较大",
+                "beijing_hour": 10,
+                "beijing_time": "10:30",
+                "can_trade": True,
+            },
+            strategy_context={
+                "rating": "买入",
+                "summary": "优先等回踩确认，不追高。",
+            },
+        )
+
+        self.assertIn("[INTRADAY_FLOW]", prompt)
+        self.assertIn("盘中偏向: 分时均价附近反复拉锯", prompt)
+        self.assertNotIn("覆盖率/缺口:", prompt)
+        self.assertNotIn("近15/30/60分钟涨跌:", prompt)
+        self.assertNotIn("15/30/60分钟量能比:", prompt)
+        self.assertNotIn("时间/来源:", prompt)
+        self.assertNotIn("阈值:", prompt)
 
 
 if __name__ == "__main__":

@@ -1,8 +1,0 @@
-[EVIDENCE_SUMMARY] 跨层证据摘要 ⭐ 重要
-═══════════════════════════════════════════════════════════
-战略锚点: $baseline_anchor
-执行重点: $execution_focus
-一致性判断: $alignment_summary
-执行支持: $execution_support
-不执行约束: $execution_constraint
-变化触发器: $change_trigger

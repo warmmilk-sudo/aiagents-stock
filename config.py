@@ -161,7 +161,14 @@ LLM_API_KEY = WARMMILK_API_KEY or VOICE_API_KEY
 def get_model_config_env_key(model_name: str | None = None) -> str | None:
     """Return the env var name that stores a model JSON config."""
     normalized = str(model_name or "").strip()
-    return MODEL_CONFIG_ENV_BY_NAME.get(normalized)
+    direct = MODEL_CONFIG_ENV_BY_NAME.get(normalized)
+    if direct:
+        return direct
+
+    for alias, config_key in MODEL_CONFIG_ENV_BY_NAME.items():
+        if MODEL_API_NAME_BY_CONFIG_ENV.get(config_key, {}).get(alias) == normalized:
+            return config_key
+    return None
 
 
 def _lookup_config_value(key: str, overrides: dict[str, str] | None = None) -> str:

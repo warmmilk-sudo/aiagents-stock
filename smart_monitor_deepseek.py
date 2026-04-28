@@ -30,12 +30,12 @@ class SmartMonitorDeepSeek:
     """A股智能盯盘 - DeepSeek AI决策引擎"""
 
     OPTIONAL_SECTION_PRIORITY_HEADERS = (
-        "[EVIDENCE_SUMMARY]",
+        "[INTRADAY_FLOW]",
         "[STRATEGY_CONTEXT]",
     )
     MAX_STRATEGY_SUMMARY_CHARS = 240
     MAX_SEMANTIC_LABELS = 8
-    PROMPT_SIZE_WARNING_CHARS = 15000
+    PROMPT_SIZE_WARNING_CHARS = 22000
     PROMPT_SIZE_SAFETY_MARGIN_CHARS = 0
     PROMPT_BUILD_TARGET_CHARS = 6200
     MAX_OPTIONAL_SECTION_REASONING_CHARS = 180
@@ -54,7 +54,6 @@ class SmartMonitorDeepSeek:
     SECTION_ACCOUNT_RISK_PROFILE_TEMPLATE = "smart_monitor/sections/account_risk_profile.txt"
     SECTION_INTRADAY_FLOW_TEMPLATE = "smart_monitor/sections/intraday_flow.txt"
     SECTION_STRATEGY_CONTEXT_TEMPLATE = "smart_monitor/sections/strategy_context.txt"
-    SECTION_EVIDENCE_SUMMARY_TEMPLATE = "smart_monitor/sections/evidence_summary.txt"
     SECTION_AI_PATTERN_RECOGNITION_TEMPLATE = "smart_monitor/sections/ai_pattern_recognition.txt"
     SECTION_POSITION_HOLDING_TEMPLATE = "smart_monitor/sections/position_holding.txt"
     SECTION_POSITION_EMPTY_TEMPLATE = "smart_monitor/sections/position_empty.txt"
@@ -120,6 +119,20 @@ class SmartMonitorDeepSeek:
         if limit <= len(suffix):
             return suffix[:limit]
         return text[: limit - len(suffix)].rstrip() + suffix
+
+    @staticmethod
+    def _is_missing_prompt_value(value: object) -> bool:
+        text = str(value or "").strip()
+        return text in {"", "N/A", "[N/A]"}
+
+    @classmethod
+    def _optional_prompt_value(cls, value: object) -> str:
+        return "" if cls._is_missing_prompt_value(value) else str(value).strip()
+
+    @classmethod
+    def _join_prompt_values(cls, *values: object, separator: str = " | ") -> str:
+        parts = [cls._optional_prompt_value(value) for value in values]
+        return separator.join(part for part in parts if part)
 
     def _build_strategy_summary_brief(self, strategy_context: Dict[str, Any]) -> str:
         def _clean_text(value: object) -> str:
@@ -1263,11 +1276,28 @@ class SmartMonitorDeepSeek:
         primary_category = str((evidence_summary or {}).get("primary_category") or "neutral")
 
         if isinstance(strategy_context, dict):
+            threshold_parts = []
+            entry_min = strategy_context.get("entry_min")
+            entry_max = strategy_context.get("entry_max")
+            if not self._is_missing_prompt_value(entry_min) and not self._is_missing_prompt_value(entry_max):
+                threshold_parts.append(f"进场 {entry_min} - {entry_max}")
+            take_profit = strategy_context.get("take_profit")
+            if not self._is_missing_prompt_value(take_profit):
+                threshold_parts.append(f"止盈 {take_profit}")
+            stop_loss = strategy_context.get("stop_loss")
+            if not self._is_missing_prompt_value(stop_loss):
+                threshold_parts.append(f"止损 {stop_loss}")
             baseline_anchor = self._truncate_prompt_text(
-                f"{strategy_context.get('rating', 'N/A')} | {strategy_context.get('swing_type', '未明确')} | "
-                f"周期 {strategy_context.get('swing_horizon_days_text', strategy_context.get('holding_period', '未明确'))} | "
-                f"进场 {strategy_context.get('entry_min', 'N/A')} - {strategy_context.get('entry_max', 'N/A')} | "
-                f"止盈 {strategy_context.get('take_profit', 'N/A')} | 止损 {strategy_context.get('stop_loss', 'N/A')}",
+                self._join_prompt_values(
+                    strategy_context.get("rating"),
+                    strategy_context.get("swing_type"),
+                    (
+                        f"周期 {strategy_context.get('swing_horizon_days_text') or strategy_context.get('holding_period')}"
+                        if str(strategy_context.get("swing_horizon_days_text") or strategy_context.get("holding_period") or "").strip()
+                        else ""
+                    ),
+                    self._join_prompt_values(*threshold_parts),
+                ) or "无战略基线",
                 100,
                 suffix="…",
             )
@@ -1282,11 +1312,11 @@ class SmartMonitorDeepSeek:
         if has_position:
             execution_focus = "已有持仓，优先区分回踩确认加仓、突破确认加仓、主动减仓锁盈、防守减仓/清仓与继续持有，并同步考虑仓位上限与T+1约束。"
             if strategy_execution_preference:
-                execution_focus = f"{execution_focus} 当前基线更偏{strategy_execution_preference}"
+                execution_focus = f"{execution_focus} 当前基线偏好：{strategy_execution_preference}"
         elif isinstance(strategy_context, dict):
             execution_focus = "无持仓，先看盘中证据是否支持沿用或微调基线阈值执行，避免情绪化追价。"
             if strategy_execution_preference:
-                execution_focus = f"{execution_focus} 当前基线更偏{strategy_execution_preference}"
+                execution_focus = f"{execution_focus} 当前基线偏好：{strategy_execution_preference}"
         else:
             execution_focus = "无持仓，可根据盘中证据强度评估是否执行买点，但要兼顾时点与风险收益比。"
 
@@ -1533,6 +1563,7 @@ class SmartMonitorDeepSeek:
             lightweight_model=self.lightweight_model,
             reasoning_model=self.reasoning_model,
         )
+        api_model_to_use = config.get_model_api_name(model_to_use) or model_to_use
 
         if "reasoner" in model_to_use.lower() and max_tokens <= 2000:
             max_tokens = max(max_tokens, self.reasoning_max_tokens)
@@ -1545,7 +1576,7 @@ class SmartMonitorDeepSeek:
         )
         
         payload = {
-            "model": model_to_use,
+            "model": api_model_to_use,
             "messages": messages,
             "temperature": effective_temperature,
             "max_tokens": max_tokens
@@ -1556,18 +1587,18 @@ class SmartMonitorDeepSeek:
         if payload_size >= self.PROMPT_SIZE_WARNING_CHARS:
             self.logger.warning(
                 "LLM请求体较大，model=%s，payload_chars=%s，messages=%s",
-                model_to_use,
+                api_model_to_use,
                 payload_size,
                 len(messages),
             )
         else:
             self.logger.debug(
                 "LLM请求体大小，model=%s，payload_chars=%s，messages=%s",
-                model_to_use,
+                api_model_to_use,
                 payload_size,
                 len(messages),
             )
-        
+
         api_key, base_url = self._resolve_request_credentials(model_to_use)
         endpoint = f"{base_url.rstrip('/')}/chat/completions"
         headers = {
@@ -1597,7 +1628,7 @@ class SmartMonitorDeepSeek:
                     "LLM API请求超时或连接失败，准备重试 (%s/%s)，model=%s，read_timeout=%ss: %s",
                     attempt_index + 1,
                     total_attempts,
-                    model_to_use,
+                    api_model_to_use,
                     self.http_timeout_seconds,
                     exc,
                 )
@@ -1611,7 +1642,7 @@ class SmartMonitorDeepSeek:
                         status_code,
                         attempt_index + 1,
                         total_attempts,
-                        model_to_use,
+                        api_model_to_use,
                         payload_size,
                         exc,
                     )
@@ -1619,7 +1650,7 @@ class SmartMonitorDeepSeek:
                     continue
                 self.logger.error(
                     "LLM API调用失败，model=%s，status=%s，timeout=%ss，payload_chars=%s: %s",
-                    model_to_use,
+                    api_model_to_use,
                     status_code,
                     self.http_timeout_seconds,
                     payload_size,
@@ -1629,7 +1660,7 @@ class SmartMonitorDeepSeek:
             except Exception as exc:
                 self.logger.error(
                     "LLM API调用失败，model=%s，timeout=%ss，payload_chars=%s: %s",
-                    model_to_use,
+                    api_model_to_use,
                     self.http_timeout_seconds,
                     payload_size,
                     exc,
@@ -1639,7 +1670,7 @@ class SmartMonitorDeepSeek:
         if last_error is not None:
             self.logger.error(
                 "LLM API调用失败，重试后仍未成功，model=%s，timeout=%ss: %s",
-                model_to_use,
+                api_model_to_use,
                 self.http_timeout_seconds,
                 last_error,
             )
@@ -2280,8 +2311,27 @@ class SmartMonitorDeepSeek:
                 items = [self._truncate_prompt_text(value, 120)] if str(value or "").strip() else []
             return "；".join(items[:5]) if items else "N/A"
 
+        def _optional_value(value: object) -> str:
+            return self._optional_prompt_value(value)
+
+        def _join_non_empty(*values: object, separator: str = " | ") -> str:
+            return self._join_prompt_values(*values, separator=separator)
+
+        def _status_overview(timestamp: object, status: object) -> str:
+            timestamp_text = _optional_value(timestamp)
+            status_text = _optional_value(status)
+            if timestamp_text and status_text:
+                return f"{timestamp_text} ({status_text})"
+            return timestamp_text or status_text
+
+        def _yes_no_text(value: Any) -> str:
+            normalized = self._coerce_optional_bool(value)
+            if normalized is None:
+                return ""
+            return "是" if normalized else "否"
+
         turnover_rate_text = _fmt_pct(market_data.get("turnover_rate"))
-        turnover_rate_line = f"换手率: {turnover_rate_text}\n" if turnover_rate_text != "N/A" else ""
+        turnover_rate_line = f"换手率: {turnover_rate_text}" if turnover_rate_text != "N/A" else ""
         current_price = _to_float(market_data.get("current_price"))
         current_price_text = _fmt_money(current_price)
         current_volume = _to_float(market_data.get("volume"))
@@ -2337,31 +2387,38 @@ class SmartMonitorDeepSeek:
         minute_quality = realtime_freshness.get("minute_quality") if isinstance(realtime_freshness.get("minute_quality"), dict) else {}
         realtime_freshness_section = render_prompt(
             self.SECTION_REALTIME_FRESHNESS_TEMPLATE,
-            asof_time=realtime_freshness.get("asof_time", "N/A"),
-            is_trading_now_text="是" if realtime_freshness.get("is_trading_now") else "否",
-            intraday_decision_ready_text="是" if realtime_freshness.get("intraday_decision_ready") else "否",
-            overall_status_text=_freshness_label(realtime_freshness.get("overall_status")),
-            quote_timestamp=quote_freshness.get("timestamp", "N/A"),
-            quote_status_text=_freshness_label(quote_freshness.get("status")),
-            minute_timestamp=minute_freshness.get("timestamp", "N/A"),
-            minute_status_text=_freshness_label(minute_freshness.get("status")),
-            trade_timestamp=trade_freshness.get("timestamp", "N/A"),
-            trade_status_text=_freshness_label(trade_freshness.get("status")),
+            omit_empty_lines=True,
+            asof_time=_optional_value(realtime_freshness.get("asof_time")),
+            is_trading_now_text=_yes_no_text(realtime_freshness.get("is_trading_now")),
+            intraday_decision_ready_text=_yes_no_text(realtime_freshness.get("intraday_decision_ready")),
+            overall_status_text=_optional_value(_freshness_label(realtime_freshness.get("overall_status"))),
+            quote_line=_status_overview(
+                quote_freshness.get("timestamp"),
+                _freshness_label(quote_freshness.get("status")) if quote_freshness.get("status") else "",
+            ),
+            minute_line=_status_overview(
+                minute_freshness.get("timestamp"),
+                _freshness_label(minute_freshness.get("status")) if minute_freshness.get("status") else "",
+            ),
+            trade_line=_status_overview(
+                trade_freshness.get("timestamp"),
+                _freshness_label(trade_freshness.get("status")) if trade_freshness.get("status") else "",
+            ),
             minute_coverage_ratio_text=(
                 f"{float(minute_quality.get('coverage_ratio')) * 100:.1f}%"
                 if minute_quality.get("coverage_ratio") is not None
-                else "N/A"
+                else ""
             ),
             minute_max_gap_text=(
                 f"{int(minute_quality.get('max_gap'))} 分钟"
                 if minute_quality.get("max_gap") is not None
-                else "N/A"
+                else ""
             ),
-            minute_quality_text=minute_quality.get("label", "未提供分时质量"),
-            freshness_summary=self._truncate_prompt_text(
-                realtime_freshness.get("summary", "未提供实时新鲜度校验结果"),
+            minute_quality_text=_optional_value(minute_quality.get("label")),
+            freshness_summary=_optional_value(self._truncate_prompt_text(
+                realtime_freshness.get("summary"),
                 self.MAX_OPTIONAL_SECTION_SUMMARY_CHARS,
-            ),
+            )),
         )
 
         rsi6_value = _to_float(market_data.get("rsi6"))
@@ -2376,74 +2433,92 @@ class SmartMonitorDeepSeek:
 
         stock_section = render_prompt(
             self.SECTION_STOCK_TEMPLATE,
+            omit_empty_lines=True,
             stock_code=stock_code,
-            stock_name=market_data.get("name", "N/A"),
-            data_source=str(market_data.get("data_source", "N/A")).upper(),
-            update_time=market_data.get("update_time", "N/A"),
-            current_price=current_price_text,
-            change_pct=_fmt_pct(market_data.get("change_pct")),
-            change_amount=_fmt_money(market_data.get("change_amount"), signed=True),
-            high=_fmt_money(market_data.get("high")),
-            low=_fmt_money(market_data.get("low")),
-            open_price=_fmt_money(market_data.get("open")),
-            pre_close=_fmt_money(market_data.get("pre_close")),
-            volume=_fmt_volume(market_data.get("volume")),
-            amount=_fmt_money(market_data.get("amount")),
+            stock_name=_optional_value(market_data.get("name")),
+            data_source=_optional_value(str(market_data.get("data_source", "")).upper()),
+            update_time=_optional_value(market_data.get("update_time")),
+            current_price=_optional_value(current_price_text),
+            change_pct=_optional_value(_fmt_pct(market_data.get("change_pct"))),
+            change_amount=_optional_value(_fmt_money(market_data.get("change_amount"), signed=True)),
+            high=_optional_value(_fmt_money(market_data.get("high"))),
+            low=_optional_value(_fmt_money(market_data.get("low"))),
+            open_price=_optional_value(_fmt_money(market_data.get("open"))),
+            pre_close=_optional_value(_fmt_money(market_data.get("pre_close"))),
+            volume=_optional_value(_fmt_volume(market_data.get("volume"))),
+            amount=_optional_value(_fmt_money(market_data.get("amount"))),
         )
 
         technical_section = render_prompt(
             self.SECTION_TECHNICAL_TEMPLATE,
-            ma5=_fmt_money(market_data.get("ma5")),
-            ma10=_fmt_money(market_data.get("ma10")),
-            ma20=_fmt_money(market_data.get("ma20")),
-            ma60=_fmt_money(market_data.get("ma60")),
-            trend_label="多头排列" if market_data.get("trend") == "up" else "空头排列" if market_data.get("trend") == "down" else "N/A",
-            atr14=_fmt_money(market_data.get("atr14")),
-            atr14_pct=_fmt_pct(market_data.get("atr14_pct")),
-            macd_dif=_fmt_number(market_data.get("macd_dif"), digits=4),
-            macd_dea=_fmt_number(market_data.get("macd_dea"), digits=4),
-            macd=_fmt_number(market_data.get("macd"), digits=4),
-            rsi6=_fmt_number(market_data.get("rsi6")),
-            rsi6_state=rsi6_state,
-            rsi12=_fmt_number(market_data.get("rsi12")),
-            rsi24=_fmt_number(market_data.get("rsi24")),
-            kdj_k=_fmt_number(market_data.get("kdj_k")),
-            kdj_d=_fmt_number(market_data.get("kdj_d")),
-            kdj_j=_fmt_number(market_data.get("kdj_j")),
-            boll_upper=_fmt_money(market_data.get("boll_upper")),
-            boll_mid=_fmt_money(market_data.get("boll_mid")),
-            boll_lower=_fmt_money(market_data.get("boll_lower")),
-            boll_position=market_data.get("boll_position", "N/A") or "N/A",
+            omit_empty_lines=True,
+            ma5=_optional_value(_fmt_money(market_data.get("ma5"))),
+            ma10=_optional_value(_fmt_money(market_data.get("ma10"))),
+            ma20=_optional_value(_fmt_money(market_data.get("ma20"))),
+            ma60=_optional_value(_fmt_money(market_data.get("ma60"))),
+            trend_label=_optional_value(
+                "多头排列" if market_data.get("trend") == "up" else "空头排列" if market_data.get("trend") == "down" else ""
+            ),
+            atr14=_optional_value(_fmt_money(market_data.get("atr14"))),
+            atr14_pct=_optional_value(_fmt_pct(market_data.get("atr14_pct"))),
+            macd_overview=_join_non_empty(
+                f"DIF {_fmt_number(market_data.get('macd_dif'), digits=4)}" if _fmt_number(market_data.get("macd_dif"), digits=4) != "N/A" else "",
+                f"DEA {_fmt_number(market_data.get('macd_dea'), digits=4)}" if _fmt_number(market_data.get("macd_dea"), digits=4) != "N/A" else "",
+                f"MACD {_fmt_number(market_data.get('macd'), digits=4)}" if _fmt_number(market_data.get("macd"), digits=4) != "N/A" else "",
+            ),
+            rsi_overview=_join_non_empty(
+                f"6 {_fmt_number(market_data.get('rsi6'))}{(' ' + rsi6_state) if rsi6_state != '[N/A]' else ''}" if _fmt_number(market_data.get("rsi6")) != "N/A" else "",
+                f"12 {_fmt_number(market_data.get('rsi12'))}" if _fmt_number(market_data.get("rsi12")) != "N/A" else "",
+                f"24 {_fmt_number(market_data.get('rsi24'))}" if _fmt_number(market_data.get("rsi24")) != "N/A" else "",
+            ),
+            kdj_overview=_join_non_empty(
+                f"K {_fmt_number(market_data.get('kdj_k'))}" if _fmt_number(market_data.get("kdj_k")) != "N/A" else "",
+                f"D {_fmt_number(market_data.get('kdj_d'))}" if _fmt_number(market_data.get("kdj_d")) != "N/A" else "",
+                f"J {_fmt_number(market_data.get('kdj_j'))}" if _fmt_number(market_data.get("kdj_j")) != "N/A" else "",
+            ),
+            boll_overview=_join_non_empty(
+                f"上 {_fmt_money(market_data.get('boll_upper'))}" if _fmt_money(market_data.get("boll_upper")) != "N/A" else "",
+                f"中 {_fmt_money(market_data.get('boll_mid'))}" if _fmt_money(market_data.get("boll_mid")) != "N/A" else "",
+                f"下 {_fmt_money(market_data.get('boll_lower'))}" if _fmt_money(market_data.get("boll_lower")) != "N/A" else "",
+                f"位置 {market_data.get('boll_position')}" if str(market_data.get("boll_position") or "").strip() else "",
+            ),
         )
 
         volume_section = render_prompt(
             self.SECTION_VOLUME_TEMPLATE,
-            current_volume=_fmt_volume(current_volume),
-            trading_progress=trading_progress_text,
-            projected_full_day_volume=_fmt_volume(projected_full_day_volume),
-            vol_ma5=_fmt_volume(market_data.get("vol_ma5")),
-            realtime_volume_ratio=_fmt_number(realtime_volume_ratio),
-            realtime_volume_state=_volume_state_label(realtime_volume_ratio),
-            projected_volume_ratio_vs_vol_ma5=_fmt_number(projected_volume_ratio_vs_vol_ma5),
-            projected_volume_state=_volume_state_label(projected_volume_ratio_vs_vol_ma5),
+            omit_empty_lines=True,
+            current_volume=_optional_value(_fmt_volume(current_volume)),
+            trading_progress=_optional_value(trading_progress_text),
+            projected_full_day_volume=_optional_value(_fmt_volume(projected_full_day_volume)),
+            vol_ma5=_optional_value(_fmt_volume(market_data.get("vol_ma5"))),
+            realtime_volume_overview=_join_non_empty(
+                _optional_value(_fmt_number(realtime_volume_ratio)),
+                f"({_volume_state_label(realtime_volume_ratio)})" if _volume_state_label(realtime_volume_ratio) != "N/A" else "",
+                separator=" ",
+            ),
+            projected_volume_overview=_join_non_empty(
+                _optional_value(_fmt_number(projected_volume_ratio_vs_vol_ma5)),
+                f"({_volume_state_label(projected_volume_ratio_vs_vol_ma5)})" if _volume_state_label(projected_volume_ratio_vs_vol_ma5) != "N/A" else "",
+                separator=" ",
+            ),
             intraday_volume_note=intraday_volume_note,
-            turnover_rate_line=turnover_rate_line.strip(),
+            turnover_rate_line=turnover_rate_line,
         )
 
         execution_context_section = render_prompt(
             self.SECTION_EXECUTION_CONTEXT_TEMPLATE,
+            omit_empty_lines=True,
             available_cash=f"¥{account_info.get('available_cash', 0):,.2f}",
             total_value=f"¥{account_info.get('total_value', 0):,.2f}",
             total_market_value=f"¥{account_info.get('total_market_value', 0):,.2f}",
             position_usage_pct=f"{account_info.get('position_usage_pct', 0) * 100:.2f}%",
             positions_count=account_info.get("positions_count", 0),
             account_name=account_name,
-            asset_id=asset_id or "N/A",
-            portfolio_stock_id=portfolio_stock_id or "N/A",
         )
 
         account_risk_profile_section = render_prompt(
             self.SECTION_ACCOUNT_RISK_PROFILE_TEMPLATE,
+            omit_empty_lines=True,
             position_size_pct=resolved_risk_profile["position_size_pct"],
             total_position_pct=resolved_risk_profile["total_position_pct"],
             stop_loss_pct=resolved_risk_profile["stop_loss_pct"],
@@ -2451,6 +2526,11 @@ class SmartMonitorDeepSeek:
         )
         optional_sections: List[str] = []
         evidence_summary: Optional[Dict[str, str]] = None
+        cross_layer_summary = self._build_cross_layer_evidence_summary(
+            has_position=has_position,
+            strategy_context=strategy_context,
+            evidence_summary=evidence_summary,
+        )
         intraday_momentum_state = "N/A"
         intraday_volume_structure = "N/A"
         acceptance_state = "N/A"
@@ -2474,14 +2554,11 @@ class SmartMonitorDeepSeek:
                 previous_labels=[],
                 current_bias_text=str(intraday_context.get("intraday_bias_text") or ""),
             )
-        optional_sections.append(render_prompt(
-            self.SECTION_EVIDENCE_SUMMARY_TEMPLATE,
-            **self._build_cross_layer_evidence_summary(
+            cross_layer_summary = self._build_cross_layer_evidence_summary(
                 has_position=has_position,
                 strategy_context=strategy_context,
                 evidence_summary=evidence_summary,
-            ),
-        ))
+            )
         if strategy_context:
             summary_text = self._build_strategy_summary_brief(strategy_context)
             feature_beacons_text = "、".join(
@@ -2489,73 +2566,109 @@ class SmartMonitorDeepSeek:
             ) or "无"
             optional_sections.append(render_prompt(
                 self.SECTION_STRATEGY_CONTEXT_TEMPLATE,
-                analysis_date=strategy_context.get("analysis_date", "N/A"),
-                analysis_source=strategy_context.get("analysis_source", "N/A"),
-                rating=strategy_context.get("rating", "N/A"),
-                swing_type=strategy_context.get("swing_type", "N/A"),
-                holding_period=strategy_context.get("holding_period", "N/A"),
-                swing_horizon_label=strategy_context.get("swing_horizon_label", "N/A"),
-                swing_horizon_days_text=strategy_context.get("swing_horizon_days_text", "N/A"),
-                strategy_style_summary=strategy_context.get("strategy_style_summary", "N/A"),
-                baseline_exit_style=strategy_context.get("baseline_exit_style", "N/A"),
-                intraday_execution_preference=strategy_context.get("intraday_execution_preference", "N/A"),
-                swing_type_reason=strategy_context.get("swing_type_reason", "N/A"),
-                summary=summary_text or "N/A",
-                entry_min=strategy_context.get("entry_min", "N/A"),
-                entry_max=strategy_context.get("entry_max", "N/A"),
-                take_profit=strategy_context.get("take_profit", "N/A"),
-                stop_loss=strategy_context.get("stop_loss", "N/A"),
-                execution_plan_summary=strategy_context.get("execution_plan_summary", "N/A") or "N/A",
-                entry_conditions_text=_format_conditions(strategy_context.get("entry_conditions")),
-                exit_conditions_text=_format_conditions(strategy_context.get("exit_conditions")),
-                hold_conditions_text=_format_conditions(strategy_context.get("hold_conditions")),
-                invalidation_conditions_text=_format_conditions(strategy_context.get("invalidation_conditions")),
-                structure_state=strategy_context.get("structure_state", "N/A") or "N/A",
-                atr14=_fmt_money(strategy_context.get("atr14")),
-                atr14_pct=_fmt_pct(strategy_context.get("atr14_pct")),
-                trend_anchor_type=strategy_context.get("trend_anchor_type", "N/A") or "N/A",
-                trend_anchor_value=_fmt_money(strategy_context.get("trend_anchor_value")),
+                omit_empty_lines=True,
+                analysis_meta=_join_non_empty(
+                    strategy_context.get("analysis_date"),
+                    strategy_context.get("analysis_source"),
+                ),
+                rating=_optional_value(strategy_context.get("rating")),
+                swing_type=_optional_value(strategy_context.get("swing_type")),
+                holding_period=_optional_value(strategy_context.get("holding_period")),
+                horizon_meta=_join_non_empty(
+                    strategy_context.get("swing_horizon_label"),
+                    strategy_context.get("swing_horizon_days_text"),
+                ),
+                strategy_style_summary=_optional_value(strategy_context.get("strategy_style_summary")),
+                baseline_exit_style=_optional_value(strategy_context.get("baseline_exit_style")),
+                intraday_execution_preference=_optional_value(strategy_context.get("intraday_execution_preference")),
+                swing_type_reason=_optional_value(strategy_context.get("swing_type_reason")),
+                summary=_optional_value(summary_text),
+                thresholds_line=_join_non_empty(
+                    (
+                        f"进场 {strategy_context.get('entry_min')} - {strategy_context.get('entry_max')}"
+                        if not self._is_missing_prompt_value(strategy_context.get("entry_min"))
+                        and not self._is_missing_prompt_value(strategy_context.get("entry_max"))
+                        else ""
+                    ),
+                    f"止盈 {strategy_context.get('take_profit')}" if not self._is_missing_prompt_value(strategy_context.get("take_profit")) else "",
+                    f"止损 {strategy_context.get('stop_loss')}" if not self._is_missing_prompt_value(strategy_context.get("stop_loss")) else "",
+                ),
+                execution_plan_summary=_optional_value(strategy_context.get("execution_plan_summary")),
+                entry_conditions_text=_optional_value(_format_conditions(strategy_context.get("entry_conditions"))),
+                exit_conditions_text=_optional_value(_format_conditions(strategy_context.get("exit_conditions"))),
+                hold_conditions_text=_optional_value(_format_conditions(strategy_context.get("hold_conditions"))),
+                invalidation_conditions_text=_optional_value(_format_conditions(strategy_context.get("invalidation_conditions"))),
+                structure_state=_optional_value(strategy_context.get("structure_state")),
+                atr_overview=_join_non_empty(
+                    _optional_value(_fmt_money(strategy_context.get("atr14"))),
+                    _optional_value(_fmt_pct(strategy_context.get("atr14_pct"))),
+                ),
+                trend_anchor_line=_join_non_empty(
+                    strategy_context.get("trend_anchor_type"),
+                    _fmt_money(strategy_context.get("trend_anchor_value")),
+                    separator=" @ ",
+                ),
                 trend_following_active_text=(
-                    "是" if self._coerce_optional_bool(strategy_context.get("trend_following_active")) else "否"
+                    _yes_no_text(strategy_context.get("trend_following_active"))
                 ),
                 feature_beacons_text=feature_beacons_text,
             ))
-        if intraday_context:
+        if intraday_context or cross_layer_summary:
             optional_sections.append(render_prompt(
                 self.SECTION_INTRADAY_FLOW_TEMPLATE,
-                minute_coverage_ratio=(
-                    f"{float(intraday_context.get('minute_coverage_ratio')) * 100:.1f}%"
-                    if intraday_context.get("minute_coverage_ratio") is not None
-                    else "N/A"
+                omit_empty_lines=True,
+                minute_coverage_overview=_join_non_empty(
+                    (
+                        f"{float(intraday_context.get('minute_coverage_ratio')) * 100:.1f}%"
+                        if intraday_context.get("minute_coverage_ratio") is not None
+                        else ""
+                    ),
+                    (
+                        f"{int(intraday_context.get('max_minute_gap'))} 分钟"
+                        if intraday_context.get("max_minute_gap") is not None
+                        else ""
+                    ),
                 ),
-                max_minute_gap=(
-                    f"{int(intraday_context.get('max_minute_gap'))} 分钟"
-                    if intraday_context.get("max_minute_gap") is not None
-                    else "N/A"
-                ),
-                intraday_vwap=_fmt_money(intraday_context.get("intraday_vwap")),
+                intraday_vwap=_optional_value(_fmt_money(intraday_context.get("intraday_vwap"))),
                 price_position_summary=(
                     f"{_fmt_number(intraday_context.get('price_position_pct'))}% ({_intraday_position_label(intraday_context.get('price_position_pct'))})"
                     if _fmt_number(intraday_context.get("price_position_pct")) != "N/A"
-                    else "N/A"
+                    else ""
                 ),
-                last_15m_change_pct=_fmt_pct(intraday_context.get("last_15m_change_pct")),
-                last_30m_change_pct=_fmt_pct(intraday_context.get("last_30m_change_pct")),
-                last_60m_change_pct=_fmt_pct(intraday_context.get("last_60m_change_pct")),
-                last_5m_change_pct=_fmt_pct(intraday_context.get("last_5m_change_pct")),
-                volume_acceleration_ratio=_fmt_number(intraday_context.get("volume_acceleration_ratio")),
-                volume_acceleration_state=_volume_state_label(intraday_context.get("volume_acceleration_ratio")),
-                volume_ratio_15m=_fmt_number(intraday_context.get("volume_ratio_15m")),
-                volume_ratio_30m=_fmt_number(intraday_context.get("volume_ratio_30m")),
-                volume_ratio_60m=_fmt_number(intraday_context.get("volume_ratio_60m")),
-                intraday_volume_structure=intraday_volume_structure,
-                intraday_momentum_state=intraday_momentum_state,
-                acceptance_state=acceptance_state,
-                take_profit_adjustment_hint=take_profit_adjustment_hint,
-                intraday_bias_text=self._truncate_prompt_text(intraday_context.get("intraday_bias_text", "N/A"), 90),
-                primary_evidence=(evidence_summary or {}).get("primary_evidence", "N/A"),
-                counter_evidence=(evidence_summary or {}).get("counter_evidence", "N/A"),
-                delta_evidence=(evidence_summary or {}).get("delta_evidence", "N/A"),
+                momentum_overview=_join_non_empty(
+                    _optional_value(_fmt_pct(intraday_context.get("last_15m_change_pct"))),
+                    _optional_value(_fmt_pct(intraday_context.get("last_30m_change_pct"))),
+                    _optional_value(_fmt_pct(intraday_context.get("last_60m_change_pct"))),
+                    separator=" / ",
+                ),
+                last_5m_overview=_join_non_empty(
+                    _optional_value(_fmt_pct(intraday_context.get("last_5m_change_pct"))),
+                    (
+                        f"量能加速度 {_fmt_number(intraday_context.get('volume_acceleration_ratio'))} ({_volume_state_label(intraday_context.get('volume_acceleration_ratio'))})"
+                        if _fmt_number(intraday_context.get("volume_acceleration_ratio")) != "N/A"
+                        else ""
+                    ),
+                ),
+                volume_ratio_overview=_join_non_empty(
+                    _optional_value(_fmt_number(intraday_context.get("volume_ratio_15m"))),
+                    _optional_value(_fmt_number(intraday_context.get("volume_ratio_30m"))),
+                    _optional_value(_fmt_number(intraday_context.get("volume_ratio_60m"))),
+                    separator=" / ",
+                ),
+                intraday_volume_structure=_optional_value(intraday_volume_structure),
+                intraday_momentum_state=_optional_value(intraday_momentum_state),
+                acceptance_state=_optional_value(acceptance_state),
+                take_profit_adjustment_hint=_optional_value(take_profit_adjustment_hint),
+                intraday_bias_text=_optional_value(self._truncate_prompt_text(intraday_context.get("intraday_bias_text"), 90)),
+                primary_evidence=_optional_value((evidence_summary or {}).get("primary_evidence")),
+                counter_evidence=_optional_value((evidence_summary or {}).get("counter_evidence")),
+                delta_evidence=_optional_value((evidence_summary or {}).get("delta_evidence")),
+                baseline_anchor=_optional_value(cross_layer_summary.get("baseline_anchor")),
+                execution_focus=_optional_value(cross_layer_summary.get("execution_focus")),
+                alignment_summary=_optional_value(cross_layer_summary.get("alignment_summary")),
+                execution_support=_optional_value(cross_layer_summary.get("execution_support")),
+                execution_constraint=_optional_value(cross_layer_summary.get("execution_constraint")),
+                change_trigger=_optional_value(cross_layer_summary.get("change_trigger")),
             ))
         # --- 注入语义化标签分析 ---
         labels = market_data.get('semantic_labels', [])
@@ -2611,29 +2724,31 @@ class SmartMonitorDeepSeek:
 
             position_section = render_prompt(
                 self.SECTION_POSITION_HOLDING_TEMPLATE,
+                omit_empty_lines=True,
                 stock_code=stock_code,
-                position_date=resolved_position_date,
-                holding_days_text=holding_days_text,
+                position_date=_optional_value(resolved_position_date),
+                holding_days_text=_optional_value(holding_days_text),
                 swing_type_label=strategy_context.get("swing_horizon_label", "未明确"),
                 swing_horizon_days_text=strategy_context.get("swing_horizon_days_text", "未明确"),
                 strategy_style_summary=strategy_context.get("strategy_style_summary", "未明确"),
                 baseline_exit_style=strategy_context.get("baseline_exit_style", "未明确"),
                 can_sell_today_text="是" if can_sell_today else "否（T+1限制）",
                 position_quantity=position_quantity,
-                position_cost=position_cost_text,
-                current_price=current_price_text,
-                current_total=current_total_text,
-                profit_loss_text=profit_loss_text,
+                position_cost=_optional_value(position_cost_text),
+                current_price=_optional_value(current_price_text),
+                current_total=_optional_value(current_total_text),
+                profit_loss_text=_optional_value(profit_loss_text),
                 stop_loss_pct=resolved_risk_profile["stop_loss_pct"],
-                atr14_text=_fmt_money(runtime_metrics.get("atr14")),
-                atr14_pct_text=_fmt_pct(runtime_metrics.get("atr14_pct")),
-                atr_stop_floor_text=_fmt_money(runtime_metrics.get("atr_stop_floor")),
-                trend_anchor_text=trend_anchor_text,
+                atr14_text=_optional_value(_fmt_money(runtime_metrics.get("atr14"))),
+                atr14_pct_text=_optional_value(_fmt_pct(runtime_metrics.get("atr14_pct"))),
+                atr_stop_floor_text=_optional_value(_fmt_money(runtime_metrics.get("atr_stop_floor"))),
+                trend_anchor_text=_optional_value(trend_anchor_text),
                 feature_beacons_text=feature_beacons_text,
             )
         else:
             position_section = render_prompt(
                 self.SECTION_POSITION_EMPTY_TEMPLATE,
+                omit_empty_lines=True,
                 position_size_pct=resolved_risk_profile["position_size_pct"],
             )
 

@@ -2,6 +2,7 @@ import sys
 import types
 import os
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
@@ -63,6 +64,11 @@ class _FakeTDXFetcher:
         return {}
 
 
+class _UnavailableTDXFetcher:
+    def __init__(self):
+        self.available = False
+
+
 class SmartMonitorDataFetcherTests(unittest.TestCase):
     def setUp(self):
         self._temp_dir = tempfile.TemporaryDirectory()
@@ -122,6 +128,38 @@ class SmartMonitorDataFetcherTests(unittest.TestCase):
         self.assertEqual(result["precision_mode"], "tdx_quote_tushare_daily")
         self.assertIn("TDX", result["precision_error"])
 
+    def test_intraday_strict_recovers_after_initial_tdx_probe_failure(self):
+        with patch.dict(os.environ, {"TUSHARE_TOKEN": "", "AKSHARE_FALLBACK_ENABLED": "false"}, clear=False), patch(
+            "smart_monitor_tdx_data.SmartMonitorTDXDataFetcher",
+            side_effect=[_UnavailableTDXFetcher(), _FakeTDXFetcher()],
+        ) as mocked_tdx_cls:
+            fetcher = SmartMonitorDataFetcher(
+                use_tdx=True,
+                tdx_base_url="http://127.0.0.1:8181",
+                cache_db_path=os.path.join(self._temp_dir.name, "smart_monitor_cache.db"),
+            )
+            fetcher.TDX_REINIT_COOLDOWN_SECONDS = 0
+            fetcher.ts_pro = object()
+
+            with patch.object(
+                fetcher,
+                "_get_technical_indicators_from_tushare",
+                return_value={
+                    "ma5": 1508.0,
+                    "ma20": 1496.0,
+                    "ma60": 1452.0,
+                    "trend": "up",
+                    "technical_data_source": "tushare",
+                    "technical_period": "daily",
+                },
+            ):
+                result = fetcher.get_comprehensive_data("600519", intraday_strict=True)
+
+        self.assertEqual(mocked_tdx_cls.call_count, 2)
+        self.assertEqual(result["precision_status"], "validated")
+        self.assertEqual(result["precision_mode"], "tdx_quote_tushare_daily")
+        self.assertEqual(result["data_source"], "tdx")
+
     def test_daily_indicators_prefer_tushare_and_do_not_use_tdx(self):
         fetcher = self._build_fetcher(_FakeTDXFetcher(), retry_count=1)
         fetcher.ts_pro = object()
@@ -169,6 +207,10 @@ class SmartMonitorDataFetcherTests(unittest.TestCase):
             SmartMonitorDataFetcher,
             "_beijing_now",
             return_value=datetime(2026, 4, 10, 10, 30, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+        ), patch.object(
+            time,
+            "time",
+            return_value=datetime(2026, 4, 10, 10, 30, 0, tzinfo=ZoneInfo("Asia/Shanghai")).timestamp(),
         ), patch.object(
             fetcher,
             "_fetch_tushare_daily_history",
@@ -220,6 +262,10 @@ class SmartMonitorDataFetcherTests(unittest.TestCase):
                 "_beijing_now",
                 return_value=datetime(2026, 4, 10, 10, 30, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
             ), patch.object(
+                time,
+                "time",
+                return_value=datetime(2026, 4, 10, 10, 30, 0, tzinfo=ZoneInfo("Asia/Shanghai")).timestamp(),
+            ), patch.object(
                 first_fetcher,
                 "_fetch_tushare_daily_history",
                 return_value=fake_df,
@@ -237,6 +283,10 @@ class SmartMonitorDataFetcherTests(unittest.TestCase):
                 SmartMonitorDataFetcher,
                 "_beijing_now",
                 return_value=datetime(2026, 4, 10, 11, 0, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+            ), patch.object(
+                time,
+                "time",
+                return_value=datetime(2026, 4, 10, 11, 0, 0, tzinfo=ZoneInfo("Asia/Shanghai")).timestamp(),
             ), patch.object(
                 second_fetcher,
                 "_fetch_tushare_daily_history",

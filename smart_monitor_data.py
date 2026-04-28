@@ -21,6 +21,7 @@ from tushare_utils import create_tushare_pro
 class SmartMonitorDataFetcher:
     """A股数据获取器（实时价优先 TDX，结构化日线优先 Tushare）"""
     BEIJING_TZ = ZoneInfo("Asia/Shanghai")
+    TDX_REINIT_COOLDOWN_SECONDS = 15
     
     def __init__(self, use_tdx: bool = None, tdx_base_url: str = None, cache_db_path: str = None):
         """
@@ -64,27 +65,14 @@ class SmartMonitorDataFetcher:
             if tdx_base_url is None:
                 tdx_base_url = ''
 
-        self.use_tdx = use_tdx
+        self.use_tdx = bool(use_tdx)
+        self._tdx_base_url = str(tdx_base_url or "").strip()
+        self._tdx_timeout_seconds = max(5, tdx_timeout_seconds)
+        self._tdx_last_init_failure_at = 0.0
         self.tdx_fetcher = None
         
         if self.use_tdx:
-            try:
-                if not str(tdx_base_url or '').strip():
-                    raise ValueError("TDX_BASE_URL 未配置")
-                from smart_monitor_tdx_data import SmartMonitorTDXDataFetcher
-                candidate_fetcher = SmartMonitorTDXDataFetcher(
-                    base_url=tdx_base_url,
-                    timeout_seconds=max(5, tdx_timeout_seconds),
-                )
-                if getattr(candidate_fetcher, 'available', True):
-                    self.tdx_fetcher = candidate_fetcher
-                    self.logger.info(f"TDX数据源已启用: {tdx_base_url}")
-                else:
-                    self.logger.warning(f"TDX数据源不可达: {tdx_base_url}，将降级到补充数据源")
-                    self.use_tdx = False
-            except Exception as e:
-                self.logger.warning(f"TDX数据源初始化失败: {e}，将降级到补充数据源")
-                self.use_tdx = False
+            self._initialize_tdx_fetcher()
         else:
             self.logger.info("TDX数据源未启用，实时行情将使用补充数据源")
         
@@ -122,8 +110,47 @@ class SmartMonitorDataFetcher:
             result.update(quote)
         return result
 
+    def _initialize_tdx_fetcher(self) -> bool:
+        if not self.use_tdx:
+            return False
+        try:
+            if not self._tdx_base_url:
+                raise ValueError("TDX_BASE_URL 未配置")
+            from smart_monitor_tdx_data import SmartMonitorTDXDataFetcher
+            candidate_fetcher = SmartMonitorTDXDataFetcher(
+                base_url=self._tdx_base_url,
+                timeout_seconds=self._tdx_timeout_seconds,
+            )
+            if getattr(candidate_fetcher, "available", True):
+                self.tdx_fetcher = candidate_fetcher
+                self._tdx_last_init_failure_at = 0.0
+                self.logger.info("TDX数据源已启用: %s", self._tdx_base_url)
+                return True
+            self.logger.warning("TDX数据源不可达: %s，等待后续自动重试", self._tdx_base_url)
+        except Exception as exc:
+            self.logger.warning("TDX数据源初始化失败: %s，等待后续自动重试", exc)
+
+        self.tdx_fetcher = None
+        self._tdx_last_init_failure_at = time.monotonic()
+        return False
+
+    def _ensure_tdx_fetcher(self) -> bool:
+        if not self.use_tdx:
+            return False
+        if self.tdx_fetcher and getattr(self.tdx_fetcher, "available", True):
+            return True
+
+        cooldown_seconds = max(0, int(self.TDX_REINIT_COOLDOWN_SECONDS))
+        if (
+            self._tdx_last_init_failure_at > 0
+            and cooldown_seconds > 0
+            and time.monotonic() - self._tdx_last_init_failure_at < cooldown_seconds
+        ):
+            return False
+        return self._initialize_tdx_fetcher()
+
     def _attach_tdx_intraday_context(self, stock_code: str, result: Optional[Dict]) -> Dict:
-        if not result or not (self.use_tdx and self.tdx_fetcher):
+        if not result or not self._ensure_tdx_fetcher():
             return result
         try:
             intraday_context = self.tdx_fetcher.get_intraday_context(stock_code)
@@ -570,7 +597,7 @@ class SmartMonitorDataFetcher:
 
     def _get_intraday_tdx_comprehensive_data(self, stock_code: str) -> Dict:
         total_started_at = time.perf_counter()
-        if not (self.use_tdx and self.tdx_fetcher):
+        if not self._ensure_tdx_fetcher():
             self.logger.warning(
                 "[%s] 盘中严格模式综合数据获取失败，耗时 %.2fs，原因=TDX未启用或不可用",
                 stock_code,
@@ -745,7 +772,7 @@ class SmartMonitorDataFetcher:
         import math
         
         # 方法1: 尝试使用TDX（如果启用）
-        if self.use_tdx and self.tdx_fetcher:
+        if self._ensure_tdx_fetcher():
             try:
                 quote = self.tdx_fetcher.get_realtime_quote(stock_code)
                 if isinstance(quote, dict) and quote:
@@ -793,7 +820,7 @@ class SmartMonitorDataFetcher:
             return None
 
         # 方法1: 尝试使用TDX（如果启用）
-        if self.use_tdx and self.tdx_fetcher:
+        if self._ensure_tdx_fetcher():
             try:
                 indicators = self.tdx_fetcher.get_technical_indicators(stock_code, normalized_period)
                 if indicators:

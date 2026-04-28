@@ -329,6 +329,10 @@ class ConfigManagerEnvFormatTests(unittest.TestCase):
             ("voice-key", "https://voice.example/v1"),
         )
         self.assertEqual(
+            config.get_model_api_credentials("doubao-seed-2-0-pro-260215", overrides),
+            ("voice-key", "https://voice.example/v1"),
+        )
+        self.assertEqual(
             config.get_model_api_credentials("deepseek-chat", overrides),
             ("", ""),
         )

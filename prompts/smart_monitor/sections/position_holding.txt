@@ -1,5 +1,4 @@
-[POSITION] 当前持仓（$stock_code） ⭐ 重要
-═══════════════════════════════════════════════════════════
+[POSITION] 当前持仓（$stock_code）
 持仓日期: $position_date
 持仓天数: $holding_days_text
 今日可卖: $can_sell_today_text
@@ -14,7 +13,7 @@ ATR波动率: $atr14_pct_text
 跟踪均线锚点: $trend_anchor_text
 量化信标: $feature_beacons_text
 
-💡 决策建议：
+决策提示：
 - 若基线已明确波段类型，优先按 `$swing_type_label`（$swing_horizon_days_text）视角管理；若未明确，只按持仓成本、结构强弱和风险约束执行，不自动套固定波段模板。
 - 基线风格：$strategy_style_summary
 - 基线退出方式：$baseline_exit_style

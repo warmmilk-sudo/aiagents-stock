@@ -1,23 +1,22 @@
-[STRATEGY_CONTEXT] 战略基线 ⭐ 重要
-═══════════════════════════════════════════════════════════
-时间/来源: $analysis_date | $analysis_source
+[STRATEGY_CONTEXT] 战略基线
+时间/来源: $analysis_meta
 评级: $rating
 当前适用波段: $swing_type
 持有周期: $holding_period
-周期框架: $swing_horizon_label | $swing_horizon_days_text
+周期框架: $horizon_meta
 风格: $strategy_style_summary
 退出方式: $baseline_exit_style
 盘中协同重点: $intraday_execution_preference
 波段判断依据: $swing_type_reason
-阈值: 进场 $entry_min - $entry_max | 止盈 $take_profit | 止损 $stop_loss
+阈值: $thresholds_line
 执行计划: $execution_plan_summary
 进场/加仓条件: $entry_conditions_text
 离场/减仓条件: $exit_conditions_text
 继续持有/观望条件: $hold_conditions_text
 基线失效条件: $invalidation_conditions_text
 上次结构状态: $structure_state
-ATR14 / 波动率: $atr14 / $atr14_pct
-当前跟踪锚点: $trend_anchor_type @ $trend_anchor_value
+ATR14 / 波动率: $atr_overview
+当前跟踪锚点: $trend_anchor_line
 无限趋势跟随期: $trend_following_active_text
 升级信标: $feature_beacons_text
 摘要: $summary
