@@ -57,6 +57,8 @@ interface SmartSelectionResultItem {
   symbol?: string;
   name?: string;
   primary_sector?: string;
+  canonical_sector?: string;
+  match_score?: number;
   score?: number;
   tech_score?: number;
   agent_composite_score?: number;
@@ -65,6 +67,7 @@ interface SmartSelectionResultItem {
   lifecycle_stage?: string;
   defense_line_type?: string;
   execution_ready?: boolean;
+  execution_mode?: string;
   execution_gate_reason?: string;
   execution_gate_type?: string;
   trajectory?: Array<{ day_offset?: number; score?: number }>;
@@ -75,7 +78,20 @@ interface SmartSelectionResultItem {
   shrinkage_score?: number;
   relative_strength_score?: number;
   tail_confirmation_score?: number;
+  gate_score?: number;
+  base_gate_score?: number;
+  adjusted_gate_score?: number;
+  gate_soft_penalty?: number;
   distribution_penalty?: number;
+  execution_gate_notes?: Array<{ type?: string; reason?: string; penalty?: number }>;
+  external_discovery?: boolean;
+  external_discovery_reason?: string;
+  source_type?: string;
+  change_pct?: number | null;
+  amount_yi?: number | null;
+  turnover_rate?: number | null;
+  volume_ratio?: number | null;
+  leader_score?: number | null;
 }
 
 interface SmartSelectionRun {
@@ -93,7 +109,19 @@ interface SmartSelectionRun {
   result?: {
     lifecycle_summary?: LatestLifecycle["summary"];
     watch_pool_size?: number;
+    match_diagnostics?: Record<string, number>;
+    run_session?: {
+      mode?: string;
+      label?: string;
+      time?: string;
+      recommendation?: string;
+      can_trade_now?: boolean;
+      allow_final_selection?: boolean;
+    };
+    matched_candidates?: SmartSelectionResultItem[];
     observed_startup_candidates?: SmartSelectionResultItem[];
+    observe_candidates?: SmartSelectionResultItem[];
+    external_discovery_candidates?: SmartSelectionResultItem[];
     observed_decay_candidates?: SmartSelectionResultItem[];
     ranked_action_candidates?: SmartSelectionResultItem[];
     excluded_by_execution_gate?: SmartSelectionResultItem[];
@@ -192,6 +220,13 @@ function formatScore(value?: number | null, digits = 2) {
   return Number(value).toFixed(digits);
 }
 
+function executionReadyLabel(item: SmartSelectionResultItem) {
+  if (item.execution_mode === "post_close_review" || item.execution_mode === "non_trading_review") {
+    return "次日复核";
+  }
+  return item.execution_ready === false ? "盘中探索" : "可执行";
+}
+
 export function SmartSelectionPage() {
   const { lightweightModel, reasoningModel } = useSelectedModels();
   const [section, setSection] = useState<PageSectionKey>("overview");
@@ -245,15 +280,20 @@ export function SmartSelectionPage() {
   }, [scheduler?.enabled, scheduler?.max_workers, scheduler?.schedule_time, schedulerDirty]);
 
   const finalSelected = latestRun?.result?.final_selected ?? [];
+  const matchedCandidates = latestRun?.result?.matched_candidates ?? [];
+  const observeCandidates = latestRun?.result?.observe_candidates ?? [];
+  const externalDiscoveryCandidates = latestRun?.result?.external_discovery_candidates ?? [];
   const observedStartupCandidates = latestRun?.result?.observed_startup_candidates ?? [];
   const observedDecayCandidates = latestRun?.result?.observed_decay_candidates ?? [];
   const rankedActionCandidates = latestRun?.result?.ranked_action_candidates ?? [];
   const executionGatedCandidates = latestRun?.result?.excluded_by_execution_gate ?? [];
   const vetoedCandidates = latestRun?.result?.excluded_by_lifecycle_veto ?? [];
+  const matchDiagnostics = latestRun?.result?.match_diagnostics ?? {};
   const lifecycleCounts = overview?.lifecycle?.summary?.counts ?? {};
   const hubAssetLookup = new Map(hubAssets.map((item) => [item.symbol, item]));
   const taskStatus = taskStatusMeta(latestRun);
   const taskPending = isPendingRunStatus(latestRun?.status);
+  const taskStatusVisible = taskPending || latestRun?.status === "failed" || latestRun?.status === "cancelled";
   const taskProgressCurrent = latestRun?.current ?? (latestRun?.status === "success" ? latestRun?.total ?? 100 : 0);
   const lifecycleDetailTitle =
     activeLifecycleDetail === "startup"
@@ -406,7 +446,7 @@ export function SmartSelectionPage() {
       <div className={styles.cardHeader}>
         <div>
           <strong>最终执行清单</strong>
-          <p className={styles.helperText}>这是当前可操作清单。手工在 14:30 前触发时会放宽到盘中探索模式，不再因为尾盘门槛直接跑空。</p>
+          <p className={styles.helperText}>这是当前可操作清单。未满足尾盘、新鲜度或执行门槛的标的会降级到观察或外部发现，不直接进入执行。</p>
         </div>
       </div>
       <div className={styles.selectionCompactList}>
@@ -471,7 +511,7 @@ export function SmartSelectionPage() {
               </div>
               <div className={styles.selectionCompactReason}>
                 Agent {formatScore(item.agent_composite_score, 1)} / 执行 {formatScore(item.execution_composite_score, 1)} / 就绪{" "}
-                {item.execution_ready === false ? "盘中探索" : "可执行"}
+                {executionReadyLabel(item)}
               </div>
               <div className={styles.selectionCompactReason}>
                 预期差 {formatScore(item.anticipation_score, 1)} / 缩量 {formatScore(item.shrinkage_score, 1)} / 相对强度{" "}
@@ -502,7 +542,7 @@ export function SmartSelectionPage() {
           </button>
         </div>
 
-        {taskPending ? (
+        {taskStatusVisible ? (
           <>
             <div className={styles.noticeMeta}>
               <div>
@@ -544,7 +584,24 @@ export function SmartSelectionPage() {
             <p className={styles.helperText}>把“最终执行”“观察候选”“市场依据”拆开，避免在同一个列表里做不同决策。</p>
           </div>
         </div>
+        {latestRun?.result?.run_session ? (
+          <div className={styles.noticeMeta} style={{ marginBottom: 12 }}>
+            <div>
+              <strong>手动触发口径</strong>
+              <div className={styles.muted}>
+                {latestRun.result.run_session.label || "-"} {latestRun.result.run_session.time || ""} |{" "}
+                {latestRun.result.run_session.allow_final_selection ? "允许生成执行/次日候选" : "仅观察预选"} |{" "}
+                {latestRun.result.run_session.recommendation || "-"}
+              </div>
+            </div>
+          </div>
+        ) : null}
         <div className={styles.summaryMetricGrid}>
+          <button className={styles.historySummaryCellButton} onClick={() => setSection("pipeline")} type="button">
+            <span>主线已匹配</span>
+            <strong>{matchedCandidates.length}</strong>
+            <div className={styles.muted}>板块主线已对齐</div>
+          </button>
           <button className={styles.historySummaryCellButton} onClick={() => setSection("pipeline")} type="button">
             <span>启动期观察</span>
             <strong>{observedStartupCandidates.length}</strong>
@@ -554,6 +611,16 @@ export function SmartSelectionPage() {
             <span>爆发期候选</span>
             <strong>{rankedActionCandidates.length}</strong>
             <div className={styles.muted}>进入执行筛选</div>
+          </button>
+          <button className={styles.historySummaryCellButton} onClick={() => setSection("pipeline")} type="button">
+            <span>观察级候选</span>
+            <strong>{observeCandidates.length}</strong>
+            <div className={styles.muted}>有匹配但未达执行级</div>
+          </button>
+          <button className={styles.historySummaryCellButton} onClick={() => setSection("pipeline")} type="button">
+            <span>外部发现</span>
+            <strong>{externalDiscoveryCandidates.length}</strong>
+            <div className={styles.muted}>补足研究池覆盖</div>
           </button>
           <button className={styles.historySummaryCellButton} onClick={() => setSection("pipeline")} type="button">
             <span>执行门槛过滤</span>
@@ -588,6 +655,9 @@ export function SmartSelectionPage() {
         <div className={styles.selectionResultGrid}>
           {renderFinalSelectionCard()}
         </div>
+        {finalSelected.length === 0 && observeCandidates.length > 0 ? (
+          <div className={styles.muted}>当前没有执行级名单，但存在观察级候选，请在流程页区分“有匹配”与“可执行”。</div>
+        ) : null}
       </section>
 
       <section className={styles.card}>
@@ -657,6 +727,27 @@ export function SmartSelectionPage() {
           <section className={styles.selectionResultCard}>
             <div className={styles.cardHeader}>
               <div>
+                <strong>主线已匹配候选</strong>
+                <p className={styles.helperText}>这些标的已与主线板块完成语义对齐，再按生命周期和执行门槛继续分层。</p>
+              </div>
+            </div>
+            <div className={styles.selectionCompactList}>
+              {matchedCandidates.map((item) => (
+                <div className={styles.selectionCompactItem} key={`matched-${item.symbol}`}>
+                  <strong>{item.name || item.symbol}</strong>
+                  <div className={styles.muted}>
+                    {item.symbol} | {item.primary_sector || item.canonical_sector || "-"} | 匹配分 {formatScore(item.match_score, 2)}
+                  </div>
+                  <div className={styles.selectionCompactReason}>{item.reason || "暂无说明"}</div>
+                </div>
+              ))}
+              {!matchedCandidates.length ? <div className={styles.muted}>暂无主线已匹配候选</div> : null}
+            </div>
+          </section>
+
+          <section className={styles.selectionResultCard}>
+            <div className={styles.cardHeader}>
+              <div>
                 <strong>启动期观察候选</strong>
                 <p className={styles.helperText}>这些标的不直接进执行池，保留到 MA10 观察池持续跟踪。</p>
               </div>
@@ -681,8 +772,54 @@ export function SmartSelectionPage() {
           <section className={styles.selectionResultCard}>
             <div className={styles.cardHeader}>
               <div>
+                <strong>观察级候选</strong>
+                <p className={styles.helperText}>这里区分“有匹配但未达执行级”，避免把观察机会误判为空结果。</p>
+              </div>
+            </div>
+            <div className={styles.selectionCompactList}>
+              {observeCandidates.map((item) => (
+                <div className={styles.selectionCompactItem} key={`observe-${item.symbol}-${item.execution_gate_type || item.lifecycle_stage}`}>
+                  <strong>{item.name || item.symbol}</strong>
+                  <div className={styles.muted}>
+                    {item.symbol} | {item.primary_sector || "-"} | 匹配分 {formatScore(item.match_score, 2)} | Gate {formatScore(item.gate_score, 1)}
+                  </div>
+                  <div className={styles.selectionCompactReason}>{item.reason || item.execution_gate_reason || "暂无说明"}</div>
+                </div>
+              ))}
+              {!observeCandidates.length ? <div className={styles.muted}>暂无观察级候选</div> : null}
+            </div>
+          </section>
+
+          <section className={styles.selectionResultCard}>
+            <div className={styles.cardHeader}>
+              <div>
+                <strong>研究池外发现</strong>
+                <p className={styles.helperText}>研究池匹配不足时补充的板块候选，只作为补池线索，不直接进入最终执行清单。</p>
+              </div>
+            </div>
+            <div className={styles.selectionCompactList}>
+              {externalDiscoveryCandidates.map((item) => (
+                <div className={styles.selectionCompactItem} key={`external-${item.symbol}-${item.primary_sector}`}>
+                  <strong>{item.name || item.symbol}</strong>
+                  <div className={styles.muted}>
+                    {item.symbol} | {item.primary_sector || "-"} | {stageLabel(item.lifecycle_stage)} | 来源 {item.source_type || "external"}
+                  </div>
+                  <div className={styles.selectionCompactReason}>
+                    龙头分 {formatScore(item.leader_score ?? item.score, 1)} | 涨跌幅 {formatScore(item.change_pct, 2)}% | 成交额{" "}
+                    {formatScore(item.amount_yi, 2)} 亿 | 换手 {formatScore(item.turnover_rate, 2)}%
+                  </div>
+                  <div className={styles.selectionCompactReason}>{item.reason || item.external_discovery_reason || "暂无说明"}</div>
+                </div>
+              ))}
+              {!externalDiscoveryCandidates.length ? <div className={styles.muted}>暂无研究池外发现候选</div> : null}
+            </div>
+          </section>
+
+          <section className={styles.selectionResultCard}>
+            <div className={styles.cardHeader}>
+              <div>
                 <strong>爆发期候选</strong>
-                <p className={styles.helperText}>这是最终执行清单的上游候选池，还未经过尾盘执行阈值和板块集中度约束。</p>
+                <p className={styles.helperText}>这是最终执行清单的上游候选池；执行过滤会把硬阻断和软扣分分开处理。</p>
               </div>
             </div>
             <div className={styles.selectionCompactList}>
@@ -694,12 +831,19 @@ export function SmartSelectionPage() {
                   </div>
                   <div className={styles.selectionCompactReason}>
                     Agent {formatScore(item.agent_composite_score, 1)} / 执行 {formatScore(item.execution_composite_score, 1)} / 就绪{" "}
-                    {item.execution_ready === false ? "盘中探索" : "可执行"}
+                    {executionReadyLabel(item)}
                   </div>
                   <div className={styles.selectionCompactReason}>
-                    缩量 {formatScore(item.shrinkage_score, 1)} / 相对强度 {formatScore(item.relative_strength_score, 1)} / 尾盘确认{" "}
+                    Gate {formatScore(item.base_gate_score ?? item.gate_score, 1)}
+                    {item.gate_soft_penalty ? ` - ${formatScore(item.gate_soft_penalty, 1)} = ${formatScore(item.adjusted_gate_score ?? item.gate_score, 1)}` : ""} / 缩量{" "}
+                    {formatScore(item.shrinkage_score, 1)} / 相对强度 {formatScore(item.relative_strength_score, 1)} / 尾盘确认{" "}
                     {formatScore(item.tail_confirmation_score, 1)}
                   </div>
+                  {item.execution_gate_notes?.length ? (
+                    <div className={styles.selectionCompactReason}>
+                      门槛提示：{item.execution_gate_notes.map((note) => note.reason).filter(Boolean).join("；")}
+                    </div>
+                  ) : null}
                   <div className={styles.selectionCompactReason}>{item.reason || "暂无说明"}</div>
                 </div>
               ))}
@@ -735,7 +879,7 @@ export function SmartSelectionPage() {
             <div className={styles.cardHeader}>
               <div>
                 <strong>执行门槛过滤</strong>
-                <p className={styles.helperText}>这里展示被时段、新鲜度和执行阈值拦截的候选，便于区分“没有机会”和“暂不满足执行条件”。</p>
+                <p className={styles.helperText}>这里只展示硬阻断或调整后执行分不足的候选；轻微数据瑕疵会扣分并保留在上游候选说明中。</p>
               </div>
             </div>
             <div className={styles.selectionCompactList}>
@@ -746,8 +890,15 @@ export function SmartSelectionPage() {
                     {item.symbol} | {item.primary_sector || "-"} | {item.execution_gate_type || "gate"}
                   </div>
                   <div className={styles.selectionCompactReason}>
-                    原综合分 {formatScore(item.score)} | 就绪 {item.execution_ready === false ? "否" : "是"}
+                    原综合分 {formatScore(item.score)} | Gate {formatScore(item.base_gate_score ?? item.gate_score, 1)}
+                    {item.gate_soft_penalty ? ` - ${formatScore(item.gate_soft_penalty, 1)} = ${formatScore(item.adjusted_gate_score ?? item.gate_score, 1)}` : ""} | 就绪{" "}
+                    {item.execution_ready === false ? "否" : "是"}
                   </div>
+                  {item.execution_gate_notes?.length ? (
+                    <div className={styles.selectionCompactReason}>
+                      扣分项：{item.execution_gate_notes.map((note) => `${note.reason || note.type} ${formatScore(note.penalty, 1)}`).join("；")}
+                    </div>
+                  ) : null}
                   <div className={styles.selectionCompactReason}>{item.execution_gate_reason || item.reason || "暂无说明"}</div>
                 </div>
               ))}
@@ -800,6 +951,13 @@ export function SmartSelectionPage() {
             </div>
           </section>
         </div>
+        {Object.keys(matchDiagnostics).length ? (
+          <div className={styles.muted}>
+            匹配诊断：研究池 {matchDiagnostics.research_asset_count ?? 0} 只，主线板块 {matchDiagnostics.selection_sector_count ?? 0} 个，
+            已匹配 {matchDiagnostics.matched_candidate_count ?? 0} 只，观察级 {matchDiagnostics.observe_candidate_count ?? 0} 只，
+            外部发现 {matchDiagnostics.external_discovery_count ?? 0} 只，执行级 {matchDiagnostics.final_selected_count ?? 0} 只。
+          </div>
+        ) : null}
       </section>
     </div>
   );

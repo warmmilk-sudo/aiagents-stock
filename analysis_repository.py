@@ -1019,6 +1019,63 @@ class AnalysisRepository:
         conn.close()
         return self._deserialize_row(row) if row else None
 
+    def update_record_final_decision(self, record_id: int, final_decision: Dict[str, Any]) -> bool:
+        if not isinstance(final_decision, dict):
+            return False
+
+        entry_min = self._extract_first_number(final_decision.get("entry_min"))
+        entry_max = self._extract_first_number(final_decision.get("entry_max"))
+        if entry_min is None or entry_max is None:
+            entry_text = str(final_decision.get("entry_range") or "")
+            if entry_text:
+                numbers = []
+                for token in entry_text.replace("~", "-").replace("至", "-").replace("到", "-").split("-"):
+                    number = self._extract_first_number(token)
+                    if number is not None:
+                        numbers.append(number)
+                if len(numbers) >= 2:
+                    entry_min = entry_min if entry_min is not None else numbers[0]
+                    entry_max = entry_max if entry_max is not None else numbers[1]
+        take_profit = self._extract_first_number(final_decision.get("take_profit"))
+        stop_loss = self._extract_first_number(final_decision.get("stop_loss"))
+        summary = str(
+            final_decision.get("operation_advice")
+            or final_decision.get("advice")
+            or final_decision.get("summary")
+            or ""
+        ).strip()
+
+        conn = self._connect()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                UPDATE analysis_records
+                SET final_decision_json = ?,
+                    entry_min = COALESCE(?, entry_min),
+                    entry_max = COALESCE(?, entry_max),
+                    take_profit = COALESCE(?, take_profit),
+                    stop_loss = COALESCE(?, stop_loss),
+                    summary = CASE WHEN ? != '' THEN ? ELSE summary END
+                WHERE id = ?
+                """,
+                (
+                    self._serialize_json(final_decision),
+                    entry_min,
+                    entry_max,
+                    take_profit,
+                    stop_loss,
+                    summary,
+                    summary,
+                    record_id,
+                ),
+            )
+            changed = cursor.rowcount > 0
+            conn.commit()
+            return changed
+        finally:
+            conn.close()
+
     def delete_record(self, record_id: int) -> bool:
         conn = self._connect()
         cursor = conn.cursor()

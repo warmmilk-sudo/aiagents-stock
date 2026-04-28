@@ -1,5 +1,7 @@
 import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
+import { persist } from "zustand/middleware";
+
+import { createSafeJSONStorage } from "../persistStorage";
 
 export interface DeepAnalysisAnalystConfig {
   technical: boolean;
@@ -32,7 +34,7 @@ export const useDeepAnalysisStore = create<DeepAnalysisState>()(
     }),
     {
       name: "deep-analysis-ui-state",
-      storage: createJSONStorage(() => localStorage),
+      storage: createSafeJSONStorage<DeepAnalysisState>(),
     },
   ),
 );

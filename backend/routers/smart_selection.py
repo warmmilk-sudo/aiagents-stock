@@ -8,6 +8,7 @@ from backend.api import ApiError, success_payload
 from backend.auth import require_session
 from backend.dto import (
     SmartSelectionImportRequest,
+    SmartSelectionLifecycleConfigRequest,
     SmartSelectionRunRequest,
     SmartSelectionSchedulerRequest,
 )
@@ -23,6 +24,70 @@ def get_overview(
     _session: dict = Depends(require_session),
 ) -> dict:
     return success_payload(services.get_smart_selection_overview())
+
+
+@router.get("/lifecycle/latest")
+@cache(expire=15, namespace="smart-selection")
+def get_latest_lifecycle(
+    request: Request,
+    _session: dict = Depends(require_session),
+) -> dict:
+    return success_payload(services.get_smart_selection_latest_lifecycle())
+
+
+@router.get("/lifecycle")
+def list_lifecycle(request: Request, days: int = 20) -> dict:
+    require_session(request)
+    return success_payload(services.list_smart_selection_lifecycle(days=days))
+
+
+@router.get("/lifecycle-config")
+def get_lifecycle_config(request: Request) -> dict:
+    require_session(request)
+    return success_payload(services.get_smart_selection_lifecycle_config())
+
+
+@router.put("/lifecycle-config")
+def update_lifecycle_config(request: Request, payload: SmartSelectionLifecycleConfigRequest) -> dict:
+    require_session(request)
+    raise ApiError(403, "生命周期阈值已固定在代码配置中，不支持在线修改", error_code="smart_selection_lifecycle_config_read_only")
+
+
+@router.post("/lifecycle/rebuild")
+def rebuild_lifecycle(request: Request) -> dict:
+    require_session(request)
+    task = services.submit_smart_selection_lifecycle_rebuild_task(reason="manual")
+    return success_payload(
+        {"task_id": task.get("task_id"), "reused": bool(task.get("reused"))},
+        message="已存在进行中的生命周期重建任务，已复用" if task.get("reused") else "生命周期重建任务已提交",
+    )
+
+
+@router.get("/lifecycle/rebuild/tasks/latest")
+def get_latest_rebuild_task(request: Request) -> dict:
+    require_session(request)
+    return success_payload(services.get_latest_ui_task(services.SMART_SELECTION_LIFECYCLE_REBUILD_TASK_TYPE))
+
+
+@router.get("/lifecycle/rebuild/tasks/active")
+def get_active_rebuild_task(request: Request) -> dict:
+    require_session(request)
+    return success_payload(services.get_active_ui_task(services.SMART_SELECTION_LIFECYCLE_REBUILD_TASK_TYPE))
+
+
+@router.get("/lifecycle/rebuild/tasks/{task_id}")
+def get_rebuild_task(request: Request, task_id: str) -> dict:
+    require_session(request)
+    task = services.get_ui_task(services.SMART_SELECTION_LIFECYCLE_REBUILD_TASK_TYPE, task_id)
+    if not task:
+        raise ApiError(404, "未找到生命周期重建任务", error_code="smart_selection_lifecycle_rebuild_task_not_found")
+    return success_payload(task)
+
+
+@router.get("/heat-daily/latest")
+def get_latest_daily_heat(request: Request, limit: int = 30) -> dict:
+    require_session(request)
+    return success_payload(services.get_smart_selection_latest_heat_daily(limit=limit))
 
 
 @router.post("/runs")

@@ -16,7 +16,7 @@ import pytz
 import requests
 
 import config
-from investment_action_utils import normalize_strategy_context, normalize_swing_type, swing_type_label
+from investment_action_utils import normalize_condition_list, normalize_strategy_context, normalize_swing_type, swing_type_label
 from investment_db_utils import DEFAULT_ACCOUNT_NAME
 from model_routing import ModelTier, resolve_model_name
 from prompt_registry import build_messages, render_prompt
@@ -185,13 +185,18 @@ class SmartMonitorDeepSeek:
         model: str = "gemini-3-flash",
         temperature: float = 0.1,
         max_tokens: int = 1600,
+        top_p: Optional[float] = None,
     ) -> int:
-        return len(json.dumps({
+        payload = {
             "model": model,
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
-        }, ensure_ascii=False))
+        }
+        effective_top_p = config.LLM_DEFAULT_TOP_P if top_p is None else float(top_p)
+        if effective_top_p < 1.0:
+            payload["top_p"] = effective_top_p
+        return len(json.dumps(payload, ensure_ascii=False))
 
     @staticmethod
     def _parse_prompt_date(value: object) -> Optional[date]:
@@ -1101,6 +1106,66 @@ class SmartMonitorDeepSeek:
                 horizon="swing",
             ))
 
+        entry_conditions = normalize_condition_list(strategy_context.get("entry_conditions"), max_items=3)
+        if entry_conditions:
+            items.append(self._build_evidence_item(
+                text="进场条件：" + "；".join(entry_conditions),
+                layer="strategy",
+                source_kind="strategy_entry_conditions",
+                category="timing",
+                role="support",
+                novelty=False,
+                reliability=0.97,
+                action_relevance=1.0,
+                score=7.1,
+                horizon="swing",
+            ))
+
+        exit_conditions = normalize_condition_list(strategy_context.get("exit_conditions"), max_items=3)
+        if exit_conditions:
+            items.append(self._build_evidence_item(
+                text="离场条件：" + "；".join(exit_conditions),
+                layer="strategy",
+                source_kind="strategy_exit_conditions",
+                category="risk",
+                role="constraint",
+                novelty=False,
+                reliability=0.97,
+                action_relevance=1.0,
+                score=7.2,
+                horizon="swing",
+            ))
+
+        invalidation_conditions = normalize_condition_list(strategy_context.get("invalidation_conditions"), max_items=3)
+        if invalidation_conditions:
+            items.append(self._build_evidence_item(
+                text="基线失效条件：" + "；".join(invalidation_conditions),
+                layer="strategy",
+                source_kind="strategy_invalidation_conditions",
+                category="risk",
+                role="constraint",
+                novelty=False,
+                reliability=0.98,
+                action_relevance=1.0,
+                score=7.4,
+                horizon="swing",
+            ))
+
+        hold_conditions = normalize_condition_list(strategy_context.get("hold_conditions"), max_items=3)
+        if hold_conditions:
+            items.append(self._build_evidence_item(
+                text="继续持有/观望条件：" + "；".join(hold_conditions),
+                layer="strategy",
+                source_kind="strategy_hold_conditions",
+                category="neutral",
+                role="context",
+                novelty=False,
+                reliability=0.94,
+                action_relevance=0.86,
+                score=6.5,
+                horizon="swing",
+            ))
+
         return items
 
     @classmethod
@@ -1443,16 +1508,20 @@ class SmartMonitorDeepSeek:
         return max(0.0, min(1.0, progress))
 
     def chat_completion(self, messages: List[Dict], model: str = None,
-                       temperature: float = 0.7, max_tokens: int = 2000,
-                       tier: ModelTier = ModelTier.LIGHTWEIGHT) -> Dict:
+                       temperature: Optional[float] = None, max_tokens: int = 2000,
+                       tier: ModelTier = ModelTier.LIGHTWEIGHT,
+                       top_p: Optional[float] = None,
+                       sampling_profile: str = "factual") -> Dict:
         """
         调用DeepSeek API
         
         Args:
             messages: 对话消息列表
             model: 模型名称
-            temperature: 温度参数
+            temperature: 温度参数；默认使用事实优先配置
             max_tokens: 最大token数
+            top_p: nucleus sampling 参数；默认使用全局配置
+            sampling_profile: 采样参数配置档，默认事实优先
             
         Returns:
             API响应
@@ -1467,13 +1536,22 @@ class SmartMonitorDeepSeek:
 
         if "reasoner" in model_to_use.lower() and max_tokens <= 2000:
             max_tokens = max(max_tokens, self.reasoning_max_tokens)
+
+        effective_temperature, effective_top_p = config.resolve_llm_sampling_params(
+            model_to_use,
+            temperature=temperature,
+            top_p=top_p,
+            profile=sampling_profile,
+        )
         
         payload = {
             "model": model_to_use,
             "messages": messages,
-            "temperature": temperature,
+            "temperature": effective_temperature,
             "max_tokens": max_tokens
         }
+        if effective_top_p < 1.0:
+            payload["top_p"] = effective_top_p
         payload_size = len(json.dumps(payload, ensure_ascii=False))
         if payload_size >= self.PROMPT_SIZE_WARNING_CHARS:
             self.logger.warning(
@@ -1917,28 +1995,40 @@ class SmartMonitorDeepSeek:
 
         momentum_state = cls._derive_intraday_momentum_state(intraday_context)
         acceptance_state = cls._derive_intraday_acceptance_state(intraday_context)
-        volume_acc = cls._intraday_numeric(intraday_context.get("volume_acceleration_ratio")) or 0.0
-        volume_ratio_15m = cls._intraday_numeric(intraday_context.get("volume_ratio_15m")) or 0.0
-        volume_ratio_30m = cls._intraday_numeric(intraday_context.get("volume_ratio_30m")) or 0.0
-        volume_ratio_60m = cls._intraday_numeric(intraday_context.get("volume_ratio_60m")) or 0.0
+        last_60m = cls._intraday_numeric(intraday_context.get("last_60m_change_pct"))
+        last_30m = cls._intraday_numeric(intraday_context.get("last_30m_change_pct"))
+        last_15m = cls._intraday_numeric(intraday_context.get("last_15m_change_pct"))
+        volume_ratio_60m = cls._intraday_numeric(intraday_context.get("volume_ratio_60m"))
+        volume_ratio_30m = cls._intraday_numeric(intraday_context.get("volume_ratio_30m"))
+        volume_ratio_15m = cls._intraday_numeric(intraday_context.get("volume_ratio_15m"))
+        volume_acc = cls._intraday_numeric(intraday_context.get("volume_acceleration_ratio"))
 
         if (
             ("整体走强" in momentum_state or "延续走强" in momentum_state)
             and "承接优化" in acceptance_state
-            and (volume_ratio_15m >= 1.05 or volume_acc >= 1.0)
-            and volume_ratio_30m >= 0.98
+            and (last_60m is None or last_60m >= 0)
         ):
-            if volume_ratio_60m >= 1.0:
-                return "若接近基线止盈位，可考虑更主动上修止盈/减仓区间"
-            return "若接近基线止盈位，可考虑上修止盈/减仓区间"
+            return "若接近基线止盈位但60分钟结构未走坏，可继续持有或上修止盈位，不必主动锁盈"
         if (
             "持续走坏" in momentum_state
             or "已转弱" in momentum_state
             or "承接转弱" in acceptance_state
-            or (volume_ratio_15m <= 0.9 and volume_ratio_30m <= 0.92)
+            or (
+                last_60m is not None and last_60m <= -0.5
+                and (
+                    (last_30m is not None and last_30m <= -0.2)
+                    or (last_15m is not None and last_15m <= -0.2)
+                )
+                and (
+                    (volume_ratio_60m is not None and volume_ratio_60m < 1.0)
+                    or (volume_ratio_30m is not None and volume_ratio_30m < 0.98)
+                    or (volume_ratio_15m is not None and volume_ratio_15m < 0.98)
+                    or (volume_acc is not None and volume_acc < 0.95)
+                )
+            )
         ):
-            return "若接近止盈位且同步转弱，应优先考虑兑现计划"
-        return "止盈区处理需结合分时强弱与承接变化"
+            return "若接近止盈位且60分钟转弱，再结合15/30分钟与短时量能确认卖点"
+        return "止盈区先看60分钟结构，再结合15/30分钟和短时量能寻找更好的买卖点"
 
     @classmethod
     def _derive_intraday_volume_structure(cls, intraday_context: Dict[str, Any]) -> str:
@@ -1968,6 +2058,11 @@ class SmartMonitorDeepSeek:
             and volume_ratio_60m is not None and volume_ratio_60m >= 1.0
         ):
             return "30/60分钟量能保持扩张，更适合波段跟踪"
+        if (
+            volume_ratio_60m is not None and volume_ratio_60m < 0.98
+            and volume_ratio_30m is not None and volume_ratio_30m >= 1.0
+        ):
+            return "60分钟量能未跟随，短时放量更适合当作执行确认"
         return "量能结构中性，等待进一步确认"
 
     @staticmethod
@@ -2176,6 +2271,15 @@ class SmartMonitorDeepSeek:
                 return "接近日内低位"
             return "处于日内中位"
 
+        def _format_conditions(value: object) -> str:
+            if isinstance(value, dict):
+                value = [f"{key}: {item}" for key, item in value.items() if str(item or "").strip()]
+            if isinstance(value, list):
+                items = [self._truncate_prompt_text(item, 80) for item in value if str(item or "").strip()]
+            else:
+                items = [self._truncate_prompt_text(value, 120)] if str(value or "").strip() else []
+            return "；".join(items[:5]) if items else "N/A"
+
         turnover_rate_text = _fmt_pct(market_data.get("turnover_rate"))
         turnover_rate_line = f"换手率: {turnover_rate_text}\n" if turnover_rate_text != "N/A" else ""
         current_price = _to_float(market_data.get("current_price"))
@@ -2212,6 +2316,7 @@ class SmartMonitorDeepSeek:
         def _freshness_label(status: Any) -> str:
             mapping = {
                 "ready": "可直接用于盘中执行",
+                "review_ready": "可用于盘后复盘",
                 "degraded": "可参考但需适度降权",
                 "stale": "不适合盘中执行判断",
                 "fresh": "新鲜",
@@ -2400,6 +2505,11 @@ class SmartMonitorDeepSeek:
                 entry_max=strategy_context.get("entry_max", "N/A"),
                 take_profit=strategy_context.get("take_profit", "N/A"),
                 stop_loss=strategy_context.get("stop_loss", "N/A"),
+                execution_plan_summary=strategy_context.get("execution_plan_summary", "N/A") or "N/A",
+                entry_conditions_text=_format_conditions(strategy_context.get("entry_conditions")),
+                exit_conditions_text=_format_conditions(strategy_context.get("exit_conditions")),
+                hold_conditions_text=_format_conditions(strategy_context.get("hold_conditions")),
+                invalidation_conditions_text=_format_conditions(strategy_context.get("invalidation_conditions")),
                 structure_state=strategy_context.get("structure_state", "N/A") or "N/A",
                 atr14=_fmt_money(strategy_context.get("atr14")),
                 atr14_pct=_fmt_pct(strategy_context.get("atr14_pct")),

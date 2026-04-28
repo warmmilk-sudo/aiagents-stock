@@ -45,6 +45,7 @@ interface HubAsset {
 interface HubOverview {
   counts: Record<string, number>;
   focus_capacity: number;
+  sector_report_warning?: string;
 }
 
 interface BackgroundTask {
@@ -69,6 +70,34 @@ interface BackgroundTask {
 type ConfirmAction =
   | { kind: "toggle-pin"; item: HubAsset }
   | { kind: "delete"; item: HubAsset };
+
+function asObjectArray<T>(value: unknown): T[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter((item): item is T => Boolean(item) && typeof item === "object" && !Array.isArray(item));
+}
+
+function sanitizeHubAssets(value: unknown): HubAsset[] {
+  return asObjectArray<HubAsset>(value);
+}
+
+function sanitizeHubOverview(value: unknown): HubOverview | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  const counts =
+    record.counts && typeof record.counts === "object" && !Array.isArray(record.counts)
+      ? (record.counts as Record<string, number>)
+      : {};
+  return {
+    counts,
+    focus_capacity: Number(record.focus_capacity) || 0,
+    sector_report_warning:
+      typeof record.sector_report_warning === "string" ? record.sector_report_warning : undefined,
+  };
+}
 
 function isPendingTaskStatus(status?: string | null) {
   return status === "queued" || status === "running";
@@ -218,7 +247,16 @@ function PoolPanel({
                         title={item.status === "focus" || item.manual_pin ? "移出备选关注" : "加入备选关注"}
                         type="button"
                       >
-                        {item.status === "focus" || item.manual_pin ? "★" : "☆"}
+                        <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24">
+                          <path
+                            d="M12 3.1 14.7 8.7l6.1.9-4.4 4.3 1 6.1-5.4-2.9L6.6 20l1-6.1-4.4-4.3 6.1-.9L12 3.1Z"
+                            fill={item.status === "focus" || item.manual_pin ? "currentColor" : "none"}
+                            stroke="currentColor"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth="1.8"
+                          />
+                        </svg>
                       </button>
                       {activePool === "research" ? (
                         <button
@@ -245,7 +283,7 @@ function PoolPanel({
                   )}
                 </div>
               </div>
-              {item.status === "focus" ? <small>{item.manual_pin ? "已加入备选关注，且手动置顶保留" : "已加入备选关注并自动同步到盯盘"}</small> : null}
+              {item.status === "focus" && !item.manual_pin ? <small>已加入备选关注并自动同步到盯盘</small> : null}
             </div>
           );
         })}
@@ -277,10 +315,10 @@ export function ResearchHubPage() {
             ? "control"
             : "analysis";
   const [overview, setOverview] = useState<HubOverview | null>(
-    () => (initialCachedPage?.overview as HubOverview | null) ?? null,
+    () => sanitizeHubOverview(initialCachedPage?.overview),
   );
   const [assets, setAssets] = useState<HubAsset[]>(
-    () => (initialCachedPage?.assets as HubAsset[]) ?? [],
+    () => sanitizeHubAssets(initialCachedPage?.assets),
   );
   const [selectedAssetId, setSelectedAssetId] = useState<number | null>(
     () => initialCachedPage?.selectedAssetId ?? null,
@@ -317,22 +355,33 @@ export function ResearchHubPage() {
   const loadAssets = async (options?: { background?: boolean }) => {
     const requestId = pageLoadRequestRef.current + 1;
     pageLoadRequestRef.current = requestId;
-    const [overviewData, assetData] = await Promise.all([
-      options?.background
-        ? apiFetch<HubOverview>("/api/watchlist-hub/overview")
-        : apiFetchCached<HubOverview>("/api/watchlist-hub/overview", {}, { ttlMs: HUB_CACHE_TTL_MS }),
-      options?.background
-        ? apiFetch<HubAsset[]>(`/api/watchlist-hub/assets${buildQuery({ search_term: searchTerm })}`)
-        : apiFetchCached<HubAsset[]>(
-          `/api/watchlist-hub/assets${buildQuery({ search_term: searchTerm })}`,
-          {},
-          { ttlMs: HUB_CACHE_TTL_MS },
-        ),
-    ]);
+    const overviewRequest = options?.background
+      ? apiFetch<HubOverview>("/api/watchlist-hub/overview")
+      : apiFetchCached<HubOverview>("/api/watchlist-hub/overview", {}, { ttlMs: HUB_CACHE_TTL_MS });
+    const assetRequest = options?.background
+      ? apiFetch<HubAsset[]>(`/api/watchlist-hub/assets${buildQuery({ search_term: searchTerm })}`)
+      : apiFetchCached<HubAsset[]>(
+        `/api/watchlist-hub/assets${buildQuery({ search_term: searchTerm })}`,
+        {},
+        { ttlMs: HUB_CACHE_TTL_MS },
+      );
+    const [overviewResult, assetResult] = await Promise.allSettled([overviewRequest, assetRequest]);
     if (pageLoadRequestRef.current !== requestId) {
       return;
     }
-    setOverview(overviewData);
+
+    const overviewData = overviewResult.status === "fulfilled" ? sanitizeHubOverview(overviewResult.value) : null;
+    if (overviewData) {
+      setOverview(overviewData);
+    } else if (!options?.background) {
+      setOverview(null);
+    }
+
+    if (assetResult.status !== "fulfilled") {
+      throw assetResult.reason;
+    }
+
+    const assetData = sanitizeHubAssets(assetResult.value);
     setAssets(assetData);
     assetData.forEach((item) => {
       if (item.status !== "research") {
@@ -352,7 +401,7 @@ export function ResearchHubPage() {
       return nextSelectedAssetId;
     });
     persistHubPageCache({
-      overview: overviewData,
+      overview: overviewData ?? overview,
       assets: assetData,
       selectedAssetId: nextSelectedAssetId,
       searchTerm,
@@ -378,8 +427,8 @@ export function ResearchHubPage() {
 
   useEffect(() => {
     if (isHubPageCacheUsable(cachedPage) && cachedPage?.searchTerm === searchTerm) {
-      setOverview((cachedPage.overview as HubOverview | null) ?? null);
-      setAssets((cachedPage.assets as HubAsset[]) ?? []);
+      setOverview(sanitizeHubOverview(cachedPage.overview));
+      setAssets(sanitizeHubAssets(cachedPage.assets));
       setSelectedAssetId(cachedPage.selectedAssetId ?? null);
       setActivePool((cachedPage.activePool as PoolKey) || "research");
     } else {
@@ -593,15 +642,17 @@ export function ResearchHubPage() {
   const renderAssetTags = (item: HubAsset) => {
     const expanded = Boolean(expandedTagAssetIds[item.id]);
     const industryTag = (item.primary_industry || item.display_tag_summary?.[0] || "").trim();
-    const conceptTags = (item.core_concepts || [])
+    const conceptTags = (Array.isArray(item.core_concepts) ? item.core_concepts : [])
       .map((tag) => String(tag || "").trim())
       .filter(Boolean);
-    const fallbackConceptTags = (item.display_tags || [])
+    const fallbackConceptTags = (Array.isArray(item.display_tags) ? item.display_tags : [])
       .map((tag) => String(tag || "").trim())
       .filter(Boolean)
       .filter((tag) => tag !== industryTag);
     const visibleTags = conceptTags.length ? conceptTags : fallbackConceptTags;
-    const fullTags = (item.display_tags || []).map((tag) => String(tag || "").trim()).filter(Boolean);
+    const fullTags = (Array.isArray(item.display_tags) ? item.display_tags : [])
+      .map((tag) => String(tag || "").trim())
+      .filter(Boolean);
     const hiddenTags = conceptTags.length ? [] : fullTags.filter((tag) => tag !== industryTag && !visibleTags.includes(tag));
 
     if (!visibleTags.length && !hiddenTags.length) {
@@ -610,19 +661,14 @@ export function ResearchHubPage() {
 
     return (
       <>
-        {visibleTags.map((tag, index) => (
+        {visibleTags.map((tag) => (
           <span
-            className={index === 0 ? styles.researchHubTagPrimary : styles.researchHubTag}
+            className={styles.researchHubTag}
             key={`${item.symbol}-${tag}`}
           >
             {tag}
           </span>
         ))}
-        {item.extra_tags_count ? (
-          <span className={styles.researchHubTagMuted} title="还有更多概念标签未展开">
-            +{item.extra_tags_count}
-          </span>
-        ) : null}
         {hiddenTags.length ? (
           expanded ? (
             <>
@@ -650,9 +696,9 @@ export function ResearchHubPage() {
                 handleToggleTagExpansion(item.id);
               }}
               type="button"
-              title={`展开 ${hiddenTags.length} 个隐藏标签`}
+              title="展开隐藏标签"
             >
-              +{hiddenTags.length}
+              展开
             </button>
           )
         ) : null}
@@ -698,26 +744,21 @@ export function ResearchHubPage() {
           </div>
         </ModuleCard>
 
-        <ModuleCard
-          className={styles.researchHubControlListCard}
-          title="池列表"
-          summary={`持仓 ${displayCounts.holding} | 备选 ${displayCounts.focus} | 研究池库 ${displayCounts.research} | 手动关注 ${manualPinCount}`}
-          hideTitleOnMobile
-        >
+        <div className={styles.researchHubControlListCard}>
           <PoolPanel
             activeId={selectedAssetId}
-          activePool={activePool}
-          counts={displayCounts}
-          items={activePoolItems}
-          pinUpdatingAssetId={pinUpdatingAssetId}
-          deletingAssetId={deletingAssetId}
-          onPoolChange={setActivePool}
-          onSelect={handleOpenStockProfile}
-          onDeleteResearchCard={handleDeleteResearchCard}
-          onToggleManualPin={handleToggleManualPin}
-          renderAssetTags={renderAssetTags}
-        />
-        </ModuleCard>
+            activePool={activePool}
+            counts={displayCounts}
+            items={activePoolItems}
+            pinUpdatingAssetId={pinUpdatingAssetId}
+            deletingAssetId={deletingAssetId}
+            onPoolChange={setActivePool}
+            onSelect={handleOpenStockProfile}
+            onDeleteResearchCard={handleDeleteResearchCard}
+            onToggleManualPin={handleToggleManualPin}
+            renderAssetTags={renderAssetTags}
+          />
+        </div>
 
       </div>
     );
@@ -788,20 +829,24 @@ export function ResearchHubPage() {
 
           {selectionTask ? (
             <>
-              <div className={styles.noticeMeta}>
-                <div>
-                  <strong>选股任务进度</strong>
-                  <div className={styles.muted}>{selectionTask.result?.sector_strategy_reused ? "已复用 12 小时内智策报告" : "按最新智策报告执行选股"}</div>
-                </div>
-                <StatusBadge label={selectionTaskStatus.label} tone={selectionTaskStatus.tone} />
-              </div>
-              <TaskProgressBar
-                current={selectionTaskCurrent}
-                message={selectionTask.message || "等待智能选股任务状态..."}
-                tone={taskProgressTone(selectionTask)}
-                total={selectionTask?.total ?? 100}
-              />
-              {selectionTask.error ? <div className={styles.dangerText}>{selectionTask.error}</div> : null}
+              {selectionTaskPending ? (
+                <>
+                  <div className={styles.noticeMeta}>
+                    <div>
+                      <strong>选股任务进度</strong>
+                      <div className={styles.muted}>{selectionTask.result?.sector_strategy_reused ? "已复用 12 小时内智策报告" : "按最新智策报告执行选股"}</div>
+                    </div>
+                    <StatusBadge label={selectionTaskStatus.label} tone={selectionTaskStatus.tone} />
+                  </div>
+                  <TaskProgressBar
+                    current={selectionTaskCurrent}
+                    message={selectionTask.message || "等待智能选股任务状态..."}
+                    tone={taskProgressTone(selectionTask)}
+                    total={selectionTask?.total ?? 100}
+                  />
+                  {selectionTask.error ? <div className={styles.dangerText}>{selectionTask.error}</div> : null}
+                </>
+              ) : null}
 
               <div className={styles.selectionResultGrid}>
                 {renderSelectionBlock("Top 15 准入围", selectionTask.result?.ranked_top15, "暂无准入围名单")}
@@ -850,7 +895,15 @@ export function ResearchHubPage() {
         {section === "holdings"
           ? renderHoldingsContent()
           : section === "analysis"
-            ? <DeepAnalysisPage startOnly />
+            ? (
+              <DeepAnalysisPage
+                startOnly
+                onAnalysisSettled={() => {
+                  clearHubPageCache();
+                  void loadAssets({ background: true }).catch(() => undefined);
+                }}
+              />
+            )
             : renderControlContent()}
       </PageFrame>
       {confirmDialogMeta ? (

@@ -153,10 +153,12 @@ class LLMClient:
         self,
         messages: List[Dict[str, str]],
         model: Optional[str] = None,
-        temperature: float = 0.7,
+        temperature: Optional[float] = None,
         max_tokens: int = 2000,
         tier: Optional[ModelTier] = None,
         include_reasoning: bool = False,
+        top_p: Optional[float] = None,
+        sampling_profile: str = "default",
     ) -> str:
         """调用LLM API"""
         model_to_use = resolve_model_name(
@@ -171,6 +173,12 @@ class LLMClient:
         base_delay = max(0.2, float(getattr(self, "api_retry_base_delay_seconds", 0.8)))
         last_error: Exception | None = None
         client = self._get_client_for_model(model_to_use)
+        effective_temperature, effective_top_p = config.resolve_llm_sampling_params(
+            model_to_use,
+            temperature=temperature,
+            top_p=top_p,
+            profile=sampling_profile,
+        )
 
         candidate_max_tokens = max_tokens
         if "reasoner" in model_to_use.lower() and candidate_max_tokens <= 2000:
@@ -178,11 +186,16 @@ class LLMClient:
 
         for attempt in range(1, total_attempts + 1):
             try:
+                request_kwargs = {
+                    "model": api_model_to_use,
+                    "messages": messages,
+                    "temperature": effective_temperature,
+                    "max_tokens": candidate_max_tokens,
+                }
+                if effective_top_p < 1.0:
+                    request_kwargs["top_p"] = effective_top_p
                 response = client.chat.completions.create(
-                    model=api_model_to_use,
-                    messages=messages,
-                    temperature=temperature,
-                    max_tokens=candidate_max_tokens,
+                    **request_kwargs,
                 )
 
                 # 处理 reasoner 模型的响应
@@ -516,7 +529,7 @@ class LLMClient:
 
         response = self.call_api(
             messages,
-            temperature=0.3,
+            sampling_profile="factual",
             max_tokens=4000,
             tier=ModelTier.REASONING,
             include_reasoning=False,

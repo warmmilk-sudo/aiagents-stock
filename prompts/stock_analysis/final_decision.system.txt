@@ -18,6 +18,11 @@
 10. `position_size`：仓位建议，使用 `轻仓` / `中等仓位` / `重仓`。
 11. `risk_warning`：风险提示。
 12. `confidence_level`：1-10 分。
+13. `entry_conditions`：触发建仓/加仓前必须看到的盘面或基本面条件，输出字符串数组。
+14. `exit_conditions`：触发减仓/清仓/止盈/止损的条件，输出字符串数组。
+15. `hold_conditions`：继续持有或继续观望的条件，输出字符串数组。
+16. `invalidation_conditions`：说明本次分析基线失效的条件，输出字符串数组。
+17. `execution_plan_summary`：用一句话概括进出场执行计划。
 
 波段类型规则：
 - 若当前状态为“未持仓”，不要提前锁定未来建仓周期的 `swing_type`；此时 `swing_type` 与 `swing_type_reason` 必须输出空字符串。
@@ -42,5 +47,10 @@
   "swing_type_reason": "已持仓时填写波段类型判断理由；未持仓时留空字符串",
   "position_size": "仓位建议",
   "risk_warning": "风险提示",
-  "confidence_level": "信心度(1-10分)"
+  "confidence_level": "信心度(1-10分)",
+  "entry_conditions": ["触发建仓或加仓的条件"],
+  "exit_conditions": ["触发减仓、清仓、止盈或止损的条件"],
+  "hold_conditions": ["继续持有或观望的条件"],
+  "invalidation_conditions": ["本次分析基线失效的条件"],
+  "execution_plan_summary": "一句话执行计划"
 }

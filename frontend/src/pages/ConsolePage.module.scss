@@ -118,10 +118,10 @@
   display: grid;
   gap: 12px;
   grid-template-columns: minmax(0, 1fr);
-  padding: 14px;
-  border: 1px solid var(--line-soft);
-  border-radius: 16px;
-  background: color-mix(in srgb, var(--bg-panel-strong) 95%, transparent);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   min-width: 0;
   box-sizing: border-box;
 }
@@ -210,15 +210,20 @@
 .researchHubSidebar {
   display: grid;
   gap: 12px;
+  width: 100%;
+  max-width: 100%;
   min-width: 0;
   min-height: 0;
   grid-template-rows: auto minmax(0, 1fr);
+  box-sizing: border-box;
 }
 
 .researchHubPoolTabs {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0;
+  width: 100%;
+  max-width: 100%;
   padding: 5px;
   border: 1px solid color-mix(in srgb, var(--line-soft) 70%, transparent);
   border-radius: 22px;
@@ -227,6 +232,8 @@
     inset 0 1px 0 rgba(255, 255, 255, 0.04),
     inset 0 0 0 1px rgba(255, 255, 255, 0.02);
   min-width: 0;
+  justify-self: stretch;
+  box-sizing: border-box;
 }
 
 .researchHubPoolTabs>.nestedTabButton,
@@ -234,6 +241,8 @@
   display: grid;
   gap: 4px;
   place-items: center;
+  width: 100%;
+  min-width: 0;
   padding: 9px 7px;
   border-radius: 16px;
   font-size: 13px;
@@ -430,6 +439,9 @@
 
 .researchHubStarButton,
 .researchHubStarButtonActive {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   min-width: 28px;
   height: 28px;
   padding: 0;
@@ -437,12 +449,18 @@
   border-radius: 14px;
   background: transparent;
   color: var(--text-muted);
-  font-size: 28px;
   line-height: 1;
   transition:
     background var(--shell-transition),
     color var(--shell-transition),
     transform var(--shell-transition);
+}
+
+.researchHubStarButton svg,
+.researchHubStarButtonActive svg {
+  width: 28px;
+  height: 28px;
+  display: block;
 }
 
 .researchHubStarButton:hover,
@@ -490,8 +508,21 @@
 .researchHubControlPage {
   display: grid;
   gap: 12px;
+  grid-template-columns: minmax(0, 1fr);
   min-height: calc(100vh - 190px);
+  width: 100%;
+  max-width: 100%;
   align-content: start;
+  box-sizing: border-box;
+}
+
+.researchHubControlPage>* {
+  grid-column: 1 / -1;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  justify-self: stretch;
+  box-sizing: border-box;
 }
 
 .dialogBackdrop {
@@ -567,11 +598,17 @@
 }
 
 .researchHubControlListCard {
+  grid-column: 1 / -1;
+  width: 100%;
+  max-width: 100%;
   min-height: calc(100vh - 320px);
   display: grid;
+  min-width: 0;
+  justify-self: stretch;
+  box-sizing: border-box;
 }
 
-.researchHubControlListCard .moduleBody {
+.researchHubControlListCard>.researchHubSidebar {
   min-height: 0;
   height: 100%;
 }
@@ -1330,10 +1367,88 @@
 .smartMonitorTaskCard {
   padding: 14px 16px;
   border: 1px solid var(--line-soft);
-  border-radius: 16px;
+  border-radius: 12px;
   background: color-mix(in srgb, var(--bg-panel-strong) 94%, transparent);
   display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.smartMonitorTaskToolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1px;
+  align-items: stretch;
+  min-width: 0;
+}
+
+.smartMonitorTaskStats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  min-width: 0;
+}
+
+.smartMonitorTaskGroups {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  min-width: 0;
+}
+
+.smartMonitorTaskGroup {
+  position: relative;
+  display: grid;
   gap: 10px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--bg-panel-strong) 92%, transparent);
+}
+
+.smartMonitorTaskGroup::before {
+  content: "";
+  position: absolute;
+  inset: 12px auto 12px 8px;
+  width: 3px;
+  border-radius: 999px;
+  background: var(--notice-color, var(--accent));
+}
+
+.smartMonitorTaskGroupHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding-left: 10px;
+  min-width: 0;
+}
+
+.smartMonitorTaskGroupHeader h4 {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.35;
+}
+
+.smartMonitorTaskGroupHeader p {
+  margin: 4px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.smartMonitorTaskHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.smartMonitorTaskIdentity {
+  display: grid;
+  gap: 3px;
   min-width: 0;
 }
 
@@ -1358,26 +1473,86 @@
 }
 
 .smartMonitorTaskTitle {
+  display: block;
   font-size: 15px;
   line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 .smartMonitorStateToggleEnabled,
-.smartMonitorStateToggleDisabled {
+.smartMonitorStateToggleDisabled,
+.smartMonitorTaskIconButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
   padding: 0;
-  border: 0;
-  background: transparent;
-  font-size: 13px;
-  line-height: 1.4;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--text-muted);
+  line-height: 1;
   cursor: pointer;
+  transition:
+    background var(--shell-transition),
+    border-color var(--shell-transition),
+    color var(--shell-transition),
+    transform var(--shell-transition);
+}
+
+.smartMonitorStateToggleEnabled svg,
+.smartMonitorStateToggleDisabled svg,
+.smartMonitorTaskIconButton svg {
+  display: block;
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
 }
 
 .smartMonitorStateToggleEnabled {
   color: var(--success);
+  border-color: color-mix(in srgb, var(--success) 32%, var(--line-soft));
 }
 
 .smartMonitorStateToggleDisabled {
   color: var(--text-muted);
+}
+
+.researchHubDeleteButton.smartMonitorTaskIconButton {
+  margin-top: 0;
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 30%, var(--line-soft));
+}
+
+.smartMonitorStateToggleEnabled:hover,
+.smartMonitorStateToggleDisabled:hover,
+.smartMonitorTaskIconButton:hover {
+  transform: translateY(-1px);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--line-soft));
+  color: var(--text-main);
+}
+
+.smartMonitorStateToggleEnabled:disabled,
+.smartMonitorStateToggleDisabled:disabled,
+.smartMonitorTaskIconButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.iconButtonBusy {
+  font-size: 18px;
+  line-height: 1;
+}
+
+.smartMonitorEmptyState {
+  padding: 14px 16px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 12px;
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.015);
 }
 
 .taskIndicatorText {
@@ -1385,9 +1560,12 @@
   color: var(--text-muted);
   font-size: 13px;
   line-height: 1.55;
+  overflow-wrap: anywhere;
 }
 
 .historyRecordCard {
+  width: 100%;
+  max-width: 100%;
   padding: 14px 16px;
   border: 1px solid var(--line-soft);
   border-radius: 16px;
@@ -1395,6 +1573,8 @@
   display: grid;
   gap: 14px;
   min-width: 0;
+  justify-self: stretch;
+  box-sizing: border-box;
 }
 
 .historyRecordTop {
@@ -2814,7 +2994,7 @@ details>.historyDetailSummary:hover {
     min-height: 0;
   }
 
-  .researchHubControlListCard .moduleBody {
+  .researchHubControlListCard>.researchHubSidebar {
     height: auto;
   }
 
@@ -2912,6 +3092,61 @@ details>.historyDetailSummary:hover {
   .smartMonitorTaskCard,
   .historyRecordCard {
     padding: 12px;
+  }
+
+  .historyRecordListPanel {
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    backdrop-filter: none;
+  }
+
+  .smartMonitorTaskToolbar,
+  .smartMonitorTaskStats,
+  .smartMonitorTaskGroups {
+    grid-template-columns: 1fr;
+  }
+
+  .smartMonitorTaskHeader {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .smartMonitorTaskActionRow {
+    align-items: center;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    gap: 8px;
+  }
+
+  .smartMonitorTaskActionLeft {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .smartMonitorTaskActionLeft>* {
+    width: auto;
+    min-width: 0;
+  }
+
+  .smartMonitorTaskActionRight {
+    width: auto;
+    flex: 0 0 auto;
+    flex-direction: row;
+    justify-content: flex-end;
+    margin-left: 0;
+  }
+
+  .smartMonitorStateToggleEnabled,
+  .smartMonitorStateToggleDisabled,
+  .smartMonitorTaskIconButton,
+  .researchHubDeleteButton.smartMonitorTaskIconButton {
+    flex: 0 0 42px;
+    width: 42px;
+    min-width: 42px;
+    height: 42px;
   }
 
   .taskIndicatorText {
@@ -3023,14 +3258,24 @@ details>.historyDetailSummary:hover {
     height: 48px;
   }
 
-  .researchHubStarButton,
-  .researchHubStarButtonActive {
-    font-size: 32px;
-  }
-
+  .researchHubStarButton svg,
+  .researchHubStarButtonActive svg,
   .researchHubDeleteButton svg {
     width: 30px;
     height: 30px;
+  }
+
+  .researchHubDeleteButton.smartMonitorTaskIconButton,
+  .researchHubDeleteButton.smartMonitorTaskIconButton svg {
+    width: 42px;
+    min-width: 42px;
+    height: 42px;
+  }
+
+  .researchHubDeleteButton.smartMonitorTaskIconButton svg {
+    width: 18px;
+    min-width: 18px;
+    height: 18px;
   }
 
   .dialogBackdrop {

@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
+import { createSafeJSONStorage } from "../persistStorage";
 
 interface ShellState {
   sidebarCollapsed: boolean;
@@ -17,6 +18,7 @@ export const useShellStore = create<ShellState>()(
     }),
     {
       name: "aiagents-shell",
+      storage: createSafeJSONStorage<Pick<ShellState, "sidebarCollapsed">>(),
       partialize: (state) => ({
         sidebarCollapsed: state.sidebarCollapsed,
       }),

@@ -27,7 +27,11 @@ export function usePollingLoader({
     }
 
     const run = () => {
-      void Promise.resolve(loadRef.current());
+      void Promise.resolve()
+        .then(() => loadRef.current())
+        .catch((error) => {
+          console.error("[usePollingLoader] load failed", error);
+        });
     };
 
     if (immediate) {

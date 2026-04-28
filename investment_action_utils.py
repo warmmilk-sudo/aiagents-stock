@@ -108,6 +108,59 @@ def resolve_entry_range(final_decision: Optional[Dict[str, Any]]) -> Tuple[Optio
     return parse_entry_range(final_decision.get("entry_range"))
 
 
+def normalize_condition_list(value: Any, *, max_items: int = 6, max_chars: int = 120) -> List[str]:
+    if value in (None, ""):
+        return []
+    if isinstance(value, dict):
+        raw_items = []
+        for key, item in value.items():
+            text = str(item or "").strip()
+            if text:
+                raw_items.append(f"{key}: {text}")
+    elif isinstance(value, list):
+        raw_items = value
+    else:
+        text = str(value).strip()
+        raw_items = [
+            segment.strip()
+            for segment in re.split(r"[\n；;。]+|\s+\d+[.)、]\s*", text)
+            if segment.strip()
+        ] or ([text] if text else [])
+
+    normalized: List[str] = []
+    for raw_item in raw_items:
+        text = re.sub(r"\s+", " ", str(raw_item or "")).strip(" -；;。")
+        if not text:
+            continue
+        if len(text) > max_chars:
+            text = text[: max_chars - 1].rstrip() + "…"
+        if text not in normalized:
+            normalized.append(text)
+        if len(normalized) >= max_items:
+            break
+    return normalized
+
+
+def build_execution_plan(final_decision: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    final_decision = final_decision if isinstance(final_decision, dict) else {}
+    entry_conditions = normalize_condition_list(final_decision.get("entry_conditions"))
+    exit_conditions = normalize_condition_list(final_decision.get("exit_conditions"))
+    hold_conditions = normalize_condition_list(final_decision.get("hold_conditions"))
+    invalidation_conditions = normalize_condition_list(final_decision.get("invalidation_conditions"))
+    summary = str(final_decision.get("execution_plan_summary") or "").strip()
+    if not summary:
+        summary = str(final_decision.get("operation_advice") or final_decision.get("advice") or "").strip()
+    if len(summary) > 240:
+        summary = summary[:239].rstrip() + "…"
+    return {
+        "entry_conditions": entry_conditions,
+        "exit_conditions": exit_conditions,
+        "hold_conditions": hold_conditions,
+        "invalidation_conditions": invalidation_conditions,
+        "execution_plan_summary": summary,
+    }
+
+
 def normalize_swing_type(value: Any) -> str:
     text = str(value or "").strip().lower()
     if not text:
@@ -291,6 +344,17 @@ def normalize_strategy_context(strategy_context: Optional[Dict[str, Any]]) -> Di
     )
     for key, value in profile.items():
         normalized[key] = value
+    execution_plan = build_execution_plan(final_decision)
+    for key, value in execution_plan.items():
+        if key not in normalized or normalized.get(key) in (None, "", [], {}):
+            normalized[key] = value
+    normalized["execution_plan"] = {
+        "entry_conditions": normalize_condition_list(normalized.get("entry_conditions")),
+        "exit_conditions": normalize_condition_list(normalized.get("exit_conditions")),
+        "hold_conditions": normalize_condition_list(normalized.get("hold_conditions")),
+        "invalidation_conditions": normalize_condition_list(normalized.get("invalidation_conditions")),
+        "execution_plan_summary": str(normalized.get("execution_plan_summary") or "").strip(),
+    }
     return normalized
 
 
@@ -365,6 +429,7 @@ def build_strategy_context(
         "swing_type": str(final_decision.get("swing_type") or final_decision.get("swing_strategy_type") or "").strip(),
         "swing_type_reason": str(final_decision.get("swing_type_reason") or "").strip(),
         "final_decision": final_decision,
+        **build_execution_plan(final_decision),
     }
     return normalize_strategy_context(context)
 

@@ -1,6 +1,8 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
+import { createSafeJSONStorage } from "../persistStorage";
+
 export interface SmartMonitorPageCache {
   systemStatus: unknown | null;
   tasks: unknown[];
@@ -44,6 +46,7 @@ export const useSmartMonitorStore = create<SmartMonitorState>()(
     }),
     {
       name: "smart-monitor-ui-state",
+      storage: createSafeJSONStorage<Pick<SmartMonitorState, "enabledOnly">>(),
       partialize: (state) => ({
         enabledOnly: state.enabledOnly,
       }),

@@ -1,0 +1,2245 @@
+- generic [ref=e3]:
+  - button
+  - complementary:
+    - generic:
+      - generic:
+        - heading "Stock Center" [level=1]
+      - button "关闭": ×
+    - navigation:
+      - generic:
+        - paragraph: 投资管理
+        - link "投研中心":
+          - /url: /research/watchlist-hub
+          - generic: 投研中心
+        - link "智能盯盘":
+          - /url: /investment/smart-monitor
+          - generic: 智能盯盘
+        - link "智能选股":
+          - /url: /investment/smart-selection
+          - generic: 智能选股
+      - generic:
+        - paragraph: 策略分析
+        - link "智策板块":
+          - /url: /strategies/sector-strategy
+          - generic: 智策板块
+        - link "智瞰龙虎":
+          - /url: /strategies/longhubang
+          - generic: 智瞰龙虎
+        - link "新闻流量":
+          - /url: /strategies/news-flow
+          - generic: 新闻流量
+        - link "宏观分析":
+          - /url: /strategies/macro-analysis
+          - generic: 宏观分析
+        - link "宏观周期":
+          - /url: /strategies/macro-cycle
+          - generic: 宏观周期
+      - generic:
+        - paragraph: 选股
+        - link "主力选股":
+          - /url: /selectors/main-force
+          - generic: 主力选股
+        - link "低价擒牛":
+          - /url: /selectors/low-price-bull
+          - generic: 低价擒牛
+        - link "小市值":
+          - /url: /selectors/small-cap
+          - generic: 小市值
+        - link "净利增长":
+          - /url: /selectors/profit-growth
+          - generic: 净利增长
+        - link "低估值":
+          - /url: /selectors/value-stock
+          - generic: 低估值
+      - generic:
+        - paragraph: 系统管理
+        - link "系统配置":
+          - /url: /system/config
+          - generic: 系统配置
+        - link "数据库管理":
+          - /url: /system/database
+          - generic: 数据库管理
+        - generic:
+          - generic:
+            - generic: 轻量模型
+            - combobox "轻量模型" [disabled]:
+              - option "暂无可用模型" [selected]
+          - generic:
+            - generic: 推理模型
+            - combobox "推理模型" [disabled]:
+              - option "暂无可用模型" [selected]
+          - paragraph: 切换后自动保存
+    - generic:
+      - button "退出登录"
+  - generic [ref=e4]:
+    - banner [ref=e5]:
+      - button "打开导航" [ref=e7] [cursor=pointer]: ≡
+      - strong [ref=e9]: 投资管理-投研中心
+    - main [ref=e10]:
+      - generic [ref=e11]:
+        - tablist "投研中心页面分区" [ref=e13]:
+          - tab "深度分析" [ref=e14] [cursor=pointer]
+          - tab "投研档案" [selected] [ref=e15] [cursor=pointer]
+          - tab "持仓列表" [ref=e16] [cursor=pointer]
+        - generic [ref=e18]:
+          - generic [ref=e23]:
+            - generic [ref=e24]: 列表搜索
+            - textbox "列表搜索" [ref=e25]:
+              - /placeholder: 搜索代码 / 名称 / 理由
+          - generic [ref=e27]:
+            - generic [ref=e28]:
+              - button "持仓中 18" [ref=e29] [cursor=pointer]:
+                - text: 持仓中
+                - generic [ref=e30]: "18"
+              - button "备选关注 3" [ref=e31] [cursor=pointer]:
+                - text: 备选关注
+                - generic [ref=e32]: "3"
+              - button "研究池库 144" [ref=e33] [cursor=pointer]:
+                - text: 研究池库
+                - generic [ref=e34]: "144"
+            - generic [ref=e35]:
+              - generic [ref=e37]:
+                - button "巨化股份 600160 | 基础化工-化学制品-氟化工 氟化工概念 PVDF概念 消毒剂 2025年报预增 煤化工概念" [ref=e38] [cursor=pointer]:
+                  - strong [ref=e39]: 巨化股份
+                  - generic [ref=e40]: 600160 | 基础化工-化学制品-氟化工
+                  - generic [ref=e41]:
+                    - generic [ref=e42]: 氟化工概念
+                    - generic [ref=e43]: PVDF概念
+                    - generic [ref=e44]: 消毒剂
+                    - generic [ref=e45]: 2025年报预增
+                    - generic [ref=e46]: 煤化工概念
+                - generic [ref=e48]:
+                  - button "加入备选关注 600160" [ref=e49] [cursor=pointer]:
+                    - img [ref=e50]
+                  - button "删除研究池卡片 600160" [ref=e52] [cursor=pointer]:
+                    - img [ref=e53]
+              - generic [ref=e56]:
+                - button "通富微电 002156 | 电子-半导体-集成电路封测 国家大基金持股 存储芯片 先进封装 汽车芯片 第三代半导体" [ref=e57] [cursor=pointer]:
+                  - strong [ref=e58]: 通富微电
+                  - generic [ref=e59]: 002156 | 电子-半导体-集成电路封测
+                  - generic [ref=e60]:
+                    - generic [ref=e61]: 国家大基金持股
+                    - generic [ref=e62]: 存储芯片
+                    - generic [ref=e63]: 先进封装
+                    - generic [ref=e64]: 汽车芯片
+                    - generic [ref=e65]: 第三代半导体
+                - generic [ref=e67]:
+                  - button "加入备选关注 002156" [ref=e68] [cursor=pointer]:
+                    - img [ref=e69]
+                  - button "删除研究池卡片 002156" [ref=e71] [cursor=pointer]:
+                    - img [ref=e72]
+              - generic [ref=e75]:
+                - button "容百科技 688005 | 电力设备-电池-电池化学品 钠离子电池 固态电池 动力电池回收 锂电池概念 宁德时代概念" [ref=e76] [cursor=pointer]:
+                  - strong [ref=e77]: 容百科技
+                  - generic [ref=e78]: 688005 | 电力设备-电池-电池化学品
+                  - generic [ref=e79]:
+                    - generic [ref=e80]: 钠离子电池
+                    - generic [ref=e81]: 固态电池
+                    - generic [ref=e82]: 动力电池回收
+                    - generic [ref=e83]: 锂电池概念
+                    - generic [ref=e84]: 宁德时代概念
+                - generic [ref=e86]:
+                  - button "加入备选关注 688005" [ref=e87] [cursor=pointer]:
+                    - img [ref=e88]
+                  - button "删除研究池卡片 688005" [ref=e90] [cursor=pointer]:
+                    - img [ref=e91]
+              - generic [ref=e94]:
+                - button "香农芯创 300475 | 电子-其他电子-其他电子Ⅲ 存储芯片 芯片概念 数据中心 抖音概念(字节概念) 腾讯概念" [ref=e95] [cursor=pointer]:
+                  - strong [ref=e96]: 香农芯创
+                  - generic [ref=e97]: 300475 | 电子-其他电子-其他电子Ⅲ
+                  - generic [ref=e98]:
+                    - generic [ref=e99]: 存储芯片
+                    - generic [ref=e100]: 芯片概念
+                    - generic [ref=e101]: 数据中心
+                    - generic [ref=e102]: 抖音概念(字节概念)
+                    - generic [ref=e103]: 腾讯概念
+                - generic [ref=e105]:
+                  - button "加入备选关注 300475" [ref=e106] [cursor=pointer]:
+                    - img [ref=e107]
+                  - button "删除研究池卡片 300475" [ref=e109] [cursor=pointer]:
+                    - img [ref=e110]
+              - generic [ref=e113]:
+                - button "盛科通信-U 688702 | 电子-半导体-数字芯片设计 国家大基金持股 中国AI 50 5G 芯片概念 数据中心" [ref=e114] [cursor=pointer]:
+                  - strong [ref=e115]: 盛科通信-U
+                  - generic [ref=e116]: 688702 | 电子-半导体-数字芯片设计
+                  - generic [ref=e117]:
+                    - generic [ref=e118]: 国家大基金持股
+                    - generic [ref=e119]: 中国AI 50
+                    - generic [ref=e120]: 5G
+                    - generic [ref=e121]: 芯片概念
+                    - generic [ref=e122]: 数据中心
+                - generic [ref=e124]:
+                  - button "加入备选关注 688702" [ref=e125] [cursor=pointer]:
+                    - img [ref=e126]
+                  - button "删除研究池卡片 688702" [ref=e128] [cursor=pointer]:
+                    - img [ref=e129]
+              - generic [ref=e132]:
+                - button "中国卫通 601698 | 国防军工-军工装备-航天装备 商业航天 6G概念 军工 低空经济 同花顺新质50" [ref=e133] [cursor=pointer]:
+                  - strong [ref=e134]: 中国卫通
+                  - generic [ref=e135]: 601698 | 国防军工-军工装备-航天装备
+                  - generic [ref=e136]:
+                    - generic [ref=e137]: 商业航天
+                    - generic [ref=e138]: 6G概念
+                    - generic [ref=e139]: 军工
+                    - generic [ref=e140]: 低空经济
+                    - generic [ref=e141]: 同花顺新质50
+                - generic [ref=e143]:
+                  - button "加入备选关注 601698" [ref=e144] [cursor=pointer]:
+                    - img [ref=e145]
+                  - button "删除研究池卡片 601698" [ref=e147] [cursor=pointer]:
+                    - img [ref=e148]
+              - generic [ref=e151]:
+                - button "中国西电 601179 | 电力设备-电网设备-输变电设备 柔性直流输电 特高压 智能电网 风电 核电" [ref=e152] [cursor=pointer]:
+                  - strong [ref=e153]: 中国西电
+                  - generic [ref=e154]: 601179 | 电力设备-电网设备-输变电设备
+                  - generic [ref=e155]:
+                    - generic [ref=e156]: 柔性直流输电
+                    - generic [ref=e157]: 特高压
+                    - generic [ref=e158]: 智能电网
+                    - generic [ref=e159]: 风电
+                    - generic [ref=e160]: 核电
+                - generic [ref=e162]:
+                  - button "加入备选关注 601179" [ref=e163] [cursor=pointer]:
+                    - img [ref=e164]
+                  - button "删除研究池卡片 601179" [ref=e166] [cursor=pointer]:
+                    - img [ref=e167]
+              - generic [ref=e170]:
+                - button "彩虹股份 600707 | 电子-光学光电子-面板 OLED 人民币贬值受益 西部大开发 国企改革 融资融券" [ref=e171] [cursor=pointer]:
+                  - strong [ref=e172]: 彩虹股份
+                  - generic [ref=e173]: 600707 | 电子-光学光电子-面板
+                  - generic [ref=e174]:
+                    - generic [ref=e175]: OLED
+                    - generic [ref=e176]: 人民币贬值受益
+                    - generic [ref=e177]: 西部大开发
+                    - generic [ref=e178]: 国企改革
+                    - generic [ref=e179]: 融资融券
+                - generic [ref=e181]:
+                  - button "加入备选关注 600707" [ref=e182] [cursor=pointer]:
+                    - img [ref=e183]
+                  - button "删除研究池卡片 600707" [ref=e185] [cursor=pointer]:
+                    - img [ref=e186]
+              - generic [ref=e189]:
+                - button "强力新材 300429 | 电子-电子化学品-电子化学品Ⅲ 光刻胶 先进封装 PCB概念 芯片概念 专精特新" [ref=e190] [cursor=pointer]:
+                  - strong [ref=e191]: 强力新材
+                  - generic [ref=e192]: 300429 | 电子-电子化学品-电子化学品Ⅲ
+                  - generic [ref=e193]:
+                    - generic [ref=e194]: 光刻胶
+                    - generic [ref=e195]: 先进封装
+                    - generic [ref=e196]: PCB概念
+                    - generic [ref=e197]: 芯片概念
+                    - generic [ref=e198]: 专精特新
+                - generic [ref=e200]:
+                  - button "加入备选关注 300429" [ref=e201] [cursor=pointer]:
+                    - img [ref=e202]
+                  - button "删除研究池卡片 300429" [ref=e204] [cursor=pointer]:
+                    - img [ref=e205]
+              - generic [ref=e208]:
+                - button "天银机电 300342 | 家用电器-白色家电-家电零部件 太赫兹 军工信息化 卫星导航 商业航天 6G概念" [ref=e209] [cursor=pointer]:
+                  - strong [ref=e210]: 天银机电
+                  - generic [ref=e211]: 300342 | 家用电器-白色家电-家电零部件
+                  - generic [ref=e212]:
+                    - generic [ref=e213]: 太赫兹
+                    - generic [ref=e214]: 军工信息化
+                    - generic [ref=e215]: 卫星导航
+                    - generic [ref=e216]: 商业航天
+                    - generic [ref=e217]: 6G概念
+                - generic [ref=e219]:
+                  - button "加入备选关注 300342" [ref=e220] [cursor=pointer]:
+                    - img [ref=e221]
+                  - button "删除研究池卡片 300342" [ref=e223] [cursor=pointer]:
+                    - img [ref=e224]
+              - generic [ref=e227]:
+                - button "鼎泰高科 301377 | 机械设备-通用设备-金属制品 PCB概念 2025年报预增 工业母机 机器视觉 粤港澳大湾区" [ref=e228] [cursor=pointer]:
+                  - strong [ref=e229]: 鼎泰高科
+                  - generic [ref=e230]: 301377 | 机械设备-通用设备-金属制品
+                  - generic [ref=e231]:
+                    - generic [ref=e232]: PCB概念
+                    - generic [ref=e233]: 2025年报预增
+                    - generic [ref=e234]: 工业母机
+                    - generic [ref=e235]: 机器视觉
+                    - generic [ref=e236]: 粤港澳大湾区
+                - generic [ref=e238]:
+                  - button "加入备选关注 301377" [ref=e239] [cursor=pointer]:
+                    - img [ref=e240]
+                  - button "删除研究池卡片 301377" [ref=e242] [cursor=pointer]:
+                    - img [ref=e243]
+              - generic [ref=e246]:
+                - button "沃特股份 002886 | 基础化工-塑料制品-改性塑料 PCB概念 富士康概念 先进封装 毫米波雷达 新型烟草(电子烟)" [ref=e247] [cursor=pointer]:
+                  - strong [ref=e248]: 沃特股份
+                  - generic [ref=e249]: 002886 | 基础化工-塑料制品-改性塑料
+                  - generic [ref=e250]:
+                    - generic [ref=e251]: PCB概念
+                    - generic [ref=e252]: 富士康概念
+                    - generic [ref=e253]: 先进封装
+                    - generic [ref=e254]: 毫米波雷达
+                    - generic [ref=e255]: 新型烟草(电子烟)
+                - generic [ref=e257]:
+                  - button "加入备选关注 002886" [ref=e258] [cursor=pointer]:
+                    - img [ref=e259]
+                  - button "删除研究池卡片 002886" [ref=e261] [cursor=pointer]:
+                    - img [ref=e262]
+              - generic [ref=e265]:
+                - button "彤程新材 603650 | 基础化工-橡胶制品-其他橡胶制品 光刻胶 中芯国际概念 存储芯片 OLED 芯片概念" [ref=e266] [cursor=pointer]:
+                  - strong [ref=e267]: 彤程新材
+                  - generic [ref=e268]: 603650 | 基础化工-橡胶制品-其他橡胶制品
+                  - generic [ref=e269]:
+                    - generic [ref=e270]: 光刻胶
+                    - generic [ref=e271]: 中芯国际概念
+                    - generic [ref=e272]: 存储芯片
+                    - generic [ref=e273]: OLED
+                    - generic [ref=e274]: 芯片概念
+                - generic [ref=e276]:
+                  - button "加入备选关注 603650" [ref=e277] [cursor=pointer]:
+                    - img [ref=e278]
+                  - button "删除研究池卡片 603650" [ref=e280] [cursor=pointer]:
+                    - img [ref=e281]
+              - generic [ref=e284]:
+                - button "传艺科技 002866 | 电子-消费电子-消费电子零部件及组装 固态电池 钠离子电池 PCB概念 富士康概念 消费电子概念" [ref=e285] [cursor=pointer]:
+                  - strong [ref=e286]: 传艺科技
+                  - generic [ref=e287]: 002866 | 电子-消费电子-消费电子零部件及组装
+                  - generic [ref=e288]:
+                    - generic [ref=e289]: 固态电池
+                    - generic [ref=e290]: 钠离子电池
+                    - generic [ref=e291]: PCB概念
+                    - generic [ref=e292]: 富士康概念
+                    - generic [ref=e293]: 消费电子概念
+                - generic [ref=e295]:
+                  - button "加入备选关注 002866" [ref=e296] [cursor=pointer]:
+                    - img [ref=e297]
+                  - button "删除研究池卡片 002866" [ref=e299] [cursor=pointer]:
+                    - img [ref=e300]
+              - generic [ref=e303]:
+                - button "南大光电 300346 | 电子-电子化学品-电子化学品Ⅲ 光刻胶 中芯国际概念 OLED 国家大基金持股 存储芯片" [ref=e304] [cursor=pointer]:
+                  - strong [ref=e305]: 南大光电
+                  - generic [ref=e306]: 300346 | 电子-电子化学品-电子化学品Ⅲ
+                  - generic [ref=e307]:
+                    - generic [ref=e308]: 光刻胶
+                    - generic [ref=e309]: 中芯国际概念
+                    - generic [ref=e310]: OLED
+                    - generic [ref=e311]: 国家大基金持股
+                    - generic [ref=e312]: 存储芯片
+                - generic [ref=e314]:
+                  - button "加入备选关注 300346" [ref=e315] [cursor=pointer]:
+                    - img [ref=e316]
+                  - button "删除研究池卡片 300346" [ref=e318] [cursor=pointer]:
+                    - img [ref=e319]
+              - generic [ref=e322]:
+                - button "大族激光 002008 | 机械设备-自动化设备-激光设备 光刻机 PCB概念 光纤概念 富士康概念 先进封装" [ref=e323] [cursor=pointer]:
+                  - strong [ref=e324]: 大族激光
+                  - generic [ref=e325]: 002008 | 机械设备-自动化设备-激光设备
+                  - generic [ref=e326]:
+                    - generic [ref=e327]: 光刻机
+                    - generic [ref=e328]: PCB概念
+                    - generic [ref=e329]: 光纤概念
+                    - generic [ref=e330]: 富士康概念
+                    - generic [ref=e331]: 先进封装
+                - generic [ref=e333]:
+                  - button "加入备选关注 002008" [ref=e334] [cursor=pointer]:
+                    - img [ref=e335]
+                  - button "删除研究池卡片 002008" [ref=e337] [cursor=pointer]:
+                    - img [ref=e338]
+              - generic [ref=e341]:
+                - button "云南锗业 002428 | 有色金属-小金属-其他小金属 光纤概念 第三代半导体 小金属概念 芯片概念 商业航天" [ref=e342] [cursor=pointer]:
+                  - strong [ref=e343]: 云南锗业
+                  - generic [ref=e344]: 002428 | 有色金属-小金属-其他小金属
+                  - generic [ref=e345]:
+                    - generic [ref=e346]: 光纤概念
+                    - generic [ref=e347]: 第三代半导体
+                    - generic [ref=e348]: 小金属概念
+                    - generic [ref=e349]: 芯片概念
+                    - generic [ref=e350]: 商业航天
+                - generic [ref=e352]:
+                  - button "加入备选关注 002428" [ref=e353] [cursor=pointer]:
+                    - img [ref=e354]
+                  - button "删除研究池卡片 002428" [ref=e356] [cursor=pointer]:
+                    - img [ref=e357]
+              - generic [ref=e360]:
+                - button "拓维信息 002261 | 计算机-软件开发-垂直应用软件 华为欧拉 华为昇腾 云计算 华为鲲鹏 华为盘古" [ref=e361] [cursor=pointer]:
+                  - strong [ref=e362]: 拓维信息
+                  - generic [ref=e363]: 002261 | 计算机-软件开发-垂直应用软件
+                  - generic [ref=e364]:
+                    - generic [ref=e365]: 华为欧拉
+                    - generic [ref=e366]: 华为昇腾
+                    - generic [ref=e367]: 云计算
+                    - generic [ref=e368]: 华为鲲鹏
+                    - generic [ref=e369]: 华为盘古
+                - generic [ref=e371]:
+                  - button "加入备选关注 002261" [ref=e372] [cursor=pointer]:
+                    - img [ref=e373]
+                  - button "删除研究池卡片 002261" [ref=e375] [cursor=pointer]:
+                    - img [ref=e376]
+              - generic [ref=e379]:
+                - button "北方华创 002371 | 电子-半导体-半导体设备 国家大基金持股 中芯国际概念 存储芯片 OLED 第三代半导体" [ref=e380] [cursor=pointer]:
+                  - strong [ref=e381]: 北方华创
+                  - generic [ref=e382]: 002371 | 电子-半导体-半导体设备
+                  - generic [ref=e383]:
+                    - generic [ref=e384]: 国家大基金持股
+                    - generic [ref=e385]: 中芯国际概念
+                    - generic [ref=e386]: 存储芯片
+                    - generic [ref=e387]: OLED
+                    - generic [ref=e388]: 第三代半导体
+                - generic [ref=e390]:
+                  - button "加入备选关注 002371" [ref=e391] [cursor=pointer]:
+                    - img [ref=e392]
+                  - button "删除研究池卡片 002371" [ref=e394] [cursor=pointer]:
+                    - img [ref=e395]
+              - generic [ref=e398]:
+                - button "安泰科技 000969 | 有色金属-金属新材料-其他金属新材料 商业航天 航空发动机 可控核聚变 军工 大飞机" [ref=e399] [cursor=pointer]:
+                  - strong [ref=e400]: 安泰科技
+                  - generic [ref=e401]: 000969 | 有色金属-金属新材料-其他金属新材料
+                  - generic [ref=e402]:
+                    - generic [ref=e403]: 商业航天
+                    - generic [ref=e404]: 航空发动机
+                    - generic [ref=e405]: 可控核聚变
+                    - generic [ref=e406]: 军工
+                    - generic [ref=e407]: 大飞机
+                - generic [ref=e409]:
+                  - button "加入备选关注 000969" [ref=e410] [cursor=pointer]:
+                    - img [ref=e411]
+                  - button "删除研究池卡片 000969" [ref=e413] [cursor=pointer]:
+                    - img [ref=e414]
+              - generic [ref=e417]:
+                - button "博云新材 002297 | 国防军工-军工装备-航空装备 成飞概念 航空发动机 大飞机 商业航天 军民融合" [ref=e418] [cursor=pointer]:
+                  - strong [ref=e419]: 博云新材
+                  - generic [ref=e420]: 002297 | 国防军工-军工装备-航空装备
+                  - generic [ref=e421]:
+                    - generic [ref=e422]: 成飞概念
+                    - generic [ref=e423]: 航空发动机
+                    - generic [ref=e424]: 大飞机
+                    - generic [ref=e425]: 商业航天
+                    - generic [ref=e426]: 军民融合
+                - generic [ref=e428]:
+                  - button "加入备选关注 002297" [ref=e429] [cursor=pointer]:
+                    - img [ref=e430]
+                  - button "删除研究池卡片 002297" [ref=e432] [cursor=pointer]:
+                    - img [ref=e433]
+              - generic [ref=e436]:
+                - button "东方锆业 002167 | 有色金属-小金属-其他小金属 小金属概念 稀土永磁 锂电池概念 核电 固态电池" [ref=e437] [cursor=pointer]:
+                  - strong [ref=e438]: 东方锆业
+                  - generic [ref=e439]: 002167 | 有色金属-小金属-其他小金属
+                  - generic [ref=e440]:
+                    - generic [ref=e441]: 小金属概念
+                    - generic [ref=e442]: 稀土永磁
+                    - generic [ref=e443]: 锂电池概念
+                    - generic [ref=e444]: 核电
+                    - generic [ref=e445]: 固态电池
+                - generic [ref=e447]:
+                  - button "加入备选关注 002167" [ref=e448] [cursor=pointer]:
+                    - img [ref=e449]
+                  - button "删除研究池卡片 002167" [ref=e451] [cursor=pointer]:
+                    - img [ref=e452]
+              - generic [ref=e455]:
+                - button "明阳智能 601615 | 电力设备-风电设备-风电整机 HJT电池 钙钛矿电池 光伏概念 风电 光伏建筑一体化" [ref=e456] [cursor=pointer]:
+                  - strong [ref=e457]: 明阳智能
+                  - generic [ref=e458]: 601615 | 电力设备-风电设备-风电整机
+                  - generic [ref=e459]:
+                    - generic [ref=e460]: HJT电池
+                    - generic [ref=e461]: 钙钛矿电池
+                    - generic [ref=e462]: 光伏概念
+                    - generic [ref=e463]: 风电
+                    - generic [ref=e464]: 光伏建筑一体化
+                - generic [ref=e466]:
+                  - button "加入备选关注 601615" [ref=e467] [cursor=pointer]:
+                    - img [ref=e468]
+                  - button "删除研究池卡片 601615" [ref=e470] [cursor=pointer]:
+                    - img [ref=e471]
+              - generic [ref=e474]:
+                - button "数据港 603881 | 通信-通信服务-通信应用增值服务 算力租赁 云计算 国资云 东数西算(算力) 中国AI 50" [ref=e475] [cursor=pointer]:
+                  - strong [ref=e476]: 数据港
+                  - generic [ref=e477]: 603881 | 通信-通信服务-通信应用增值服务
+                  - generic [ref=e478]:
+                    - generic [ref=e479]: 算力租赁
+                    - generic [ref=e480]: 云计算
+                    - generic [ref=e481]: 国资云
+                    - generic [ref=e482]: 东数西算(算力)
+                    - generic [ref=e483]: 中国AI 50
+                - generic [ref=e485]:
+                  - button "加入备选关注 603881" [ref=e486] [cursor=pointer]:
+                    - img [ref=e487]
+                  - button "删除研究池卡片 603881" [ref=e489] [cursor=pointer]:
+                    - img [ref=e490]
+              - generic [ref=e493]:
+                - button "凯格精机 301338 | 机械设备-专用设备-其他专用设备 共封装光学(CPO) MiniLED 先进封装 PCB概念 第三代半导体" [ref=e494] [cursor=pointer]:
+                  - strong [ref=e495]: 凯格精机
+                  - generic [ref=e496]: 301338 | 机械设备-专用设备-其他专用设备
+                  - generic [ref=e497]:
+                    - generic [ref=e498]: 共封装光学(CPO)
+                    - generic [ref=e499]: MiniLED
+                    - generic [ref=e500]: 先进封装
+                    - generic [ref=e501]: PCB概念
+                    - generic [ref=e502]: 第三代半导体
+                - generic [ref=e504]:
+                  - button "加入备选关注 301338" [ref=e505] [cursor=pointer]:
+                    - img [ref=e506]
+                  - button "删除研究池卡片 301338" [ref=e508] [cursor=pointer]:
+                    - img [ref=e509]
+              - generic [ref=e512]:
+                - button "神剑股份 002361 | 基础化工-塑料制品-合成树脂 卫星导航 商业航天 军民融合 航空发动机 军工" [ref=e513] [cursor=pointer]:
+                  - strong [ref=e514]: 神剑股份
+                  - generic [ref=e515]: 002361 | 基础化工-塑料制品-合成树脂
+                  - generic [ref=e516]:
+                    - generic [ref=e517]: 卫星导航
+                    - generic [ref=e518]: 商业航天
+                    - generic [ref=e519]: 军民融合
+                    - generic [ref=e520]: 航空发动机
+                    - generic [ref=e521]: 军工
+                - generic [ref=e523]:
+                  - button "加入备选关注 002361" [ref=e524] [cursor=pointer]:
+                    - img [ref=e525]
+                  - button "删除研究池卡片 002361" [ref=e527] [cursor=pointer]:
+                    - img [ref=e528]
+              - generic [ref=e531]:
+                - button "章源钨业 002378 | 有色金属-小金属-钨 金属铜 小金属概念 2025年报预增 工业母机 军工" [ref=e532] [cursor=pointer]:
+                  - strong [ref=e533]: 章源钨业
+                  - generic [ref=e534]: 002378 | 有色金属-小金属-钨
+                  - generic [ref=e535]:
+                    - generic [ref=e536]: 金属铜
+                    - generic [ref=e537]: 小金属概念
+                    - generic [ref=e538]: 2025年报预增
+                    - generic [ref=e539]: 工业母机
+                    - generic [ref=e540]: 军工
+                - generic [ref=e542]:
+                  - button "加入备选关注 002378" [ref=e543] [cursor=pointer]:
+                    - img [ref=e544]
+                  - button "删除研究池卡片 002378" [ref=e546] [cursor=pointer]:
+                    - img [ref=e547]
+              - generic [ref=e550]:
+                - button "利通电子 603629 | 电子-消费电子-消费电子零部件及组装 算力租赁 液冷服务器 东数西算(算力) 英伟达概念 云计算" [ref=e551] [cursor=pointer]:
+                  - strong [ref=e552]: 利通电子
+                  - generic [ref=e553]: 603629 | 电子-消费电子-消费电子零部件及组装
+                  - generic [ref=e554]:
+                    - generic [ref=e555]: 算力租赁
+                    - generic [ref=e556]: 液冷服务器
+                    - generic [ref=e557]: 东数西算(算力)
+                    - generic [ref=e558]: 英伟达概念
+                    - generic [ref=e559]: 云计算
+                - generic [ref=e561]:
+                  - button "加入备选关注 603629" [ref=e562] [cursor=pointer]:
+                    - img [ref=e563]
+                  - button "删除研究池卡片 603629" [ref=e565] [cursor=pointer]:
+                    - img [ref=e566]
+              - generic [ref=e569]:
+                - button "网宿科技 300017 | 计算机-IT服务-IT服务Ⅲ 算力租赁 云计算 华为鲲鹏 数据安全 多模态AI" [ref=e570] [cursor=pointer]:
+                  - strong [ref=e571]: 网宿科技
+                  - generic [ref=e572]: 300017 | 计算机-IT服务-IT服务Ⅲ
+                  - generic [ref=e573]:
+                    - generic [ref=e574]: 算力租赁
+                    - generic [ref=e575]: 云计算
+                    - generic [ref=e576]: 华为鲲鹏
+                    - generic [ref=e577]: 数据安全
+                    - generic [ref=e578]: 多模态AI
+                - generic [ref=e580]:
+                  - button "加入备选关注 300017" [ref=e581] [cursor=pointer]:
+                    - img [ref=e582]
+                  - button "删除研究池卡片 300017" [ref=e584] [cursor=pointer]:
+                    - img [ref=e585]
+              - generic [ref=e588]:
+                - button "铜冠铜箔 301217 | 电力设备-电池-锂电池 PCB概念 PET铜箔 5G 宁德时代概念 固态电池" [ref=e589] [cursor=pointer]:
+                  - strong [ref=e590]: 铜冠铜箔
+                  - generic [ref=e591]: 301217 | 电力设备-电池-锂电池
+                  - generic [ref=e592]:
+                    - generic [ref=e593]: PCB概念
+                    - generic [ref=e594]: PET铜箔
+                    - generic [ref=e595]: 5G
+                    - generic [ref=e596]: 宁德时代概念
+                    - generic [ref=e597]: 固态电池
+                - generic [ref=e599]:
+                  - button "加入备选关注 301217" [ref=e600] [cursor=pointer]:
+                    - img [ref=e601]
+                  - button "删除研究池卡片 301217" [ref=e603] [cursor=pointer]:
+                    - img [ref=e604]
+              - generic [ref=e607]:
+                - button "润泽科技 300442 | 通信-通信服务-通信应用增值服务 算力租赁 中国AI 50 东数西算(算力) 抖音概念(字节概念) 数据中心" [ref=e608] [cursor=pointer]:
+                  - strong [ref=e609]: 润泽科技
+                  - generic [ref=e610]: 300442 | 通信-通信服务-通信应用增值服务
+                  - generic [ref=e611]:
+                    - generic [ref=e612]: 算力租赁
+                    - generic [ref=e613]: 中国AI 50
+                    - generic [ref=e614]: 东数西算(算力)
+                    - generic [ref=e615]: 抖音概念(字节概念)
+                    - generic [ref=e616]: 数据中心
+                - generic [ref=e618]:
+                  - button "加入备选关注 300442" [ref=e619] [cursor=pointer]:
+                    - img [ref=e620]
+                  - button "删除研究池卡片 300442" [ref=e622] [cursor=pointer]:
+                    - img [ref=e623]
+              - generic [ref=e626]:
+                - button "华海诚科 688535 | 电子-半导体-半导体材料 存储芯片 先进封装 汽车芯片 芯片概念 汽车电子" [ref=e627] [cursor=pointer]:
+                  - strong [ref=e628]: 华海诚科
+                  - generic [ref=e629]: 688535 | 电子-半导体-半导体材料
+                  - generic [ref=e630]:
+                    - generic [ref=e631]: 存储芯片
+                    - generic [ref=e632]: 先进封装
+                    - generic [ref=e633]: 汽车芯片
+                    - generic [ref=e634]: 芯片概念
+                    - generic [ref=e635]: 汽车电子
+                - generic [ref=e637]:
+                  - button "加入备选关注 688535" [ref=e638] [cursor=pointer]:
+                    - img [ref=e639]
+                  - button "删除研究池卡片 688535" [ref=e641] [cursor=pointer]:
+                    - img [ref=e642]
+              - generic [ref=e645]:
+                - button "特变电工 600089 | 综合-综合-综合Ⅲ 柔性直流输电 抽水蓄能 特高压 智能电网 虚拟电厂" [ref=e646] [cursor=pointer]:
+                  - strong [ref=e647]: 特变电工
+                  - generic [ref=e648]: 600089 | 综合-综合-综合Ⅲ
+                  - generic [ref=e649]:
+                    - generic [ref=e650]: 柔性直流输电
+                    - generic [ref=e651]: 抽水蓄能
+                    - generic [ref=e652]: 特高压
+                    - generic [ref=e653]: 智能电网
+                    - generic [ref=e654]: 虚拟电厂
+                - generic [ref=e656]:
+                  - button "加入备选关注 600089" [ref=e657] [cursor=pointer]:
+                    - img [ref=e658]
+                  - button "删除研究池卡片 600089" [ref=e660] [cursor=pointer]:
+                    - img [ref=e661]
+              - generic [ref=e664]:
+                - button "中瓷电子 003031 | 通信-通信设备-通信终端及配件 共封装光学(CPO) 光刻机 第三代半导体 华为海思概念股 6G概念" [ref=e665] [cursor=pointer]:
+                  - strong [ref=e666]: 中瓷电子
+                  - generic [ref=e667]: 003031 | 通信-通信设备-通信终端及配件
+                  - generic [ref=e668]:
+                    - generic [ref=e669]: 共封装光学(CPO)
+                    - generic [ref=e670]: 光刻机
+                    - generic [ref=e671]: 第三代半导体
+                    - generic [ref=e672]: 华为海思概念股
+                    - generic [ref=e673]: 6G概念
+                - generic [ref=e675]:
+                  - button "加入备选关注 003031" [ref=e676] [cursor=pointer]:
+                    - img [ref=e677]
+                  - button "删除研究池卡片 003031" [ref=e679] [cursor=pointer]:
+                    - img [ref=e680]
+              - generic [ref=e683]:
+                - button "圣晖集成 603163 | 建筑装饰-建筑装饰-专业工程 中芯国际概念 富士康概念 芯片概念 海峡两岸 一带一路" [ref=e684] [cursor=pointer]:
+                  - strong [ref=e685]: 圣晖集成
+                  - generic [ref=e686]: 603163 | 建筑装饰-建筑装饰-专业工程
+                  - generic [ref=e687]:
+                    - generic [ref=e688]: 中芯国际概念
+                    - generic [ref=e689]: 富士康概念
+                    - generic [ref=e690]: 芯片概念
+                    - generic [ref=e691]: 海峡两岸
+                    - generic [ref=e692]: 一带一路
+                - generic [ref=e694]:
+                  - button "加入备选关注 603163" [ref=e695] [cursor=pointer]:
+                    - img [ref=e696]
+                  - button "删除研究池卡片 603163" [ref=e698] [cursor=pointer]:
+                    - img [ref=e699]
+              - generic [ref=e702]:
+                - button "顺灏股份 002565 | 轻工制造-包装印刷-包装 卫星导航 商业航天 东数西算(算力) 土壤修复 工业大麻" [ref=e703] [cursor=pointer]:
+                  - strong [ref=e704]: 顺灏股份
+                  - generic [ref=e705]: 002565 | 轻工制造-包装印刷-包装
+                  - generic [ref=e706]:
+                    - generic [ref=e707]: 卫星导航
+                    - generic [ref=e708]: 商业航天
+                    - generic [ref=e709]: 东数西算(算力)
+                    - generic [ref=e710]: 土壤修复
+                    - generic [ref=e711]: 工业大麻
+                - generic [ref=e713]:
+                  - button "加入备选关注 002565" [ref=e714] [cursor=pointer]:
+                    - img [ref=e715]
+                  - button "删除研究池卡片 002565" [ref=e717] [cursor=pointer]:
+                    - img [ref=e718]
+              - generic [ref=e721]:
+                - button "再升科技 603601 | 建筑材料-建筑材料-玻璃玻纤 商业航天 大飞机 核污染防治 核电 PM2.5" [ref=e722] [cursor=pointer]:
+                  - strong [ref=e723]: 再升科技
+                  - generic [ref=e724]: 603601 | 建筑材料-建筑材料-玻璃玻纤
+                  - generic [ref=e725]:
+                    - generic [ref=e726]: 商业航天
+                    - generic [ref=e727]: 大飞机
+                    - generic [ref=e728]: 核污染防治
+                    - generic [ref=e729]: 核电
+                    - generic [ref=e730]: PM2.5
+                - generic [ref=e732]:
+                  - button "加入备选关注 603601" [ref=e733] [cursor=pointer]:
+                    - img [ref=e734]
+                  - button "删除研究池卡片 603601" [ref=e736] [cursor=pointer]:
+                    - img [ref=e737]
+              - generic [ref=e740]:
+                - button "火炬电子 603678 | 国防军工-军工电子-军工电子Ⅲ 商业航天 5G 芯片概念 军工 小米概念" [ref=e741] [cursor=pointer]:
+                  - strong [ref=e742]: 火炬电子
+                  - generic [ref=e743]: 603678 | 国防军工-军工电子-军工电子Ⅲ
+                  - generic [ref=e744]:
+                    - generic [ref=e745]: 商业航天
+                    - generic [ref=e746]: 5G
+                    - generic [ref=e747]: 芯片概念
+                    - generic [ref=e748]: 军工
+                    - generic [ref=e749]: 小米概念
+                - generic [ref=e751]:
+                  - button "加入备选关注 603678" [ref=e752] [cursor=pointer]:
+                    - img [ref=e753]
+                  - button "删除研究池卡片 603678" [ref=e755] [cursor=pointer]:
+                    - img [ref=e756]
+              - generic [ref=e759]:
+                - button "盛达资源 000603 | 有色金属-工业金属-铅锌 金属铅 金属锌 黄金概念 金属铜 金属镍" [ref=e760] [cursor=pointer]:
+                  - strong [ref=e761]: 盛达资源
+                  - generic [ref=e762]: 000603 | 有色金属-工业金属-铅锌
+                  - generic [ref=e763]:
+                    - generic [ref=e764]: 金属铅
+                    - generic [ref=e765]: 金属锌
+                    - generic [ref=e766]: 黄金概念
+                    - generic [ref=e767]: 金属铜
+                    - generic [ref=e768]: 金属镍
+                - generic [ref=e770]:
+                  - button "加入备选关注 000603" [ref=e771] [cursor=pointer]:
+                    - img [ref=e772]
+                  - button "删除研究池卡片 000603" [ref=e774] [cursor=pointer]:
+                    - img [ref=e775]
+              - generic [ref=e778]:
+                - button "高新发展 000628 | 建筑装饰-建筑装饰-房屋建设 智慧政务 数字孪生 汽车芯片 数据要素 智慧城市" [ref=e779] [cursor=pointer]:
+                  - strong [ref=e780]: 高新发展
+                  - generic [ref=e781]: 000628 | 建筑装饰-建筑装饰-房屋建设
+                  - generic [ref=e782]:
+                    - generic [ref=e783]: 智慧政务
+                    - generic [ref=e784]: 数字孪生
+                    - generic [ref=e785]: 汽车芯片
+                    - generic [ref=e786]: 数据要素
+                    - generic [ref=e787]: 智慧城市
+                - generic [ref=e789]:
+                  - button "加入备选关注 000628" [ref=e790] [cursor=pointer]:
+                    - img [ref=e791]
+                  - button "删除研究池卡片 000628" [ref=e793] [cursor=pointer]:
+                    - img [ref=e794]
+              - generic [ref=e797]:
+                - button "川润股份 002272 | 机械设备-通用设备-其他通用设备 液冷服务器 数据中心 特高压 军工 智能电网" [ref=e798] [cursor=pointer]:
+                  - strong [ref=e799]: 川润股份
+                  - generic [ref=e800]: 002272 | 机械设备-通用设备-其他通用设备
+                  - generic [ref=e801]:
+                    - generic [ref=e802]: 液冷服务器
+                    - generic [ref=e803]: 数据中心
+                    - generic [ref=e804]: 特高压
+                    - generic [ref=e805]: 军工
+                    - generic [ref=e806]: 智能电网
+                - generic [ref=e808]:
+                  - button "加入备选关注 002272" [ref=e809] [cursor=pointer]:
+                    - img [ref=e810]
+                  - button "删除研究池卡片 002272" [ref=e812] [cursor=pointer]:
+                    - img [ref=e813]
+              - generic [ref=e816]:
+                - button "乾照光电 300102 | 电子-光学光电子-LED 商业航天 卫星导航 军工 MicroLED概念 第三代半导体" [ref=e817] [cursor=pointer]:
+                  - strong [ref=e818]: 乾照光电
+                  - generic [ref=e819]: 300102 | 电子-光学光电子-LED
+                  - generic [ref=e820]:
+                    - generic [ref=e821]: 商业航天
+                    - generic [ref=e822]: 卫星导航
+                    - generic [ref=e823]: 军工
+                    - generic [ref=e824]: MicroLED概念
+                    - generic [ref=e825]: 第三代半导体
+                - generic [ref=e827]:
+                  - button "加入备选关注 300102" [ref=e828] [cursor=pointer]:
+                    - img [ref=e829]
+                  - button "删除研究池卡片 300102" [ref=e831] [cursor=pointer]:
+                    - img [ref=e832]
+              - generic [ref=e835]:
+                - button "臻镭科技 688270 | 电子-半导体-模拟芯片设计 卫星导航 军工信息化 商业航天 6G概念 军民融合" [ref=e836] [cursor=pointer]:
+                  - strong [ref=e837]: 臻镭科技
+                  - generic [ref=e838]: 688270 | 电子-半导体-模拟芯片设计
+                  - generic [ref=e839]:
+                    - generic [ref=e840]: 卫星导航
+                    - generic [ref=e841]: 军工信息化
+                    - generic [ref=e842]: 商业航天
+                    - generic [ref=e843]: 6G概念
+                    - generic [ref=e844]: 军民融合
+                - generic [ref=e846]:
+                  - button "加入备选关注 688270" [ref=e847] [cursor=pointer]:
+                    - img [ref=e848]
+                  - button "删除研究池卡片 688270" [ref=e850] [cursor=pointer]:
+                    - img [ref=e851]
+              - generic [ref=e854]:
+                - button "光威复材 300699 | 国防军工-军工装备-航空装备 大飞机 商业航天 军民融合 卫星导航 碳纤维" [ref=e855] [cursor=pointer]:
+                  - strong [ref=e856]: 光威复材
+                  - generic [ref=e857]: 300699 | 国防军工-军工装备-航空装备
+                  - generic [ref=e858]:
+                    - generic [ref=e859]: 大飞机
+                    - generic [ref=e860]: 商业航天
+                    - generic [ref=e861]: 军民融合
+                    - generic [ref=e862]: 卫星导航
+                    - generic [ref=e863]: 碳纤维
+                - generic [ref=e865]:
+                  - button "加入备选关注 300699" [ref=e866] [cursor=pointer]:
+                    - img [ref=e867]
+                  - button "删除研究池卡片 300699" [ref=e869] [cursor=pointer]:
+                    - img [ref=e870]
+              - generic [ref=e873]:
+                - button "中科星图 688568 | 计算机-IT服务-IT服务Ⅲ 卫星导航 时空大数据 多模态AI 商业航天 AIGC概念" [ref=e874] [cursor=pointer]:
+                  - strong [ref=e875]: 中科星图
+                  - generic [ref=e876]: 688568 | 计算机-IT服务-IT服务Ⅲ
+                  - generic [ref=e877]:
+                    - generic [ref=e878]: 卫星导航
+                    - generic [ref=e879]: 时空大数据
+                    - generic [ref=e880]: 多模态AI
+                    - generic [ref=e881]: 商业航天
+                    - generic [ref=e882]: AIGC概念
+                - generic [ref=e884]:
+                  - button "加入备选关注 688568" [ref=e885] [cursor=pointer]:
+                    - img [ref=e886]
+                  - button "删除研究池卡片 688568" [ref=e888] [cursor=pointer]:
+                    - img [ref=e889]
+              - generic [ref=e892]:
+                - button "中兵红箭 000519 | 国防军工-军工装备-地面兵装 军民融合 培育钻石 军工 无人机 商业航天" [ref=e893] [cursor=pointer]:
+                  - strong [ref=e894]: 中兵红箭
+                  - generic [ref=e895]: 000519 | 国防军工-军工装备-地面兵装
+                  - generic [ref=e896]:
+                    - generic [ref=e897]: 军民融合
+                    - generic [ref=e898]: 培育钻石
+                    - generic [ref=e899]: 军工
+                    - generic [ref=e900]: 无人机
+                    - generic [ref=e901]: 商业航天
+                - generic [ref=e903]:
+                  - button "加入备选关注 000519" [ref=e904] [cursor=pointer]:
+                    - img [ref=e905]
+                  - button "删除研究池卡片 000519" [ref=e907] [cursor=pointer]:
+                    - img [ref=e908]
+              - generic [ref=e911]:
+                - button "西部超导 688122 | 国防军工-军工装备-航空装备 商业航天 航空发动机 可控核聚变 大飞机 军工" [ref=e912] [cursor=pointer]:
+                  - strong [ref=e913]: 西部超导
+                  - generic [ref=e914]: 688122 | 国防军工-军工装备-航空装备
+                  - generic [ref=e915]:
+                    - generic [ref=e916]: 商业航天
+                    - generic [ref=e917]: 航空发动机
+                    - generic [ref=e918]: 可控核聚变
+                    - generic [ref=e919]: 大飞机
+                    - generic [ref=e920]: 军工
+                - generic [ref=e922]:
+                  - button "加入备选关注 688122" [ref=e923] [cursor=pointer]:
+                    - img [ref=e924]
+                  - button "删除研究池卡片 688122" [ref=e926] [cursor=pointer]:
+                    - img [ref=e927]
+              - generic [ref=e930]:
+                - button "奥比中光-UW 688322 | 电子-光学光电子-光学元件 人形机器人 智能座舱 传感器 同花顺新质50 英伟达概念" [ref=e931] [cursor=pointer]:
+                  - strong [ref=e932]: 奥比中光-UW
+                  - generic [ref=e933]: 688322 | 电子-光学光电子-光学元件
+                  - generic [ref=e934]:
+                    - generic [ref=e935]: 人形机器人
+                    - generic [ref=e936]: 智能座舱
+                    - generic [ref=e937]: 传感器
+                    - generic [ref=e938]: 同花顺新质50
+                    - generic [ref=e939]: 英伟达概念
+                - generic [ref=e941]:
+                  - button "加入备选关注 688322" [ref=e942] [cursor=pointer]:
+                    - img [ref=e943]
+                  - button "删除研究池卡片 688322" [ref=e945] [cursor=pointer]:
+                    - img [ref=e946]
+              - generic [ref=e949]:
+                - button "万向钱潮 000559 | 汽车-汽车零部件-底盘与发动机系统 人形机器人 低空经济 机器人概念 无人机 小米概念" [ref=e950] [cursor=pointer]:
+                  - strong [ref=e951]: 万向钱潮
+                  - generic [ref=e952]: 000559 | 汽车-汽车零部件-底盘与发动机系统
+                  - generic [ref=e953]:
+                    - generic [ref=e954]: 人形机器人
+                    - generic [ref=e955]: 低空经济
+                    - generic [ref=e956]: 机器人概念
+                    - generic [ref=e957]: 无人机
+                    - generic [ref=e958]: 小米概念
+                - generic [ref=e960]:
+                  - button "加入备选关注 000559" [ref=e961] [cursor=pointer]:
+                    - img [ref=e962]
+                  - button "删除研究池卡片 000559" [ref=e964] [cursor=pointer]:
+                    - img [ref=e965]
+              - generic [ref=e968]:
+                - button "金风科技 002202 | 电力设备-风电设备-风电整机 电气设备 商业航天 东数西算(算力) 海工装备 独角兽概念" [ref=e969] [cursor=pointer]:
+                  - strong [ref=e970]: 金风科技
+                  - generic [ref=e971]: 002202 | 电力设备-风电设备-风电整机
+                  - generic [ref=e972]:
+                    - generic [ref=e973]: 电气设备
+                    - generic [ref=e974]: 商业航天
+                    - generic [ref=e975]: 东数西算(算力)
+                    - generic [ref=e976]: 海工装备
+                    - generic [ref=e977]: 独角兽概念
+                - generic [ref=e979]:
+                  - button "加入备选关注 002202" [ref=e980] [cursor=pointer]:
+                    - img [ref=e981]
+                  - button "删除研究池卡片 002202" [ref=e983] [cursor=pointer]:
+                    - img [ref=e984]
+              - generic [ref=e987]:
+                - button "中国巨石 600176 | 建筑材料-建筑材料-玻璃玻纤 PCB概念 2026一季报预增 风电 光伏概念 PEEK材料" [ref=e988] [cursor=pointer]:
+                  - strong [ref=e989]: 中国巨石
+                  - generic [ref=e990]: 600176 | 建筑材料-建筑材料-玻璃玻纤
+                  - generic [ref=e991]:
+                    - generic [ref=e992]: PCB概念
+                    - generic [ref=e993]: 2026一季报预增
+                    - generic [ref=e994]: 风电
+                    - generic [ref=e995]: 光伏概念
+                    - generic [ref=e996]: PEEK材料
+                - generic [ref=e998]:
+                  - button "加入备选关注 600176" [ref=e999] [cursor=pointer]:
+                    - img [ref=e1000]
+                  - button "删除研究池卡片 600176" [ref=e1002] [cursor=pointer]:
+                    - img [ref=e1003]
+              - generic [ref=e1006]:
+                - button "钢研高纳 300034 | 国防军工-军工装备-航空装备 航空发动机 大飞机 军民融合 商业航天 军工" [ref=e1007] [cursor=pointer]:
+                  - strong [ref=e1008]: 钢研高纳
+                  - generic [ref=e1009]: 300034 | 国防军工-军工装备-航空装备
+                  - generic [ref=e1010]:
+                    - generic [ref=e1011]: 航空发动机
+                    - generic [ref=e1012]: 大飞机
+                    - generic [ref=e1013]: 军民融合
+                    - generic [ref=e1014]: 商业航天
+                    - generic [ref=e1015]: 军工
+                - generic [ref=e1017]:
+                  - button "加入备选关注 300034" [ref=e1018] [cursor=pointer]:
+                    - img [ref=e1019]
+                  - button "删除研究池卡片 300034" [ref=e1021] [cursor=pointer]:
+                    - img [ref=e1022]
+              - generic [ref=e1025]:
+                - button "航天工程 603698 | 机械设备-专用设备-能源及重型设备 军民融合 军工 核电 高端装备 氢能源" [ref=e1026] [cursor=pointer]:
+                  - strong [ref=e1027]: 航天工程
+                  - generic [ref=e1028]: 603698 | 机械设备-专用设备-能源及重型设备
+                  - generic [ref=e1029]:
+                    - generic [ref=e1030]: 军民融合
+                    - generic [ref=e1031]: 军工
+                    - generic [ref=e1032]: 核电
+                    - generic [ref=e1033]: 高端装备
+                    - generic [ref=e1034]: 氢能源
+                - generic [ref=e1036]:
+                  - button "加入备选关注 603698" [ref=e1037] [cursor=pointer]:
+                    - img [ref=e1038]
+                  - button "删除研究池卡片 603698" [ref=e1040] [cursor=pointer]:
+                    - img [ref=e1041]
+              - generic [ref=e1044]:
+                - button "*ST铖昌 001270 | 国防军工-军工电子-军工电子Ⅲ 6G概念 商业航天 卫星导航 军工信息化 军民融合" [ref=e1045] [cursor=pointer]:
+                  - strong [ref=e1046]: "*ST铖昌"
+                  - generic [ref=e1047]: 001270 | 国防军工-军工电子-军工电子Ⅲ
+                  - generic [ref=e1048]:
+                    - generic [ref=e1049]: 6G概念
+                    - generic [ref=e1050]: 商业航天
+                    - generic [ref=e1051]: 卫星导航
+                    - generic [ref=e1052]: 军工信息化
+                    - generic [ref=e1053]: 军民融合
+                - generic [ref=e1055]:
+                  - button "加入备选关注 001270" [ref=e1056] [cursor=pointer]:
+                    - img [ref=e1057]
+                  - button "删除研究池卡片 001270" [ref=e1059] [cursor=pointer]:
+                    - img [ref=e1060]
+              - generic [ref=e1063]:
+                - button "江丰电子 300666 | 电子-半导体-半导体材料 光刻机 中芯国际概念 OLED 存储芯片 第三代半导体" [ref=e1064] [cursor=pointer]:
+                  - strong [ref=e1065]: 江丰电子
+                  - generic [ref=e1066]: 300666 | 电子-半导体-半导体材料
+                  - generic [ref=e1067]:
+                    - generic [ref=e1068]: 光刻机
+                    - generic [ref=e1069]: 中芯国际概念
+                    - generic [ref=e1070]: OLED
+                    - generic [ref=e1071]: 存储芯片
+                    - generic [ref=e1072]: 第三代半导体
+                - generic [ref=e1074]:
+                  - button "加入备选关注 300666" [ref=e1075] [cursor=pointer]:
+                    - img [ref=e1076]
+                  - button "删除研究池卡片 300666" [ref=e1078] [cursor=pointer]:
+                    - img [ref=e1079]
+              - generic [ref=e1082]:
+                - button "有研新材 600206 | 电子-半导体-半导体材料 稀土永磁 中芯国际概念 OLED 国家大基金持股 先进封装" [ref=e1083] [cursor=pointer]:
+                  - strong [ref=e1084]: 有研新材
+                  - generic [ref=e1085]: 600206 | 电子-半导体-半导体材料
+                  - generic [ref=e1086]:
+                    - generic [ref=e1087]: 稀土永磁
+                    - generic [ref=e1088]: 中芯国际概念
+                    - generic [ref=e1089]: OLED
+                    - generic [ref=e1090]: 国家大基金持股
+                    - generic [ref=e1091]: 先进封装
+                - generic [ref=e1093]:
+                  - button "加入备选关注 600206" [ref=e1094] [cursor=pointer]:
+                    - img [ref=e1095]
+                  - button "删除研究池卡片 600206" [ref=e1097] [cursor=pointer]:
+                    - img [ref=e1098]
+              - generic [ref=e1101]:
+                - button "贵研铂业 600459 | 有色金属-小金属-其他小金属 黄金概念 小金属概念 金属回收 西部大开发 军工" [ref=e1102] [cursor=pointer]:
+                  - strong [ref=e1103]: 贵研铂业
+                  - generic [ref=e1104]: 600459 | 有色金属-小金属-其他小金属
+                  - generic [ref=e1105]:
+                    - generic [ref=e1106]: 黄金概念
+                    - generic [ref=e1107]: 小金属概念
+                    - generic [ref=e1108]: 金属回收
+                    - generic [ref=e1109]: 西部大开发
+                    - generic [ref=e1110]: 军工
+                - generic [ref=e1112]:
+                  - button "加入备选关注 600459" [ref=e1113] [cursor=pointer]:
+                    - img [ref=e1114]
+                  - button "删除研究池卡片 600459" [ref=e1116] [cursor=pointer]:
+                    - img [ref=e1117]
+              - generic [ref=e1120]:
+                - button "昂利康 002940 | 医药生物-化学制药-化学制剂 仿制药一致性评价 创新药 幽门螺杆菌概念 维生素 合成生物" [ref=e1121] [cursor=pointer]:
+                  - strong [ref=e1122]: 昂利康
+                  - generic [ref=e1123]: 002940 | 医药生物-化学制药-化学制剂
+                  - generic [ref=e1124]:
+                    - generic [ref=e1125]: 仿制药一致性评价
+                    - generic [ref=e1126]: 创新药
+                    - generic [ref=e1127]: 幽门螺杆菌概念
+                    - generic [ref=e1128]: 维生素
+                    - generic [ref=e1129]: 合成生物
+                - generic [ref=e1131]:
+                  - button "加入备选关注 002940" [ref=e1132] [cursor=pointer]:
+                    - img [ref=e1133]
+                  - button "删除研究池卡片 002940" [ref=e1135] [cursor=pointer]:
+                    - img [ref=e1136]
+              - generic [ref=e1139]:
+                - button "拉卡拉 300773 | 非银金融-多元金融-多元金融Ⅲ 数字货币 移动支付 蚂蚁集团概念 跨境支付(CIPS) 云计算" [ref=e1140] [cursor=pointer]:
+                  - strong [ref=e1141]: 拉卡拉
+                  - generic [ref=e1142]: 300773 | 非银金融-多元金融-多元金融Ⅲ
+                  - generic [ref=e1143]:
+                    - generic [ref=e1144]: 数字货币
+                    - generic [ref=e1145]: 移动支付
+                    - generic [ref=e1146]: 蚂蚁集团概念
+                    - generic [ref=e1147]: 跨境支付(CIPS)
+                    - generic [ref=e1148]: 云计算
+                - generic [ref=e1150]:
+                  - button "加入备选关注 300773" [ref=e1151] [cursor=pointer]:
+                    - img [ref=e1152]
+                  - button "删除研究池卡片 300773" [ref=e1154] [cursor=pointer]:
+                    - img [ref=e1155]
+              - generic [ref=e1158]:
+                - button "恩捷股份 002812 | 电力设备-电池-电池化学品 固态电池 锂电池概念 宁德时代概念 储能 烟草" [ref=e1159] [cursor=pointer]:
+                  - strong [ref=e1160]: 恩捷股份
+                  - generic [ref=e1161]: 002812 | 电力设备-电池-电池化学品
+                  - generic [ref=e1162]:
+                    - generic [ref=e1163]: 固态电池
+                    - generic [ref=e1164]: 锂电池概念
+                    - generic [ref=e1165]: 宁德时代概念
+                    - generic [ref=e1166]: 储能
+                    - generic [ref=e1167]: 烟草
+                - generic [ref=e1169]:
+                  - button "加入备选关注 002812" [ref=e1170] [cursor=pointer]:
+                    - img [ref=e1171]
+                  - button "删除研究池卡片 002812" [ref=e1173] [cursor=pointer]:
+                    - img [ref=e1174]
+              - generic [ref=e1177]:
+                - button "中信证券 600030 | 非银金融-证券-证券Ⅲ 期货概念 同花顺漂亮100 沪股通 融资融券 证金持股" [ref=e1178] [cursor=pointer]:
+                  - strong [ref=e1179]: 中信证券
+                  - generic [ref=e1180]: 600030 | 非银金融-证券-证券Ⅲ
+                  - generic [ref=e1181]:
+                    - generic [ref=e1182]: 期货概念
+                    - generic [ref=e1183]: 同花顺漂亮100
+                    - generic [ref=e1184]: 沪股通
+                    - generic [ref=e1185]: 融资融券
+                    - generic [ref=e1186]: 证金持股
+                - generic [ref=e1188]:
+                  - button "加入备选关注 600030" [ref=e1189] [cursor=pointer]:
+                    - img [ref=e1190]
+                  - button "删除研究池卡片 600030" [ref=e1192] [cursor=pointer]:
+                    - img [ref=e1193]
+              - generic [ref=e1196]:
+                - button "华工科技 000988 | 机械设备-自动化设备-激光设备 F5G概念 共封装光学(CPO) 铜缆高速连接 PCB概念 6G概念" [ref=e1197] [cursor=pointer]:
+                  - strong [ref=e1198]: 华工科技
+                  - generic [ref=e1199]: 000988 | 机械设备-自动化设备-激光设备
+                  - generic [ref=e1200]:
+                    - generic [ref=e1201]: F5G概念
+                    - generic [ref=e1202]: 共封装光学(CPO)
+                    - generic [ref=e1203]: 铜缆高速连接
+                    - generic [ref=e1204]: PCB概念
+                    - generic [ref=e1205]: 6G概念
+                - generic [ref=e1207]:
+                  - button "加入备选关注 000988" [ref=e1208] [cursor=pointer]:
+                    - img [ref=e1209]
+                  - button "删除研究池卡片 000988" [ref=e1211] [cursor=pointer]:
+                    - img [ref=e1212]
+              - generic [ref=e1215]:
+                - button "海兰信 300065 | 国防军工-军工装备-航海装备 军工信息化 国产航母 商业航天 云计算 军工" [ref=e1216] [cursor=pointer]:
+                  - strong [ref=e1217]: 海兰信
+                  - generic [ref=e1218]: 300065 | 国防军工-军工装备-航海装备
+                  - generic [ref=e1219]:
+                    - generic [ref=e1220]: 军工信息化
+                    - generic [ref=e1221]: 国产航母
+                    - generic [ref=e1222]: 商业航天
+                    - generic [ref=e1223]: 云计算
+                    - generic [ref=e1224]: 军工
+                - generic [ref=e1226]:
+                  - button "加入备选关注 300065" [ref=e1227] [cursor=pointer]:
+                    - img [ref=e1228]
+                  - button "删除研究池卡片 300065" [ref=e1230] [cursor=pointer]:
+                    - img [ref=e1231]
+              - generic [ref=e1234]:
+                - button "南亚新材 688519 | 电子-元件-印制电路板 PCB概念 共封装光学(CPO) MiniLED 存储芯片 5G" [ref=e1235] [cursor=pointer]:
+                  - strong [ref=e1236]: 南亚新材
+                  - generic [ref=e1237]: 688519 | 电子-元件-印制电路板
+                  - generic [ref=e1238]:
+                    - generic [ref=e1239]: PCB概念
+                    - generic [ref=e1240]: 共封装光学(CPO)
+                    - generic [ref=e1241]: MiniLED
+                    - generic [ref=e1242]: 存储芯片
+                    - generic [ref=e1243]: 5G
+                - generic [ref=e1245]:
+                  - button "加入备选关注 688519" [ref=e1246] [cursor=pointer]:
+                    - img [ref=e1247]
+                  - button "删除研究池卡片 688519" [ref=e1249] [cursor=pointer]:
+                    - img [ref=e1250]
+              - generic [ref=e1253]:
+                - button "国瓷材料 300285 | 电子-电子化学品-电子化学品Ⅲ 商业航天 卫星导航 3D打印 5G 芯片概念" [ref=e1254] [cursor=pointer]:
+                  - strong [ref=e1255]: 国瓷材料
+                  - generic [ref=e1256]: 300285 | 电子-电子化学品-电子化学品Ⅲ
+                  - generic [ref=e1257]:
+                    - generic [ref=e1258]: 商业航天
+                    - generic [ref=e1259]: 卫星导航
+                    - generic [ref=e1260]: 3D打印
+                    - generic [ref=e1261]: 5G
+                    - generic [ref=e1262]: 芯片概念
+                - generic [ref=e1264]:
+                  - button "加入备选关注 300285" [ref=e1265] [cursor=pointer]:
+                    - img [ref=e1266]
+                  - button "删除研究池卡片 300285" [ref=e1268] [cursor=pointer]:
+                    - img [ref=e1269]
+              - generic [ref=e1272]:
+                - button "蓝焰控股 000968 | 石油石化-油气开采及服务-油气开采 俄乌冲突概念 天然气 煤炭概念 新疆振兴 深股通" [ref=e1273] [cursor=pointer]:
+                  - strong [ref=e1274]: 蓝焰控股
+                  - generic [ref=e1275]: 000968 | 石油石化-油气开采及服务-油气开采
+                  - generic [ref=e1276]:
+                    - generic [ref=e1277]: 俄乌冲突概念
+                    - generic [ref=e1278]: 天然气
+                    - generic [ref=e1279]: 煤炭概念
+                    - generic [ref=e1280]: 新疆振兴
+                    - generic [ref=e1281]: 深股通
+                - generic [ref=e1283]:
+                  - button "加入备选关注 000968" [ref=e1284] [cursor=pointer]:
+                    - img [ref=e1285]
+                  - button "删除研究池卡片 000968" [ref=e1287] [cursor=pointer]:
+                    - img [ref=e1288]
+              - generic [ref=e1291]:
+                - button "东方财富 300059 | 非银金融-证券-证券Ⅲ 互联网保险 期货概念 互联网金融 区块链 数据要素" [ref=e1292] [cursor=pointer]:
+                  - strong [ref=e1293]: 东方财富
+                  - generic [ref=e1294]: 300059 | 非银金融-证券-证券Ⅲ
+                  - generic [ref=e1295]:
+                    - generic [ref=e1296]: 互联网保险
+                    - generic [ref=e1297]: 期货概念
+                    - generic [ref=e1298]: 互联网金融
+                    - generic [ref=e1299]: 区块链
+                    - generic [ref=e1300]: 数据要素
+                - generic [ref=e1302]:
+                  - button "加入备选关注 300059" [ref=e1303] [cursor=pointer]:
+                    - img [ref=e1304]
+                  - button "删除研究池卡片 300059" [ref=e1306] [cursor=pointer]:
+                    - img [ref=e1307]
+              - generic [ref=e1310]:
+                - button "金雷股份 300443 | 电力设备-风电设备-风电零部件 风电 海工装备 军工 2025年报预增 减速器" [ref=e1311] [cursor=pointer]:
+                  - strong [ref=e1312]: 金雷股份
+                  - generic [ref=e1313]: 300443 | 电力设备-风电设备-风电零部件
+                  - generic [ref=e1314]:
+                    - generic [ref=e1315]: 风电
+                    - generic [ref=e1316]: 海工装备
+                    - generic [ref=e1317]: 军工
+                    - generic [ref=e1318]: 2025年报预增
+                    - generic [ref=e1319]: 减速器
+                - generic [ref=e1321]:
+                  - button "加入备选关注 300443" [ref=e1322] [cursor=pointer]:
+                    - img [ref=e1323]
+                  - button "删除研究池卡片 300443" [ref=e1325] [cursor=pointer]:
+                    - img [ref=e1326]
+              - generic [ref=e1329]:
+                - button "阿拉丁 688179 | 基础化工-化学制品-其他化学制品 光刻胶 专精特新 合成生物 猴痘概念 重组蛋白" [ref=e1330] [cursor=pointer]:
+                  - strong [ref=e1331]: 阿拉丁
+                  - generic [ref=e1332]: 688179 | 基础化工-化学制品-其他化学制品
+                  - generic [ref=e1333]:
+                    - generic [ref=e1334]: 光刻胶
+                    - generic [ref=e1335]: 专精特新
+                    - generic [ref=e1336]: 合成生物
+                    - generic [ref=e1337]: 猴痘概念
+                    - generic [ref=e1338]: 重组蛋白
+                - generic [ref=e1340]:
+                  - button "加入备选关注 688179" [ref=e1341] [cursor=pointer]:
+                    - img [ref=e1342]
+                  - button "删除研究池卡片 688179" [ref=e1344] [cursor=pointer]:
+                    - img [ref=e1345]
+              - generic [ref=e1348]:
+                - button "晶科能源 688223 | 电力设备-光伏设备-光伏电池组件 BC电池 TOPCON电池 钙钛矿电池 光伏概念 储能" [ref=e1349] [cursor=pointer]:
+                  - strong [ref=e1350]: 晶科能源
+                  - generic [ref=e1351]: 688223 | 电力设备-光伏设备-光伏电池组件
+                  - generic [ref=e1352]:
+                    - generic [ref=e1353]: BC电池
+                    - generic [ref=e1354]: TOPCON电池
+                    - generic [ref=e1355]: 钙钛矿电池
+                    - generic [ref=e1356]: 光伏概念
+                    - generic [ref=e1357]: 储能
+                - generic [ref=e1359]:
+                  - button "加入备选关注 688223" [ref=e1360] [cursor=pointer]:
+                    - img [ref=e1361]
+                  - button "删除研究池卡片 688223" [ref=e1363] [cursor=pointer]:
+                    - img [ref=e1364]
+              - generic [ref=e1367]:
+                - button "航天发展 000547 | 国防军工-军工电子-军工电子Ⅲ 军工信息化 商业航天 卫星导航 军民融合 军工" [ref=e1368] [cursor=pointer]:
+                  - strong [ref=e1369]: 航天发展
+                  - generic [ref=e1370]: 000547 | 国防军工-军工电子-军工电子Ⅲ
+                  - generic [ref=e1371]:
+                    - generic [ref=e1372]: 军工信息化
+                    - generic [ref=e1373]: 商业航天
+                    - generic [ref=e1374]: 卫星导航
+                    - generic [ref=e1375]: 军民融合
+                    - generic [ref=e1376]: 军工
+                - generic [ref=e1378]:
+                  - button "加入备选关注 000547" [ref=e1379] [cursor=pointer]:
+                    - img [ref=e1380]
+                  - button "删除研究池卡片 000547" [ref=e1382] [cursor=pointer]:
+                    - img [ref=e1383]
+              - generic [ref=e1386]:
+                - button "汇宇制药-W 688553 | 医药生物-化学制药-化学制剂 创新药 重组蛋白 CRO概念 仿制药一致性评价 西部大开发" [ref=e1387] [cursor=pointer]:
+                  - strong [ref=e1388]: 汇宇制药-W
+                  - generic [ref=e1389]: 688553 | 医药生物-化学制药-化学制剂
+                  - generic [ref=e1390]:
+                    - generic [ref=e1391]: 创新药
+                    - generic [ref=e1392]: 重组蛋白
+                    - generic [ref=e1393]: CRO概念
+                    - generic [ref=e1394]: 仿制药一致性评价
+                    - generic [ref=e1395]: 西部大开发
+                - generic [ref=e1397]:
+                  - button "加入备选关注 688553" [ref=e1398] [cursor=pointer]:
+                    - img [ref=e1399]
+                  - button "删除研究池卡片 688553" [ref=e1401] [cursor=pointer]:
+                    - img [ref=e1402]
+              - generic [ref=e1405]:
+                - button "迈为股份 300751 | 电力设备-光伏设备-光伏加工设备 HJT电池 钙钛矿电池 光伏概念 第三代半导体 MicroLED概念" [ref=e1406] [cursor=pointer]:
+                  - strong [ref=e1407]: 迈为股份
+                  - generic [ref=e1408]: 300751 | 电力设备-光伏设备-光伏加工设备
+                  - generic [ref=e1409]:
+                    - generic [ref=e1410]: HJT电池
+                    - generic [ref=e1411]: 钙钛矿电池
+                    - generic [ref=e1412]: 光伏概念
+                    - generic [ref=e1413]: 第三代半导体
+                    - generic [ref=e1414]: MicroLED概念
+                - generic [ref=e1416]:
+                  - button "加入备选关注 300751" [ref=e1417] [cursor=pointer]:
+                    - img [ref=e1418]
+                  - button "删除研究池卡片 300751" [ref=e1420] [cursor=pointer]:
+                    - img [ref=e1421]
+              - generic [ref=e1424]:
+                - button "超捷股份 301005 | 汽车-汽车零部件-其他汽车零部件 卫星导航 航空发动机 商业航天 大飞机 军工" [ref=e1425] [cursor=pointer]:
+                  - strong [ref=e1426]: 超捷股份
+                  - generic [ref=e1427]: 301005 | 汽车-汽车零部件-其他汽车零部件
+                  - generic [ref=e1428]:
+                    - generic [ref=e1429]: 卫星导航
+                    - generic [ref=e1430]: 航空发动机
+                    - generic [ref=e1431]: 商业航天
+                    - generic [ref=e1432]: 大飞机
+                    - generic [ref=e1433]: 军工
+                - generic [ref=e1435]:
+                  - button "加入备选关注 301005" [ref=e1436] [cursor=pointer]:
+                    - img [ref=e1437]
+                  - button "删除研究池卡片 301005" [ref=e1439] [cursor=pointer]:
+                    - img [ref=e1440]
+              - generic [ref=e1443]:
+                - button "博迁新材 605376 | 有色金属-能源金属-镍 金属镍 小金属概念 硅能源 3D打印 光伏概念" [ref=e1444] [cursor=pointer]:
+                  - strong [ref=e1445]: 博迁新材
+                  - generic [ref=e1446]: 605376 | 有色金属-能源金属-镍
+                  - generic [ref=e1447]:
+                    - generic [ref=e1448]: 金属镍
+                    - generic [ref=e1449]: 小金属概念
+                    - generic [ref=e1450]: 硅能源
+                    - generic [ref=e1451]: 3D打印
+                    - generic [ref=e1452]: 光伏概念
+                - generic [ref=e1454]:
+                  - button "加入备选关注 605376" [ref=e1455] [cursor=pointer]:
+                    - img [ref=e1456]
+                  - button "删除研究池卡片 605376" [ref=e1458] [cursor=pointer]:
+                    - img [ref=e1459]
+              - generic [ref=e1462]:
+                - button "黄河旋风 600172 | 机械设备-通用设备-磨具磨料 培育钻石 第三代半导体 回购增持再贷款概念 国企改革 物业管理" [ref=e1463] [cursor=pointer]:
+                  - strong [ref=e1464]: 黄河旋风
+                  - generic [ref=e1465]: 600172 | 机械设备-通用设备-磨具磨料
+                  - generic [ref=e1466]:
+                    - generic [ref=e1467]: 培育钻石
+                    - generic [ref=e1468]: 第三代半导体
+                    - generic [ref=e1469]: 回购增持再贷款概念
+                    - generic [ref=e1470]: 国企改革
+                    - generic [ref=e1471]: 物业管理
+                - generic [ref=e1473]:
+                  - button "加入备选关注 600172" [ref=e1474] [cursor=pointer]:
+                    - img [ref=e1475]
+                  - button "删除研究池卡片 600172" [ref=e1477] [cursor=pointer]:
+                    - img [ref=e1478]
+              - generic [ref=e1481]:
+                - button "新易盛 300502 | 通信-通信设备-通信网络设备及器件 共封装光学(CPO) 5G 中国AI 50 芯片概念 数据中心" [ref=e1482] [cursor=pointer]:
+                  - strong [ref=e1483]: 新易盛
+                  - generic [ref=e1484]: 300502 | 通信-通信设备-通信网络设备及器件
+                  - generic [ref=e1485]:
+                    - generic [ref=e1486]: 共封装光学(CPO)
+                    - generic [ref=e1487]: 5G
+                    - generic [ref=e1488]: 中国AI 50
+                    - generic [ref=e1489]: 芯片概念
+                    - generic [ref=e1490]: 数据中心
+                - generic [ref=e1492]:
+                  - button "加入备选关注 300502" [ref=e1493] [cursor=pointer]:
+                    - img [ref=e1494]
+                  - button "删除研究池卡片 300502" [ref=e1496] [cursor=pointer]:
+                    - img [ref=e1497]
+              - generic [ref=e1500]:
+                - button "璞泰来 603659 | 电力设备-电池-电池化学品 钠离子电池 石墨电极 固态电池 宁德时代概念 锂电池概念" [ref=e1501] [cursor=pointer]:
+                  - strong [ref=e1502]: 璞泰来
+                  - generic [ref=e1503]: 603659 | 电力设备-电池-电池化学品
+                  - generic [ref=e1504]:
+                    - generic [ref=e1505]: 钠离子电池
+                    - generic [ref=e1506]: 石墨电极
+                    - generic [ref=e1507]: 固态电池
+                    - generic [ref=e1508]: 宁德时代概念
+                    - generic [ref=e1509]: 锂电池概念
+                - generic [ref=e1511]:
+                  - button "加入备选关注 603659" [ref=e1512] [cursor=pointer]:
+                    - img [ref=e1513]
+                  - button "删除研究池卡片 603659" [ref=e1515] [cursor=pointer]:
+                    - img [ref=e1516]
+              - generic [ref=e1519]:
+                - button "鼎龙股份 300054 | 电子-电子化学品-电子化学品Ⅲ 光刻胶 中芯国际概念 存储芯片 先进封装 OLED" [ref=e1520] [cursor=pointer]:
+                  - strong [ref=e1521]: 鼎龙股份
+                  - generic [ref=e1522]: 300054 | 电子-电子化学品-电子化学品Ⅲ
+                  - generic [ref=e1523]:
+                    - generic [ref=e1524]: 光刻胶
+                    - generic [ref=e1525]: 中芯国际概念
+                    - generic [ref=e1526]: 存储芯片
+                    - generic [ref=e1527]: 先进封装
+                    - generic [ref=e1528]: OLED
+                - generic [ref=e1530]:
+                  - button "加入备选关注 300054" [ref=e1531] [cursor=pointer]:
+                    - img [ref=e1532]
+                  - button "删除研究池卡片 300054" [ref=e1534] [cursor=pointer]:
+                    - img [ref=e1535]
+              - generic [ref=e1538]:
+                - button "东方电气 600875 | 电力设备-其他电源设备-其他电源设备Ⅲ 电气设备 抽水蓄能 可控核聚变 核电 光热发电" [ref=e1539] [cursor=pointer]:
+                  - strong [ref=e1540]: 东方电气
+                  - generic [ref=e1541]: 600875 | 电力设备-其他电源设备-其他电源设备Ⅲ
+                  - generic [ref=e1542]:
+                    - generic [ref=e1543]: 电气设备
+                    - generic [ref=e1544]: 抽水蓄能
+                    - generic [ref=e1545]: 可控核聚变
+                    - generic [ref=e1546]: 核电
+                    - generic [ref=e1547]: 光热发电
+                - generic [ref=e1549]:
+                  - button "加入备选关注 600875" [ref=e1550] [cursor=pointer]:
+                    - img [ref=e1551]
+                  - button "删除研究池卡片 600875" [ref=e1553] [cursor=pointer]:
+                    - img [ref=e1554]
+              - generic [ref=e1557]:
+                - button "中稀有色 600259 | 有色金属-小金属-稀土 稀土永磁 金属铜 小金属概念 2026一季报预增 央企国企改革" [ref=e1558] [cursor=pointer]:
+                  - strong [ref=e1559]: 中稀有色
+                  - generic [ref=e1560]: 600259 | 有色金属-小金属-稀土
+                  - generic [ref=e1561]:
+                    - generic [ref=e1562]: 稀土永磁
+                    - generic [ref=e1563]: 金属铜
+                    - generic [ref=e1564]: 小金属概念
+                    - generic [ref=e1565]: 2026一季报预增
+                    - generic [ref=e1566]: 央企国企改革
+                - generic [ref=e1568]:
+                  - button "加入备选关注 600259" [ref=e1569] [cursor=pointer]:
+                    - img [ref=e1570]
+                  - button "删除研究池卡片 600259" [ref=e1572] [cursor=pointer]:
+                    - img [ref=e1573]
+              - generic [ref=e1576]:
+                - button "永鼎股份 600105 | 通信-通信设备-通信线缆及配套 共封装光学(CPO) 光纤概念 商业航天 5G 可控核聚变" [ref=e1577] [cursor=pointer]:
+                  - strong [ref=e1578]: 永鼎股份
+                  - generic [ref=e1579]: 600105 | 通信-通信设备-通信线缆及配套
+                  - generic [ref=e1580]:
+                    - generic [ref=e1581]: 共封装光学(CPO)
+                    - generic [ref=e1582]: 光纤概念
+                    - generic [ref=e1583]: 商业航天
+                    - generic [ref=e1584]: 5G
+                    - generic [ref=e1585]: 可控核聚变
+                - generic [ref=e1587]:
+                  - button "加入备选关注 600105" [ref=e1588] [cursor=pointer]:
+                    - img [ref=e1589]
+                  - button "删除研究池卡片 600105" [ref=e1591] [cursor=pointer]:
+                    - img [ref=e1592]
+              - generic [ref=e1595]:
+                - button "剑桥科技 603083 | 通信设备 通信-通信设备-通信终端及配件 共封装光学(CPO) F5G概念 WiFi 6 液冷服务器" [ref=e1596] [cursor=pointer]:
+                  - strong [ref=e1597]: 剑桥科技
+                  - generic [ref=e1598]: 603083 | 通信设备
+                  - generic [ref=e1599]:
+                    - generic [ref=e1600]: 通信-通信设备-通信终端及配件
+                    - generic [ref=e1601]: 共封装光学(CPO)
+                    - generic [ref=e1602]: F5G概念
+                    - generic [ref=e1603]: WiFi 6
+                    - generic [ref=e1604]: 液冷服务器
+                - generic [ref=e1606]:
+                  - button "加入备选关注 603083" [ref=e1607] [cursor=pointer]:
+                    - img [ref=e1608]
+                  - button "删除研究池卡片 603083" [ref=e1610] [cursor=pointer]:
+                    - img [ref=e1611]
+              - generic [ref=e1614]:
+                - button "北方稀土 600111 | 有色金属-小金属-稀土 稀土永磁 小金属概念 金属回收 2026一季报预增 回购增持再贷款概念" [ref=e1615] [cursor=pointer]:
+                  - strong [ref=e1616]: 北方稀土
+                  - generic [ref=e1617]: 600111 | 有色金属-小金属-稀土
+                  - generic [ref=e1618]:
+                    - generic [ref=e1619]: 稀土永磁
+                    - generic [ref=e1620]: 小金属概念
+                    - generic [ref=e1621]: 金属回收
+                    - generic [ref=e1622]: 2026一季报预增
+                    - generic [ref=e1623]: 回购增持再贷款概念
+                - generic [ref=e1625]:
+                  - button "加入备选关注 600111" [ref=e1626] [cursor=pointer]:
+                    - img [ref=e1627]
+                  - button "删除研究池卡片 600111" [ref=e1629] [cursor=pointer]:
+                    - img [ref=e1630]
+              - generic [ref=e1633]:
+                - button "东方盛虹 000301 | 石油石化-石油加工贸易-石油加工 环氧丙烷 煤化工概念 POE胶膜 回购增持再贷款概念 同花顺漂亮100" [ref=e1634] [cursor=pointer]:
+                  - strong [ref=e1635]: 东方盛虹
+                  - generic [ref=e1636]: 000301 | 石油石化-石油加工贸易-石油加工
+                  - generic [ref=e1637]:
+                    - generic [ref=e1638]: 环氧丙烷
+                    - generic [ref=e1639]: 煤化工概念
+                    - generic [ref=e1640]: POE胶膜
+                    - generic [ref=e1641]: 回购增持再贷款概念
+                    - generic [ref=e1642]: 同花顺漂亮100
+                - generic [ref=e1644]:
+                  - button "加入备选关注 000301" [ref=e1645] [cursor=pointer]:
+                    - img [ref=e1646]
+                  - button "删除研究池卡片 000301" [ref=e1648] [cursor=pointer]:
+                    - img [ref=e1649]
+              - generic [ref=e1652]:
+                - button "中钨高新 000657 | 有色金属-小金属-钨 金属铜 金属钴 小金属概念 金属回收 PCB概念" [ref=e1653] [cursor=pointer]:
+                  - strong [ref=e1654]: 中钨高新
+                  - generic [ref=e1655]: 000657 | 有色金属-小金属-钨
+                  - generic [ref=e1656]:
+                    - generic [ref=e1657]: 金属铜
+                    - generic [ref=e1658]: 金属钴
+                    - generic [ref=e1659]: 小金属概念
+                    - generic [ref=e1660]: 金属回收
+                    - generic [ref=e1661]: PCB概念
+                - generic [ref=e1663]:
+                  - button "加入备选关注 000657" [ref=e1664] [cursor=pointer]:
+                    - img [ref=e1665]
+                  - button "删除研究池卡片 000657" [ref=e1667] [cursor=pointer]:
+                    - img [ref=e1668]
+              - generic [ref=e1671]:
+                - button "赛微电子 300456 | 电子-半导体-集成电路制造 共封装光学(CPO) 光刻机 先进封装 太赫兹 6G概念" [ref=e1672] [cursor=pointer]:
+                  - strong [ref=e1673]: 赛微电子
+                  - generic [ref=e1674]: 300456 | 电子-半导体-集成电路制造
+                  - generic [ref=e1675]:
+                    - generic [ref=e1676]: 共封装光学(CPO)
+                    - generic [ref=e1677]: 光刻机
+                    - generic [ref=e1678]: 先进封装
+                    - generic [ref=e1679]: 太赫兹
+                    - generic [ref=e1680]: 6G概念
+                - generic [ref=e1682]:
+                  - button "加入备选关注 300456" [ref=e1683] [cursor=pointer]:
+                    - img [ref=e1684]
+                  - button "删除研究池卡片 300456" [ref=e1686] [cursor=pointer]:
+                    - img [ref=e1687]
+              - generic [ref=e1690]:
+                - button "鼎胜新材 603876 | 有色金属-工业金属-铝 钠离子电池 固态电池 锂电池概念 宁德时代概念 储能" [ref=e1691] [cursor=pointer]:
+                  - strong [ref=e1692]: 鼎胜新材
+                  - generic [ref=e1693]: 603876 | 有色金属-工业金属-铝
+                  - generic [ref=e1694]:
+                    - generic [ref=e1695]: 钠离子电池
+                    - generic [ref=e1696]: 固态电池
+                    - generic [ref=e1697]: 锂电池概念
+                    - generic [ref=e1698]: 宁德时代概念
+                    - generic [ref=e1699]: 储能
+                - generic [ref=e1701]:
+                  - button "加入备选关注 603876" [ref=e1702] [cursor=pointer]:
+                    - img [ref=e1703]
+                  - button "删除研究池卡片 603876" [ref=e1705] [cursor=pointer]:
+                    - img [ref=e1706]
+              - generic [ref=e1709]:
+                - button "拓荆科技 688072 | 电子-半导体-半导体设备 国家大基金持股 存储芯片 先进封装 芯片概念 沪股通" [ref=e1710] [cursor=pointer]:
+                  - strong [ref=e1711]: 拓荆科技
+                  - generic [ref=e1712]: 688072 | 电子-半导体-半导体设备
+                  - generic [ref=e1713]:
+                    - generic [ref=e1714]: 国家大基金持股
+                    - generic [ref=e1715]: 存储芯片
+                    - generic [ref=e1716]: 先进封装
+                    - generic [ref=e1717]: 芯片概念
+                    - generic [ref=e1718]: 沪股通
+                - generic [ref=e1720]:
+                  - button "加入备选关注 688072" [ref=e1721] [cursor=pointer]:
+                    - img [ref=e1722]
+                  - button "删除研究池卡片 688072" [ref=e1724] [cursor=pointer]:
+                    - img [ref=e1725]
+              - generic [ref=e1728]:
+                - button "昊华科技 600378 | 基础化工-化学制品-氟化工 磷化工 氟化工概念 国产航母 PVDF概念 中芯国际概念" [ref=e1729] [cursor=pointer]:
+                  - strong [ref=e1730]: 昊华科技
+                  - generic [ref=e1731]: 600378 | 基础化工-化学制品-氟化工
+                  - generic [ref=e1732]:
+                    - generic [ref=e1733]: 磷化工
+                    - generic [ref=e1734]: 氟化工概念
+                    - generic [ref=e1735]: 国产航母
+                    - generic [ref=e1736]: PVDF概念
+                    - generic [ref=e1737]: 中芯国际概念
+                - generic [ref=e1739]:
+                  - button "加入备选关注 600378" [ref=e1740] [cursor=pointer]:
+                    - img [ref=e1741]
+                  - button "删除研究池卡片 600378" [ref=e1743] [cursor=pointer]:
+                    - img [ref=e1744]
+              - generic [ref=e1747]:
+                - button "云铝股份 000807 | 有色金属-工业金属-铝 俄乌冲突概念 央企国企改革 西部大开发 国企改革 深股通" [ref=e1748] [cursor=pointer]:
+                  - strong [ref=e1749]: 云铝股份
+                  - generic [ref=e1750]: 000807 | 有色金属-工业金属-铝
+                  - generic [ref=e1751]:
+                    - generic [ref=e1752]: 俄乌冲突概念
+                    - generic [ref=e1753]: 央企国企改革
+                    - generic [ref=e1754]: 西部大开发
+                    - generic [ref=e1755]: 国企改革
+                    - generic [ref=e1756]: 深股通
+                - generic [ref=e1758]:
+                  - button "加入备选关注 000807" [ref=e1759] [cursor=pointer]:
+                    - img [ref=e1760]
+                  - button "删除研究池卡片 000807" [ref=e1762] [cursor=pointer]:
+                    - img [ref=e1763]
+              - generic [ref=e1766]:
+                - button "顺钠股份 000533 | 电力设备-电网设备-输变电设备 智能电网 抽水蓄能 风电 充电桩 超超临界发电" [ref=e1767] [cursor=pointer]:
+                  - strong [ref=e1768]: 顺钠股份
+                  - generic [ref=e1769]: 000533 | 电力设备-电网设备-输变电设备
+                  - generic [ref=e1770]:
+                    - generic [ref=e1771]: 智能电网
+                    - generic [ref=e1772]: 抽水蓄能
+                    - generic [ref=e1773]: 风电
+                    - generic [ref=e1774]: 充电桩
+                    - generic [ref=e1775]: 超超临界发电
+                - generic [ref=e1777]:
+                  - button "加入备选关注 000533" [ref=e1778] [cursor=pointer]:
+                    - img [ref=e1779]
+                  - button "删除研究池卡片 000533" [ref=e1781] [cursor=pointer]:
+                    - img [ref=e1782]
+              - generic [ref=e1785]:
+                - button "东岳硅材 300821 | 基础化工-化学制品-有机硅 有机硅概念 硅能源 2026一季报预增 燃料电池 融资融券" [ref=e1786] [cursor=pointer]:
+                  - strong [ref=e1787]: 东岳硅材
+                  - generic [ref=e1788]: 300821 | 基础化工-化学制品-有机硅
+                  - generic [ref=e1789]:
+                    - generic [ref=e1790]: 有机硅概念
+                    - generic [ref=e1791]: 硅能源
+                    - generic [ref=e1792]: 2026一季报预增
+                    - generic [ref=e1793]: 燃料电池
+                    - generic [ref=e1794]: 融资融券
+                - generic [ref=e1796]:
+                  - button "加入备选关注 300821" [ref=e1797] [cursor=pointer]:
+                    - img [ref=e1798]
+                  - button "删除研究池卡片 300821" [ref=e1800] [cursor=pointer]:
+                    - img [ref=e1801]
+              - generic [ref=e1804]:
+                - button "沃尔德 688028 | 机械设备-通用设备-磨具磨料 培育钻石 OLED 工业母机 核电 芯片概念" [ref=e1805] [cursor=pointer]:
+                  - strong [ref=e1806]: 沃尔德
+                  - generic [ref=e1807]: 688028 | 机械设备-通用设备-磨具磨料
+                  - generic [ref=e1808]:
+                    - generic [ref=e1809]: 培育钻石
+                    - generic [ref=e1810]: OLED
+                    - generic [ref=e1811]: 工业母机
+                    - generic [ref=e1812]: 核电
+                    - generic [ref=e1813]: 芯片概念
+                - generic [ref=e1815]:
+                  - button "加入备选关注 688028" [ref=e1816] [cursor=pointer]:
+                    - img [ref=e1817]
+                  - button "删除研究池卡片 688028" [ref=e1819] [cursor=pointer]:
+                    - img [ref=e1820]
+              - generic [ref=e1823]:
+                - button "三峡能源 600905 | 公用事业-电力-新能源发电 同花顺中特估100 绿色电力 碳交易 抽水蓄能 碳中和" [ref=e1824] [cursor=pointer]:
+                  - strong [ref=e1825]: 三峡能源
+                  - generic [ref=e1826]: 600905 | 公用事业-电力-新能源发电
+                  - generic [ref=e1827]:
+                    - generic [ref=e1828]: 同花顺中特估100
+                    - generic [ref=e1829]: 绿色电力
+                    - generic [ref=e1830]: 碳交易
+                    - generic [ref=e1831]: 抽水蓄能
+                    - generic [ref=e1832]: 碳中和
+                - generic [ref=e1834]:
+                  - button "加入备选关注 600905" [ref=e1835] [cursor=pointer]:
+                    - img [ref=e1836]
+                  - button "删除研究池卡片 600905" [ref=e1838] [cursor=pointer]:
+                    - img [ref=e1839]
+              - generic [ref=e1842]:
+                - button "恒瑞医药 600276 | 医药生物-化学制药-化学制剂 减肥药 创新药 细胞免疫治疗 眼科医疗 仿制药一致性评价" [ref=e1843] [cursor=pointer]:
+                  - strong [ref=e1844]: 恒瑞医药
+                  - generic [ref=e1845]: 600276 | 医药生物-化学制药-化学制剂
+                  - generic [ref=e1846]:
+                    - generic [ref=e1847]: 减肥药
+                    - generic [ref=e1848]: 创新药
+                    - generic [ref=e1849]: 细胞免疫治疗
+                    - generic [ref=e1850]: 眼科医疗
+                    - generic [ref=e1851]: 仿制药一致性评价
+                - generic [ref=e1853]:
+                  - button "加入备选关注 600276" [ref=e1854] [cursor=pointer]:
+                    - img [ref=e1855]
+                  - button "删除研究池卡片 600276" [ref=e1857] [cursor=pointer]:
+                    - img [ref=e1858]
+              - generic [ref=e1861]:
+                - button "天齐锂业 002466 | 有色金属-能源金属-锂 盐湖提锂 动力电池回收 固态电池 锂电池概念 化肥" [ref=e1862] [cursor=pointer]:
+                  - strong [ref=e1863]: 天齐锂业
+                  - generic [ref=e1864]: 002466 | 有色金属-能源金属-锂
+                  - generic [ref=e1865]:
+                    - generic [ref=e1866]: 盐湖提锂
+                    - generic [ref=e1867]: 动力电池回收
+                    - generic [ref=e1868]: 固态电池
+                    - generic [ref=e1869]: 锂电池概念
+                    - generic [ref=e1870]: 化肥
+                - generic [ref=e1872]:
+                  - button "加入备选关注 002466" [ref=e1873] [cursor=pointer]:
+                    - img [ref=e1874]
+                  - button "删除研究池卡片 002466" [ref=e1876] [cursor=pointer]:
+                    - img [ref=e1877]
+              - generic [ref=e1880]:
+                - button "长光华芯 688048 | 电子-半导体-分立器件 共封装光学(CPO) 光纤概念 第三代半导体 芯片概念 数据中心" [ref=e1881] [cursor=pointer]:
+                  - strong [ref=e1882]: 长光华芯
+                  - generic [ref=e1883]: 688048 | 电子-半导体-分立器件
+                  - generic [ref=e1884]:
+                    - generic [ref=e1885]: 共封装光学(CPO)
+                    - generic [ref=e1886]: 光纤概念
+                    - generic [ref=e1887]: 第三代半导体
+                    - generic [ref=e1888]: 芯片概念
+                    - generic [ref=e1889]: 数据中心
+                - generic [ref=e1891]:
+                  - button "加入备选关注 688048" [ref=e1892] [cursor=pointer]:
+                    - img [ref=e1893]
+                  - button "删除研究池卡片 688048" [ref=e1895] [cursor=pointer]:
+                    - img [ref=e1896]
+              - generic [ref=e1899]:
+                - button "盛弘股份 300693 | 电力设备-其他电源设备-其他电源设备Ⅲ 高压快充 数据中心 虚拟电厂 宁德时代概念 充电桩" [ref=e1900] [cursor=pointer]:
+                  - strong [ref=e1901]: 盛弘股份
+                  - generic [ref=e1902]: 300693 | 电力设备-其他电源设备-其他电源设备Ⅲ
+                  - generic [ref=e1903]:
+                    - generic [ref=e1904]: 高压快充
+                    - generic [ref=e1905]: 数据中心
+                    - generic [ref=e1906]: 虚拟电厂
+                    - generic [ref=e1907]: 宁德时代概念
+                    - generic [ref=e1908]: 充电桩
+                - generic [ref=e1910]:
+                  - button "加入备选关注 300693" [ref=e1911] [cursor=pointer]:
+                    - img [ref=e1912]
+                  - button "删除研究池卡片 300693" [ref=e1914] [cursor=pointer]:
+                    - img [ref=e1915]
+              - generic [ref=e1918]:
+                - button "万华化学 600309 | 基础化工-化学制品-聚氨酯 环氧丙烷 煤化工概念 丙烯酸 POE胶膜 可降解塑料" [ref=e1919] [cursor=pointer]:
+                  - strong [ref=e1920]: 万华化学
+                  - generic [ref=e1921]: 600309 | 基础化工-化学制品-聚氨酯
+                  - generic [ref=e1922]:
+                    - generic [ref=e1923]: 环氧丙烷
+                    - generic [ref=e1924]: 煤化工概念
+                    - generic [ref=e1925]: 丙烯酸
+                    - generic [ref=e1926]: POE胶膜
+                    - generic [ref=e1927]: 可降解塑料
+                - generic [ref=e1929]:
+                  - button "加入备选关注 600309" [ref=e1930] [cursor=pointer]:
+                    - img [ref=e1931]
+                  - button "删除研究池卡片 600309" [ref=e1933] [cursor=pointer]:
+                    - img [ref=e1934]
+              - generic [ref=e1937]:
+                - button "金宏气体 688106 | 电子-电子化学品-电子化学品Ⅲ 俄乌冲突概念 天然气 固态电池 氢能源 中芯国际概念" [ref=e1938] [cursor=pointer]:
+                  - strong [ref=e1939]: 金宏气体
+                  - generic [ref=e1940]: 688106 | 电子-电子化学品-电子化学品Ⅲ
+                  - generic [ref=e1941]:
+                    - generic [ref=e1942]: 俄乌冲突概念
+                    - generic [ref=e1943]: 天然气
+                    - generic [ref=e1944]: 固态电池
+                    - generic [ref=e1945]: 氢能源
+                    - generic [ref=e1946]: 中芯国际概念
+                - generic [ref=e1948]:
+                  - button "加入备选关注 688106" [ref=e1949] [cursor=pointer]:
+                    - img [ref=e1950]
+                  - button "删除研究池卡片 688106" [ref=e1952] [cursor=pointer]:
+                    - img [ref=e1953]
+              - generic [ref=e1956]:
+                - button "东田微 301183 | 电子-光学光电子-光学元件 F5G概念 共封装光学(CPO) 华为手机 6G概念 消费电子概念" [ref=e1957] [cursor=pointer]:
+                  - strong [ref=e1958]: 东田微
+                  - generic [ref=e1959]: 301183 | 电子-光学光电子-光学元件
+                  - generic [ref=e1960]:
+                    - generic [ref=e1961]: F5G概念
+                    - generic [ref=e1962]: 共封装光学(CPO)
+                    - generic [ref=e1963]: 华为手机
+                    - generic [ref=e1964]: 6G概念
+                    - generic [ref=e1965]: 消费电子概念
+                - generic [ref=e1967]:
+                  - button "加入备选关注 301183" [ref=e1968] [cursor=pointer]:
+                    - img [ref=e1969]
+                  - button "删除研究池卡片 301183" [ref=e1971] [cursor=pointer]:
+                    - img [ref=e1972]
+              - generic [ref=e1975]:
+                - button "金利华电 300069 | 电力设备-电网设备-线缆部件及其他 特高压 智能电网 核电 文化传媒概念 燃料电池" [ref=e1976] [cursor=pointer]:
+                  - strong [ref=e1977]: 金利华电
+                  - generic [ref=e1978]: 300069 | 电力设备-电网设备-线缆部件及其他
+                  - generic [ref=e1979]:
+                    - generic [ref=e1980]: 特高压
+                    - generic [ref=e1981]: 智能电网
+                    - generic [ref=e1982]: 核电
+                    - generic [ref=e1983]: 文化传媒概念
+                    - generic [ref=e1984]: 燃料电池
+                - generic [ref=e1986]:
+                  - button "加入备选关注 300069" [ref=e1987] [cursor=pointer]:
+                    - img [ref=e1988]
+                  - button "删除研究池卡片 300069" [ref=e1990] [cursor=pointer]:
+                    - img [ref=e1991]
+              - generic [ref=e1994]:
+                - button "电光科技 002730 | 机械设备-专用设备-能源及重型设备 电力物联网 算力租赁 东数西算(算力) 鸿蒙概念 人工智能" [ref=e1995] [cursor=pointer]:
+                  - strong [ref=e1996]: 电光科技
+                  - generic [ref=e1997]: 002730 | 机械设备-专用设备-能源及重型设备
+                  - generic [ref=e1998]:
+                    - generic [ref=e1999]: 电力物联网
+                    - generic [ref=e2000]: 算力租赁
+                    - generic [ref=e2001]: 东数西算(算力)
+                    - generic [ref=e2002]: 鸿蒙概念
+                    - generic [ref=e2003]: 人工智能
+                - generic [ref=e2005]:
+                  - button "加入备选关注 002730" [ref=e2006] [cursor=pointer]:
+                    - img [ref=e2007]
+                  - button "删除研究池卡片 002730" [ref=e2009] [cursor=pointer]:
+                    - img [ref=e2010]
+              - generic [ref=e2013]:
+                - button "金禄电子 301282 | 电子-元件-印制电路板 PCB概念 富士康概念 共封装光学(CPO) 5G 汽车电子" [ref=e2014] [cursor=pointer]:
+                  - strong [ref=e2015]: 金禄电子
+                  - generic [ref=e2016]: 301282 | 电子-元件-印制电路板
+                  - generic [ref=e2017]:
+                    - generic [ref=e2018]: PCB概念
+                    - generic [ref=e2019]: 富士康概念
+                    - generic [ref=e2020]: 共封装光学(CPO)
+                    - generic [ref=e2021]: 5G
+                    - generic [ref=e2022]: 汽车电子
+                - generic [ref=e2024]:
+                  - button "加入备选关注 301282" [ref=e2025] [cursor=pointer]:
+                    - img [ref=e2026]
+                  - button "删除研究池卡片 301282" [ref=e2028] [cursor=pointer]:
+                    - img [ref=e2029]
+              - generic [ref=e2032]:
+                - button "华宏科技 002645 | 环保-环境治理-综合环境治理 稀土永磁 金属钴 金属铜 金属回收 消费电子概念" [ref=e2033] [cursor=pointer]:
+                  - strong [ref=e2034]: 华宏科技
+                  - generic [ref=e2035]: 002645 | 环保-环境治理-综合环境治理
+                  - generic [ref=e2036]:
+                    - generic [ref=e2037]: 稀土永磁
+                    - generic [ref=e2038]: 金属钴
+                    - generic [ref=e2039]: 金属铜
+                    - generic [ref=e2040]: 金属回收
+                    - generic [ref=e2041]: 消费电子概念
+                - generic [ref=e2043]:
+                  - button "加入备选关注 002645" [ref=e2044] [cursor=pointer]:
+                    - img [ref=e2045]
+                  - button "删除研究池卡片 002645" [ref=e2047] [cursor=pointer]:
+                    - img [ref=e2048]
+              - generic [ref=e2051]:
+                - button "德科立 688205 | 通信-通信设备-通信网络设备及器件 共封装光学(CPO) F5G概念 5G 芯片概念 数据中心" [ref=e2052] [cursor=pointer]:
+                  - strong [ref=e2053]: 德科立
+                  - generic [ref=e2054]: 688205 | 通信-通信设备-通信网络设备及器件
+                  - generic [ref=e2055]:
+                    - generic [ref=e2056]: 共封装光学(CPO)
+                    - generic [ref=e2057]: F5G概念
+                    - generic [ref=e2058]: 5G
+                    - generic [ref=e2059]: 芯片概念
+                    - generic [ref=e2060]: 数据中心
+                - generic [ref=e2062]:
+                  - button "加入备选关注 688205" [ref=e2063] [cursor=pointer]:
+                    - img [ref=e2064]
+                  - button "删除研究池卡片 688205" [ref=e2066] [cursor=pointer]:
+                    - img [ref=e2067]
+              - generic [ref=e2070]:
+                - button "仕佳光子 688313 | 通信-通信设备-通信网络设备及器件 共封装光学(CPO) F5G概念 光纤概念 5G 芯片概念" [ref=e2071] [cursor=pointer]:
+                  - strong [ref=e2072]: 仕佳光子
+                  - generic [ref=e2073]: 688313 | 通信-通信设备-通信网络设备及器件
+                  - generic [ref=e2074]:
+                    - generic [ref=e2075]: 共封装光学(CPO)
+                    - generic [ref=e2076]: F5G概念
+                    - generic [ref=e2077]: 光纤概念
+                    - generic [ref=e2078]: 5G
+                    - generic [ref=e2079]: 芯片概念
+                - generic [ref=e2081]:
+                  - button "加入备选关注 688313" [ref=e2082] [cursor=pointer]:
+                    - img [ref=e2083]
+                  - button "删除研究池卡片 688313" [ref=e2085] [cursor=pointer]:
+                    - img [ref=e2086]
+              - generic [ref=e2089]:
+                - button "四方达 300179 | 机械设备-通用设备-磨具磨料 矿物制品 培育钻石 第三代半导体 海工装备 专精特新" [ref=e2090] [cursor=pointer]:
+                  - strong [ref=e2091]: 四方达
+                  - generic [ref=e2092]: 300179 | 机械设备-通用设备-磨具磨料
+                  - generic [ref=e2093]:
+                    - generic [ref=e2094]: 矿物制品
+                    - generic [ref=e2095]: 培育钻石
+                    - generic [ref=e2096]: 第三代半导体
+                    - generic [ref=e2097]: 海工装备
+                    - generic [ref=e2098]: 专精特新
+                - generic [ref=e2100]:
+                  - button "加入备选关注 300179" [ref=e2101] [cursor=pointer]:
+                    - img [ref=e2102]
+                  - button "删除研究池卡片 300179" [ref=e2104] [cursor=pointer]:
+                    - img [ref=e2105]
+              - generic [ref=e2108]:
+                - button "北京君正 300223 | 电子-半导体-数字芯片设计 存储芯片 汽车芯片 MCU芯片 OLED 芯片概念" [ref=e2109] [cursor=pointer]:
+                  - strong [ref=e2110]: 北京君正
+                  - generic [ref=e2111]: 300223 | 电子-半导体-数字芯片设计
+                  - generic [ref=e2112]:
+                    - generic [ref=e2113]: 存储芯片
+                    - generic [ref=e2114]: 汽车芯片
+                    - generic [ref=e2115]: MCU芯片
+                    - generic [ref=e2116]: OLED
+                    - generic [ref=e2117]: 芯片概念
+                - generic [ref=e2119]:
+                  - button "加入备选关注 300223" [ref=e2120] [cursor=pointer]:
+                    - img [ref=e2121]
+                  - button "删除研究池卡片 300223" [ref=e2123] [cursor=pointer]:
+                    - img [ref=e2124]
+              - generic [ref=e2127]:
+                - button "亿纬锂能 300014 | 电力设备-电池-锂电池 钠离子电池 固态电池 动力电池回收 盐湖提锂 锂电池概念" [ref=e2128] [cursor=pointer]:
+                  - strong [ref=e2129]: 亿纬锂能
+                  - generic [ref=e2130]: 300014 | 电力设备-电池-锂电池
+                  - generic [ref=e2131]:
+                    - generic [ref=e2132]: 钠离子电池
+                    - generic [ref=e2133]: 固态电池
+                    - generic [ref=e2134]: 动力电池回收
+                    - generic [ref=e2135]: 盐湖提锂
+                    - generic [ref=e2136]: 锂电池概念
+                - generic [ref=e2138]:
+                  - button "加入备选关注 300014" [ref=e2139] [cursor=pointer]:
+                    - img [ref=e2140]
+                  - button "删除研究池卡片 300014" [ref=e2142] [cursor=pointer]:
+                    - img [ref=e2143]
+              - generic [ref=e2146]:
+                - button "中际旭创 300308 | 通信设备 通信-通信设备-通信网络设备及器件 共封装光学(CPO) F5G概念 液冷服务器 芯片概念" [ref=e2147] [cursor=pointer]:
+                  - strong [ref=e2148]: 中际旭创
+                  - generic [ref=e2149]: 300308 | 通信设备
+                  - generic [ref=e2150]:
+                    - generic [ref=e2151]: 通信-通信设备-通信网络设备及器件
+                    - generic [ref=e2152]: 共封装光学(CPO)
+                    - generic [ref=e2153]: F5G概念
+                    - generic [ref=e2154]: 液冷服务器
+                    - generic [ref=e2155]: 芯片概念
+                - generic [ref=e2157]:
+                  - button "加入备选关注 300308" [ref=e2158] [cursor=pointer]:
+                    - img [ref=e2159]
+                  - button "删除研究池卡片 300308" [ref=e2161] [cursor=pointer]:
+                    - img [ref=e2162]
+              - generic [ref=e2165]:
+                - button "云天化 600096 | 基础化工-农化制品-磷肥及磷化工 磷化工 化肥 氟化工概念 煤化工概念 煤炭概念" [ref=e2166] [cursor=pointer]:
+                  - strong [ref=e2167]: 云天化
+                  - generic [ref=e2168]: 600096 | 基础化工-农化制品-磷肥及磷化工
+                  - generic [ref=e2169]:
+                    - generic [ref=e2170]: 磷化工
+                    - generic [ref=e2171]: 化肥
+                    - generic [ref=e2172]: 氟化工概念
+                    - generic [ref=e2173]: 煤化工概念
+                    - generic [ref=e2174]: 煤炭概念
+                - generic [ref=e2176]:
+                  - button "加入备选关注 600096" [ref=e2177] [cursor=pointer]:
+                    - img [ref=e2178]
+                  - button "删除研究池卡片 600096" [ref=e2180] [cursor=pointer]:
+                    - img [ref=e2181]
+              - generic [ref=e2184]:
+                - button "华胜天成 600410 | 计算机-IT服务-IT服务Ⅲ 云计算 华为鲲鹏 东数西算(算力) 网络安全 信创" [ref=e2185] [cursor=pointer]:
+                  - strong [ref=e2186]: 华胜天成
+                  - generic [ref=e2187]: 600410 | 计算机-IT服务-IT服务Ⅲ
+                  - generic [ref=e2188]:
+                    - generic [ref=e2189]: 云计算
+                    - generic [ref=e2190]: 华为鲲鹏
+                    - generic [ref=e2191]: 东数西算(算力)
+                    - generic [ref=e2192]: 网络安全
+                    - generic [ref=e2193]: 信创
+                - generic [ref=e2195]:
+                  - button "加入备选关注 600410" [ref=e2196] [cursor=pointer]:
+                    - img [ref=e2197]
+                  - button "删除研究池卡片 600410" [ref=e2199] [cursor=pointer]:
+                    - img [ref=e2200]
+              - generic [ref=e2203]:
+                - button "中国能建 601868 | 建筑装饰-建筑装饰-基础建设 碳交易 超超临界发电 虚拟电厂 生物质能发电 绿色电力" [ref=e2204] [cursor=pointer]:
+                  - strong [ref=e2205]: 中国能建
+                  - generic [ref=e2206]: 601868 | 建筑装饰-建筑装饰-基础建设
+                  - generic [ref=e2207]:
+                    - generic [ref=e2208]: 碳交易
+                    - generic [ref=e2209]: 超超临界发电
+                    - generic [ref=e2210]: 虚拟电厂
+                    - generic [ref=e2211]: 生物质能发电
+                    - generic [ref=e2212]: 绿色电力
+                - generic [ref=e2214]:
+                  - button "加入备选关注 601868" [ref=e2215] [cursor=pointer]:
+                    - img [ref=e2216]
+                  - button "删除研究池卡片 601868" [ref=e2218] [cursor=pointer]:
+                    - img [ref=e2219]
+              - generic [ref=e2222]:
+                - button "腾景科技 688195 | 电子-光学光电子-光学元件 共封装光学(CPO) 光纤概念 光刻机 量子科技 AI眼镜" [ref=e2223] [cursor=pointer]:
+                  - strong [ref=e2224]: 腾景科技
+                  - generic [ref=e2225]: 688195 | 电子-光学光电子-光学元件
+                  - generic [ref=e2226]:
+                    - generic [ref=e2227]: 共封装光学(CPO)
+                    - generic [ref=e2228]: 光纤概念
+                    - generic [ref=e2229]: 光刻机
+                    - generic [ref=e2230]: 量子科技
+                    - generic [ref=e2231]: AI眼镜
+                - generic [ref=e2233]:
+                  - button "加入备选关注 688195" [ref=e2234] [cursor=pointer]:
+                    - img [ref=e2235]
+                  - button "删除研究池卡片 688195" [ref=e2237] [cursor=pointer]:
+                    - img [ref=e2238]
+              - generic [ref=e2241]:
+                - button "雷科防务 002413 | 国防军工-军工电子-军工电子Ⅲ 太赫兹 军工信息化 商业航天 军民融合 卫星导航" [ref=e2242] [cursor=pointer]:
+                  - strong [ref=e2243]: 雷科防务
+                  - generic [ref=e2244]: 002413 | 国防军工-军工电子-军工电子Ⅲ
+                  - generic [ref=e2245]:
+                    - generic [ref=e2246]: 太赫兹
+                    - generic [ref=e2247]: 军工信息化
+                    - generic [ref=e2248]: 商业航天
+                    - generic [ref=e2249]: 军民融合
+                    - generic [ref=e2250]: 卫星导航
+                - generic [ref=e2252]:
+                  - button "加入备选关注 002413" [ref=e2253] [cursor=pointer]:
+                    - img [ref=e2254]
+                  - button "删除研究池卡片 002413" [ref=e2256] [cursor=pointer]:
+                    - img [ref=e2257]
+              - generic [ref=e2260]:
+                - button "阳光电源 300274 | 电气设备 光伏设备" [ref=e2261] [cursor=pointer]:
+                  - strong [ref=e2262]: 阳光电源
+                  - generic [ref=e2263]: 300274 | 电气设备
+                  - generic [ref=e2265]: 光伏设备
+                - generic [ref=e2267]:
+                  - button "加入备选关注 300274" [ref=e2268] [cursor=pointer]:
+                    - img [ref=e2269]
+                  - button "删除研究池卡片 300274" [ref=e2271] [cursor=pointer]:
+                    - img [ref=e2272]
+              - generic [ref=e2275]:
+                - button "生益科技 600183 | 电子-元件-印制电路板 PCB概念 共封装光学(CPO) 先进封装 存储芯片 MiniLED" [ref=e2276] [cursor=pointer]:
+                  - strong [ref=e2277]: 生益科技
+                  - generic [ref=e2278]: 600183 | 电子-元件-印制电路板
+                  - generic [ref=e2279]:
+                    - generic [ref=e2280]: PCB概念
+                    - generic [ref=e2281]: 共封装光学(CPO)
+                    - generic [ref=e2282]: 先进封装
+                    - generic [ref=e2283]: 存储芯片
+                    - generic [ref=e2284]: MiniLED
+                - generic [ref=e2286]:
+                  - button "加入备选关注 600183" [ref=e2287] [cursor=pointer]:
+                    - img [ref=e2288]
+                  - button "删除研究池卡片 600183" [ref=e2290] [cursor=pointer]:
+                    - img [ref=e2291]
+              - generic [ref=e2294]:
+                - button "华虹公司 688347 | 电子-半导体-集成电路制造 国家大基金持股 存储芯片 芯片概念 消费电子概念 上海国企改革" [ref=e2295] [cursor=pointer]:
+                  - strong [ref=e2296]: 华虹公司
+                  - generic [ref=e2297]: 688347 | 电子-半导体-集成电路制造
+                  - generic [ref=e2298]:
+                    - generic [ref=e2299]: 国家大基金持股
+                    - generic [ref=e2300]: 存储芯片
+                    - generic [ref=e2301]: 芯片概念
+                    - generic [ref=e2302]: 消费电子概念
+                    - generic [ref=e2303]: 上海国企改革
+                - generic [ref=e2305]:
+                  - button "加入备选关注 688347" [ref=e2306] [cursor=pointer]:
+                    - img [ref=e2307]
+                  - button "删除研究池卡片 688347" [ref=e2309] [cursor=pointer]:
+                    - img [ref=e2310]
+              - generic [ref=e2313]:
+                - button "钧达股份 002865 | 电力设备-光伏设备-光伏电池组件 BC电池 钙钛矿电池 TOPCON电池 商业航天 光伏概念" [ref=e2314] [cursor=pointer]:
+                  - strong [ref=e2315]: 钧达股份
+                  - generic [ref=e2316]: 002865 | 电力设备-光伏设备-光伏电池组件
+                  - generic [ref=e2317]:
+                    - generic [ref=e2318]: BC电池
+                    - generic [ref=e2319]: 钙钛矿电池
+                    - generic [ref=e2320]: TOPCON电池
+                    - generic [ref=e2321]: 商业航天
+                    - generic [ref=e2322]: 光伏概念
+                - generic [ref=e2324]:
+                  - button "加入备选关注 002865" [ref=e2325] [cursor=pointer]:
+                    - img [ref=e2326]
+                  - button "删除研究池卡片 002865" [ref=e2328] [cursor=pointer]:
+                    - img [ref=e2329]
+              - generic [ref=e2332]:
+                - button "浙江世宝 002703 | 汽车-汽车零部件-底盘与发动机系统 长安汽车概念 共同富裕示范区 小米汽车 无人驾驶 比亚迪概念" [ref=e2333] [cursor=pointer]:
+                  - strong [ref=e2334]: 浙江世宝
+                  - generic [ref=e2335]: 002703 | 汽车-汽车零部件-底盘与发动机系统
+                  - generic [ref=e2336]:
+                    - generic [ref=e2337]: 长安汽车概念
+                    - generic [ref=e2338]: 共同富裕示范区
+                    - generic [ref=e2339]: 小米汽车
+                    - generic [ref=e2340]: 无人驾驶
+                    - generic [ref=e2341]: 比亚迪概念
+                - generic [ref=e2343]:
+                  - button "加入备选关注 002703" [ref=e2344] [cursor=pointer]:
+                    - img [ref=e2345]
+                  - button "删除研究池卡片 002703" [ref=e2347] [cursor=pointer]:
+                    - img [ref=e2348]
+              - generic [ref=e2351]:
+                - button "牧原股份 002714 | 农林牧渔-养殖业-生猪养殖 猪肉 同花顺漂亮100 合成生物 乡村振兴 参股银行" [ref=e2352] [cursor=pointer]:
+                  - strong [ref=e2353]: 牧原股份
+                  - generic [ref=e2354]: 002714 | 农林牧渔-养殖业-生猪养殖
+                  - generic [ref=e2355]:
+                    - generic [ref=e2356]: 猪肉
+                    - generic [ref=e2357]: 同花顺漂亮100
+                    - generic [ref=e2358]: 合成生物
+                    - generic [ref=e2359]: 乡村振兴
+                    - generic [ref=e2360]: 参股银行
+                - generic [ref=e2362]:
+                  - button "加入备选关注 002714" [ref=e2363] [cursor=pointer]:
+                    - img [ref=e2364]
+                  - button "删除研究池卡片 002714" [ref=e2366] [cursor=pointer]:
+                    - img [ref=e2367]
+              - generic [ref=e2370]:
+                - button "湖南黄金 002155 | 有色金属-贵金属-贵金属Ⅲ 黄金概念 金属锌 金属铅 小金属概念 2025年报预增" [ref=e2371] [cursor=pointer]:
+                  - strong [ref=e2372]: 湖南黄金
+                  - generic [ref=e2373]: 002155 | 有色金属-贵金属-贵金属Ⅲ
+                  - generic [ref=e2374]:
+                    - generic [ref=e2375]: 黄金概念
+                    - generic [ref=e2376]: 金属锌
+                    - generic [ref=e2377]: 金属铅
+                    - generic [ref=e2378]: 小金属概念
+                    - generic [ref=e2379]: 2025年报预增
+                - generic [ref=e2381]:
+                  - button "加入备选关注 002155" [ref=e2382] [cursor=pointer]:
+                    - img [ref=e2383]
+                  - button "删除研究池卡片 002155" [ref=e2385] [cursor=pointer]:
+                    - img [ref=e2386]
+              - generic [ref=e2389]:
+                - button "梅花生物 600873 | 基础化工-化学制品-食品及饲料添加剂 食品 代糖概念 维生素 高股息精选 合成生物" [ref=e2390] [cursor=pointer]:
+                  - strong [ref=e2391]: 梅花生物
+                  - generic [ref=e2392]: 600873 | 基础化工-化学制品-食品及饲料添加剂
+                  - generic [ref=e2393]:
+                    - generic [ref=e2394]: 食品
+                    - generic [ref=e2395]: 代糖概念
+                    - generic [ref=e2396]: 维生素
+                    - generic [ref=e2397]: 高股息精选
+                    - generic [ref=e2398]: 合成生物
+                - generic [ref=e2400]:
+                  - button "加入备选关注 600873" [ref=e2401] [cursor=pointer]:
+                    - img [ref=e2402]
+                  - button "删除研究池卡片 600873" [ref=e2404] [cursor=pointer]:
+                    - img [ref=e2405]
+              - generic [ref=e2408]:
+                - button "北斗星通 002151 | 国防军工-军工电子-军工电子Ⅲ 军工信息化 国产航母 卫星导航 商业航天 军民融合" [ref=e2409] [cursor=pointer]:
+                  - strong [ref=e2410]: 北斗星通
+                  - generic [ref=e2411]: 002151 | 国防军工-军工电子-军工电子Ⅲ
+                  - generic [ref=e2412]:
+                    - generic [ref=e2413]: 军工信息化
+                    - generic [ref=e2414]: 国产航母
+                    - generic [ref=e2415]: 卫星导航
+                    - generic [ref=e2416]: 商业航天
+                    - generic [ref=e2417]: 军民融合
+                - generic [ref=e2419]:
+                  - button "加入备选关注 002151" [ref=e2420] [cursor=pointer]:
+                    - img [ref=e2421]
+                  - button "删除研究池卡片 002151" [ref=e2423] [cursor=pointer]:
+                    - img [ref=e2424]
+              - generic [ref=e2427]:
+                - button "润丰股份 301035 | 基础化工-农化制品-农药 草甘膦 回购增持再贷款概念 人民币贬值受益 2025年报预增 深股通" [ref=e2428] [cursor=pointer]:
+                  - strong [ref=e2429]: 润丰股份
+                  - generic [ref=e2430]: 301035 | 基础化工-农化制品-农药
+                  - generic [ref=e2431]:
+                    - generic [ref=e2432]: 草甘膦
+                    - generic [ref=e2433]: 回购增持再贷款概念
+                    - generic [ref=e2434]: 人民币贬值受益
+                    - generic [ref=e2435]: 2025年报预增
+                    - generic [ref=e2436]: 深股通
+                - generic [ref=e2438]:
+                  - button "加入备选关注 301035" [ref=e2439] [cursor=pointer]:
+                    - img [ref=e2440]
+                  - button "删除研究池卡片 301035" [ref=e2442] [cursor=pointer]:
+                    - img [ref=e2443]
+              - generic [ref=e2446]:
+                - button "青岛啤酒 600600 | 食品饮料-饮料制造-啤酒 超级品牌 啤酒概念 证金持股 同花顺漂亮100 国企改革" [ref=e2447] [cursor=pointer]:
+                  - strong [ref=e2448]: 青岛啤酒
+                  - generic [ref=e2449]: 600600 | 食品饮料-饮料制造-啤酒
+                  - generic [ref=e2450]:
+                    - generic [ref=e2451]: 超级品牌
+                    - generic [ref=e2452]: 啤酒概念
+                    - generic [ref=e2453]: 证金持股
+                    - generic [ref=e2454]: 同花顺漂亮100
+                    - generic [ref=e2455]: 国企改革
+                - generic [ref=e2457]:
+                  - button "加入备选关注 600600" [ref=e2458] [cursor=pointer]:
+                    - img [ref=e2459]
+                  - button "删除研究池卡片 600600" [ref=e2461] [cursor=pointer]:
+                    - img [ref=e2462]
+              - generic [ref=e2465]:
+                - button "澜起科技 688008 | 电子-半导体-数字芯片设计 存储芯片 中芯国际概念 消费电子概念 芯片概念 数据中心" [ref=e2466] [cursor=pointer]:
+                  - strong [ref=e2467]: 澜起科技
+                  - generic [ref=e2468]: 688008 | 电子-半导体-数字芯片设计
+                  - generic [ref=e2469]:
+                    - generic [ref=e2470]: 存储芯片
+                    - generic [ref=e2471]: 中芯国际概念
+                    - generic [ref=e2472]: 消费电子概念
+                    - generic [ref=e2473]: 芯片概念
+                    - generic [ref=e2474]: 数据中心
+                - generic [ref=e2476]:
+                  - button "加入备选关注 688008" [ref=e2477] [cursor=pointer]:
+                    - img [ref=e2478]
+                  - button "删除研究池卡片 688008" [ref=e2480] [cursor=pointer]:
+                    - img [ref=e2481]
+              - generic [ref=e2484]:
+                - button "大金重工 002487 | 电力设备-风电设备-风电零部件 绿色电力 风电 航运概念 2025年报预增 海工装备" [ref=e2485] [cursor=pointer]:
+                  - strong [ref=e2486]: 大金重工
+                  - generic [ref=e2487]: 002487 | 电力设备-风电设备-风电零部件
+                  - generic [ref=e2488]:
+                    - generic [ref=e2489]: 绿色电力
+                    - generic [ref=e2490]: 风电
+                    - generic [ref=e2491]: 航运概念
+                    - generic [ref=e2492]: 2025年报预增
+                    - generic [ref=e2493]: 海工装备
+                - generic [ref=e2495]:
+                  - button "加入备选关注 002487" [ref=e2496] [cursor=pointer]:
+                    - img [ref=e2497]
+                  - button "删除研究池卡片 002487" [ref=e2499] [cursor=pointer]:
+                    - img [ref=e2500]
+              - generic [ref=e2503]:
+                - button "山东黄金 600547 | 有色金属-贵金属-贵金属Ⅲ 黄金 黄金概念 2025年报预增 证金持股 国企改革" [ref=e2504] [cursor=pointer]:
+                  - strong [ref=e2505]: 山东黄金
+                  - generic [ref=e2506]: 600547 | 有色金属-贵金属-贵金属Ⅲ
+                  - generic [ref=e2507]:
+                    - generic [ref=e2508]: 黄金
+                    - generic [ref=e2509]: 黄金概念
+                    - generic [ref=e2510]: 2025年报预增
+                    - generic [ref=e2511]: 证金持股
+                    - generic [ref=e2512]: 国企改革
+                - generic [ref=e2514]:
+                  - button "加入备选关注 600547" [ref=e2515] [cursor=pointer]:
+                    - img [ref=e2516]
+                  - button "删除研究池卡片 600547" [ref=e2518] [cursor=pointer]:
+                    - img [ref=e2519]
+              - generic [ref=e2522]:
+                - button "菲利华 300395 | 国防军工-军工装备-航空装备 PCB概念 OLED 5G 芯片概念 光伏概念" [ref=e2523] [cursor=pointer]:
+                  - strong [ref=e2524]: 菲利华
+                  - generic [ref=e2525]: 300395 | 国防军工-军工装备-航空装备
+                  - generic [ref=e2526]:
+                    - generic [ref=e2527]: PCB概念
+                    - generic [ref=e2528]: OLED
+                    - generic [ref=e2529]: 5G
+                    - generic [ref=e2530]: 芯片概念
+                    - generic [ref=e2531]: 光伏概念
+                - generic [ref=e2533]:
+                  - button "加入备选关注 300395" [ref=e2534] [cursor=pointer]:
+                    - img [ref=e2535]
+                  - button "删除研究池卡片 300395" [ref=e2537] [cursor=pointer]:
+                    - img [ref=e2538]
+              - generic [ref=e2541]:
+                - button "宏景科技 301396 | 计算机-IT服务-IT服务Ⅲ 算力租赁 财税数字化 云计算 东数西算(算力) 多模态AI" [ref=e2542] [cursor=pointer]:
+                  - strong [ref=e2543]: 宏景科技
+                  - generic [ref=e2544]: 301396 | 计算机-IT服务-IT服务Ⅲ
+                  - generic [ref=e2545]:
+                    - generic [ref=e2546]: 算力租赁
+                    - generic [ref=e2547]: 财税数字化
+                    - generic [ref=e2548]: 云计算
+                    - generic [ref=e2549]: 东数西算(算力)
+                    - generic [ref=e2550]: 多模态AI
+                - generic [ref=e2552]:
+                  - button "加入备选关注 301396" [ref=e2553] [cursor=pointer]:
+                    - img [ref=e2554]
+                  - button "删除研究池卡片 301396" [ref=e2556] [cursor=pointer]:
+                    - img [ref=e2557]
+              - generic [ref=e2560]:
+                - button "联影医疗 688271 | 医药生物-医疗器械-医疗设备 智能医疗 人工智能 AI应用 阿尔茨海默概念 医疗器械概念" [ref=e2561] [cursor=pointer]:
+                  - strong [ref=e2562]: 联影医疗
+                  - generic [ref=e2563]: 688271 | 医药生物-医疗器械-医疗设备
+                  - generic [ref=e2564]:
+                    - generic [ref=e2565]: 智能医疗
+                    - generic [ref=e2566]: 人工智能
+                    - generic [ref=e2567]: AI应用
+                    - generic [ref=e2568]: 阿尔茨海默概念
+                    - generic [ref=e2569]: 医疗器械概念
+                - generic [ref=e2571]:
+                  - button "加入备选关注 688271" [ref=e2572] [cursor=pointer]:
+                    - img [ref=e2573]
+                  - button "删除研究池卡片 688271" [ref=e2575] [cursor=pointer]:
+                    - img [ref=e2576]
+              - generic [ref=e2579]:
+                - button "创世纪 300083 | 机械设备-通用设备-机床工具 飞行汽车(eVTOL) 新型工业化 工业母机 人形机器人 无线充电" [ref=e2580] [cursor=pointer]:
+                  - strong [ref=e2581]: 创世纪
+                  - generic [ref=e2582]: 300083 | 机械设备-通用设备-机床工具
+                  - generic [ref=e2583]:
+                    - generic [ref=e2584]: 飞行汽车(eVTOL)
+                    - generic [ref=e2585]: 新型工业化
+                    - generic [ref=e2586]: 工业母机
+                    - generic [ref=e2587]: 人形机器人
+                    - generic [ref=e2588]: 无线充电
+                - generic [ref=e2590]:
+                  - button "加入备选关注 300083" [ref=e2591] [cursor=pointer]:
+                    - img [ref=e2592]
+                  - button "删除研究池卡片 300083" [ref=e2594] [cursor=pointer]:
+                    - img [ref=e2595]
+              - generic [ref=e2598]:
+                - button "中际联合 605305 | 机械设备-工程机械-工程机械Ⅲ 储能 2025年报预增 风电 专精特新 京津冀一体化" [ref=e2599] [cursor=pointer]:
+                  - strong [ref=e2600]: 中际联合
+                  - generic [ref=e2601]: 605305 | 机械设备-工程机械-工程机械Ⅲ
+                  - generic [ref=e2602]:
+                    - generic [ref=e2603]: 储能
+                    - generic [ref=e2604]: 2025年报预增
+                    - generic [ref=e2605]: 风电
+                    - generic [ref=e2606]: 专精特新
+                    - generic [ref=e2607]: 京津冀一体化
+                - generic [ref=e2609]:
+                  - button "加入备选关注 605305" [ref=e2610] [cursor=pointer]:
+                    - img [ref=e2611]
+                  - button "删除研究池卡片 605305" [ref=e2613] [cursor=pointer]:
+                    - img [ref=e2614]
+              - generic [ref=e2617]:
+                - button "中天科技 600522 | 通信-通信设备-通信线缆及配套 光纤概念 铜缆高速连接 共封装光学(CPO) 特高压 超导概念" [ref=e2618] [cursor=pointer]:
+                  - strong [ref=e2619]: 中天科技
+                  - generic [ref=e2620]: 600522 | 通信-通信设备-通信线缆及配套
+                  - generic [ref=e2621]:
+                    - generic [ref=e2622]: 光纤概念
+                    - generic [ref=e2623]: 铜缆高速连接
+                    - generic [ref=e2624]: 共封装光学(CPO)
+                    - generic [ref=e2625]: 特高压
+                    - generic [ref=e2626]: 超导概念
+                - generic [ref=e2628]:
+                  - button "加入备选关注 600522" [ref=e2629] [cursor=pointer]:
+                    - img [ref=e2630]
+                  - button "删除研究池卡片 600522" [ref=e2632] [cursor=pointer]:
+                    - img [ref=e2633]
+              - generic [ref=e2636]:
+                - button "城地香江 603887 | 通信-通信服务-通信应用增值服务 算力租赁 东数西算(算力) 腾讯概念 抖音概念(字节概念) 阿里巴巴概念" [ref=e2637] [cursor=pointer]:
+                  - strong [ref=e2638]: 城地香江
+                  - generic [ref=e2639]: 603887 | 通信-通信服务-通信应用增值服务
+                  - generic [ref=e2640]:
+                    - generic [ref=e2641]: 算力租赁
+                    - generic [ref=e2642]: 东数西算(算力)
+                    - generic [ref=e2643]: 腾讯概念
+                    - generic [ref=e2644]: 抖音概念(字节概念)
+                    - generic [ref=e2645]: 阿里巴巴概念
+                - generic [ref=e2647]:
+                  - button "加入备选关注 603887" [ref=e2648] [cursor=pointer]:
+                    - img [ref=e2649]
+                  - button "删除研究池卡片 603887" [ref=e2651] [cursor=pointer]:
+                    - img [ref=e2652]
+              - generic [ref=e2655]:
+                - button "华鲁恒升 600426 | 基础化工-农化制品-氮肥 煤化工概念 化肥 国企改革 沪股通 融资融券" [ref=e2656] [cursor=pointer]:
+                  - strong [ref=e2657]: 华鲁恒升
+                  - generic [ref=e2658]: 600426 | 基础化工-农化制品-氮肥
+                  - generic [ref=e2659]:
+                    - generic [ref=e2660]: 煤化工概念
+                    - generic [ref=e2661]: 化肥
+                    - generic [ref=e2662]: 国企改革
+                    - generic [ref=e2663]: 沪股通
+                    - generic [ref=e2664]: 融资融券
+                - generic [ref=e2666]:
+                  - button "加入备选关注 600426" [ref=e2667] [cursor=pointer]:
+                    - img [ref=e2668]
+                  - button "删除研究池卡片 600426" [ref=e2670] [cursor=pointer]:
+                    - img [ref=e2671]
+              - generic [ref=e2674]:
+                - button "兴业银锡 000426 | 铅锌 贵金属" [ref=e2675] [cursor=pointer]:
+                  - strong [ref=e2676]: 兴业银锡
+                  - generic [ref=e2677]: 000426 | 铅锌
+                  - generic [ref=e2679]: 贵金属
+                - generic [ref=e2681]:
+                  - button "加入备选关注 000426" [ref=e2682] [cursor=pointer]:
+                    - img [ref=e2683]
+                  - button "删除研究池卡片 000426" [ref=e2685] [cursor=pointer]:
+                    - img [ref=e2686]
+              - generic [ref=e2689]:
+                - button "光迅科技 002281 | 通信-通信设备-通信网络设备及器件 F5G概念 共封装光学(CPO) 光纤概念 液冷服务器 6G概念" [ref=e2690] [cursor=pointer]:
+                  - strong [ref=e2691]: 光迅科技
+                  - generic [ref=e2692]: 002281 | 通信-通信设备-通信网络设备及器件
+                  - generic [ref=e2693]:
+                    - generic [ref=e2694]: F5G概念
+                    - generic [ref=e2695]: 共封装光学(CPO)
+                    - generic [ref=e2696]: 光纤概念
+                    - generic [ref=e2697]: 液冷服务器
+                    - generic [ref=e2698]: 6G概念
+                - generic [ref=e2700]:
+                  - button "加入备选关注 002281" [ref=e2701] [cursor=pointer]:
+                    - img [ref=e2702]
+                  - button "删除研究池卡片 002281" [ref=e2704] [cursor=pointer]:
+                    - img [ref=e2705]
+              - generic [ref=e2708]:
+                - button "科大讯飞 002230 | 软件服务 软件开发" [ref=e2709] [cursor=pointer]:
+                  - strong [ref=e2710]: 科大讯飞
+                  - generic [ref=e2711]: 002230 | 软件服务
+                  - generic [ref=e2713]: 软件开发
+                - generic [ref=e2715]:
+                  - button "加入备选关注 002230" [ref=e2716] [cursor=pointer]:
+                    - img [ref=e2717]
+                  - button "删除研究池卡片 002230" [ref=e2719] [cursor=pointer]:
+                    - img [ref=e2720]
+              - generic [ref=e2723]:
+                - button "海天精工 601882 | 机械设备-通用设备-机床工具 机床制造 工业母机 新型工业化 高端装备 共同富裕示范区" [ref=e2724] [cursor=pointer]:
+                  - strong [ref=e2725]: 海天精工
+                  - generic [ref=e2726]: 601882 | 机械设备-通用设备-机床工具
+                  - generic [ref=e2727]:
+                    - generic [ref=e2728]: 机床制造
+                    - generic [ref=e2729]: 工业母机
+                    - generic [ref=e2730]: 新型工业化
+                    - generic [ref=e2731]: 高端装备
+                    - generic [ref=e2732]: 共同富裕示范区
+                - generic [ref=e2734]:
+                  - button "加入备选关注 601882" [ref=e2735] [cursor=pointer]:
+                    - img [ref=e2736]
+                  - button "删除研究池卡片 601882" [ref=e2738] [cursor=pointer]:
+                    - img [ref=e2739]
+              - generic [ref=e2742]:
+                - button "贵州茅台 600519 | 食品饮料-白酒-白酒Ⅲ 超级品牌 白酒概念 同花顺漂亮100 证金持股 沪股通" [ref=e2743] [cursor=pointer]:
+                  - strong [ref=e2744]: 贵州茅台
+                  - generic [ref=e2745]: 600519 | 食品饮料-白酒-白酒Ⅲ
+                  - generic [ref=e2746]:
+                    - generic [ref=e2747]: 超级品牌
+                    - generic [ref=e2748]: 白酒概念
+                    - generic [ref=e2749]: 同花顺漂亮100
+                    - generic [ref=e2750]: 证金持股
+                    - generic [ref=e2751]: 沪股通
+                - generic [ref=e2753]:
+                  - button "加入备选关注 600519" [ref=e2754] [cursor=pointer]:
+                    - img [ref=e2755]
+                  - button "删除研究池卡片 600519" [ref=e2757] [cursor=pointer]:
+                    - img [ref=e2758]

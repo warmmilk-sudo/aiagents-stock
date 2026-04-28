@@ -148,6 +148,20 @@ class SmartMonitorDataFetcher:
             or dt_time(13, 0) <= current_time <= dt_time(15, 0)
         )
 
+    @staticmethod
+    def _is_after_regular_close(local_dt: Optional[datetime]) -> bool:
+        if local_dt is None or local_dt.weekday() >= 5:
+            return False
+        current_time = local_dt.timetz().replace(tzinfo=None)
+        return current_time > dt_time(15, 0)
+
+    @staticmethod
+    def _is_tail_or_close_snapshot(parsed: Optional[datetime]) -> bool:
+        if parsed is None:
+            return False
+        current_time = parsed.timetz().replace(tzinfo=None)
+        return dt_time(14, 30) <= current_time <= dt_time(15, 5)
+
     @classmethod
     def _parse_beijing_timestamp(
         cls,
@@ -323,15 +337,43 @@ class SmartMonitorDataFetcher:
         minute_quality = cls._classify_minute_quality(intraday_context)
 
         is_trading_now = cls._is_trading_clock(now)
+        is_after_close = cls._is_after_regular_close(now)
         timing_ready = is_trading_now and (
             minute_info["status"] == "fresh" or trade_info["status"] == "fresh"
         )
         quality_ready = minute_quality["status"] in {"good", "fair", "unavailable"}
         intraday_ready = timing_ready and quality_ready
+        minute_timestamp = cls._parse_beijing_timestamp(
+            intraday_context.get("latest_minute_time"),
+            reference_date=now.date(),
+        )
+        trade_timestamp = cls._parse_beijing_timestamp(
+            intraday_context.get("latest_trade_time"),
+            reference_date=now.date(),
+        )
+        has_same_day_intraday = bool(minute_info["same_day"] or trade_info["same_day"])
+        has_tail_or_close_snapshot = (
+            cls._is_tail_or_close_snapshot(minute_timestamp)
+            or cls._is_tail_or_close_snapshot(trade_timestamp)
+        )
+        intraday_review_ready = bool(
+            not is_trading_now
+            and has_same_day_intraday
+            and quality_ready
+            and (
+                not is_after_close
+                or has_tail_or_close_snapshot
+                or minute_info["status"] == "same_day_snapshot"
+                or trade_info["status"] == "same_day_snapshot"
+            )
+        )
 
         if intraday_ready:
             overall_status = "ready"
             summary = "TDX 分时/逐笔时间戳足够新鲜，且分时覆盖质量可接受，可用于盘中执行判断。"
+        elif intraday_review_ready:
+            overall_status = "review_ready"
+            summary = "存在同日分时/逐笔快照，盘后可用于复盘判断；不应视为盘中实时执行信号。"
         elif timing_ready and not quality_ready:
             overall_status = "degraded"
             summary = "盘中时间戳仍然较新，但分时缺口较多；可参考价格方向，不宜过度依赖短周期节奏。"
@@ -350,6 +392,8 @@ class SmartMonitorDataFetcher:
             "trade": trade_info,
             "minute_quality": minute_quality,
             "intraday_decision_ready": intraday_ready,
+            "intraday_review_ready": intraday_review_ready,
+            "has_tail_or_close_snapshot": has_tail_or_close_snapshot,
             "overall_status": overall_status,
             "summary": summary,
         }

@@ -317,34 +317,34 @@ class BackendSplitApiTests(unittest.TestCase):
         self.assertEqual(response.json()["data"]["max_workers"], 8)
         mocked.assert_called_once_with(enabled=True, schedule_time="14:35", max_workers=8)
 
-    def test_update_sector_strategy_lifecycle_config_is_read_only(self):
+    def test_update_smart_selection_lifecycle_config_is_read_only(self):
         self.login()
         response = self.client.put(
-            "/api/strategies/sector-strategy/lifecycle-config",
+            "/api/smart-selection/lifecycle-config",
             json={"values": {"explosive_current_min": 84, "explosive_avg_10d_min": 70}, "auto_rebuild": True},
         )
         self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.json()["error_code"], "sector_strategy_lifecycle_config_read_only")
+        self.assertEqual(response.json()["error_code"], "smart_selection_lifecycle_config_read_only")
 
-    def test_rebuild_sector_strategy_lifecycle_uses_service(self):
+    def test_rebuild_smart_selection_lifecycle_uses_service(self):
         self.login()
         with patch(
-            "backend.services.submit_sector_strategy_lifecycle_rebuild_task",
+            "backend.services.submit_smart_selection_lifecycle_rebuild_task",
             return_value={"task_id": "rebuild-task-2", "reused": False, "status": "queued"},
         ) as mocked:
-            response = self.client.post("/api/strategies/sector-strategy/lifecycle/rebuild")
+            response = self.client.post("/api/smart-selection/lifecycle/rebuild")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["data"]["task_id"], "rebuild-task-2")
         self.assertFalse(response.json()["data"]["reused"])
         mocked.assert_called_once_with(reason="manual")
 
-    def test_rebuild_sector_strategy_lifecycle_reuses_active_task(self):
+    def test_rebuild_smart_selection_lifecycle_reuses_active_task(self):
         self.login()
         with patch(
-            "backend.services.submit_sector_strategy_lifecycle_rebuild_task",
+            "backend.services.submit_smart_selection_lifecycle_rebuild_task",
             return_value={"task_id": "rebuild-task-3", "reused": True, "status": "running"},
         ) as mocked:
-            response = self.client.post("/api/strategies/sector-strategy/lifecycle/rebuild")
+            response = self.client.post("/api/smart-selection/lifecycle/rebuild")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["data"]["task_id"], "rebuild-task-3")
         self.assertTrue(response.json()["data"]["reused"])

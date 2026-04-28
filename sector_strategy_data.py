@@ -4,7 +4,9 @@
 """
 
 import concurrent.futures
+import json
 import pandas as pd
+import sqlite3
 from datetime import datetime, timedelta
 import warnings
 import logging
@@ -24,7 +26,7 @@ class SectorStrategyDataFetcher:
     """板块策略数据获取类"""
 
     _CORE_DATA_KEYS = ("sectors", "concepts", "sector_fund_flow")
-    _OPTIONAL_DATA_KEYS = ("market_overview", "north_flow", "news")
+    _OPTIONAL_DATA_KEYS = ("market_overview", "north_flow", "news", "macro_data")
     
     def __init__(self):
         print("[智策] 板块数据获取器初始化...")
@@ -83,6 +85,7 @@ class SectorStrategyDataFetcher:
             "sector_fund_flow": {},
             "market_overview": {},
             "north_flow": {},
+            "macro_data": {},
             "news": [],
         }
 
@@ -214,12 +217,13 @@ class SectorStrategyDataFetcher:
 
         try:
             fetch_specs = [
-                ("sectors", "[1/6] 获取行业板块行情...", self._get_sector_performance, True),
-                ("concepts", "[2/6] 获取概念板块行情...", self._get_concept_performance, True),
-                ("sector_fund_flow", "[3/6] 获取行业资金流向...", self._get_sector_fund_flow, True),
-                ("market_overview", "[4/6] 获取市场总体情况...", self._get_market_overview, False),
-                ("north_flow", "[5/6] 获取北向资金流向...", self._get_north_money_flow, False),
-                ("news", "[6/6] 获取财经新闻...", self._get_financial_news, False),
+                ("sectors", "[1/7] 获取行业板块行情...", self._get_sector_performance, True),
+                ("concepts", "[2/7] 获取概念板块行情...", self._get_concept_performance, True),
+                ("sector_fund_flow", "[3/7] 获取行业资金流向...", self._get_sector_fund_flow, True),
+                ("market_overview", "[4/7] 获取市场总体情况...", self._get_market_overview, False),
+                ("north_flow", "[5/7] 获取北向资金流向...", self._get_north_money_flow, False),
+                ("macro_data", "[6/7] 获取宏观指标快照...", self._get_macro_data, False),
+                ("news", "[7/7] 获取财经新闻...", self._get_financial_news, False),
             ]
 
             for _, step_label, _, _ in fetch_specs:
@@ -259,6 +263,9 @@ class SectorStrategyDataFetcher:
                         print("    ✓ 成功获取市场概况")
                     elif result_key == "north_flow":
                         print("    ✓ 成功获取北向资金数据")
+                    elif result_key == "macro_data":
+                        snapshot_size = len(payload.get("macro_snapshot", {})) if isinstance(payload, dict) else 0
+                        print(f"    ✓ 成功获取 {snapshot_size} 项宏观指标")
                     elif result_key == "news":
                         print(f"    ✓ 成功获取 {len(payload)} 条新闻")
 
@@ -566,6 +573,98 @@ class SectorStrategyDataFetcher:
             fetcher_name="get_latest_news_data",
             log_on_hit=True,
         )
+
+    def _get_macro_data(self):
+        """获取宏观指标快照，复用宏观分析模块的缓存与 Tushare 映射。"""
+        cached = self._load_latest_macro_analysis_snapshot()
+        if cached:
+            return cached
+
+        try:
+            from macro_analysis_data import MacroAnalysisDataFetcher
+
+            macro_fetcher = MacroAnalysisDataFetcher()
+            macro_series = {}
+            for key in ("gdp_yoy", "cpi_yoy", "ppi_yoy", "manufacturing_pmi", "m2_yoy"):
+                try:
+                    series = macro_fetcher._fetch_tushare_series(key)
+                except Exception as exc:
+                    self.logger.warning("[智策数据] Tushare宏观指标%s获取失败: %s", key, exc)
+                    series = []
+                if series:
+                    macro_series[key] = series
+
+            if not macro_series:
+                return {}
+
+            macro_snapshot = macro_fetcher._build_macro_snapshot(macro_series)
+            return {
+                "success": bool(macro_snapshot),
+                "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                "source": "macro_analysis_tushare",
+                "macro_series": macro_series,
+                "macro_snapshot": macro_snapshot,
+                "macro_tables": macro_fetcher._build_macro_tables(macro_series),
+                "rule_based_sector_view": macro_fetcher.build_rule_based_sector_view(macro_snapshot),
+                "errors": [],
+            }
+        except Exception as exc:
+            self.logger.warning("[智策数据] 宏观指标快照获取失败: %s", exc)
+            return {}
+
+    def _load_latest_macro_analysis_snapshot(self):
+        """从宏观分析库读取最近一次已采集的宏观快照。"""
+        db_path = os.getenv("MACRO_ANALYSIS_DB_PATH", "macro_analysis.db")
+        if not db_path or not os.path.exists(db_path):
+            return {}
+
+        try:
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                """
+                SELECT id, analysis_date, result_json, created_at
+                FROM macro_analysis_reports
+                ORDER BY datetime(created_at) DESC, id DESC
+                LIMIT 1
+                """
+            ).fetchone()
+            conn.close()
+        except Exception as exc:
+            self.logger.warning("[智策数据] 读取宏观分析缓存失败: %s", exc)
+            return {}
+
+        if not row:
+            return {}
+
+        try:
+            result_payload = json.loads(row["result_json"] or "{}")
+        except Exception as exc:
+            self.logger.warning("[智策数据] 解析宏观分析缓存失败: %s", exc)
+            return {}
+
+        raw_data = result_payload.get("raw_data") if isinstance(result_payload, dict) else {}
+        if not isinstance(raw_data, dict) or not raw_data.get("macro_snapshot"):
+            return {}
+
+        cached_payload = {
+            "success": bool(raw_data.get("success", True)),
+            "timestamp": raw_data.get("timestamp") or row["analysis_date"] or row["created_at"],
+            "source": "macro_analysis_cache",
+            "source_report_id": row["id"],
+            "source_created_at": row["created_at"],
+            "macro_series": raw_data.get("macro_series", {}),
+            "macro_snapshot": raw_data.get("macro_snapshot", {}),
+            "macro_tables": raw_data.get("macro_tables", {}),
+            "rule_based_sector_view": raw_data.get("rule_based_sector_view", {}),
+            "errors": raw_data.get("errors", []),
+        }
+        self.logger.info(
+            "[智策数据] 已复用宏观分析缓存 #%s，指标数: %s",
+            cached_payload["source_report_id"],
+            len(cached_payload["macro_snapshot"]),
+        )
+        return cached_payload
     
     def format_data_for_ai(self, data):
         """
@@ -654,6 +753,10 @@ class SectorStrategyDataFetcher:
             if sgt_net_inflow is not None:
                 block.append(f"  深股通: {sgt_net_inflow} 万元")
             text_parts.append("\n".join(block))
+
+        macro_text = self.format_macro_data_for_ai(data.get("macro_data", {}))
+        if macro_text:
+            text_parts.append(macro_text)
         
         # 行业板块表现（前20）
         if data.get("sectors"):
@@ -724,6 +827,69 @@ class SectorStrategyDataFetcher:
                     text_parts.append(f"   {news['content'][:100]}...")
         
         return "\n".join(text_parts)
+
+    @staticmethod
+    def format_macro_data_for_ai(macro_data):
+        """格式化宏观快照，避免报告误判为未提供 GDP/PMI 等指标。"""
+        if not isinstance(macro_data, dict) or not macro_data.get("macro_snapshot"):
+            return ""
+
+        snapshot = macro_data.get("macro_snapshot", {})
+        ordered_keys = (
+            "gdp_yoy",
+            "gdp_qoq",
+            "industrial_yoy",
+            "cpi_yoy",
+            "ppi_yoy",
+            "manufacturing_pmi",
+            "non_manufacturing_pmi",
+            "composite_pmi",
+            "m2_yoy",
+            "retail_sales_yoy",
+            "fixed_asset_yoy",
+            "real_estate_invest_yoy",
+            "urban_unemployment",
+        )
+        source_label = {
+            "macro_analysis_cache": "宏观分析模块最近快照",
+            "macro_analysis_tushare": "宏观分析模块Tushare实时映射",
+        }.get(macro_data.get("source"), str(macro_data.get("source") or "宏观分析模块"))
+
+        lines = ["【宏观指标快照】", f"数据来源: {source_label}"]
+        if macro_data.get("timestamp"):
+            lines.append(f"采集时间: {macro_data['timestamp']}")
+
+        for key in ordered_keys:
+            item = snapshot.get(key)
+            if not isinstance(item, dict):
+                continue
+            label = item.get("label") or key
+            value = item.get("value")
+            unit = item.get("unit") or ""
+            if value in (None, ""):
+                continue
+            period_hint = "最新公布期"
+            change = item.get("change")
+            change_text = f"，较上一期变动 {change:+.2f}{unit}" if isinstance(change, (int, float)) else ""
+            lines.append(f"- {label}: {value}{unit}（{period_hint}{change_text}）")
+
+        rule_view = macro_data.get("rule_based_sector_view") or {}
+        if isinstance(rule_view, dict):
+            market_view = rule_view.get("market_view")
+            if market_view:
+                lines.append(f"- 宏观规则视图: {market_view}")
+            bullish = rule_view.get("bullish_sectors") or []
+            if bullish:
+                names = [str(item.get("sector")) for item in bullish[:5] if isinstance(item, dict) and item.get("sector")]
+                if names:
+                    lines.append(f"- 宏观相对受益板块: {'、'.join(names)}")
+            bearish = rule_view.get("bearish_sectors") or []
+            if bearish:
+                names = [str(item.get("sector")) for item in bearish[:4] if isinstance(item, dict) and item.get("sector")]
+                if names:
+                    lines.append(f"- 宏观相对承压板块: {'、'.join(names)}")
+
+        return "\n".join(lines)
     
     def _save_raw_data_to_db(self, data):
         """保存原始数据到数据库"""
@@ -890,6 +1056,8 @@ class SectorStrategyDataFetcher:
                 fetcher_name=fetcher_name,
                 log_on_hit=False,
             )
+
+        cached_data["macro_data"] = self._get_macro_data()
 
         has_data = any(cached_data[key] for key in self._CORE_DATA_KEYS + self._OPTIONAL_DATA_KEYS)
         return cached_data if has_data else None

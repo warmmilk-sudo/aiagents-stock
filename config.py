@@ -35,9 +35,22 @@ def _safe_int_env(key: str, default: int) -> int:
         return default
 
 
+def _safe_float_env(key: str, default: float) -> float:
+    """Read float env safely; fallback to default on invalid values."""
+    try:
+        return float(os.getenv(key, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
 def _clamp_int(value: int, minimum: int, maximum: int) -> int:
     """Clamp int values to an inclusive range."""
     return max(minimum, min(maximum, int(value)))
+
+
+def _clamp_float(value: float, minimum: float, maximum: float) -> float:
+    """Clamp float values to an inclusive range."""
+    return max(minimum, min(maximum, float(value)))
 
 
 def _parse_model_options_env(key: str, fallback_model: str) -> list[str]:
@@ -57,9 +70,25 @@ def _parse_model_options_env(key: str, fallback_model: str) -> list[str]:
     return options
 
 
+def _parse_json_object_env(key: str) -> dict:
+    """Parse a JSON object env var; fallback to an empty dict on invalid values."""
+    raw_value = os.getenv(key, "")
+    if not raw_value:
+        return {}
+    try:
+        payload = json.loads(raw_value)
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
 WARMMILK_CONFIG = _safe_str_env("WARMMILK_CONFIG")
 VOICE_CONFIG = _safe_str_env("VOICE_CONFIG")
 LLM_API_TIMEOUT_SECONDS = max(30, _safe_int_env("LLM_API_TIMEOUT_SECONDS", 180))
+LLM_DEFAULT_TEMPERATURE = _clamp_float(_safe_float_env("LLM_DEFAULT_TEMPERATURE", 0.2), 0.0, 2.0)
+LLM_FACTUAL_TEMPERATURE = _clamp_float(_safe_float_env("LLM_FACTUAL_TEMPERATURE", 0.1), 0.0, 2.0)
+LLM_DEFAULT_TOP_P = _clamp_float(_safe_float_env("LLM_DEFAULT_TOP_P", 0.85), 0.01, 1.0)
+LLM_MODEL_SAMPLING_CONFIG = _parse_json_object_env("LLM_MODEL_SAMPLING_CONFIG")
 ANALYSIS_TASK_TIMEOUT_SECONDS = max(
     LLM_API_TIMEOUT_SECONDS + 120,
     _safe_int_env("ANALYSIS_TASK_TIMEOUT_SECONDS", 600),
@@ -97,6 +126,11 @@ REASONING_MODEL_OPTIONS = _parse_model_options_env(
 EMBEDDING_API_KEY = _safe_str_env("EMBEDDING_API_KEY")
 EMBEDDING_BASE_URL = _safe_str_env("EMBEDDING_BASE_URL", "https://api.siliconflow.cn/v1")
 EMBEDDING_MODEL_NAME = _safe_str_env("EMBEDDING_MODEL_NAME", "BAAI/bge-m3")
+MEMORY_BACKFILL_WORKERS = max(1, min(8, _safe_int_env("MEMORY_BACKFILL_WORKERS", 2)))
+MEMORY_BACKFILL_FORCE_OVERWRITE = _safe_str_env("MEMORY_BACKFILL_FORCE_OVERWRITE", "true").lower() in {"1", "true", "yes", "on"}
+MEMORY_BACKFILL_COMPRESS_AFTER = _safe_str_env("MEMORY_BACKFILL_COMPRESS_AFTER", "true").lower() in {"1", "true", "yes", "on"}
+SMART_MONITOR_OPTIMIZATION_VERSION = _safe_str_env("SMART_MONITOR_OPTIMIZATION_VERSION", "execution_conditions_v1")
+SMART_MONITOR_REQUIRED_OPTIMIZATION_VERSION = "execution_conditions_v1"
 
 def _parse_json_api_config(raw_value: str) -> tuple[str, str]:
     if not raw_value:
@@ -168,6 +202,56 @@ def get_model_api_name(
         return normalized
 
     return MODEL_API_NAME_BY_CONFIG_ENV.get(config_key, {}).get(normalized, normalized)
+
+
+def _coerce_sampling_float(value: object, default: float, minimum: float, maximum: float) -> float:
+    try:
+        return _clamp_float(float(value), minimum, maximum)
+    except (TypeError, ValueError):
+        return default
+
+
+def _get_model_sampling_overrides(model_name: str | None) -> dict:
+    normalized = str(model_name or "").strip()
+    if not normalized or not isinstance(LLM_MODEL_SAMPLING_CONFIG, dict):
+        return {}
+
+    candidates = [normalized]
+    api_name = get_model_api_name(normalized)
+    if api_name and api_name not in candidates:
+        candidates.append(api_name)
+    for model_alias in MODEL_CONFIG_ENV_BY_NAME:
+        if get_model_api_name(model_alias) == normalized and model_alias not in candidates:
+            candidates.append(model_alias)
+
+    for candidate in candidates:
+        payload = LLM_MODEL_SAMPLING_CONFIG.get(candidate)
+        if isinstance(payload, dict):
+            return payload
+    return {}
+
+
+def resolve_llm_sampling_params(
+    model_name: str | None = None,
+    *,
+    temperature: float | None = None,
+    top_p: float | None = None,
+    profile: str = "default",
+) -> tuple[float, float]:
+    """Resolve sampling params with per-model overrides and explicit-call precedence."""
+    overrides = _get_model_sampling_overrides(model_name)
+    profile_key = "factual_temperature" if str(profile or "").strip().lower() == "factual" else "temperature"
+    default_temperature = LLM_FACTUAL_TEMPERATURE if profile_key == "factual_temperature" else LLM_DEFAULT_TEMPERATURE
+
+    if temperature is None:
+        temperature = overrides.get(profile_key, overrides.get("temperature", default_temperature))
+    if top_p is None:
+        top_p = overrides.get("top_p", LLM_DEFAULT_TOP_P)
+
+    return (
+        _coerce_sampling_float(temperature, default_temperature, 0.0, 2.0),
+        _coerce_sampling_float(top_p, LLM_DEFAULT_TOP_P, 0.01, 1.0),
+    )
 
 
 def has_any_api_credentials(overrides: dict[str, str] | None = None) -> bool:

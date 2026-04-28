@@ -10,6 +10,11 @@
 盘中协同重点: $intraday_execution_preference
 波段判断依据: $swing_type_reason
 阈值: 进场 $entry_min - $entry_max | 止盈 $take_profit | 止损 $stop_loss
+执行计划: $execution_plan_summary
+进场/加仓条件: $entry_conditions_text
+离场/减仓条件: $exit_conditions_text
+继续持有/观望条件: $hold_conditions_text
+基线失效条件: $invalidation_conditions_text
 上次结构状态: $structure_state
 ATR14 / 波动率: $atr14 / $atr14_pct
 当前跟踪锚点: $trend_anchor_type @ $trend_anchor_value

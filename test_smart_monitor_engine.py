@@ -134,6 +134,91 @@ class SmartMonitorEngineTests(unittest.TestCase):
         self.assertEqual(updated["trade_intent"], "hold")
         self.assertEqual(updated["position_delta_pct"], 0.0)
 
+    def test_plan_guardrails_do_not_auto_buy_when_entry_conditions_exist(self):
+        engine = SmartMonitorEngine.__new__(SmartMonitorEngine)
+
+        decision = {
+            "action": "HOLD",
+            "action_detail": "观望",
+            "reasoning": "价格进入计划区间，但还需要观察。",
+            "action_ratio_pct": None,
+        }
+
+        updated = engine._apply_strategy_plan_guardrails(
+            decision=decision,
+            strategy_context={
+                "rating": "买入",
+                "entry_min": 10.0,
+                "entry_max": 11.0,
+                "take_profit": 13.0,
+                "stop_loss": 9.5,
+                "entry_conditions": ["回踩后缩量企稳"],
+            },
+            market_data={"current_price": 10.5},
+            has_position=False,
+        )
+
+        self.assertEqual(updated["action"], "HOLD")
+        self.assertEqual(updated["action_detail"], "观望")
+        self.assertNotIn("已触发深度分析交易计划", updated["reasoning"])
+
+    def test_plan_guardrails_downgrades_buy_without_condition_confirmation(self):
+        engine = SmartMonitorEngine.__new__(SmartMonitorEngine)
+
+        decision = {
+            "action": "BUY",
+            "action_detail": "买入",
+            "reasoning": "当前价格进入计划进场区间，可以执行。",
+            "action_ratio_pct": 20,
+        }
+
+        updated = engine._apply_strategy_plan_guardrails(
+            decision=decision,
+            strategy_context={
+                "rating": "买入",
+                "entry_min": 10.0,
+                "entry_max": 11.0,
+                "take_profit": 13.0,
+                "stop_loss": 9.5,
+                "entry_conditions": ["回踩后缩量企稳"],
+            },
+            market_data={"current_price": 10.5},
+            has_position=False,
+        )
+
+        self.assertEqual(updated["action"], "HOLD")
+        self.assertEqual(updated["action_detail"], "观望")
+        self.assertIsNone(updated["action_ratio_pct"])
+        self.assertIn("结构化进场/加仓条件", updated["reasoning"])
+
+    def test_plan_guardrails_allows_buy_when_condition_confirmed(self):
+        engine = SmartMonitorEngine.__new__(SmartMonitorEngine)
+
+        decision = {
+            "action": "BUY",
+            "action_detail": "买入",
+            "reasoning": "盘中回踩后缩量企稳，满足进场条件，可以按计划小仓位执行。",
+            "action_ratio_pct": 20,
+        }
+
+        updated = engine._apply_strategy_plan_guardrails(
+            decision=decision,
+            strategy_context={
+                "rating": "买入",
+                "entry_min": 10.0,
+                "entry_max": 11.0,
+                "take_profit": 13.0,
+                "stop_loss": 9.5,
+                "entry_conditions": ["回踩后缩量企稳"],
+            },
+            market_data={"current_price": 10.5},
+            has_position=False,
+        )
+
+        self.assertEqual(updated["action"], "BUY")
+        self.assertEqual(updated["action_detail"], "买入")
+        self.assertEqual(updated["action_ratio_pct"], 20)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -192,14 +192,14 @@ export function MacroAnalysisPage() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [isSubmittingAnalysis, setIsSubmittingAnalysis] = useState(false);
-  const shouldPollTask = !task || task.status === "queued" || task.status === "running";
+  const taskStatusVisible = task?.status === "queued" || task?.status === "running" || task?.status === "failed" || task?.status === "cancelled";
 
   const loadTask = async () => {
     const data = await apiFetch<TaskDetail<MacroTaskPayload> | null>("/api/strategies/macro-analysis/tasks/latest");
     setTask(data);
   };
 
-  usePollingLoader({ load: loadTask, intervalMs: 2000, enabled: shouldPollTask });
+  usePollingLoader({ load: loadTask, intervalMs: 2000 });
 
   const currentResult = task?.status === "success" ? task.result?.result ?? null : null;
   const currentChiefSections = useMemo(
@@ -259,17 +259,19 @@ export function MacroAnalysisPage() {
           </div>
         </section>
 
-        <section className={styles.card}>
-          <h2>任务状态</h2>
-          <p className={styles.helperText}>{task?.message || "等待宏观分析任务状态..."}</p>
-          <TaskProgressBar
-            current={task?.current}
-            total={task?.total}
-            message={task?.status === "success" ? "任务完成" : task?.error || task?.message}
-            tone={taskProgressTone(task)}
-          />
-          {task?.error ? <p className={styles.dangerText}>{task.error}</p> : null}
-        </section>
+        {taskStatusVisible ? (
+          <section className={styles.card}>
+            <h2>任务状态</h2>
+            <p className={styles.helperText}>{task?.message || "等待宏观分析任务状态..."}</p>
+            <TaskProgressBar
+              current={task?.current}
+              total={task?.total}
+              message={task?.message || "等待宏观分析任务状态..."}
+              tone={taskProgressTone(task)}
+            />
+            {task?.error ? <p className={styles.dangerText}>{task.error}</p> : null}
+          </section>
+        ) : null}
 
         {!currentResult ? (
           <section className={styles.card}>

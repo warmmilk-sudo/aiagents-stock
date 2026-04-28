@@ -3,7 +3,6 @@ import { useSearchParams } from "react-router-dom";
 
 import { PageFeedback } from "../../components/common/PageFeedback";
 import { PageFrame } from "../../components/common/PageFrame";
-import { StatusBadge } from "../../components/common/StatusBadge";
 import { TaskProgressBar } from "../../components/common/TaskProgressBar";
 import { useSelectedModels } from "../../hooks/useSelectedModels";
 import {
@@ -19,7 +18,6 @@ import styles from "../ConsolePage.module.scss";
 interface SectorTaskPayload {
   result?: Record<string, unknown>;
   report_view?: SectorStrategyReportView | null;
-  lifecycle_snapshot?: Array<Record<string, unknown>> | null;
   data_summary?: Record<string, unknown> | null;
   message?: string;
 }
@@ -51,8 +49,6 @@ interface SectorHistoryRecord {
 interface SectorHistoryDetail extends SectorHistoryRecord {
   analysis_content_parsed?: Record<string, unknown>;
   report_view?: SectorStrategyReportView | null;
-  lifecycle_items?: Array<Record<string, unknown>> | null;
-  lifecycle_summary?: Record<string, unknown> | null;
   daily_heat_panel?: {
     available?: boolean;
     board_date?: string;
@@ -86,20 +82,6 @@ interface SchedulerStatus {
   next_run_time?: string | null;
 }
 
-interface LifecycleSnapshot {
-  available?: boolean;
-  analysis_id?: number;
-  analysis_date?: string;
-  summary?: Record<string, unknown> | null;
-  items?: Array<Record<string, unknown>> | null;
-  daily_heat_panel?: {
-    available?: boolean;
-    board_date?: string;
-    total_count?: number;
-    items?: Array<Record<string, unknown>>;
-  } | null;
-}
-
 type SectionKey = "overview" | "history" | "scheduler";
 
 const sectionTabs = [
@@ -109,7 +91,6 @@ const sectionTabs = [
 ];
 const HISTORY_CACHE_TTL_MS = 60_000;
 const HISTORY_DETAIL_CACHE_TTL_MS = 30 * 60_000;
-const LIFECYCLE_CACHE_TTL_MS = 60_000;
 
 function asText(value: unknown, fallback = "暂无"): string {
   if (value === null || value === undefined || value === "") {
@@ -176,7 +157,6 @@ export function SectorStrategyPage() {
   const [latestDetailReportViewOverride, setLatestDetailReportViewOverride] = useState<SectorStrategyReportView | null>(null);
   const [latestDetailRawResult, setLatestDetailRawResult] = useState<Record<string, unknown> | null>(null);
   const [scheduler, setScheduler] = useState<SchedulerStatus | null>(null);
-  const [latestLifecycle, setLatestLifecycle] = useState<LifecycleSnapshot | null>(null);
   const [scheduleTime, setScheduleTime] = useState("09:00");
   const [section, setSection] = useState<SectionKey>("overview");
   const [message, setMessage] = useState("");
@@ -226,15 +206,6 @@ export function SectorStrategyPage() {
     setScheduleTime(data.schedule_time || "09:00");
   };
 
-  const loadLifecycle = async () => {
-    const data = await apiFetchCached<LifecycleSnapshot>(
-      "/api/strategies/sector-strategy/lifecycle/latest",
-      {},
-      { ttlMs: LIFECYCLE_CACHE_TTL_MS },
-    );
-    setLatestLifecycle(data);
-  };
-
   const setSchedulerRunningOptimistically = (running: boolean) => {
     setScheduler((current) =>
       current
@@ -260,16 +231,14 @@ export function SectorStrategyPage() {
   };
 
   useEffect(() => {
-    void Promise.all([loadTask(), loadLatestOverview(), loadHistory(), loadScheduler(), loadLifecycle()]);
+    void Promise.all([loadTask(), loadLatestOverview(), loadHistory(), loadScheduler()]);
     const taskTimer = window.setInterval(() => void loadTask(), 2000);
     const latestReportTimer = window.setInterval(() => void loadLatestOverview(), 10000);
     const schedulerTimer = window.setInterval(() => void loadScheduler(), 10000);
-    const lifecycleTimer = window.setInterval(() => void loadLifecycle(), 10000);
     return () => {
       window.clearInterval(taskTimer);
       window.clearInterval(latestReportTimer);
       window.clearInterval(schedulerTimer);
-      window.clearInterval(lifecycleTimer);
     };
   }, []);
 
@@ -279,7 +248,7 @@ export function SectorStrategyPage() {
       return;
     }
     syncedHistoryReportIdRef.current = reportId;
-    void Promise.all([loadLatestOverview(), loadHistory(), loadLifecycle()]).catch(() => undefined);
+    void Promise.all([loadLatestOverview(), loadHistory()]).catch(() => undefined);
   }, [task?.status, task?.result?.result?.report_id]);
 
   useEffect(() => {
@@ -315,7 +284,7 @@ export function SectorStrategyPage() {
       : historyDetail?.report_view ?? null;
   const detailDailyHeatPanel =
     detailSource === "latest"
-      ? latestOverview?.daily_heat_panel ?? latestLifecycle?.daily_heat_panel ?? null
+      ? latestOverview?.daily_heat_panel ?? null
       : historyDetail?.daily_heat_panel ?? null;
   const detailRawResult =
     detailSource === "latest"
@@ -331,11 +300,6 @@ export function SectorStrategyPage() {
 
   const closeDetail = () => {
     setSearchParams({});
-  };
-
-  const openLatestDetail = () => {
-    setSection("overview");
-    setSearchParams({ view: "detail", source: "latest" });
   };
 
   const openHistoryDetail = (reportId: number) => {
@@ -547,11 +511,6 @@ export function SectorStrategyPage() {
                   <button className={styles.primaryButton} disabled={isSubmittingAnalysis} onClick={() => void submitAnalysis()} type="button">
                     {isSubmittingAnalysis ? "提交中..." : "开始智策分析"}
                   </button>
-                  {latestReportView ? (
-                    <button className={styles.secondaryButton} onClick={openLatestDetail} type="button">
-                      查看最新报告
-                    </button>
-                  ) : null}
                 </div>
               </section>
 
@@ -581,16 +540,11 @@ export function SectorStrategyPage() {
                       {formatDateTime(latestOverview?.analysis_date ?? latestOverview?.created_at, "暂无时间")}
                     </p>
                   </div>
-                  {latestReportView ? (
-                    <button className={styles.secondaryButton} onClick={openLatestDetail} type="button">
-                      查看最新报告
-                    </button>
-                  ) : null}
                 </div>
 
                 {latestSummary ? (
                   <SectorReportOverviewPanels
-                    dailyHeatPanel={latestOverview?.daily_heat_panel ?? latestLifecycle?.daily_heat_panel ?? null}
+                    dailyHeatPanel={latestOverview?.daily_heat_panel ?? null}
                     reportView={latestReportView}
                   />
                 ) : (

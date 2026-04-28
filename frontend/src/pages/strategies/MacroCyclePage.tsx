@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { PageFeedback } from "../../components/common/PageFeedback";
 import { PageFrame } from "../../components/common/PageFrame";
+import { TaskProgressBar } from "../../components/common/TaskProgressBar";
 import { MacroCycleReportDetailView } from "../../components/research/MacroCycleReportDetailView";
 import { splitReportSections } from "../../components/research/FormattedReport";
 import { useSelectedModels } from "../../hooks/useSelectedModels";
@@ -124,7 +125,7 @@ export function MacroCyclePage() {
   const [deletingHistoryId, setDeletingHistoryId] = useState<number | null>(null);
   const [isLoadingSelectedReport, setIsLoadingSelectedReport] = useState(false);
   const lastTerminalTaskRef = useRef<string>("");
-  const shouldPollTask = !task || task.status === "queued" || task.status === "running";
+  const taskStatusVisible = task?.status === "queued" || task?.status === "running" || task?.status === "failed" || task?.status === "cancelled";
 
   const loadTask = async () => {
     const data = await apiFetch<TaskDetail<MacroTaskPayload> | null>("/api/strategies/macro-cycle/tasks/latest");
@@ -157,7 +158,7 @@ export function MacroCyclePage() {
   useEffect(() => {
     void loadHistory();
   }, []);
-  usePollingLoader({ load: loadTask, intervalMs: 2000, enabled: shouldPollTask });
+  usePollingLoader({ load: loadTask, intervalMs: 2000 });
 
   const analysisResult = task?.status === "success" ? task.result?.result ?? null : null;
   const historyResult = selectedReport?.result_parsed ?? null;
@@ -367,14 +368,17 @@ export function MacroCyclePage() {
               </div>
             </section>
 
-            {task ? (
+            {taskStatusVisible ? (
               <section className={styles.card}>
                 <h2>任务状态</h2>
-                <p>{task.message || "等待宏观周期任务状态..."}</p>
-                <p className={styles.muted}>
-                  进度: {task.current ?? 0} / {task.total ?? 0}
-                </p>
-                {task.error ? <p className={styles.dangerText}>{task.error}</p> : null}
+                <p>{task?.message || "等待宏观周期任务状态..."}</p>
+                <TaskProgressBar
+                  current={task?.current ?? 0}
+                  total={task?.total ?? 0}
+                  message={task?.message || "等待宏观周期任务状态..."}
+                  tone={task?.status === "failed" || task?.status === "cancelled" ? "danger" : "running"}
+                />
+                {task?.error ? <p className={styles.dangerText}>{task.error}</p> : null}
               </section>
             ) : null}
 

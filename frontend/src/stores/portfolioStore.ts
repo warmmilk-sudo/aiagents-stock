@@ -1,5 +1,7 @@
 import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
+import { persist } from "zustand/middleware";
+
+import { createSafeJSONStorage } from "../persistStorage";
 
 interface DraftPosition {
   code: string;
@@ -43,7 +45,7 @@ export const usePortfolioStore = create<PortfolioState>()(
     }),
     {
       name: "portfolio-ui-state",
-      storage: createJSONStorage(() => localStorage),
+      storage: createSafeJSONStorage<Partial<PortfolioState>>(),
       merge: (persistedState, currentState) => {
         const typedState = (persistedState as Partial<PortfolioState> | undefined) ?? {};
         return {

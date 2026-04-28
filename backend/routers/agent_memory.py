@@ -23,6 +23,14 @@ class ProfilePutPayload(BaseModel):
     macro_profile: str
 
 
+class MonitorRelatedBackfillPayload(BaseModel):
+    apply: bool = True
+    workers: Optional[int] = None
+    limit: Optional[int] = None
+    stock_code: Optional[str] = None
+    force: Optional[bool] = None
+
+
 def _get_db():
     from agent_memory_db import agent_memory_db
     return agent_memory_db
@@ -31,6 +39,50 @@ def _get_db():
 def _get_service():
     from agent_memory_service import agent_memory_service
     return agent_memory_service
+
+
+@router.post("/backfill/monitor-related")
+def backfill_monitor_related_memory(request: Request, payload: MonitorRelatedBackfillPayload | None = None) -> dict:
+    """Queue a monitor-related historical report/memory backfill task."""
+    require_session(request)
+    from backend import services
+
+    payload = payload or MonitorRelatedBackfillPayload()
+    task = services.submit_monitor_related_memory_backfill_task(
+        apply=payload.apply,
+        workers=payload.workers,
+        limit=payload.limit,
+        stock_code=payload.stock_code,
+        force=payload.force,
+    )
+    return success_payload(task, message="盯盘相关历史报告回填任务已提交")
+
+
+@router.get("/backfill/monitor-related/tasks/latest")
+def get_latest_monitor_related_backfill_task(request: Request) -> dict:
+    require_session(request)
+    from backend import services
+
+    return success_payload(services.get_latest_ui_task(services.MONITOR_RELATED_MEMORY_BACKFILL_TASK_TYPE))
+
+
+@router.get("/backfill/monitor-related/tasks/active")
+def get_active_monitor_related_backfill_task(request: Request) -> dict:
+    require_session(request)
+    from backend import services
+
+    return success_payload(services.get_active_ui_task(services.MONITOR_RELATED_MEMORY_BACKFILL_TASK_TYPE))
+
+
+@router.get("/backfill/monitor-related/tasks/{task_id}")
+def get_monitor_related_backfill_task(request: Request, task_id: str) -> dict:
+    require_session(request)
+    from backend import services
+
+    task = services.get_ui_task(services.MONITOR_RELATED_MEMORY_BACKFILL_TASK_TYPE, task_id)
+    if not task:
+        raise ApiError(404, "未找到盯盘相关历史报告回填任务", error_code="monitor_memory_backfill_task_not_found")
+    return success_payload(task)
 
 
 @router.get("/{stock_code}")

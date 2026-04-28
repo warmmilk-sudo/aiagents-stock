@@ -3,6 +3,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { PageFeedback } from "../../components/common/PageFeedback";
 import { PageFrame } from "../../components/common/PageFrame";
 import { StatusBadge } from "../../components/common/StatusBadge";
+import { TaskProgressBar } from "../../components/common/TaskProgressBar";
 import { ApiRequestError, apiFetch } from "../../lib/api";
 import { asNumber, asText, downloadCsvRows, findKey, numberText } from "../../lib/market";
 import styles from "../ConsolePage.module.scss";
@@ -147,6 +148,7 @@ export function SmallCapPage() {
 
   const filterSummary = useMemo(() => buildFilterSummary(form), [form]);
   const stocks = task?.status === "success" ? task.result?.stocks ?? [] : [];
+  const taskStatusVisible = task?.status === "queued" || task?.status === "running" || task?.status === "failed" || task?.status === "cancelled";
   const firstRow = stocks[0];
   const displayKeys = useMemo(() => {
     const keys = [
@@ -511,14 +513,17 @@ export function SmallCapPage() {
               </form>
             </section>
 
-            {task ? (
+            {taskStatusVisible ? (
               <section className={styles.card}>
                 <h2>选股任务状态</h2>
-                <p>{task.message || "等待小市值任务..."}</p>
-                <p className={styles.muted}>
-                  进度: {task.current ?? 0} / {task.total ?? 0}
-                </p>
-                {task.error ? <p className={styles.dangerText}>{task.error}</p> : null}
+                <p>{task?.message || "等待小市值任务..."}</p>
+                <TaskProgressBar
+                  current={task?.current ?? 0}
+                  total={task?.total ?? 0}
+                  message={task?.message || "等待小市值任务..."}
+                  tone={task?.status === "failed" || task?.status === "cancelled" ? "danger" : "running"}
+                />
+                {task?.error ? <p className={styles.dangerText}>{task.error}</p> : null}
               </section>
             ) : null}
 

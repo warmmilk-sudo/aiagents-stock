@@ -6,7 +6,7 @@ Responsibilities:
   - Assemble memory context for injection into agent prompts (fast track).
   - Extract facts from completed reports via LLM (daemon track).
   - Compute time-decay scores (forgetting curve).
-  - Perform hybrid retrieval using numpy cosine similarity + decay.
+  - Perform hybrid retrieval using cosine similarity + decay.
   - Compress long-term profiles when fact count exceeds threshold.
 """
 
@@ -16,15 +16,15 @@ import json
 import logging
 import math
 import os
+import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional
-
-import numpy as np
 
 from agent_memory_db import AgentMemoryDB, agent_memory_db
 from llm_client import EmbeddingClient, LLMClient
 from model_routing import ModelTier
 from prompt_registry import build_messages
+from investment_action_utils import build_execution_plan
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +34,11 @@ RECALL_TOP_K = int(os.getenv("MEMORY_RECALL_TOP_K", "5"))
 CROSS_SECTOR_TOP_K = int(os.getenv("MEMORY_CROSS_SECTOR_TOP_K", "2"))
 # Fact count threshold to trigger long-term profile compression
 COMPRESS_THRESHOLD = int(os.getenv("MEMORY_COMPRESS_THRESHOLD", "30"))
+
+LEGACY_LONG_TERM_PROFILE_MARKERS = (
+    "长期画像由历史回填本地生成",
+    "核心记忆以历史深度分析中的执行计划、进出场条件、基线失效条件和风控纪律为主",
+)
 
 # Weight balance: similarity vs decay in final score
 WEIGHT_SIMILARITY = float(os.getenv("MEMORY_WEIGHT_SIMILARITY", "0.6"))
@@ -87,26 +92,35 @@ def compute_decay_score(importance: float, timestamp_str: str, now: Optional[dat
 
 
 def _cosine_similarity(vec_a: list[float], vec_b: list[float]) -> float:
-    """Compute cosine similarity between two vectors using numpy."""
-    a = np.array(vec_a, dtype=np.float32)
-    b = np.array(vec_b, dtype=np.float32)
-    dot = np.dot(a, b)
-    norm = np.linalg.norm(a) * np.linalg.norm(b)
-    if norm == 0:
+    """Compute cosine similarity without requiring optional numeric packages."""
+    if not vec_a or not vec_b:
         return 0.0
-    return float(dot / norm)
+    if len(vec_a) != len(vec_b):
+        return 0.0
+    dot = 0.0
+    norm_a = 0.0
+    norm_b = 0.0
+    for index in range(len(vec_a)):
+        try:
+            a = float(vec_a[index])
+            b = float(vec_b[index])
+        except (TypeError, ValueError):
+            continue
+        dot += a * b
+        norm_a += a * a
+        norm_b += b * b
+    if norm_a <= 0 or norm_b <= 0:
+        return 0.0
+    return float(dot / (math.sqrt(norm_a) * math.sqrt(norm_b)))
 
 
 def _batch_cosine_similarity(query_vec: list[float], candidate_vecs: list[list[float]]) -> list[float]:
     """Batch cosine similarity: query vs N candidates. Returns N scores."""
-    if not candidate_vecs:
-        return []
-    q = np.array(query_vec, dtype=np.float32)
-    mat = np.array(candidate_vecs, dtype=np.float32)
-    dots = mat @ q
-    norms = np.linalg.norm(mat, axis=1) * np.linalg.norm(q)
-    norms[norms == 0] = 1.0  # Avoid division by zero
-    return (dots / norms).tolist()
+    return [_cosine_similarity(query_vec, candidate) for candidate in candidate_vecs]
+
+
+def _collapse_spaces(text: str) -> str:
+    return re.sub(r"\s+", " ", str(text or "")).strip()
 
 
 class AgentMemoryService:
@@ -276,12 +290,14 @@ class AgentMemoryService:
         rating: str,
         summary: str,
         discussion_summary: str,
+        final_decision: Optional[Dict] = None,
         source_analysis_id: Optional[int] = None,
     ) -> List[Dict]:
         """
         Call LLM to extract structured fact memories from a completed report.
         Saves them to the factual memory pool with embeddings.
         """
+        execution_plan = build_execution_plan(final_decision if isinstance(final_decision, dict) else {})
         messages = build_messages(
             "stock_analysis/memory_extract.system.txt",
             "stock_analysis/memory_extract.user.txt",
@@ -290,6 +306,7 @@ class AgentMemoryService:
             analysis_date=analysis_date,
             rating=rating or "未知",
             summary=summary or "无摘要",
+            execution_plan=json.dumps(execution_plan, ensure_ascii=False),
             discussion_summary=(discussion_summary or "无讨论内容")[:4000],
         )
 
@@ -297,14 +314,22 @@ class AgentMemoryService:
             raw_response = self.llm_client.call_api(
                 messages,
                 max_tokens=2000,
-                temperature=0.3,
+                sampling_profile="factual",
                 tier=ModelTier.LIGHTWEIGHT,
             )
         except Exception as exc:
             logger.error("Memory extraction LLM call failed for %s: %s", stock_code, exc)
-            return []
+            raw_response = ""
 
-        facts = self._parse_facts_response(raw_response)
+        facts = self._parse_facts_response(raw_response) if raw_response else []
+        if not facts:
+            facts = self._fallback_facts_from_report(
+                stock_code=stock_code,
+                stock_name=stock_name,
+                rating=rating,
+                summary=summary,
+                final_decision=final_decision if isinstance(final_decision, dict) else {},
+            )
 
         # Get embeddings for all facts in one batch
         fact_texts = [f["fact_content"] for f in facts if f.get("fact_content")]
@@ -379,14 +404,27 @@ class AgentMemoryService:
             new_profile = self.llm_client.call_api(
                 messages,
                 max_tokens=1000,
-                temperature=0.3,
+                sampling_profile="factual",
                 tier=ModelTier.REASONING,
             )
         except Exception as exc:
             logger.error("Long-term profile compression failed for %s: %s", stock_code, exc)
-            return False
+            new_profile = self._fallback_long_term_profile(
+                stock_code=stock_code,
+                stock_name=stock_name,
+                facts=sorted_facts,
+                existing_profile=existing_profile,
+            )
 
-        new_profile = new_profile.strip()
+        new_profile = self._sanitize_long_term_profile(new_profile)
+        if self._contains_legacy_profile_marker(new_profile):
+            logger.warning("Compressed profile retained legacy fallback wording for %s; using local template", stock_code)
+            new_profile = self._fallback_long_term_profile(
+                stock_code=stock_code,
+                stock_name=stock_name,
+                facts=sorted_facts,
+                existing_profile=existing_profile,
+            )
         if len(new_profile) < 50:
             logger.warning("Compressed profile too short for %s, skipping", stock_code)
             return False
@@ -486,6 +524,7 @@ class AgentMemoryService:
                 rating=rating,
                 summary=summary,
                 discussion_summary=str(record.get("discussion_result") or ""),
+                final_decision=final_decision,
                 source_analysis_id=int(record["id"]) if record.get("id") not in (None, "") else None,
             )
             facts_saved += len(facts)
@@ -527,6 +566,201 @@ class AgentMemoryService:
         except json.JSONDecodeError as exc:
             logger.warning("Failed to parse memory extraction JSON: %s", exc)
             return []
+
+    @staticmethod
+    def _fallback_facts_from_report(
+        *,
+        stock_code: str,
+        stock_name: str,
+        rating: str,
+        summary: str,
+        final_decision: Dict[str, Any],
+    ) -> list[Dict[str, Any]]:
+        """Deterministic fact extraction used when the LLM is unavailable."""
+        plan = build_execution_plan(final_decision if isinstance(final_decision, dict) else {})
+        facts: list[Dict[str, Any]] = []
+
+        def _append(condition_key: str, label: str, category: str, importance: float, tag: str) -> None:
+            for condition in plan.get(condition_key) or []:
+                text = str(condition or "").strip()
+                if not text:
+                    continue
+                facts.append({
+                    "fact_content": f"{stock_name or stock_code} {label}: {text}",
+                    "importance_score": importance,
+                    "category": category,
+                    "concept_tags": [stock_code, tag, "execution_plan"],
+                })
+
+        _append("entry_conditions", "进场/加仓条件", "execution", 86, "entry_condition")
+        _append("exit_conditions", "离场/减仓条件", "risk", 90, "exit_condition")
+        _append("hold_conditions", "继续持有/观望条件", "execution", 78, "hold_condition")
+        _append("invalidation_conditions", "基线失效条件", "risk", 92, "invalidation_condition")
+
+        execution_summary = str(plan.get("execution_plan_summary") or "").strip()
+        if execution_summary:
+            facts.insert(0, {
+                "fact_content": f"{stock_name or stock_code} 执行计划: {execution_summary}",
+                "importance_score": 88,
+                "category": "execution",
+                "concept_tags": [stock_code, "execution_plan"],
+            })
+
+        operation_advice = str(final_decision.get("operation_advice") or "").strip()
+        if operation_advice and not any(operation_advice in str(f.get("fact_content") or "") for f in facts):
+            facts.append({
+                "fact_content": f"{stock_name or stock_code} 操作纪律: {operation_advice[:180]}",
+                "importance_score": 80,
+                "category": "execution",
+                "concept_tags": [stock_code, "operation_advice"],
+            })
+
+        risk_warning = str(final_decision.get("risk_warning") or "").strip()
+        if risk_warning:
+            facts.append({
+                "fact_content": f"{stock_name or stock_code} 风控纪律: {risk_warning[:180]}",
+                "importance_score": 84,
+                "category": "risk",
+                "concept_tags": [stock_code, "risk_discipline"],
+            })
+
+        if not facts and (summary or rating):
+            facts.append({
+                "fact_content": f"{stock_name or stock_code} 历史分析结论: {rating or '未评级'}；{str(summary or '').strip()[:180]}",
+                "importance_score": 60,
+                "category": "general",
+                "concept_tags": [stock_code, "analysis_summary"],
+            })
+        return facts[:8]
+
+    @staticmethod
+    def _contains_legacy_profile_marker(text: str) -> bool:
+        return any(marker in str(text or "") for marker in LEGACY_LONG_TERM_PROFILE_MARKERS)
+
+    @staticmethod
+    def _sanitize_long_term_profile(text: str) -> str:
+        cleaned_lines: list[str] = []
+        for raw_line in str(text or "").replace("\r\n", "\n").split("\n"):
+            line = raw_line.strip()
+            if not line:
+                continue
+            if any(marker in line for marker in LEGACY_LONG_TERM_PROFILE_MARKERS):
+                continue
+            line = line.replace("近期高优先级事实：", "").replace("既有画像摘要：", "")
+            cleaned_lines.append(line)
+        return "\n".join(cleaned_lines).strip()
+
+    @staticmethod
+    def _clean_profile_fact_text(text: str, *, stock_code: str, stock_name: str) -> str:
+        cleaned = str(text or "").strip()
+        if not cleaned:
+            return ""
+        name = stock_name or stock_code
+        cleaned = re.sub(r"^[-*]\s*", "", cleaned)
+        cleaned = cleaned.replace("**", "").replace("###", "")
+        cleaned = re.sub(r"^\[[^\]]+\]\s*", "", cleaned)
+        cleaned = re.sub(r"^\(重要度\d+(?:\.\d+)?\)\s*", "", cleaned)
+        cleaned = re.sub(rf"^(?:{re.escape(name)}|{re.escape(stock_code)})\s*", "", cleaned)
+        cleaned = re.sub(r"^(?:执行计划|进场/加仓条件|离场/减仓条件|继续持有/观望条件|基线失效条件|操作纪律|风控纪律|历史分析结论)\s*[:：]\s*", "", cleaned)
+        cleaned = _collapse_spaces(cleaned)
+        return cleaned[:220]
+
+    @classmethod
+    def _select_profile_fact(
+        cls,
+        facts: List[Dict[str, Any]],
+        *,
+        stock_code: str,
+        stock_name: str,
+        keywords: tuple[str, ...],
+        categories: tuple[str, ...] = (),
+        used: Optional[set[str]] = None,
+    ) -> str:
+        used = used if used is not None else set()
+        for fact in facts:
+            category = str(fact.get("category") or "").strip()
+            content = str(fact.get("fact_content") or "").strip()
+            if categories and category not in categories:
+                continue
+            if keywords and not any(keyword in content for keyword in keywords):
+                continue
+            cleaned = cls._clean_profile_fact_text(content, stock_code=stock_code, stock_name=stock_name)
+            if cleaned and cleaned not in used:
+                used.add(cleaned)
+                return cleaned
+        for fact in facts:
+            content = str(fact.get("fact_content") or "").strip()
+            if keywords and not any(keyword in content for keyword in keywords):
+                continue
+            cleaned = cls._clean_profile_fact_text(content, stock_code=stock_code, stock_name=stock_name)
+            if cleaned and cleaned not in used:
+                used.add(cleaned)
+                return cleaned
+        return ""
+
+    @staticmethod
+    def _fallback_long_term_profile(
+        *,
+        stock_code: str,
+        stock_name: str,
+        facts: List[Dict[str, Any]],
+        existing_profile: str,
+    ) -> str:
+        name = stock_name or stock_code
+        sorted_facts = sorted(
+            facts or [],
+            key=lambda item: (float(item.get("importance_score") or 0), str(item.get("timestamp") or "")),
+            reverse=True,
+        )
+        used: set[str] = set()
+        business = AgentMemoryService._select_profile_fact(
+            sorted_facts,
+            stock_code=stock_code,
+            stock_name=name,
+            categories=("fundamental",),
+            keywords=(),
+            used=used,
+        ) or AgentMemoryService._select_profile_fact(
+            sorted_facts,
+            stock_code=stock_code,
+            stock_name=name,
+            keywords=("核心", "业务", "行业", "赛道", "龙头", "客户", "订单", "产能", "增长", "净利润", "营收"),
+            used=used,
+        )
+        technical = AgentMemoryService._select_profile_fact(
+            sorted_facts,
+            stock_code=stock_code,
+            stock_name=name,
+            keywords=("筹码", "支撑", "压力", "主峰", "回踩", "突破", "量比", "主力", "换手", "成本"),
+            used=used,
+        )
+        expectation = AgentMemoryService._select_profile_fact(
+            sorted_facts,
+            stock_code=stock_code,
+            stock_name=name,
+            keywords=("一季报", "业绩", "增速", "净利润", "预期", "阈值", "公告", "催化"),
+            used=used,
+        )
+        risk = AgentMemoryService._select_profile_fact(
+            sorted_facts,
+            stock_code=stock_code,
+            stock_name=name,
+            categories=("risk",),
+            keywords=("风险", "跌破", "减持", "解禁", "不及预期", "回调", "止损", "净流出"),
+            used=used,
+        )
+
+        business_clause = business or "核心关注点集中在业务景气验证、资金承接、筹码支撑与纪律化交易条件的持续跟踪"
+        technical_clause = technical or "筹码、资金与价格支撑信号仍是判断趋势延续性的核心依据"
+        expectation_clause = expectation or "后续业绩兑现、关键公告和资金流向变化"
+        risk_clause = risk or "业绩兑现不及预期、资金承接转弱、关键支撑失守以及市场系统性波动风险"
+
+        profile = (
+            f"{name}（{stock_code}）是A股市场中被持续跟踪的研究标的，{business_clause}。"
+            f"当前其交易画像显示{technical_clause}；业绩与事件验证主要围绕{expectation_clause}。"
+            f"主要风险包括{risk_clause}。"
+        )
+        return AgentMemoryService._sanitize_long_term_profile(profile)
 
 
 # Module-level singleton

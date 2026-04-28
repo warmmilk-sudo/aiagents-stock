@@ -15,6 +15,7 @@ import { formatDateTime } from "../../lib/datetime";
 import { encodeIntent } from "../../lib/intents";
 import { useSelectedModels } from "../../hooks/useSelectedModels";
 import { useDeepAnalysisStore } from "../../stores/deepAnalysisStore";
+import { useResearchStore } from "../../stores/researchStore";
 import { useSmartMonitorStore } from "../../stores/smartMonitorStore";
 import styles from "../ConsolePage.module.scss";
 
@@ -62,6 +63,7 @@ interface FollowupAsset {
 
 interface DeepAnalysisPageProps {
   startOnly?: boolean;
+  onAnalysisSettled?: () => void;
 }
 
 type SectionKey = "start" | "watchlist" | "viewed";
@@ -87,6 +89,14 @@ function taskProgressTone(task: TaskDetail | null): "running" | "success" | "dan
     return "danger";
   }
   return "running";
+}
+
+function isPendingTask(task?: TaskDetail | null) {
+  return task?.status === "queued" || task?.status === "running";
+}
+
+function isVisibleLatestTask(task?: TaskDetail | null) {
+  return isPendingTask(task) || task?.status === "failed" || task?.status === "cancelled";
 }
 
 function FollowupAssetList({
@@ -175,17 +185,19 @@ function FollowupAssetList({
   );
 }
 
-export function DeepAnalysisPage({ startOnly = false }: DeepAnalysisPageProps = {}) {
+export function DeepAnalysisPage({ startOnly = false, onAnalysisSettled }: DeepAnalysisPageProps = {}) {
   const { lightweightModel, reasoningModel } = useSelectedModels();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const analysts = useDeepAnalysisStore((state) => state.analysts);
   const setAnalysts = useDeepAnalysisStore((state) => state.setAnalysts);
+  const clearHubPageCache = useResearchStore((state) => state.clearHubPageCache);
   const clearSmartMonitorPageCache = useSmartMonitorStore((state) => state.clearPageCache);
 
   const [stockInput, setStockInput] = useState("");
   const [section, setSection] = useState<SectionKey>("start");
   const [task, setTask] = useState<TaskDetail | null>(null);
+  const [latestTask, setLatestTask] = useState<TaskDetail | null>(null);
   const [queuedTasks, setQueuedTasks] = useState<TaskDetail[]>([]);
   const [followupAssets, setFollowupAssets] = useState<FollowupAsset[]>([]);
   const [followupSearch, setFollowupSearch] = useState("");
@@ -200,11 +212,13 @@ export function DeepAnalysisPage({ startOnly = false }: DeepAnalysisPageProps = 
   );
 
   const loadTask = async () => {
-    const [active, pending] = await Promise.all([
+    const [active, pending, latest] = await Promise.all([
       apiFetch<TaskDetail | null>("/api/tasks/active"),
       apiFetch<TaskDetail[]>("/api/tasks/pending"),
+      apiFetch<TaskDetail | null>("/api/tasks/latest"),
     ]);
     setTask(active);
+    setLatestTask(latest);
     setQueuedTasks((pending ?? []).filter((item) => item.status === "queued" && item.id !== active?.id));
   };
 
@@ -220,17 +234,19 @@ export function DeepAnalysisPage({ startOnly = false }: DeepAnalysisPageProps = 
   usePollingLoader({ load: loadTask, intervalMs: 2000 });
 
   useEffect(() => {
-    if (!task || task.status === "queued" || task.status === "running") {
+    if (!latestTask || isPendingTask(latestTask)) {
       return;
     }
-    const terminalKey = `${task.id}:${task.status}:${task.result?.record_id ?? "na"}`;
+    const terminalKey = `${latestTask.id}:${latestTask.status}:${latestTask.result?.record_id ?? "na"}`;
     if (lastTerminalTaskRef.current === terminalKey) {
       return;
     }
     lastTerminalTaskRef.current = terminalKey;
+    clearHubPageCache();
     clearSmartMonitorPageCache();
     void loadFollowupAssets().catch(() => undefined);
-  }, [clearSmartMonitorPageCache, task?.id, task?.status, task?.result?.record_id]);
+    onAnalysisSettled?.();
+  }, [clearHubPageCache, clearSmartMonitorPageCache, latestTask?.id, latestTask?.status, latestTask?.result?.record_id, onAnalysisSettled]);
 
   useEffect(() => {
     void loadFollowupAssets();
@@ -263,6 +279,7 @@ export function DeepAnalysisPage({ startOnly = false }: DeepAnalysisPageProps = 
         }),
       });
       showMessage("分析任务已提交，正在准备执行...");
+      setStockInput("");
       void loadTask().catch(() => undefined);
     } catch (requestError) {
       showError(requestError instanceof ApiRequestError ? requestError.message : "提交任务失败");
@@ -290,6 +307,7 @@ export function DeepAnalysisPage({ startOnly = false }: DeepAnalysisPageProps = 
         }),
       });
       showMessage(`已重新提交 ${symbol} 的分析任务`);
+      setStockInput("");
       setSection("start");
       void loadTask().catch(() => undefined);
     } catch (requestError) {
@@ -326,13 +344,15 @@ export function DeepAnalysisPage({ startOnly = false }: DeepAnalysisPageProps = 
     navigate(buildMonitorPath(asset.action_payload));
   };
 
-  const taskSection = (
+  const visibleTask = task ?? (isVisibleLatestTask(latestTask) ? latestTask : null);
+
+  const taskSection = visibleTask ? (
     <div className={styles.moduleSection}>
       <TaskProgressBar
-        current={task?.current ?? (task?.status === "success" ? task?.total ?? 1 : 0)}
-        total={task?.total ?? 1}
-        message={task?.message || "等待任务状态..."}
-        tone={taskProgressTone(task)}
+        current={visibleTask.current ?? (visibleTask.status === "success" ? visibleTask.total ?? 1 : 0)}
+        total={visibleTask.total ?? 1}
+        message={visibleTask.message || "等待任务状态..."}
+        tone={taskProgressTone(visibleTask)}
         showCounter={false}
       />
       {queuedTasks.length ? (
@@ -340,21 +360,16 @@ export function DeepAnalysisPage({ startOnly = false }: DeepAnalysisPageProps = 
           <div className={styles.listItem}>
             <strong>排队任务</strong>
             <p className={styles.muted}>当前任务继续执行，以下任务会按顺序依次开始。</p>
-            <div className={styles.list}>
-              {queuedTasks.map((queuedTask, index) => (
-                <div className={styles.listItem} key={queuedTask.id}>
-                  <strong>
-                    {index + 1}. {queuedTask.label || "深度分析任务"}
-                  </strong>
-                  <p className={styles.muted}>{queuedTask.message || "等待前序任务完成后开始执行"}</p>
-                </div>
-              ))}
-            </div>
+            {queuedTasks.map((queuedTask, index) => (
+              <p className={styles.muted} key={queuedTask.id}>
+                {index + 1}. {queuedTask.label || "深度分析任务"} - {queuedTask.message || "等待前序任务完成后开始执行"}
+              </p>
+            ))}
           </div>
         </div>
       ) : null}
-      {task?.error ? <p className={styles.dangerText}>{task.error}</p> : null}
-      {task?.status === "success" && task.result?.mode === "batch" ? (
+      {visibleTask.error ? <p className={styles.dangerText}>{visibleTask.error}</p> : null}
+      {visibleTask.status === "success" && visibleTask.result?.mode === "batch" ? (
         <div className={styles.tableWrap}>
           <table className={styles.table}>
             <thead>
@@ -365,7 +380,7 @@ export function DeepAnalysisPage({ startOnly = false }: DeepAnalysisPageProps = 
               </tr>
             </thead>
             <tbody>
-              {(task.result.results ?? []).map((item) => (
+              {(visibleTask.result.results ?? []).map((item) => (
                 <tr key={`${item.symbol}-${item.record_id ?? "na"}`}>
                   <td>{item.symbol}</td>
                   <td>{item.success ? "成功" : item.error || "失败"}</td>
@@ -389,10 +404,10 @@ export function DeepAnalysisPage({ startOnly = false }: DeepAnalysisPageProps = 
         </div>
       ) : null}
     </div>
-  );
+  ) : null;
 
   const startAnalysisContent = (
-    <ModuleCard hideTitleOnMobile title="分析任务" summary="股票输入和分析师配置集中在同一模块内；深度分析当前固定按顺序执行。">
+    <ModuleCard hideTitleOnMobile title="分析任务">
       <form className={styles.moduleSection} id="deep-analysis-form" onSubmit={handleSubmit}>
         <div className={styles.field}>
           <label htmlFor="stockInput">股票代码（支持逗号或换行分隔）</label>
@@ -404,7 +419,6 @@ export function DeepAnalysisPage({ startOnly = false }: DeepAnalysisPageProps = 
             value={stockInput}
           />
         </div>
-        <p className={styles.muted}>当前有任务运行时仍可继续提交，新任务会按顺序排队执行。</p>
         <div className={styles.field}>
           <label>分析师配置</label>
           <AnalystSelector
@@ -421,7 +435,7 @@ export function DeepAnalysisPage({ startOnly = false }: DeepAnalysisPageProps = 
         </div>
       </form>
 
-      {task ? taskSection : null}
+      {taskSection}
     </ModuleCard>
   );
 
@@ -447,7 +461,7 @@ export function DeepAnalysisPage({ startOnly = false }: DeepAnalysisPageProps = 
         {section === "start" ? startAnalysisContent : null}
 
         {section === "watchlist" ? (
-          <ModuleCard hideTitleOnMobile title="关注中" summary="搜索、刷新和后续操作都收拢到同一模块。">
+          <ModuleCard hideTitleOnMobile title="关注中">
             <FollowupAssetList
               assets={watchlistAssets}
               emptyText="暂无关注中的股票"
@@ -464,7 +478,7 @@ export function DeepAnalysisPage({ startOnly = false }: DeepAnalysisPageProps = 
         ) : null}
 
         {section === "viewed" ? (
-          <ModuleCard hideTitleOnMobile title="看过" summary="保留再次分析、进入盯盘和历史记录的主路径。">
+          <ModuleCard hideTitleOnMobile title="看过">
             <FollowupAssetList
               assets={viewedAssets}
               emptyText="暂无看过的股票"

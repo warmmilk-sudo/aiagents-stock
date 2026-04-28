@@ -6,6 +6,7 @@
 import sqlite3
 from datetime import datetime, date
 import json
+import os
 import re
 import pandas as pd
 import logging
@@ -271,6 +272,12 @@ class SectorStrategyDatabase:
             action_hint TEXT,
             defense_line_type TEXT NOT NULL DEFAULT 'NONE',
             selection_veto INTEGER NOT NULL DEFAULT 0,
+            quant_stage TEXT,
+            quant_confidence REAL,
+            llm_stage TEXT,
+            llm_confidence REAL,
+            final_stage TEXT,
+            stage_review_reason TEXT,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (analysis_id) REFERENCES sector_analysis_reports (id)
         )
@@ -320,6 +327,12 @@ class SectorStrategyDatabase:
         self._ensure_table_column(cursor, "sector_heat_history", "observation_count", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_table_column(cursor, "sector_heat_history", "window_size_used", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_table_column(cursor, "sector_heat_history", "lifecycle_details_json", "TEXT")
+        self._ensure_table_column(cursor, "sector_heat_history", "quant_stage", "TEXT")
+        self._ensure_table_column(cursor, "sector_heat_history", "quant_confidence", "REAL")
+        self._ensure_table_column(cursor, "sector_heat_history", "llm_stage", "TEXT")
+        self._ensure_table_column(cursor, "sector_heat_history", "llm_confidence", "REAL")
+        self._ensure_table_column(cursor, "sector_heat_history", "final_stage", "TEXT")
+        self._ensure_table_column(cursor, "sector_heat_history", "stage_review_reason", "TEXT")
 
         # 数据版本管理表
         cursor.execute('''
@@ -682,7 +695,194 @@ class SectorStrategyDatabase:
             "high_heat_days": sum(1 for score in scores if score >= 80),
         }
 
-    def _build_lifecycle_payload(self, current_score, previous_scores):
+    @staticmethod
+    def _clip_confidence(value):
+        try:
+            numeric_value = float(value)
+        except (TypeError, ValueError):
+            return None
+        return round(max(0.0, min(0.99, numeric_value)), 2)
+
+    def _compute_quant_confidence(self, stage, *, short_metrics, startup_metrics, explosive_metrics, decay_metrics):
+        if stage == self.LIFECYCLE_STAGE_EXPLOSIVE and explosive_metrics:
+            confidence = (
+                0.72
+                + max(0.0, explosive_metrics["current"] - self.DEFAULT_LIFECYCLE_CONFIG["explosive_current_min"]) / 80.0
+                + max(0.0, explosive_metrics["avg"] - self.DEFAULT_LIFECYCLE_CONFIG["explosive_avg_10d_min"]) / 120.0
+                + explosive_metrics["high_heat_days"] * 0.03
+            )
+            return self._clip_confidence(confidence)
+        if stage == self.LIFECYCLE_STAGE_STARTUP and startup_metrics and short_metrics:
+            confidence = (
+                0.68
+                + max(0.0, short_metrics["current"] - self.DEFAULT_LIFECYCLE_CONFIG["startup_current_min"]) / 120.0
+                + max(0.0, startup_metrics["change"] - self.DEFAULT_LIFECYCLE_CONFIG["startup_change_5d_min"]) / 120.0
+                + max(0.0, short_metrics["slope"] - self.DEFAULT_LIFECYCLE_CONFIG["startup_slope_3d_min"]) / 40.0
+            )
+            return self._clip_confidence(confidence)
+        if stage == self.LIFECYCLE_STAGE_DECAY and decay_metrics and startup_metrics:
+            confidence = (
+                0.78
+                + max(0.0, decay_metrics["drawdown"] - self.DEFAULT_LIFECYCLE_CONFIG["decay_drawdown_long_min"]) / 120.0
+                + max(0.0, abs(startup_metrics["change"])) / 120.0
+            )
+            return self._clip_confidence(confidence)
+        return 0.56
+
+    def _extract_report_sector_bias(self, analysis_content, sector_name):
+        payload = analysis_content if isinstance(analysis_content, dict) else {}
+        final_predictions = payload.get("final_predictions") if isinstance(payload.get("final_predictions"), dict) else {}
+        normalized_target = self._normalize_sector_name(sector_name)
+        hot_signals = []
+        cooling_signals = []
+
+        def _match(raw_name):
+            normalized_name = self._normalize_sector_name(raw_name)
+            if not normalized_name or not normalized_target:
+                return False
+            return (
+                normalized_name == normalized_target
+                or normalized_name in normalized_target
+                or normalized_target in normalized_name
+            )
+
+        heat = final_predictions.get("heat") if isinstance(final_predictions.get("heat"), dict) else {}
+        for group_name in ("hottest", "heating"):
+            for item in heat.get(group_name) or []:
+                if isinstance(item, dict) and _match(item.get("sector") or item.get("name")):
+                    hot_signals.append(f"heat.{group_name}")
+        for group_name in ("cooling",):
+            for item in heat.get(group_name) or []:
+                if isinstance(item, dict) and _match(item.get("sector") or item.get("name")):
+                    cooling_signals.append(f"heat.{group_name}")
+
+        long_short = final_predictions.get("long_short") if isinstance(final_predictions.get("long_short"), dict) else {}
+        for item in long_short.get("bullish") or []:
+            if isinstance(item, dict) and _match(item.get("sector") or item.get("name")):
+                hot_signals.append("long_short.bullish")
+        for item in long_short.get("bearish") or []:
+            if isinstance(item, dict) and _match(item.get("sector") or item.get("name")):
+                cooling_signals.append("long_short.bearish")
+
+        rotation = final_predictions.get("rotation") if isinstance(final_predictions.get("rotation"), dict) else {}
+        for group_name in ("current_strong", "potential"):
+            for item in rotation.get(group_name) or []:
+                if isinstance(item, dict) and _match(item.get("sector") or item.get("name")):
+                    hot_signals.append(f"rotation.{group_name}")
+        for item in rotation.get("declining") or []:
+            if isinstance(item, dict) and _match(item.get("sector") or item.get("name")):
+                cooling_signals.append("rotation.declining")
+
+        return {
+            "hot_signals": hot_signals,
+            "cooling_signals": cooling_signals,
+            "is_hot": bool(hot_signals),
+            "is_cooling": bool(cooling_signals),
+        }
+
+    def _should_review_lifecycle_stage(self, *, quant_stage, quant_confidence, report_bias, rank_order):
+        return bool(
+            quant_confidence < 0.82
+            or (quant_stage == self.LIFECYCLE_STAGE_NEUTRAL and int(rank_order or 0) <= 10)
+            or (quant_stage in {self.LIFECYCLE_STAGE_NEUTRAL, self.LIFECYCLE_STAGE_DECAY} and report_bias.get("is_hot"))
+            or (quant_stage in {self.LIFECYCLE_STAGE_STARTUP, self.LIFECYCLE_STAGE_EXPLOSIVE} and report_bias.get("is_cooling"))
+        )
+
+    def _call_stage_review_llm(self, *, sector_name, quant_stage, quant_confidence, trajectory, lifecycle_details, report_bias):
+        if str(os.getenv("SMART_SELECTION_ENABLE_STAGE_REVIEW_LLM") or "").strip() != "1":
+            return {}
+        try:
+            from llm_client import LLMClient
+            from model_routing import ModelTier
+            from prompt_registry import build_messages
+        except Exception:
+            return {}
+        try:
+            client = LLMClient()
+            messages = build_messages(
+                "smart_selection/sector_stage_review.system.txt",
+                "smart_selection/sector_stage_review.user.txt",
+                sector_name=sector_name,
+                aliases_payload=self._to_json([sector_name]),
+                source_type="sector_heat_history",
+                quant_stage=quant_stage,
+                quant_confidence=quant_confidence,
+                trajectory_payload=self._to_json(trajectory or []),
+                lifecycle_details_payload=self._to_json(lifecycle_details or {}),
+                report_bias_payload=self._to_json(report_bias or {}),
+            )
+            response = client.call_api(
+                messages,
+                max_tokens=500,
+                tier=ModelTier.LIGHTWEIGHT,
+            )
+            parsed = json.loads(re.search(r"\{[\s\S]*\}", str(response or "")).group(0))
+        except Exception:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+
+    def _review_lifecycle_stage(self, *, sector_name, quant_stage, quant_confidence, rank_order, analysis_content, trajectory, lifecycle_details, current_score):
+        report_bias = self._extract_report_sector_bias(analysis_content, sector_name)
+        final_stage = quant_stage
+        llm_stage = ""
+        llm_confidence = None
+        review_reason = "量化阶段直接采用"
+
+        if quant_stage == self.LIFECYCLE_STAGE_DECAY and quant_confidence >= 0.82:
+            return {
+                "llm_stage": llm_stage,
+                "llm_confidence": llm_confidence,
+                "final_stage": final_stage,
+                "stage_review_reason": "高置信衰退期，保持量化一票否决",
+            }
+        if quant_stage in {self.LIFECYCLE_STAGE_STARTUP, self.LIFECYCLE_STAGE_EXPLOSIVE} and quant_confidence >= 0.82:
+            return {
+                "llm_stage": llm_stage,
+                "llm_confidence": llm_confidence,
+                "final_stage": final_stage,
+                "stage_review_reason": "高置信启动/爆发期，直接采用量化结果",
+            }
+
+        if self._should_review_lifecycle_stage(
+            quant_stage=quant_stage,
+            quant_confidence=quant_confidence,
+            report_bias=report_bias,
+            rank_order=rank_order,
+        ):
+            llm_payload = self._call_stage_review_llm(
+                sector_name=sector_name,
+                quant_stage=quant_stage,
+                quant_confidence=quant_confidence,
+                trajectory=trajectory,
+                lifecycle_details=lifecycle_details,
+                report_bias=report_bias,
+            )
+            llm_stage = str(llm_payload.get("final_stage") or "").strip()
+            llm_confidence = self._clip_confidence(llm_payload.get("confidence")) if llm_payload.get("confidence") not in (None, "") else None
+            review_reason = str(llm_payload.get("reason") or "").strip() or "边界样本复核"
+
+            if quant_stage == self.LIFECYCLE_STAGE_NEUTRAL and report_bias.get("is_hot") and current_score >= 75:
+                final_stage = self.LIFECYCLE_STAGE_EXPLOSIVE if current_score >= 85 else self.LIFECYCLE_STAGE_STARTUP
+                review_reason = review_reason or "热点板块与量化中性冲突，提升为可观察阶段"
+            elif quant_stage in {self.LIFECYCLE_STAGE_STARTUP, self.LIFECYCLE_STAGE_EXPLOSIVE} and report_bias.get("is_cooling") and quant_confidence < 0.82:
+                final_stage = self.LIFECYCLE_STAGE_NEUTRAL
+                review_reason = review_reason or "量化偏强但报告显示降温，降级为中性"
+
+            if llm_stage in {
+                self.LIFECYCLE_STAGE_STARTUP,
+                self.LIFECYCLE_STAGE_EXPLOSIVE,
+                self.LIFECYCLE_STAGE_DECAY,
+                self.LIFECYCLE_STAGE_NEUTRAL,
+            } and (llm_confidence or 0) >= 0.55:
+                final_stage = llm_stage
+        return {
+            "llm_stage": llm_stage,
+            "llm_confidence": llm_confidence,
+            "final_stage": final_stage,
+            "stage_review_reason": review_reason,
+        }
+
+    def _build_lifecycle_payload(self, current_score, previous_scores, *, sector_name="", rank_order=0, analysis_content=None):
         config = self.get_lifecycle_config()
         ordered_scores = list(reversed(previous_scores)) + [current_score]
         delta_1 = None
@@ -700,7 +900,7 @@ class SectorStrategyDatabase:
         explosive_metrics = metrics.get(10) or metrics.get(5) or metrics.get(3)
         decay_metrics = metrics.get(15) or metrics.get(10) or metrics.get(5) or metrics.get(3)
 
-        lifecycle_stage = self.LIFECYCLE_STAGE_NEUTRAL
+        quant_stage = self.LIFECYCLE_STAGE_NEUTRAL
         defense_line_type = "NONE"
         selection_veto = False
         action_hint = "仅展示，不推动动作"
@@ -762,21 +962,76 @@ class SectorStrategyDatabase:
         )
 
         if decay_signal:
-            lifecycle_stage = self.LIFECYCLE_STAGE_DECAY
+            quant_stage = self.LIFECYCLE_STAGE_DECAY
             defense_line_type = "NONE"
             selection_veto = True
             action_hint = "衰退期，板块级一票否决"
         elif explosive_signal:
-            lifecycle_stage = self.LIFECYCLE_STAGE_EXPLOSIVE
+            quant_stage = self.LIFECYCLE_STAGE_EXPLOSIVE
             defense_line_type = "MA5"
             action_hint = "爆发期，允许进入尾盘执行候选"
         elif startup_signal:
-            lifecycle_stage = self.LIFECYCLE_STAGE_STARTUP
+            quant_stage = self.LIFECYCLE_STAGE_STARTUP
             defense_line_type = "MA10"
             action_hint = "启动期，进入 MA10 重点观察池"
         trajectory = [{"day_offset": offset - len(ordered_scores) + 1, "score": round(score, 2)} for offset, score in enumerate(ordered_scores)]
+        quant_confidence = self._compute_quant_confidence(
+            quant_stage,
+            short_metrics=short_metrics,
+            startup_metrics=startup_metrics,
+            explosive_metrics=explosive_metrics,
+            decay_metrics=decay_metrics,
+        )
+        lifecycle_details = {
+            str(window_size): {
+                key: round(value, 2) if isinstance(value, float) else value
+                for key, value in (window_metrics or {}).items()
+                if key != "scores"
+            }
+            for window_size, window_metrics in metrics.items()
+            if window_metrics
+        }
+        review_payload = self._review_lifecycle_stage(
+            sector_name=sector_name,
+            quant_stage=quant_stage,
+            quant_confidence=quant_confidence,
+            rank_order=rank_order,
+            analysis_content=analysis_content if isinstance(analysis_content, dict) else {},
+            trajectory=trajectory,
+            lifecycle_details=lifecycle_details,
+            current_score=current_score,
+        )
+        lifecycle_stage = review_payload.get("final_stage") or quant_stage
+        if quant_stage == self.LIFECYCLE_STAGE_DECAY and quant_confidence >= 0.82:
+            lifecycle_stage = quant_stage
+            review_payload["stage_review_reason"] = "高置信衰退期，保持量化一票否决"
+        elif quant_stage in {self.LIFECYCLE_STAGE_STARTUP, self.LIFECYCLE_STAGE_EXPLOSIVE} and quant_confidence >= 0.82:
+            lifecycle_stage = quant_stage
+            review_payload["stage_review_reason"] = "高置信启动/爆发期，直接采用量化结果"
+        if lifecycle_stage == self.LIFECYCLE_STAGE_DECAY:
+            defense_line_type = "NONE"
+            selection_veto = True
+            action_hint = "衰退期，板块级一票否决"
+        elif lifecycle_stage == self.LIFECYCLE_STAGE_EXPLOSIVE:
+            defense_line_type = "MA5"
+            selection_veto = False
+            action_hint = "爆发期，允许进入尾盘执行候选"
+        elif lifecycle_stage == self.LIFECYCLE_STAGE_STARTUP:
+            defense_line_type = "MA10"
+            selection_veto = False
+            action_hint = "启动期，进入 MA10 重点观察池"
+        else:
+            defense_line_type = "NONE"
+            selection_veto = False
+            action_hint = "仅展示，不推动动作"
         return {
             "lifecycle_stage": lifecycle_stage,
+            "quant_stage": quant_stage,
+            "quant_confidence": quant_confidence,
+            "llm_stage": review_payload.get("llm_stage") or "",
+            "llm_confidence": review_payload.get("llm_confidence"),
+            "final_stage": lifecycle_stage,
+            "stage_review_reason": review_payload.get("stage_review_reason") or "",
             "delta_1": round(delta_1, 2) if delta_1 is not None else None,
             "delta_2": round(delta_2, 2) if delta_2 is not None else None,
             "trajectory": trajectory,
@@ -785,15 +1040,7 @@ class SectorStrategyDatabase:
             "selection_veto": selection_veto,
             "observation_count": len(ordered_scores),
             "window_size_used": int(window_size_used or 0),
-            "lifecycle_details": {
-                str(window_size): {
-                    key: round(value, 2) if isinstance(value, float) else value
-                    for key, value in (window_metrics or {}).items()
-                    if key != "scores"
-                }
-                for window_size, window_metrics in metrics.items()
-                if window_metrics
-            },
+            "lifecycle_details": lifecycle_details,
             "config_snapshot": {
                 key: self._coerce_config_value(default_value, config.get(key))
                 for key, default_value in self.DEFAULT_LIFECYCLE_CONFIG.items()
@@ -822,16 +1069,23 @@ class SectorStrategyDatabase:
                 board_date,
                 limit=max(0, int(self.LIFECYCLE_LOOKBACK_DAYS) - 1),
             )
-            lifecycle = self._build_lifecycle_payload(self._to_float(heat_score, 0.0), previous_scores)
+            lifecycle = self._build_lifecycle_payload(
+                self._to_float(heat_score, 0.0),
+                previous_scores,
+                sector_name=sector_name,
+                rank_order=rank_order,
+                analysis_content=analysis_content,
+            )
             cursor.execute(
                 '''
                 INSERT INTO sector_heat_history (
                     analysis_id, board_date, analysis_date, sector_name, normalized_sector_name,
                     source_type, heat_score, heat_group, heat_rank, trend_text, sustainability,
                     lifecycle_stage, delta_1, delta_2, observation_count, window_size_used,
-                    trajectory_json, lifecycle_details_json, action_hint, defense_line_type, selection_veto
+                    trajectory_json, lifecycle_details_json, action_hint, defense_line_type, selection_veto,
+                    quant_stage, quant_confidence, llm_stage, llm_confidence, final_stage, stage_review_reason
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''',
                 (
                     int(analysis_id),
@@ -855,6 +1109,12 @@ class SectorStrategyDatabase:
                     lifecycle["action_hint"],
                     lifecycle["defense_line_type"],
                     1 if lifecycle["selection_veto"] else 0,
+                    lifecycle.get("quant_stage"),
+                    self._to_float(lifecycle.get("quant_confidence"), 0.0),
+                    lifecycle.get("llm_stage"),
+                    self._to_float(lifecycle.get("llm_confidence"), 0.0) if lifecycle.get("llm_confidence") is not None else None,
+                    lifecycle.get("final_stage"),
+                    lifecycle.get("stage_review_reason"),
                 ),
             )
     
@@ -1128,12 +1388,13 @@ class SectorStrategyDatabase:
         
         return df
     
-    def get_analysis_report(self, report_id):
+    def get_analysis_report(self, report_id, include_lifecycle=True):
         """
         获取单个分析报告详情
         
         Args:
             report_id: 报告ID
+            include_lifecycle: 是否同时加载生命周期明细
             
         Returns:
             dict: 报告详情
@@ -1158,8 +1419,9 @@ class SectorStrategyDatabase:
                     report['analysis_content_parsed'] = json.loads(report['analysis_content'])
                 if report.get('recommended_sectors'):
                     report['recommended_sectors_parsed'] = json.loads(report['recommended_sectors'])
-                report['lifecycle_items'] = self.get_lifecycle_items_for_analysis(report_id)
-                report['lifecycle_summary'] = self.build_lifecycle_summary(report['lifecycle_items'])
+                if include_lifecycle:
+                    report['lifecycle_items'] = self.get_lifecycle_items_for_analysis(report_id)
+                    report['lifecycle_summary'] = self.build_lifecycle_summary(report['lifecycle_items'])
             except json.JSONDecodeError as e:
                 self.logger.warning(f"[智策板块] JSON解析失败: {e}")
             
@@ -1214,7 +1476,7 @@ class SectorStrategyDatabase:
                 FROM sector_heat_history
                 WHERE analysis_id = ?
                 ORDER BY
-                    CASE lifecycle_stage
+                    CASE COALESCE(final_stage, lifecycle_stage)
                         WHEN 'explosive' THEN 0
                         WHEN 'startup' THEN 1
                         WHEN 'decay' THEN 2
@@ -1230,6 +1492,8 @@ class SectorStrategyDatabase:
             for row in cursor.fetchall():
                 item = self._row_to_dict(cursor, row)
                 item['selection_veto'] = bool(item.get('selection_veto', 0))
+                if item.get('final_stage'):
+                    item['lifecycle_stage'] = item.get('final_stage')
                 try:
                     item['trajectory'] = json.loads(item.get('trajectory_json') or '[]')
                 except Exception:

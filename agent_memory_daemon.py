@@ -81,6 +81,7 @@ def _on_analysis_completed(**kwargs: Any) -> None:
             rating=kwargs.get("rating", ""),
             summary=kwargs.get("summary", ""),
             discussion_summary=kwargs.get("discussion_summary", ""),
+            final_decision=kwargs.get("final_decision"),
             source_analysis_id=kwargs.get("source_analysis_id"),
         )
         logger.info("[MemoryDaemon] Extracted %d facts for %s", len(facts), stock_code)

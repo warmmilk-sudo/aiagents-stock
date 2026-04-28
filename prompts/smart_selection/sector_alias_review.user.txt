@@ -1,0 +1,14 @@
+目标板块：$sector
+标准板块名：$canonical_sector
+别名列表：$aliases_payload
+
+候选标签：$candidate_tag
+关联文本摘录：$haystack_snippet
+
+请仅输出 JSON：
+{
+  "is_same_theme": true,
+  "canonical_sector": "标准板块名",
+  "match_score": 0.84,
+  "reason": "同义/上下游/子主题"
+}

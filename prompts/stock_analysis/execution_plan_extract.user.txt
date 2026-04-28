@@ -1,0 +1,16 @@
+历史深度分析报告：
+
+股票：$stock_name（$stock_code）
+分析时间：$analysis_date
+评级：$rating
+
+最终决策 JSON：
+$final_decision_json
+
+报告摘要：
+$summary
+
+团队讨论：
+$discussion_summary
+
+请抽取这份报告的结构化盘中执行计划。

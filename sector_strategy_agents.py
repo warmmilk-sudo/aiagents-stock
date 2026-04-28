@@ -4,7 +4,7 @@
 """
 
 import re
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from llm_client import LLMClient
 from model_routing import ModelTier
@@ -26,7 +26,13 @@ class SectorStrategyAgents:
         )
         print(f"[智策] AI智能体系统初始化 (模型配置: {self.llm_client.model_selection})")
     
-    def macro_strategist_agent(self, market_data: Dict, news_data: list, analysis_date: str = "") -> Dict[str, Any]:
+    def macro_strategist_agent(
+        self,
+        market_data: Dict,
+        news_data: list,
+        analysis_date: str = "",
+        macro_data: Optional[Dict] = None,
+    ) -> Dict[str, Any]:
         """
         宏观策略师 - 分析宏观经济和新闻对板块的影响
         
@@ -70,12 +76,15 @@ class SectorStrategyAgents:
   下跌: {market_data['down_count']}
   涨停: {market_data['limit_up']} | 跌停: {market_data['limit_down']}
 """
+
+        macro_summary = self._format_macro_snapshot(macro_data or {})
         
         reference_date = str(analysis_date or "").strip()
         messages = build_messages(
             "sector_strategy/macro.system.txt",
             "sector_strategy/macro.user.txt",
             analysis_date=reference_date or "未提供",
+            macro_summary=macro_summary,
             market_summary=market_summary,
             news_summary=news_summary,
         )
@@ -101,6 +110,74 @@ class SectorStrategyAgents:
             "focus_areas": ["宏观经济", "政策解读", "新闻事件", "市场情绪", "行业轮动"],
             "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
         }
+
+    def _format_macro_snapshot(self, macro_data: Dict) -> str:
+        if not isinstance(macro_data, dict) or not macro_data.get("macro_snapshot"):
+            return ""
+
+        snapshot = macro_data.get("macro_snapshot") or {}
+        ordered_keys = (
+            "gdp_yoy",
+            "gdp_qoq",
+            "industrial_yoy",
+            "cpi_yoy",
+            "ppi_yoy",
+            "manufacturing_pmi",
+            "non_manufacturing_pmi",
+            "composite_pmi",
+            "m2_yoy",
+            "retail_sales_yoy",
+            "fixed_asset_yoy",
+            "real_estate_invest_yoy",
+            "urban_unemployment",
+        )
+        source_label = {
+            "macro_analysis_cache": "宏观分析模块最近快照",
+            "macro_analysis_tushare": "宏观分析模块Tushare实时映射",
+        }.get(macro_data.get("source"), str(macro_data.get("source") or "宏观分析模块"))
+
+        lines = ["【宏观指标快照】", f"数据来源: {source_label}"]
+        if macro_data.get("timestamp"):
+            lines.append(f"采集时间: {macro_data['timestamp']}")
+
+        for key in ordered_keys:
+            item = snapshot.get(key)
+            if not isinstance(item, dict):
+                continue
+            label = item.get("label") or key
+            value = item.get("value")
+            unit = item.get("unit") or ""
+            if value in (None, ""):
+                continue
+            change = item.get("change")
+            change_text = f"，较上一期变动 {change:+.2f}{unit}" if isinstance(change, (int, float)) else ""
+            lines.append(f"- {label}: {value}{unit}（最新公布期{change_text}）")
+
+        rule_view = macro_data.get("rule_based_sector_view") or {}
+        if isinstance(rule_view, dict):
+            market_view = rule_view.get("market_view")
+            if market_view:
+                lines.append(f"- 宏观规则视图: {market_view}")
+            bullish = rule_view.get("bullish_sectors") or []
+            if bullish:
+                names = [
+                    str(item.get("sector"))
+                    for item in bullish[:5]
+                    if isinstance(item, dict) and item.get("sector")
+                ]
+                if names:
+                    lines.append(f"- 宏观相对受益板块: {'、'.join(names)}")
+            bearish = rule_view.get("bearish_sectors") or []
+            if bearish:
+                names = [
+                    str(item.get("sector"))
+                    for item in bearish[:4]
+                    if isinstance(item, dict) and item.get("sector")
+                ]
+                if names:
+                    lines.append(f"- 宏观相对承压板块: {'、'.join(names)}")
+
+        return "\n".join(lines)
     
     def sector_diagnostician_agent(
         self,

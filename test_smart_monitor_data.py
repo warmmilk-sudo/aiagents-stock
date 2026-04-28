@@ -475,6 +475,34 @@ class SmartMonitorDataFetcherTests(unittest.TestCase):
         self.assertFalse(freshness["intraday_decision_ready"])
         self.assertEqual(freshness["minute_quality"]["status"], "poor")
 
+    def test_realtime_freshness_is_review_ready_after_close_with_tail_snapshot(self):
+        fetcher = self._build_fetcher(_FakeTDXFetcher(), retry_count=1)
+
+        with patch.object(
+            SmartMonitorDataFetcher,
+            "_beijing_now",
+            return_value=datetime(2026, 4, 10, 15, 30, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+        ):
+            freshness = fetcher._build_realtime_freshness(
+                {
+                    "update_time": "2026-04-10 15:01:00",
+                    "intraday_context": {
+                        "latest_minute_time": "15:00",
+                        "latest_trade_time": "2026-04-10T15:00:00+08:00",
+                        "minute_coverage_ratio": 0.98,
+                        "max_minute_gap": 1,
+                        "minute_point_count": 240,
+                        "filled_minute_point_count": 240,
+                    },
+                }
+            )
+
+        self.assertEqual(freshness["overall_status"], "review_ready")
+        self.assertFalse(freshness["intraday_decision_ready"])
+        self.assertTrue(freshness["intraday_review_ready"])
+        self.assertTrue(freshness["has_tail_or_close_snapshot"])
+        self.assertEqual(freshness["minute"]["status"], "same_day_snapshot")
+
     def test_get_realtime_quote_does_not_fall_back_to_tushare(self):
         fetcher = self._build_fetcher(None, retry_count=1)
 

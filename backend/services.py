@@ -77,7 +77,7 @@ sector_strategy_db = SectorStrategyDatabase()
 MAIN_FORCE_SELECTION_TASK_TYPE = "main_force_selection"
 MAIN_FORCE_BATCH_TASK_TYPE = "main_force_batch_analysis"
 SECTOR_STRATEGY_TASK_TYPE = "sector_strategy_analysis"
-SECTOR_STRATEGY_LIFECYCLE_REBUILD_TASK_TYPE = "sector_strategy_lifecycle_rebuild"
+SMART_SELECTION_LIFECYCLE_REBUILD_TASK_TYPE = "smart_selection_lifecycle_rebuild"
 LONGHUBANG_TASK_TYPE = "longhubang_analysis"
 LONGHUBANG_BATCH_TASK_TYPE = "longhubang_batch_analysis"
 LOW_PRICE_BULL_TASK_TYPE = "low_price_bull_selection"
@@ -90,6 +90,7 @@ NEWS_FLOW_TASK_TYPE = "news_flow_analysis"
 HOME_STOCK_ANALYSIS_TASK_TYPE = "home_stock_analysis"
 PORTFOLIO_SCHEDULER_TASK_TYPE = "batch"
 SMART_MONITOR_BASELINE_REFRESH_TASK_TYPE = "smart_monitor_baseline_refresh"
+MONITOR_RELATED_MEMORY_BACKFILL_TASK_TYPE = "monitor_related_memory_backfill"
 SMART_MONITOR_INTRADAY_INTERVAL_KEY = "smart_monitor_intraday_decision_interval_minutes"
 SMART_MONITOR_REALTIME_INTERVAL_KEY = "smart_monitor_realtime_monitor_interval_minutes"
 SMART_MONITOR_RUN_ONCE_MAX_ATTEMPTS = 2
@@ -720,6 +721,54 @@ def get_ui_task(task_type: str, task_id: str) -> Optional[dict[str, Any]]:
     return build_task_summary(task)
 
 
+def submit_monitor_related_memory_backfill_task(
+    *,
+    apply: bool = True,
+    workers: Optional[int] = None,
+    limit: Optional[int] = None,
+    stock_code: Optional[str] = None,
+    force: Optional[bool] = None,
+) -> dict[str, Any]:
+    existing_task = get_active_ui_task(MONITOR_RELATED_MEMORY_BACKFILL_TASK_TYPE)
+    if existing_task and existing_task.get("id"):
+        return {
+            "task_id": str(existing_task["id"]),
+            "reused": True,
+            "status": existing_task.get("status"),
+        }
+
+    def runner(_task_id: str, report_progress) -> dict[str, Any]:
+        from monitor_memory_backfill_service import monitor_related_execution_memory_backfill_service
+
+        result = monitor_related_execution_memory_backfill_service.run(
+            apply=apply,
+            workers=workers,
+            limit=limit,
+            stock_code=stock_code,
+            force=force,
+            progress=lambda **updates: report_progress(**updates),
+        )
+        return _json_safe(result)
+
+    task_id = start_ui_analysis_task(
+        task_type=MONITOR_RELATED_MEMORY_BACKFILL_TASK_TYPE,
+        label="盯盘相关历史报告回填",
+        runner=runner,
+        metadata={
+            "apply": bool(apply),
+            "workers": workers,
+            "limit": limit,
+            "stock_code": stock_code or "",
+            "force": force,
+        },
+    )
+    return {
+        "task_id": task_id,
+        "reused": False,
+        "status": "queued",
+    }
+
+
 def _parse_main_force_start_date(raw_value: Optional[str]) -> Optional[str]:
     value = str(raw_value or "").strip()
     if not value:
@@ -1086,11 +1135,6 @@ def list_sector_strategy_reports(limit: int = 20) -> list[dict[str, Any]]:
             {
                 **_json_safe(report),
                 "summary_data": _extract_sector_strategy_summary(report),
-                "lifecycle_summary": _json_safe(
-                    sector_strategy_db.build_lifecycle_summary(
-                        sector_strategy_db.get_lifecycle_items_for_analysis(int(report.get("id") or 0))
-                    )
-                ),
             }
             for report in reports
         ]
@@ -1122,7 +1166,7 @@ def get_latest_sector_strategy_report_overview() -> dict[str, Any]:
                 "daily_heat_panel": {"available": False, "board_date": None, "total_count": 0, "items": []},
             }
 
-        report = sector_strategy_db.get_analysis_report(latest_id)
+        report = sector_strategy_db.get_analysis_report(latest_id, include_lifecycle=False)
         if not report:
             return {
                 "available": False,
@@ -1234,7 +1278,7 @@ def get_sector_strategy_task(
 
 def get_sector_strategy_report(report_id: int, *, include_raw_reports: bool = False) -> Optional[dict[str, Any]]:
     def builder() -> Optional[dict[str, Any]]:
-        report = sector_strategy_db.get_analysis_report(report_id)
+        report = sector_strategy_db.get_analysis_report(report_id, include_lifecycle=False)
         if not report:
             return None
         embedded_data_summary = {}
@@ -1254,8 +1298,6 @@ def get_sector_strategy_report(report_id: int, *, include_raw_reports: bool = Fa
             **_json_safe(report),
             "summary_data": _extract_sector_strategy_summary(report_view),
             "report_view": _json_safe(report_view),
-            "lifecycle_items": _json_safe(report.get("lifecycle_items") or []),
-            "lifecycle_summary": _json_safe(report.get("lifecycle_summary") or sector_strategy_db.build_lifecycle_summary([])),
             "daily_heat_panel": _json_safe(
                 sector_strategy_db.get_daily_heat_panel(
                     board_date=str(report.get("board_date") or report.get("analysis_date") or report.get("created_at") or "")[:10],
@@ -1285,7 +1327,7 @@ def delete_sector_strategy_report(report_id: int) -> bool:
     return deleted
 
 
-def get_sector_strategy_latest_lifecycle() -> dict[str, Any]:
+def get_smart_selection_latest_lifecycle() -> dict[str, Any]:
     return _get_or_build_report_cache(
         "sector:lifecycle:latest",
         builder=lambda: _json_safe(sector_strategy_db.get_latest_lifecycle_snapshot()),
@@ -1293,28 +1335,28 @@ def get_sector_strategy_latest_lifecycle() -> dict[str, Any]:
     )
 
 
-def list_sector_strategy_lifecycle(days: int = 20) -> list[dict[str, Any]]:
+def list_smart_selection_lifecycle(days: int = 20) -> list[dict[str, Any]]:
     return _json_safe(sector_strategy_db.list_lifecycle_snapshots(days=days))
 
 
-def get_sector_strategy_latest_heat_daily(limit: int = 30) -> dict[str, Any]:
+def get_smart_selection_latest_heat_daily(limit: int = 30) -> dict[str, Any]:
     return _json_safe(sector_strategy_db.get_daily_heat_panel(limit=limit))
 
 
-def get_sector_strategy_lifecycle_config() -> dict[str, Any]:
+def get_smart_selection_lifecycle_config() -> dict[str, Any]:
     return _json_safe(sector_strategy_db.get_lifecycle_config())
 
 
-def update_sector_strategy_lifecycle_config(values: dict[str, Any]) -> dict[str, Any]:
+def update_smart_selection_lifecycle_config(values: dict[str, Any]) -> dict[str, Any]:
     return _json_safe(sector_strategy_db.update_lifecycle_config(values or {}))
 
 
-def rebuild_sector_strategy_lifecycle() -> dict[str, Any]:
+def rebuild_smart_selection_lifecycle() -> dict[str, Any]:
     return _json_safe(sector_strategy_db.rebuild_heat_history())
 
 
-def submit_sector_strategy_lifecycle_rebuild_task(*, reason: str = "manual") -> dict[str, Any]:
-    existing_task = get_active_ui_task(SECTOR_STRATEGY_LIFECYCLE_REBUILD_TASK_TYPE)
+def submit_smart_selection_lifecycle_rebuild_task(*, reason: str = "manual") -> dict[str, Any]:
+    existing_task = get_active_ui_task(SMART_SELECTION_LIFECYCLE_REBUILD_TASK_TYPE)
     if existing_task and existing_task.get("id"):
         return {
             "task_id": str(existing_task["id"]),
@@ -1346,7 +1388,7 @@ def submit_sector_strategy_lifecycle_rebuild_task(*, reason: str = "manual") -> 
         }
 
     task_id = start_ui_analysis_task(
-        task_type=SECTOR_STRATEGY_LIFECYCLE_REBUILD_TASK_TYPE,
+        task_type=SMART_SELECTION_LIFECYCLE_REBUILD_TASK_TYPE,
         label="生命周期重建",
         runner=runner,
         metadata={"reason": str(reason or "manual")},

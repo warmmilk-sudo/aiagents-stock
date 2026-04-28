@@ -11,6 +11,7 @@ sys.modules.setdefault(
     ),
 )
 
+import config
 from llm_client import LLMClient
 from model_routing import ModelTier
 from prompt_registry import build_messages
@@ -73,6 +74,37 @@ class LLMClientTests(unittest.TestCase):
         result = client.call_api([{"role": "user", "content": "hello"}])
 
         self.assertEqual(result, "最终正文")
+
+    def test_call_api_uses_model_specific_sampling_defaults(self):
+        client = LLMClient.__new__(LLMClient)
+        client.model = None
+        client.lightweight_model = None
+        client.reasoning_model = None
+        message = types.SimpleNamespace(reasoning_content=None, content="事实回答")
+        response = types.SimpleNamespace(choices=[types.SimpleNamespace(message=message)])
+        create = MagicMock(return_value=response)
+        client.client = types.SimpleNamespace(
+            chat=types.SimpleNamespace(
+                completions=types.SimpleNamespace(create=create)
+            )
+        )
+
+        result = client.call_api(
+            [{"role": "user", "content": "hello"}],
+            model="doubao-2-0-pro",
+            sampling_profile="factual",
+        )
+
+        self.assertEqual(result, "事实回答")
+        expected_temperature, expected_top_p = config.resolve_llm_sampling_params(
+            "doubao-2-0-pro",
+            profile="factual",
+        )
+        self.assertEqual(create.call_args.kwargs["temperature"], expected_temperature)
+        if expected_top_p < 1.0:
+            self.assertEqual(create.call_args.kwargs["top_p"], expected_top_p)
+        else:
+            self.assertNotIn("top_p", create.call_args.kwargs)
 
     def test_call_api_retries_transient_failure_then_succeeds(self):
         client = LLMClient.__new__(LLMClient)
@@ -185,10 +217,11 @@ class LLMClientTests(unittest.TestCase):
             self,
             messages,
             model=None,
-            temperature=0.7,
+            temperature=None,
             max_tokens=2000,
             tier=None,
             include_reasoning=True,
+            sampling_profile="default",
         ):
             captured["messages"] = messages
             captured["tier"] = tier
@@ -231,10 +264,11 @@ class LLMClientTests(unittest.TestCase):
             self,
             messages,
             model=None,
-            temperature=0.7,
+            temperature=None,
             max_tokens=2000,
             tier=None,
             include_reasoning=True,
+            sampling_profile="default",
         ):
             captured["messages"] = messages
             captured["model"] = model
@@ -242,6 +276,7 @@ class LLMClientTests(unittest.TestCase):
             captured["max_tokens"] = max_tokens
             captured["tier"] = tier
             captured["include_reasoning"] = include_reasoning
+            captured["sampling_profile"] = sampling_profile
             return '{"rating":"buy","target_price":"12","take_profit":"12","stop_loss":"9.2","confidence_level":"8"}'
 
         client.call_api = types.MethodType(fake_call_api, client)
@@ -261,7 +296,8 @@ class LLMClientTests(unittest.TestCase):
         )
 
         self.assertEqual(captured["tier"], ModelTier.REASONING)
-        self.assertEqual(captured["temperature"], 0.3)
+        self.assertIsNone(captured["temperature"])
+        self.assertEqual(captured["sampling_profile"], "factual")
         self.assertEqual(captured["max_tokens"], 4000)
         self.assertFalse(captured["include_reasoning"])
         self.assertEqual(len(captured["messages"]), 2)
@@ -282,6 +318,7 @@ class LLMClientTests(unittest.TestCase):
             max_tokens=2000,
             tier=None,
             include_reasoning=True,
+            sampling_profile="default",
         ):
             captured["messages"] = messages
             return '{"rating":"加仓","target_price":"12","take_profit":"12","stop_loss":"9.2","confidence_level":"8"}'
@@ -310,6 +347,7 @@ class LLMClientTests(unittest.TestCase):
             max_tokens=2000,
             tier=None,
             include_reasoning=True,
+            sampling_profile="default",
         ):
             captured["messages"] = messages
             return '{"rating":"持有","target_price":"12","take_profit":"12","stop_loss":"9.2","confidence_level":"8","swing_type":"标准波段"}'
@@ -345,6 +383,7 @@ class LLMClientTests(unittest.TestCase):
             max_tokens=2000,
             tier=None,
             include_reasoning=True,
+            sampling_profile="default",
         ):
             captured["messages"] = messages
             captured["max_tokens"] = max_tokens
@@ -392,6 +431,7 @@ class LLMClientTests(unittest.TestCase):
             max_tokens=2000,
             tier=None,
             include_reasoning=True,
+            sampling_profile="default",
         ):
             return '前置说明 {"rating":"买入","target_price":"12","take_profit":"12","stop_loss":"9","operation_advice":"分批买入"} 后置说明'
 
@@ -416,6 +456,7 @@ class LLMClientTests(unittest.TestCase):
             max_tokens=2000,
             tier=None,
             include_reasoning=True,
+            sampling_profile="default",
         ):
             return "not-json"
 

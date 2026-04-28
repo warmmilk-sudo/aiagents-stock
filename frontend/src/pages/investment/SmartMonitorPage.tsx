@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { ModuleCard } from "../../components/common/ModuleCard";
@@ -162,6 +162,14 @@ type NotificationTone = "danger" | "success" | "warning" | "info";
 type ResultPanel = "decisions" | "notifications";
 type SectionKey = "results" | "tasks" | "controls";
 type ConfirmAction = { kind: "delete"; task: SmartMonitorTask };
+type TaskGroup = {
+  key: "holding" | "watch";
+  title: string;
+  description: string;
+  tasks: SmartMonitorTask[];
+  toneClass: string;
+  emptyText: string;
+};
 
 const sectionTabs: Array<{ key: SectionKey; label: string }> = [
   { key: "results", label: "监控结果" },
@@ -359,7 +367,7 @@ const taskPortfolioLabel = (task: SmartMonitorTask) => {
   if (isTaskFocus(task)) {
     return task.monitor_mode === "entry" ? "备选关注" : "备选关注";
   }
-  return "未持仓";
+  return "备选关注";
 };
 
 const matchesTaskDecision = (task: SmartMonitorTask, decision: DecisionItem) => {
@@ -425,6 +433,46 @@ const findLatestDecisionForTask = (task: SmartMonitorTask, decisions: DecisionIt
   decisions.find((decision) => matchesTaskDecision(task, decision) && (isTaskHolding(task) || !isSellDecision(decision)))
   || decisions.find((decision) => decision.stock_code === task.stock_code && !isSellDecision(decision));
 
+const iconSvg = (path: string, title: string) => (
+  <svg aria-hidden="true" focusable="false" viewBox="0 0 16 16">
+    <title>{title}</title>
+    <path d={path} />
+  </svg>
+);
+
+const pauseIcon = iconSvg("M5.35 3.25c.47 0 .85.38.85.85v7.8a.85.85 0 1 1-1.7 0V4.1c0-.47.38-.85.85-.85Zm5.3 0c.47 0 .85.38.85.85v7.8a.85.85 0 1 1-1.7 0V4.1c0-.47.38-.85.85-.85Z", "停用");
+const enableIcon = iconSvg("M3.5 8A4.5 4.5 0 0 1 11 4.65V2.75a.75.75 0 0 1 1.5 0v3.8c0 .41-.34.75-.75.75h-3.8a.75.75 0 0 1 0-1.5h2.05A3 3 0 1 0 11 8a.75.75 0 0 1 1.5 0 4.5 4.5 0 1 1-9 0Z", "启用");
+const deleteIcon = iconSvg("M5.5 2.5h5l.5 1.5H13a.75.75 0 0 1 0 1.5h-.45l-.55 7.02A1.75 1.75 0 0 1 10.26 14H5.74A1.75 1.75 0 0 1 4 12.52L3.45 5.5H3a.75.75 0 0 1 0-1.5h2.02l.48-1.5Zm.6 1.5-.16.5h4.12l-.16-.5H6.1Zm-1.14 1.5.53 6.9a.25.25 0 0 0 .25.22h4.52a.25.25 0 0 0 .25-.22l.53-6.9H4.96Zm2.04 1.25c.41 0 .75.34.75.75v3a.75.75 0 0 1-1.5 0v-3c0-.41.34-.75.75-.75Zm2 0c.41 0 .75.34.75.75v3a.75.75 0 0 1-1.5 0v-3c0-.41.34-.75.75-.75Z", "删除任务");
+
+function TaskIconButton({
+  label,
+  title,
+  className,
+  disabled,
+  onClick,
+  children,
+}: {
+  label: string;
+  title?: string;
+  className: string;
+  disabled?: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      aria-label={label}
+      className={className}
+      disabled={disabled}
+      onClick={onClick}
+      title={title || label}
+      type="button"
+    >
+      {children}
+    </button>
+  );
+}
+
 const notificationMeta = (item: PriceAlertNotification): { tone: NotificationTone; label: string } => {
   const notificationClass = resolveNotificationClass(
     item.notification_class || item.notification_category || item.notification_label,
@@ -474,11 +522,7 @@ function applySharedRiskDefaults(
 export function SmartMonitorPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const enabledOnly = useSmartMonitorStore((state) => state.enabledOnly);
-  const setEnabledOnly = useSmartMonitorStore((state) => state.setEnabledOnly);
-  const [filterHasPosition, setFilterHasPosition] = useState<string>("all");
-
-  const cacheModeKey = `${enabledOnly ? "enabled" : "all"}-${filterHasPosition}`;
+  const cacheModeKey = "all";
   const cachedPage = useSmartMonitorStore((state) => state.pageCacheByMode[cacheModeKey] ?? null);
   const setPageCache = useSmartMonitorStore((state) => state.setPageCache);
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(() => (cachedPage?.systemStatus as SystemStatus | null) ?? null);
@@ -490,6 +534,7 @@ export function SmartMonitorPage() {
   const [taskForm, setTaskForm] = useState(() => applySharedRiskDefaults(defaultTaskForm, (cachedPage?.monitorConfig as MonitorConfig | null) ?? null));
   const [activePanel, setActivePanel] = useState<ComposerPanel>(null);
   const [activeResultPanel, setActiveResultPanel] = useState<ResultPanel>("decisions");
+  const [activeTaskGroup, setActiveTaskGroup] = useState<TaskGroup["key"]>("holding");
   const [section, setSection] = useState<SectionKey>("results");
   const [isRunningAllTasks, setIsRunningAllTasks] = useState(false);
   const [isRefreshingBaselines, setIsRefreshingBaselines] = useState(false);
@@ -538,14 +583,9 @@ export function SmartMonitorPage() {
       applyPageCache(cachedPage);
       return;
     }
-    const queryParams: Record<string, string | boolean> = { enabled_only: enabledOnly };
-    if (filterHasPosition !== "all") {
-      queryParams.has_position = filterHasPosition === "true";
-    }
-
     const [statusData, taskData, decisionData, monitorConfigData, runtimeData] = await Promise.all([
       apiFetch<SystemStatus>("/api/system/status"),
-      apiFetch<SmartMonitorTask[]>(`/api/smart-monitor/tasks${buildQuery(queryParams)}`),
+      apiFetch<SmartMonitorTask[]>("/api/smart-monitor/tasks"),
       apiFetch<DecisionItem[]>("/api/smart-monitor/decisions?limit=30"),
       apiFetch<MonitorConfig>("/api/smart-monitor/config"),
       apiFetch<RuntimeConfig>("/api/smart-monitor/runtime-config"),
@@ -870,7 +910,7 @@ export function SmartMonitorPage() {
         method: "POST",
         body: JSON.stringify({
           enabled_only: true,
-          has_position: filterHasPosition !== "all" ? filterHasPosition === "true" : null,
+          has_position: null,
           ordered_task_ids: tasks
             .filter((item) => Boolean(item.enabled))
             .map((item) => Number(item.id))
@@ -940,12 +980,8 @@ export function SmartMonitorPage() {
     clear();
     setIsRefreshingBaselines(true);
     try {
-      const queryParams: Record<string, string | boolean> = { enabled_only: enabledOnly };
-      if (filterHasPosition !== "all") {
-        queryParams.has_position = filterHasPosition === "true";
-      }
       const result = await apiFetch<{ task_id: string }>(
-        `/api/smart-monitor/tasks/refresh-baselines${buildQuery(queryParams)}`,
+        "/api/smart-monitor/tasks/refresh-baselines",
         { method: "POST" },
       );
       baselineTerminalTaskRef.current = "";
@@ -996,6 +1032,28 @@ export function SmartMonitorPage() {
     ? `当前非交易时段，已启用后会在 ${systemStatus?.monitor_scheduler?.next_trading_time || "下个交易窗口"} 自动执行。`
     : null;
   const runnableTaskCount = tasks.filter((item) => Boolean(item.enabled)).length;
+  const holdingTasks = tasks.filter((item) => isTaskHolding(item));
+  const watchTasks = tasks.filter((item) => !isTaskHolding(item));
+  const taskGroups: TaskGroup[] = [
+    {
+      key: "holding",
+      title: "已持仓盯盘",
+      description: "聚焦仓位管理、止盈止损和盘中交易决策。",
+      tasks: holdingTasks,
+      toneClass: styles.noticeSuccess,
+      emptyText: "当前筛选下暂无已持仓盯盘任务。",
+    },
+    {
+      key: "watch",
+      title: "备选关注盯盘",
+      description: "聚焦入场区间、价格提醒和候选池跟踪。",
+      tasks: watchTasks,
+      toneClass: styles.noticeWarning,
+      emptyText: "当前筛选下暂无备选关注任务。",
+    },
+  ];
+  const activeTaskGroupConfig = taskGroups.find((group) => group.key === activeTaskGroup) ?? taskGroups[0];
+  const taskGroupTabsStyle = { "--nested-tab-count": taskGroups.length } as CSSProperties;
   const baselineRefreshBusy =
     isRefreshingBaselines
     || Boolean(baselineRefreshTaskId && (!baselineRefreshTask || baselineRefreshTask.status === "queued" || baselineRefreshTask.status === "running"));
@@ -1075,6 +1133,56 @@ export function SmartMonitorPage() {
       </div>
     </div>
   );
+
+  const renderTaskCard = (task: SmartMonitorTask) => {
+    const latestDecision = findLatestDecisionForTask(task, decisions);
+    const enabled = Boolean(task.enabled);
+    return (
+      <div className={styles.smartMonitorTaskCard} key={task.id}>
+        <div className={styles.smartMonitorTaskHeader}>
+          <div className={styles.smartMonitorTaskIdentity}>
+            <strong className={styles.smartMonitorTaskTitle}>
+              {stockDisplayName(task.stock_name, task.stock_code)}
+            </strong>
+          </div>
+        </div>
+        <p className={styles.taskIndicatorText}>{formatThresholdSummary("分析基线", task.strategy_context)}</p>
+        <p className={styles.taskIndicatorText}>{formatThresholdSummary("盘中决策", latestDecision?.monitor_levels)}</p>
+        <div className={styles.smartMonitorTaskActionRow}>
+          <div className={styles.smartMonitorTaskActionLeft}>
+            <button
+              className={styles.secondaryButton}
+              disabled={pendingRunTaskId === task.id}
+              onClick={() => void runTaskOnce(task)}
+              type="button"
+            >
+              {pendingRunTaskId === task.id ? "执行中..." : "立即分析"}
+            </button>
+          </div>
+          <div className={styles.smartMonitorTaskActionRight}>
+            <TaskIconButton
+              className={enabled ? styles.smartMonitorStateToggleEnabled : styles.smartMonitorStateToggleDisabled}
+              disabled={pendingToggleTaskId === task.id}
+              label={`${enabled ? "停用" : "启用"}任务 ${task.stock_code}`}
+              onClick={() => void toggleTaskEnabled(task)}
+              title={enabled ? "停用任务" : "启用任务"}
+            >
+              {pendingToggleTaskId === task.id ? <span className={styles.iconButtonBusy}>…</span> : enabled ? pauseIcon : enableIcon}
+            </TaskIconButton>
+            <TaskIconButton
+              className={`${styles.researchHubDeleteButton} ${styles.smartMonitorTaskIconButton}`}
+              disabled={pendingDeleteTaskId === task.id}
+              label={`删除任务 ${task.stock_code}`}
+              onClick={() => requestDeleteTask(task)}
+              title="删除任务"
+            >
+              {pendingDeleteTaskId === task.id ? <span className={styles.iconButtonBusy}>…</span> : deleteIcon}
+            </TaskIconButton>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <PageFrame
@@ -1197,50 +1305,10 @@ export function SmartMonitorPage() {
         {section === "tasks" ? (
           <ModuleCard
             title="监控任务"
-            summary="盯盘任务和筛选条件统一保留在任务模块中，托管预警跟随任务启停。"
+            summary="盯盘任务按持仓与关注分组展示，并统一保留盘中操作入口。"
             hideTitleOnMobile
-            toolbar={(
-              <button
-                className={activePanel === "task" ? styles.primaryButton : styles.secondaryButton}
-                onClick={() => setActivePanel((current) => current === "task" ? null : "task")}
-                type="button"
-              >
-                新增任务
-              </button>
-            )}
           >
             {activePanel === "task" ? renderTaskForm() : null}
-
-            <div className={styles.moduleSection}>
-              <div className={styles.dualToggleGrid}>
-                <label className={`${styles.switchField} ${styles.filterSwitchField}`}>
-                  <span className={styles.switchBody}>
-                    <span className={styles.switchLabel}>仅看启用</span>
-                  </span>
-                  <span className={styles.switchControl}>
-                    <input checked={enabledOnly} onChange={(event) => setEnabledOnly(event.target.checked)} type="checkbox" />
-                    <span className={styles.switchTrack} aria-hidden="true">
-                      <span className={styles.switchThumb} />
-                    </span>
-                  </span>
-                </label>
-                <label className={`${styles.switchField} ${styles.filterSwitchField}`}>
-                  <span className={styles.switchBody}>
-                    <span className={styles.switchLabel}>仅看已持仓</span>
-                  </span>
-                  <span className={styles.switchControl}>
-                    <input
-                      checked={filterHasPosition === "true"}
-                      onChange={(event) => setFilterHasPosition(event.target.checked ? "true" : "all")}
-                      type="checkbox"
-                    />
-                    <span className={styles.switchTrack} aria-hidden="true">
-                      <span className={styles.switchThumb} />
-                    </span>
-                  </span>
-                </label>
-              </div>
-            </div>
 
             <div className={styles.moduleSection}>
               <h3 className={styles.mobileDuplicateHeading}>盯盘任务列表</h3>
@@ -1261,62 +1329,24 @@ export function SmartMonitorPage() {
                 >
                   {isRefreshingBaselines ? "提交中..." : baselineRefreshBusy ? "更新中..." : "更新基线"}
                 </button>
-                <span className={styles.muted}>执行当前筛选范围内已启用任务，盘中决策和价格检查。</span>
+                <span className={styles.muted}>执行当前列表内任务，完成盘中决策和价格检查。</span>
+              </div>
+              <div className={styles.historyDetailTabs} style={taskGroupTabsStyle}>
+                {taskGroups.map((group) => (
+                  <button
+                    className={activeTaskGroup === group.key ? styles.nestedTabButtonActive : styles.nestedTabButton}
+                    key={group.key}
+                    onClick={() => setActiveTaskGroup(group.key)}
+                    type="button"
+                  >
+                    {group.title}
+                    {` (${group.tasks.length})`}
+                  </button>
+                ))}
               </div>
               <div className={styles.list}>
-                {tasks.map((task) => {
-                  const latestDecision = findLatestDecisionForTask(task, decisions);
-                  return (
-                    <div className={styles.smartMonitorTaskCard} key={task.id}>
-                      <div className={styles.noticeMeta}>
-                        <strong className={styles.smartMonitorTaskTitle}>
-                          {`${stockDisplayName(task.stock_name, task.stock_code)} | ${taskPortfolioLabel(task)}`}
-                        </strong>
-                      </div>
-                      <p className={styles.taskIndicatorText}>{formatThresholdSummary("分析基线", task.strategy_context)}</p>
-                      <p className={styles.taskIndicatorText}>{formatThresholdSummary("盘中决策", latestDecision?.monitor_levels)}</p>
-                      <div className={styles.smartMonitorTaskActionRow}>
-                        <div className={styles.smartMonitorTaskActionLeft}>
-                          <button
-                            className={styles.secondaryButton}
-                            disabled={pendingRunTaskId === task.id}
-                            onClick={() => void runTaskOnce(task)}
-                            type="button"
-                          >
-                            {pendingRunTaskId === task.id ? "执行中..." : "立即分析"}
-                          </button>
-                        </div>
-                        <div className={styles.smartMonitorTaskActionRight}>
-                          <button
-                            className={Boolean(task.enabled) ? styles.smartMonitorStateToggleEnabled : styles.smartMonitorStateToggleDisabled}
-                            disabled={pendingToggleTaskId === task.id}
-                            onClick={() => void toggleTaskEnabled(task)}
-                            type="button"
-                          >
-                            {pendingToggleTaskId === task.id ? "处理中..." : Boolean(task.enabled) ? "停用" : "启用"}
-                          </button>
-                          <button
-                            aria-label={`删除任务 ${task.stock_code}`}
-                            className={styles.researchHubDeleteButton}
-                            disabled={pendingDeleteTaskId === task.id}
-                            onClick={() => requestDeleteTask(task)}
-                            title="删除任务"
-                            type="button"
-                          >
-                            {pendingDeleteTaskId === task.id ? (
-                              "…"
-                            ) : (
-                              <svg aria-hidden="true" viewBox="0 0 16 16" focusable="false">
-                                <path d="M5.5 2.5h5l.5 1.5H13a.75.75 0 0 1 0 1.5h-.45l-.55 7.02A1.75 1.75 0 0 1 10.26 14H5.74A1.75 1.75 0 0 1 4 12.52L3.45 5.5H3a.75.75 0 0 1 0-1.5h2.02l.48-1.5Zm.6 1.5-.16.5h4.12l-.16-.5H6.1Zm-1.14 1.5.53 6.9a.25.25 0 0 0 .25.22h4.52a.25.25 0 0 0 .25-.22l.53-6.9H4.96Zm2.04 1.25c.41 0 .75.34.75.75v3a.75.75 0 0 1-1.5 0v-3c0-.41.34-.75.75-.75Zm2 0c.41 0 .75.34.75.75v3a.75.75 0 0 1-1.5 0v-3c0-.41.34-.75.75-.75Z" />
-                              </svg>
-                            )}
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-                {!tasks.length ? <div className={styles.muted}>暂无智能盯盘任务</div> : null}
+                {activeTaskGroupConfig.tasks.map(renderTaskCard)}
+                {!activeTaskGroupConfig.tasks.length ? <div className={styles.smartMonitorEmptyState}>{activeTaskGroupConfig.emptyText}</div> : null}
               </div>
             </div>
           </ModuleCard>

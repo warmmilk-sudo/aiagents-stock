@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import requests
 
+import config
 from investment_action_utils import normalize_strategy_context
 from smart_monitor_deepseek import SmartMonitorDeepSeek
 
@@ -309,6 +310,11 @@ class SmartMonitorDeepSeekTests(unittest.TestCase):
         )
 
         self.assertEqual(mock_post.call_args.kwargs["json"]["model"], "light-model")
+        self.assertEqual(mock_post.call_args.kwargs["json"]["temperature"], config.LLM_FACTUAL_TEMPERATURE)
+        if config.LLM_DEFAULT_TOP_P < 1.0:
+            self.assertEqual(mock_post.call_args.kwargs["json"]["top_p"], config.LLM_DEFAULT_TOP_P)
+        else:
+            self.assertNotIn("top_p", mock_post.call_args.kwargs["json"])
 
     @patch("smart_monitor_deepseek.time_module.sleep", return_value=None)
     @patch("smart_monitor_deepseek.requests.post")
@@ -699,15 +705,16 @@ class SmartMonitorDeepSeekTests(unittest.TestCase):
         self.assertIn("若价格短暂跌破成本或分时抖动，但 `30/60分钟` 结构未坏、承接仍在、量能未明显失控，可优先 `HOLD`", messages[0]["content"])
         self.assertIn("若触发止损，也要区分“防守减仓”与“直接清仓”", messages[0]["content"])
         self.assertIn("战略基线中的 `take_profit` 主要是初始止盈参考，不等于“价格一到就立即卖出”", messages[0]["content"])
-        self.assertIn("若价格接近或触及基线止盈位，但分时仍强、量能未衰减、结构未走坏，可优先选择 `HOLD`", messages[0]["content"])
+        self.assertIn("若价格接近或触及基线止盈位，但 `60分钟` 结构未走坏、承接未恶化时，不必主动锁盈", messages[0]["content"])
+        self.assertIn("`60分钟` 应作为买卖点判断的主锚", messages[0]["content"])
         self.assertIn("再完成 `structure_state` 判定，并说明结构是否支持当前战略基线", messages[0]["content"])
         self.assertIn("一旦进入该状态，退出锚点应转向“是否跌破跟踪均线、结构是否实质破坏、是否出现明确利空”", messages[0]["content"])
-        self.assertIn("若趋势重新走强、`15/30/60分钟` 节奏共振向上、承接优化、量能结构配合，且当前价仍处于可接受的风险收益位置，可以考虑 `BUY` 做波段 `加仓`", messages[0]["content"])
+        self.assertIn("若趋势重新走强、`60分钟` 结构先行转强", messages[0]["content"])
         self.assertIn("`回踩确认加仓` 更适合用于价格回踩成本区、均线、前支撑或突破后的回踩确认", messages[0]["content"])
         self.assertIn("`突破确认加仓` 更适合用于关键压力位被有效突破后，价格站稳、量能跟随", messages[0]["content"])
         self.assertIn("`主动减仓锁盈` 更适合用于趋势仍在但短线偏离过大、接近动态止盈区、或量价开始出现边际背离的场景", messages[0]["content"])
         self.assertIn("`防守减仓` 更适合用于 `15/30/60分钟` 明显转弱但尚未完全失控", messages[0]["content"])
-        self.assertIn("若退出证据不足，可继续 `HOLD` 并跟踪阈值变化", messages[0]["content"])
+        self.assertIn("若未进入止盈/止损等执行区且退出证据不足，可继续 `HOLD` 并跟踪阈值变化", messages[0]["content"])
         self.assertIn("持仓日期: 2026-03-18", messages[1]["content"])
         self.assertIn("持仓天数: 第6个交易日（估算）", messages[1]["content"])
         self.assertIn("今日可卖: 是", messages[1]["content"])
@@ -722,11 +729,12 @@ class SmartMonitorDeepSeekTests(unittest.TestCase):
         self.assertIn("如果 `15/30/60分钟` 持续走坏、关键位失守、承接恶化，且亏损超过止损线", messages[1]["content"])
         self.assertIn("如果只是短线波动或瞬时下探，但 `30/60分钟` 结构未坏 → 不要轻易把正常回撤当作止损信号", messages[1]["content"])
         self.assertIn("如果风险在扩大但趋势未完全坍塌 → 可先考虑 `防守减仓`，不必一上来就 `清仓`", messages[1]["content"])
-        self.assertIn("如果价格接近基线止盈位但技术指标仍强、分时未转弱 → 优先继续持有并上修止盈观察位", messages[1]["content"])
+        self.assertIn("如果价格接近基线止盈位但 `60分钟` 结构未走坏、承接仍在 → 优先继续持有或上修止盈观察位", messages[1]["content"])
+        self.assertIn("先看 `60分钟` 趋势和量能，再用短时量能", messages[1]["content"])
         self.assertIn("如果盈利较多但趋势仍强，只想兑现部分利润 → 优先考虑 `主动减仓锁盈`，而不是直接清仓", messages[1]["content"])
         self.assertIn("若当前是 `标准波段`，且客观条件满足“持仓>=10日 + 利润垫充足 + 未跌破跟踪均线 + 非高位派发”", messages[1]["content"])
-        self.assertIn("如果趋势重新走强、回踩确认有效，且 `15/30/60分钟` 节奏与量能配合 → 可考虑小到中等比例 `回踩确认加仓`", messages[1]["content"])
-        self.assertIn("如果关键压力位被有效突破并站稳，且量能与 `15/30/60分钟` 节奏继续共振 → 可考虑小到中等比例 `突破确认加仓`", messages[1]["content"])
+        self.assertIn("如果趋势重新走强、`60分钟` 结构先修复，回踩确认有效", messages[1]["content"])
+        self.assertIn("如果关键压力位被有效突破并站稳，且 `60分钟` 与短时量能继续共振", messages[1]["content"])
         self.assertIn("不得出现 `take_profit <= stop_loss`", messages[0]["content"])
         self.assertIn("若 `action = \"SELL\"`，默认不应低于 `70`", messages[0]["content"])
         self.assertIn("若 `action = \"SELL\"` 由止损、破位、放量转弱或基线失效主导，通常应为 `medium` 或 `high`", messages[0]["content"])
@@ -941,6 +949,56 @@ class SmartMonitorDeepSeekTests(unittest.TestCase):
         self.assertEqual(selected["primary_evidence"], "放量转弱")
         self.assertEqual(selected["delta_evidence"], "跌破均价")
         self.assertNotIn("横盘整理", " ".join(selected.values()))
+
+    def test_take_profit_hint_keeps_hold_when_60m_structure_stays_intact(self):
+        client = SmartMonitorDeepSeek(api_key="test-key")
+        intraday_context = {
+            "intraday_bias_text": "价格运行在分时均价上方，承接优化",
+            "price_position_pct": 82.0,
+            "last_15m_change_pct": 0.58,
+            "last_30m_change_pct": 0.42,
+            "last_60m_change_pct": 0.86,
+            "volume_acceleration_ratio": 1.18,
+            "volume_ratio_15m": 1.16,
+            "volume_ratio_30m": 1.08,
+            "volume_ratio_60m": 1.02,
+            "intraday_signal_labels": ["价格运行在分时均价上方", "高位承接正常"],
+        }
+
+        hint = client._derive_take_profit_adjustment_hint(intraday_context, has_position=True)
+
+        self.assertEqual(hint, "若接近基线止盈位但60分钟结构未走坏，可继续持有或上修止盈位，不必主动锁盈")
+
+    def test_take_profit_hint_waits_for_60m_weakening_before_sell_signal(self):
+        client = SmartMonitorDeepSeek(api_key="test-key")
+        intraday_context = {
+            "intraday_bias_text": "价格跌回分时均价下方，承接转弱",
+            "last_15m_change_pct": -0.36,
+            "last_30m_change_pct": -0.42,
+            "last_60m_change_pct": -0.72,
+            "volume_acceleration_ratio": 0.82,
+            "volume_ratio_15m": 0.94,
+            "volume_ratio_30m": 0.95,
+            "volume_ratio_60m": 0.96,
+            "intraday_signal_labels": ["价格跌破分时均价", "承接转弱"],
+        }
+
+        hint = client._derive_take_profit_adjustment_hint(intraday_context, has_position=True)
+
+        self.assertEqual(hint, "若接近止盈位且60分钟转弱，再结合15/30分钟与短时量能确认卖点")
+
+    def test_take_profit_trim_resolves_as_proactive_trim_without_volume_trigger(self):
+        client = SmartMonitorDeepSeek(api_key="test-key")
+
+        swing_mode = client._resolve_swing_execution_mode(
+            None,
+            action="SELL",
+            action_detail="减仓",
+            has_position=True,
+            reasoning="进入止盈区后先减仓锁定利润，剩余仓位继续跟踪。",
+        )
+
+        self.assertEqual(swing_mode, "proactive_trim")
 
     def test_rank_intraday_evidence_candidates_returns_structured_metadata(self):
         client = SmartMonitorDeepSeek(api_key="test-key")
@@ -1175,6 +1233,51 @@ class SmartMonitorDeepSeekTests(unittest.TestCase):
         self.assertIn("分时质量: 分时缺口较多", prompt)
         self.assertNotIn("[MARKET_CONTEXT]", prompt)
         self.assertNotIn("[SECTOR_CONTEXT]", prompt)
+
+    def test_build_prompt_labels_review_ready_freshness(self):
+        client = SmartMonitorDeepSeek(api_key="test-key")
+
+        prompt = client._build_a_stock_prompt(
+            stock_code="600519",
+            market_data={
+                "name": "贵州茅台",
+                "current_price": 1650.0,
+                "change_pct": 1.8,
+                "change_amount": 29.2,
+                "volume": 120000,
+                "realtime_freshness": {
+                    "asof_time": "2026-04-10 15:30:00",
+                    "is_trading_now": False,
+                    "intraday_decision_ready": False,
+                    "intraday_review_ready": True,
+                    "overall_status": "review_ready",
+                    "summary": "存在同日分时/逐笔快照，盘后可用于复盘判断；不应视为盘中实时执行信号。",
+                    "quote": {"timestamp": "2026-04-10 15:01:00", "status": "same_day_service_time"},
+                    "minute": {"timestamp": "2026-04-10 15:00:00", "status": "same_day_snapshot"},
+                    "trade": {"timestamp": "2026-04-10 15:00:00", "status": "same_day_snapshot"},
+                    "minute_quality": {"coverage_ratio": 0.98, "max_gap": 1, "label": "分时覆盖完整"},
+                },
+            },
+            account_info={
+                "available_cash": 100000.0,
+                "total_value": 300000.0,
+                "total_market_value": 200000.0,
+                "position_usage_pct": 0.66,
+                "positions_count": 3,
+            },
+            has_position=True,
+            session_info={
+                "session": "已收盘",
+                "volatility": "medium",
+                "recommendation": "适合复盘",
+                "beijing_hour": 15,
+                "beijing_time": "15:30",
+                "can_trade": False,
+            },
+        )
+
+        self.assertIn("整体状态: 可用于盘后复盘", prompt)
+        self.assertNotIn("整体状态: 未知", prompt)
 
     def test_build_prompt_includes_tdx_intraday_flow_context(self):
         client = SmartMonitorDeepSeek(api_key="test-key")

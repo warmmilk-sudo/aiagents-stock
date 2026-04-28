@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { PageFeedback } from "../../components/common/PageFeedback";
 import { PageFrame } from "../../components/common/PageFrame";
+import { TaskProgressBar } from "../../components/common/TaskProgressBar";
 import { AnalysisActionButtons, type ActionPayload } from "../../components/research/AnalysisActionButtons";
 import { LonghubangReportDetailView } from "../../components/research/LonghubangReportDetailView";
 import { useSelectedModels } from "../../hooks/useSelectedModels";
@@ -237,8 +238,8 @@ export function LonghubangPage() {
   const [isLoadingSelectedReport, setIsLoadingSelectedReport] = useState(false);
   const lastTerminalTaskRef = useRef<string>("");
   const lastTerminalBatchTaskRef = useRef<string>("");
-  const shouldPollTask = !task || task.status === "queued" || task.status === "running";
-  const shouldPollBatchTask = !batchTask || batchTask.status === "queued" || batchTask.status === "running";
+  const taskStatusVisible = task?.status === "queued" || task?.status === "running" || task?.status === "failed" || task?.status === "cancelled";
+  const batchTaskStatusVisible = batchTask?.status === "queued" || batchTask?.status === "running" || batchTask?.status === "failed" || batchTask?.status === "cancelled";
 
   const loadTask = async () => setTask(await apiFetch<TaskDetail<LonghubangTaskPayload> | null>("/api/strategies/longhubang/tasks/latest"));
   const loadBatchTask = async () =>
@@ -264,8 +265,8 @@ export function LonghubangPage() {
     );
   };
 
-  usePollingLoader({ load: loadTask, intervalMs: 2000, enabled: shouldPollTask });
-  usePollingLoader({ load: loadBatchTask, intervalMs: 2000, enabled: shouldPollBatchTask });
+  usePollingLoader({ load: loadTask, intervalMs: 2000 });
+  usePollingLoader({ load: loadBatchTask, intervalMs: 2000 });
   usePollingLoader({
     load: async () => {
       await Promise.all([loadHistory(), loadStatistics()]);
@@ -507,7 +508,7 @@ export function LonghubangPage() {
                 </button>
                 <button className={styles.secondaryButton} onClick={() => { if (task?.status === "success") setDismissedTaskId(task.id); setMessage("当前分析结果已清除。"); }} type="button">清除结果</button>
               </div>
-              {task ? <div className={styles.listItem} style={{ marginTop: 16 }}><strong>任务状态</strong><div style={{ marginTop: 8 }}>{task.message || "等待任务执行..."}</div><div className={styles.muted}>进度: {task.current ?? 0} / {task.total ?? 0}</div>{task.error ? <div className={styles.dangerText}>{task.error}</div> : null}</div> : null}
+              {taskStatusVisible ? <div className={styles.listItem} style={{ marginTop: 16 }}><strong>任务状态</strong><div style={{ marginTop: 8 }}>{task?.message || "等待任务执行..."}</div><TaskProgressBar current={task?.current ?? 0} total={task?.total ?? 0} message={task?.message || "等待任务执行..."} tone={task?.status === "failed" || task?.status === "cancelled" ? "danger" : "running"} />{task?.error ? <div className={styles.dangerText}>{task.error}</div> : null}</div> : null}
             </section>
 
             {currentResult ? (
@@ -546,7 +547,7 @@ export function LonghubangPage() {
               </>
             ) : null}
 
-            {batchTask ? <section className={styles.card}><div className={styles.actions}><h2>批量分析任务状态</h2><button className={styles.secondaryButton} onClick={() => { if (batchTask?.status === "success") setDismissedBatchTaskId(batchTask.id); setMessage("当前批量分析结果已清除。"); }} type="button">清除批量结果</button></div><p>{batchTask.message || "等待批量分析任务..."}</p><p className={styles.muted}>进度: {batchTask.current ?? 0} / {batchTask.total ?? 0}</p>{batchTask.error ? <p className={styles.dangerText}>{batchTask.error}</p> : null}</section> : null}
+            {batchTaskStatusVisible ? <section className={styles.card}><div className={styles.actions}><h2>批量分析任务状态</h2><button className={styles.secondaryButton} onClick={() => { if (batchTask?.status === "success") setDismissedBatchTaskId(batchTask.id); setMessage("当前批量分析结果已清除。"); }} type="button">清除批量结果</button></div><p>{batchTask?.message || "等待批量分析任务..."}</p><TaskProgressBar current={batchTask?.current ?? 0} total={batchTask?.total ?? 0} message={batchTask?.message || "等待批量分析任务..."} tone={batchTask?.status === "failed" || batchTask?.status === "cancelled" ? "danger" : "running"} />{batchTask?.error ? <p className={styles.dangerText}>{batchTask.error}</p> : null}</section> : null}
 
             {visibleBatchResult ? (
               <section className={styles.card}>

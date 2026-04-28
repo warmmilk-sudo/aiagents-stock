@@ -118,7 +118,6 @@ class MacroAnalysisAgents:
                 },
             ],
             max_tokens=2600,
-            temperature=0.5,
             tier=ModelTier.REASONING,
         )
         return {
@@ -193,7 +192,6 @@ class MacroAnalysisAgents:
                 },
             ],
             max_tokens=2600,
-            temperature=0.5,
             tier=ModelTier.REASONING,
         )
         return {
@@ -264,7 +262,6 @@ class MacroAnalysisAgents:
                 {"role": "user", "content": user_prompt},
             ],
             max_tokens=max_tokens,
-            temperature=0.45,
             tier=ModelTier.REASONING,
         )
         return {
@@ -289,7 +286,7 @@ class MacroAnalysisAgents:
                 {"role": "user", "content": user_prompt},
             ],
             max_tokens=max_tokens,
-            temperature=0.2,
+            sampling_profile="factual",
             tier=ModelTier.REASONING,
         )
         parsed = self._extract_json(response)

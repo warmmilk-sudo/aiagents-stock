@@ -2,6 +2,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from sector_strategy_db import SectorStrategyDatabase
 
@@ -23,7 +24,7 @@ def build_analysis_payload(startup_score: int, explosive_score: int, decay_score
     }
 
 
-class SectorStrategyLifecycleTests(unittest.TestCase):
+class SmartSelectionLifecycleTests(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.original_cwd = os.getcwd()
@@ -51,6 +52,11 @@ class SectorStrategyLifecycleTests(unittest.TestCase):
         self.assertEqual(defense_by_sector["机器人"], "MA5")
         self.assertEqual(defense_by_sector["高位题材"], "NONE")
         self.assertTrue(veto_by_sector["高位题材"])
+        quant_stage_by_sector = {item["sector_name"]: item["quant_stage"] for item in items}
+        final_stage_by_sector = {item["sector_name"]: item["final_stage"] for item in items}
+        self.assertEqual(quant_stage_by_sector["算力租赁"], self.db.LIFECYCLE_STAGE_STARTUP)
+        self.assertEqual(final_stage_by_sector["机器人"], self.db.LIFECYCLE_STAGE_EXPLOSIVE)
+        self.assertGreaterEqual(items[0]["quant_confidence"], 0)
 
         latest_snapshot = self.db.get_latest_lifecycle_snapshot()
         self.assertTrue(latest_snapshot["available"])
@@ -80,6 +86,40 @@ class SectorStrategyLifecycleTests(unittest.TestCase):
         self.assertEqual(stage_by_sector["算力租赁"], self.db.LIFECYCLE_STAGE_STARTUP)
         self.assertEqual(stage_by_sector["机器人"], self.db.LIFECYCLE_STAGE_EXPLOSIVE)
         self.assertEqual(stage_by_sector["高位题材"], self.db.LIFECYCLE_STAGE_DECAY)
+
+    def test_boundary_review_fields_allow_neutral_downgrade_without_overriding_high_conf_decay(self):
+        review_calls = []
+
+        def fake_review(**kwargs):
+            review_calls.append(kwargs)
+            if kwargs["quant_stage"] == self.db.LIFECYCLE_STAGE_DECAY and kwargs["quant_confidence"] >= 0.82:
+                return {
+                    "llm_stage": self.db.LIFECYCLE_STAGE_EXPLOSIVE,
+                    "llm_confidence": 0.91,
+                    "final_stage": self.db.LIFECYCLE_STAGE_EXPLOSIVE,
+                    "stage_review_reason": "尝试覆盖衰退",
+                }
+            return {
+                "llm_stage": self.db.LIFECYCLE_STAGE_NEUTRAL,
+                "llm_confidence": 0.66,
+                "final_stage": self.db.LIFECYCLE_STAGE_NEUTRAL,
+                "stage_review_reason": "边界降级",
+            }
+
+        with patch.object(self.db, "_review_lifecycle_stage", side_effect=fake_review), patch.object(
+            self.db,
+            "_compute_quant_confidence",
+            side_effect=lambda stage, **_kwargs: 0.7 if stage == self.db.LIFECYCLE_STAGE_STARTUP else 0.9 if stage == self.db.LIFECYCLE_STAGE_DECAY else 0.7,
+        ):
+            self.db.save_analysis_report("2026-04-01 数据分析", build_analysis_payload(40, 70, 95), [], "r1")
+            self.db.save_analysis_report("2026-04-02 数据分析", build_analysis_payload(55, 90, 95), [], "r2")
+            latest_report_id = self.db.save_analysis_report("2026-04-03 数据分析", build_analysis_payload(70, 95, 85), [], "r3")
+
+        items = self.db.get_lifecycle_items_for_analysis(latest_report_id)
+        by_sector = {item["sector_name"]: item for item in items}
+        self.assertEqual(by_sector["算力租赁"]["final_stage"], self.db.LIFECYCLE_STAGE_NEUTRAL)
+        self.assertEqual(by_sector["高位题材"]["final_stage"], self.db.LIFECYCLE_STAGE_DECAY)
+        self.assertTrue(by_sector["高位题材"]["selection_veto"])
 
     def test_trajectory_uses_longer_lookback_window(self):
         scores = [25, 30, 35, 42, 48, 55, 61, 69, 74, 79, 83, 88]

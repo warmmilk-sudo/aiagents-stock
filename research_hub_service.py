@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 import os
 import re
@@ -20,6 +21,8 @@ from ui_analysis_task_utils import (
     start_ui_analysis_task,
 )
 
+
+logger = logging.getLogger(__name__)
 
 RESEARCH_HUB_SELECTION_TASK_TYPE = "research_hub_selection"
 RESEARCH_HUB_FUNNEL_TASK_TYPE = RESEARCH_HUB_SELECTION_TASK_TYPE
@@ -46,6 +49,34 @@ SELECTION_MARKET_STATE_LABELS = {
     SELECTION_MARKET_STATE_RANGE: "震荡市",
     SELECTION_MARKET_STATE_MOMO: "主升浪",
     SELECTION_MARKET_STATE_RETREAT: "高位退潮期",
+}
+
+SELECTION_GENERIC_THEMES = {
+    "超跌股",
+    "低价股",
+    "高位题材",
+    "中字头",
+}
+
+SELECTION_SECTOR_ALIAS_SEEDS = {
+    "CPO概念": ["共封装光学(CPO)", "共封装光学", "CPO", "光通信模块", "光模块"],
+    "风力发电": ["风电", "风电设备", "风电整机"],
+    "印制电路板": ["PCB概念", "PCB", "电子-元件-印制电路板"],
+    "通信设备": ["通信-通信设备-通信网络设备及器件", "通信-通信设备-通信终端及配件"],
+    "油气及炼化工程": ["油气开采", "油气开采Ⅱ", "油服工程", "炼化", "炼化工程", "石油石化"],
+    "非金属材料Ⅱ": ["非金属材料", "建材", "建筑材料-建筑材料-玻璃玻纤"],
+    "集成电路封测": ["半导体封测", "电子-半导体-集成电路封测"],
+    "被动元件": ["元件", "电子元件"],
+    "通信线缆及配套": ["通信线缆", "线缆"],
+    "钢铁管材": ["钢管", "油气管道"],
+}
+
+SELECTION_SECTOR_FAMILY_SEEDS = {
+    "CPO算力链": ["CPO概念", "共封装光学(CPO)", "光通信模块", "光模块", "通信设备", "F5G概念"],
+    "PCB封装链": ["印制电路板", "PCB概念", "集成电路封测", "先进封装"],
+    "风电能源链": ["风力发电", "风电", "风电设备", "海上风电"],
+    "油气炼化链": ["油气及炼化工程", "油气开采", "油气开采Ⅱ", "油服工程", "炼化", "石油石化"],
+    "材料建材链": ["非金属材料Ⅱ", "非金属材料", "玻璃玻纤", "建筑材料"],
 }
 
 _HUB_CACHE_LOCK = threading.RLock()
@@ -235,6 +266,137 @@ def _is_a_share_symbol(symbol: Any) -> bool:
 
 def _normalize_sector_text(value: Any) -> str:
     return re.sub(r"\s+", "", str(value or "").strip()).replace("概念", "").replace("板块", "")
+
+
+def _dedupe_preserve_order(values: List[Any]) -> List[str]:
+    ordered: List[str] = []
+    for value in values:
+        text = str(value or "").strip()
+        if text and text not in ordered:
+            ordered.append(text)
+    return ordered
+
+
+def _is_ordered_subsequence(shorter: str, longer: str) -> bool:
+    if not shorter or not longer or len(shorter) > len(longer):
+        return False
+    position = 0
+    for char in shorter:
+        position = longer.find(char, position)
+        if position < 0:
+            return False
+        position += 1
+    return True
+
+
+def _build_sector_alias_lookup() -> Dict[str, str]:
+    lookup: Dict[str, str] = {}
+    for canonical_sector, aliases in SELECTION_SECTOR_ALIAS_SEEDS.items():
+        canonical_text = str(canonical_sector or "").strip()
+        for candidate in _dedupe_preserve_order([canonical_text, *(aliases or [])]):
+            normalized = _normalize_sector_text(candidate)
+            if normalized:
+                lookup[normalized] = canonical_text
+    return lookup
+
+
+def _build_sector_family_lookup() -> Dict[str, set[str]]:
+    family_lookup: Dict[str, set[str]] = {}
+    alias_lookup = _build_sector_alias_lookup()
+    for _family_name, members in SELECTION_SECTOR_FAMILY_SEEDS.items():
+        normalized_members = {
+            _normalize_sector_text(member)
+            for member in members or []
+            if _normalize_sector_text(member)
+        }
+        canonicalized_members = {
+            _normalize_sector_text(alias_lookup.get(member, member))
+            for member in normalized_members
+            if member
+        }
+        merged_members = {member for member in normalized_members | canonicalized_members if member}
+        for member in merged_members:
+            family_lookup.setdefault(member, set()).update(merged_members)
+    return family_lookup
+
+
+SELECTION_SECTOR_ALIAS_LOOKUP = _build_sector_alias_lookup()
+SELECTION_SECTOR_FAMILY_LOOKUP = _build_sector_family_lookup()
+
+
+def _canonicalize_sector_name(value: Any) -> str:
+    text = str(value or "").strip()
+    normalized = _normalize_sector_text(text)
+    if not normalized:
+        return text
+    return SELECTION_SECTOR_ALIAS_LOOKUP.get(normalized, text)
+
+
+def _is_generic_selection_theme(value: Any) -> bool:
+    normalized = _normalize_sector_text(value)
+    return normalized in {_normalize_sector_text(item) for item in SELECTION_GENERIC_THEMES}
+
+
+def _collect_sector_aliases(sector: Any, aliases: Any = None) -> List[str]:
+    canonical_sector = _canonicalize_sector_name(sector)
+    normalized_canonical = _normalize_sector_text(canonical_sector)
+    seed_aliases = list(SELECTION_SECTOR_ALIAS_SEEDS.get(canonical_sector, []))
+    resolved_aliases = []
+    if isinstance(aliases, list):
+        resolved_aliases = [str(item or "").strip() for item in aliases]
+    elif isinstance(aliases, str):
+        resolved_aliases = [item.strip() for item in aliases.replace("，", ",").split(",")]
+    merged = _dedupe_preserve_order([canonical_sector, str(sector or "").strip(), *seed_aliases, *resolved_aliases])
+    if normalized_canonical:
+        family_members = SELECTION_SECTOR_FAMILY_LOOKUP.get(normalized_canonical, set())
+        family_labels = [
+            SELECTION_SECTOR_ALIAS_LOOKUP.get(member, member)
+            for member in family_members
+            if member != normalized_canonical
+        ]
+        merged.extend(_dedupe_preserve_order(family_labels))
+    return _dedupe_preserve_order(merged)
+
+
+def _score_sector_name_alignment(
+    left: Any,
+    right: Any,
+    *,
+    allow_subsequence: bool = True,
+) -> float:
+    left_text = str(left or "").strip()
+    right_text = str(right or "").strip()
+    left_normalized = _normalize_sector_text(left_text)
+    right_normalized = _normalize_sector_text(right_text)
+    if not left_normalized or not right_normalized:
+        return 0.0
+    if left_normalized == right_normalized:
+        return 1.0
+
+    left_canonical = _normalize_sector_text(_canonicalize_sector_name(left_text))
+    right_canonical = _normalize_sector_text(_canonicalize_sector_name(right_text))
+    if left_canonical and right_canonical and left_canonical == right_canonical:
+        return 1.0
+
+    left_family = SELECTION_SECTOR_FAMILY_LOOKUP.get(left_canonical or left_normalized, set())
+    right_family = SELECTION_SECTOR_FAMILY_LOOKUP.get(right_canonical or right_normalized, set())
+    if left_family and right_family and left_family.intersection(right_family):
+        return 0.88
+
+    if (
+        left_normalized in right_normalized
+        or right_normalized in left_normalized
+        or left_canonical in right_normalized
+        or right_canonical in left_normalized
+    ):
+        if any(sep in left_text or sep in right_text for sep in ("-", "－", "—")):
+            return 0.8
+        return 0.72
+
+    if allow_subsequence:
+        if _is_ordered_subsequence(left_normalized, right_normalized) or _is_ordered_subsequence(right_normalized, left_normalized):
+            return 0.62
+    return 0.0
 
 
 def _extract_tags_from_mapping(raw_value: Any) -> List[str]:
@@ -447,10 +609,11 @@ def _extract_selection_sector_items(value: Any) -> List[Dict[str, Any]]:
             continue
         items.append(
             {
-                "sector": sector,
+                "sector": _canonicalize_sector_name(sector),
                 "heat_score": max(0, min(100, _safe_int(item.get("heat_score") or item.get("score")))),
                 "source": str(item.get("source") or "").strip(),
                 "reason": str(item.get("reason") or item.get("logic") or "").strip(),
+                "aliases": _collect_sector_aliases(sector, item.get("aliases")),
             }
         )
     return items
@@ -844,6 +1007,23 @@ def get_hub_overview() -> Dict[str, Any]:
             STATUS_FOCUS: [item for item in assets if item.get("status") == STATUS_FOCUS],
             STATUS_RESEARCH: [item for item in assets if item.get("status") == STATUS_RESEARCH],
         }
+        sector_report_warning = ""
+        try:
+            sector_report = get_recent_sector_strategy_report()
+        except Exception as exc:
+            logger.warning("投研中心概览读取最新板块报告失败，已降级为空摘要: %s", exc)
+            sector_report = {
+                "available": False,
+                "fresh": False,
+                "reused": False,
+                "headline": "智策板块报告暂不可用",
+                "market_view": "暂无",
+                "major_risk": "暂无",
+                "strategy": "暂无",
+                "heat": {},
+                "max_age_hours": SECTOR_REPORT_MAX_AGE_HOURS,
+            }
+            sector_report_warning = "最新板块报告读取失败，已降级显示资产列表"
         return {
             "counts": {
                 "holding": len(grouped[STATUS_HOLDING]),
@@ -854,7 +1034,8 @@ def get_hub_overview() -> Dict[str, Any]:
             "focus_capacity": FOCUS_CAPACITY,
             "top_focus": grouped[STATUS_FOCUS][:FOCUS_CAPACITY],
             "holdings": grouped[STATUS_HOLDING],
-            "sector_report": get_recent_sector_strategy_report(),
+            "sector_report": sector_report,
+            "sector_report_warning": sector_report_warning,
         }
 
     return _hub_cache_get_or_build("overview", builder)
@@ -1046,19 +1227,25 @@ def _upsert_sector_item(store: Dict[str, Dict[str, Any]], item: Dict[str, Any]) 
     sector = str(item.get("sector") or "").strip()
     if not sector:
         return
-    normalized = _normalize_sector_text(sector)
+    canonical_sector = _canonicalize_sector_name(sector)
+    normalized = _normalize_sector_text(canonical_sector)
     if not normalized:
         return
 
     payload = {
-        "sector": sector,
+        "sector": canonical_sector,
+        "canonical_sector": canonical_sector,
         "heat_score": max(0, min(100, _safe_int(item.get("heat_score") or item.get("score")))),
         "source": str(item.get("source") or "").strip(),
         "reason": str(item.get("reason") or item.get("logic") or item.get("trend") or "").strip(),
+        "aliases": _collect_sector_aliases(canonical_sector, item.get("aliases")),
+        "generic_theme": _is_generic_selection_theme(canonical_sector),
     }
     existing = store.get(normalized)
     if existing is None or payload["heat_score"] > existing.get("heat_score", 0):
         store[normalized] = payload
+        return
+    existing["aliases"] = _dedupe_preserve_order((existing.get("aliases") or []) + payload["aliases"])
 
 
 def _extract_structured_selection_sectors(report: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -1349,29 +1536,154 @@ def _derive_asset_display_name(asset: Dict[str, Any]) -> str:
     return symbol
 
 
+def _parse_alias_review_payload(payload: Any) -> Dict[str, Any]:
+    parsed = _decode_first_json_value(str(payload or ""))
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _review_sector_alias_with_llm(
+    *,
+    sector_item: Dict[str, Any],
+    context: Dict[str, Any],
+    candidate_tag: str,
+    haystack_snippet: str,
+) -> Dict[str, Any]:
+    try:
+        client = LLMClient()
+        messages = build_messages(
+            "smart_selection/sector_alias_review.system.txt",
+            "smart_selection/sector_alias_review.user.txt",
+            sector=sector_item.get("sector") or "",
+            canonical_sector=sector_item.get("canonical_sector") or sector_item.get("sector") or "",
+            aliases_payload=json.dumps(sector_item.get("aliases") or [], ensure_ascii=False, indent=2),
+            candidate_tag=candidate_tag,
+            haystack_snippet=haystack_snippet[:400],
+        )
+        response = client.call_api(
+            messages,
+            max_tokens=400,
+            tier=ModelTier.LIGHTWEIGHT,
+        )
+    except Exception:
+        return {}
+    parsed = _parse_alias_review_payload(response)
+    if not parsed:
+        return {}
+    return {
+        "is_same_theme": bool(parsed.get("is_same_theme")),
+        "canonical_sector": str(parsed.get("canonical_sector") or "").strip(),
+        "match_score": round(max(0.0, min(1.0, _safe_float(parsed.get("match_score")))), 2),
+        "reason": str(parsed.get("reason") or "").strip(),
+    }
+
+
+def _score_theme_match_against_tag(
+    *,
+    tag: str,
+    sector_item: Dict[str, Any],
+) -> tuple[float, str]:
+    tag_text = str(tag or "").strip()
+    if not tag_text:
+        return 0.0, ""
+    tag_normalized = _normalize_sector_text(tag_text)
+    canonical_sector = str(sector_item.get("canonical_sector") or sector_item.get("sector") or "").strip()
+    canonical_normalized = _normalize_sector_text(canonical_sector)
+    aliases = [str(item).strip() for item in sector_item.get("aliases") or [] if str(item).strip()]
+    alias_normalized = {_normalize_sector_text(item) for item in aliases if _normalize_sector_text(item)}
+    family_terms = SELECTION_SECTOR_FAMILY_LOOKUP.get(canonical_normalized, set())
+
+    if tag_normalized == canonical_normalized or tag_normalized in alias_normalized:
+        return 1.0, "exact_alias"
+    if family_terms and tag_normalized in family_terms:
+        return 0.88, "family_match"
+    if any(
+        tag_normalized in candidate or candidate in tag_normalized
+        for candidate in ([canonical_normalized] + list(alias_normalized))
+        if candidate
+    ):
+        if any(sep in tag_text for sep in ("-", "－", "—")):
+            return 0.8, "hierarchy_tag"
+        return 0.72, "alias_fuzzy"
+    if family_terms and any(tag_normalized in member or member in tag_normalized for member in family_terms if member):
+        return 0.88, "family_match"
+    return 0.0, ""
+
+
+def _match_single_theme(
+    *,
+    sector_item: Dict[str, Any],
+    context: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    best_score = 0.0
+    best_type = ""
+    best_value = ""
+    normalized_haystack = _normalize_sector_text(context.get("haystack"))
+    for tag in context.get("tags") or []:
+        score, match_type = _score_theme_match_against_tag(tag=str(tag or ""), sector_item=sector_item)
+        if score > best_score:
+            best_score = score
+            best_type = match_type
+            best_value = str(tag or "")
+
+    aliases = [str(item).strip() for item in sector_item.get("aliases") or [] if str(item).strip()]
+    normalized_aliases = [_normalize_sector_text(item) for item in aliases]
+    for alias, alias_normalized in zip(aliases, normalized_aliases):
+        if alias_normalized and alias_normalized in normalized_haystack and 0.62 > best_score:
+            best_score = 0.62
+            best_type = "text_match"
+            best_value = alias
+
+    if sector_item.get("generic_theme") and best_score < 1.0:
+        review = _review_sector_alias_with_llm(
+            sector_item=sector_item,
+            context=context,
+            candidate_tag=best_value,
+            haystack_snippet=str(context.get("haystack") or ""),
+        )
+        if not review.get("is_same_theme"):
+            return None
+        best_score = max(best_score, _safe_float(review.get("match_score")))
+        best_type = "llm_generic_review"
+        best_value = best_value or str(review.get("canonical_sector") or "")
+    elif 0.62 <= best_score < 0.8:
+        review = _review_sector_alias_with_llm(
+            sector_item=sector_item,
+            context=context,
+            candidate_tag=best_value,
+            haystack_snippet=str(context.get("haystack") or ""),
+        )
+        if review.get("is_same_theme") and _safe_float(review.get("match_score")) >= best_score:
+            best_score = _safe_float(review.get("match_score"))
+            best_type = "llm_alias_review"
+            best_value = best_value or str(review.get("canonical_sector") or "")
+
+    if best_score < 0.62:
+        return None
+    return {
+        **sector_item,
+        "match_score": round(best_score, 2),
+        "match_type": best_type,
+        "matched_on": best_value,
+    }
+
+
 def _match_asset_to_themes(
     asset: Dict[str, Any],
     context: Dict[str, Any],
     extracted_sectors: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
     matches: List[Dict[str, Any]] = []
-    haystack = _normalize_sector_text(context.get("haystack"))
-    normalized_tags = [_normalize_sector_text(tag) for tag in context.get("tags") or []]
     for sector_item in extracted_sectors:
-        normalized_sector = _normalize_sector_text(sector_item.get("sector"))
-        if not normalized_sector:
-            continue
-        matched = any(
-            normalized_sector == tag
-            or normalized_sector in tag
-            or tag in normalized_sector
-            for tag in normalized_tags
-            if tag
-        )
-        if not matched and normalized_sector:
-            matched = normalized_sector in haystack
-        if matched:
-            matches.append(sector_item)
+        matched_item = _match_single_theme(sector_item=sector_item, context=context)
+        if matched_item:
+            matches.append(matched_item)
+    matches.sort(
+        key=lambda item: (
+            _safe_float(item.get("match_score")),
+            _safe_float(item.get("heat_score")),
+        ),
+        reverse=True,
+    )
     return matches
 
 
@@ -1991,7 +2303,10 @@ def _run_volume_price_resonance_agent(
 
 
 def _build_selection_reason(item: Dict[str, Any]) -> str:
-    sector_bits = ",".join(match.get("sector") for match in item.get("matched_sectors") or [])
+    sector_bits = ",".join(
+        f"{match.get('sector')}({match.get('match_score', 0):.2f})"
+        for match in (item.get("matched_sectors") or [])[:3]
+    )
     metrics = item.get("technical_metrics") or {}
     market_state = str(metrics.get("market_state_label") or "震荡市")
     signal_labels = metrics.get("signal_labels") if isinstance(metrics.get("signal_labels"), list) else []
@@ -2012,6 +2327,13 @@ def _score_selection_candidate(
     matches = _match_asset_to_themes(asset, context, extracted_sectors)
     if not matches:
         return {}
+    best_match = max(
+        matches,
+        key=lambda item: (
+            _safe_float(item.get("match_score")),
+            _safe_float(item.get("heat_score")),
+        ),
+    )
     bundle = _build_stock_data_bundle(str(asset.get("symbol") or ""))
     if bundle.get("error"):
         return {
@@ -2019,10 +2341,12 @@ def _score_selection_candidate(
             "symbol": asset.get("symbol"),
             "name": _derive_asset_display_name(asset),
             "matched_sectors": matches,
-            "primary_sector": matches[0]["sector"],
-            "heat_score": _safe_float(matches[0].get("heat_score")),
+            "primary_sector": best_match.get("canonical_sector") or best_match.get("sector"),
+            "canonical_sector": best_match.get("canonical_sector") or best_match.get("sector"),
+            "match_score": _safe_float(best_match.get("match_score")),
+            "heat_score": _safe_float(best_match.get("heat_score")),
             "tech_score": 0.0,
-            "composite_score": _safe_float(matches[0].get("heat_score")),
+            "composite_score": _safe_float(best_match.get("heat_score")),
             "technical_metrics": {
                 "error": bundle.get("error"),
                 "market_state": str((context.get("market_context") or {}).get("state") or ""),
@@ -2034,7 +2358,7 @@ def _score_selection_candidate(
         }
 
     heat_score = max((_safe_float(item.get("heat_score")) for item in matches), default=0.0)
-    primary_sector = max(matches, key=lambda item: _safe_float(item.get("heat_score"))).get("sector")
+    primary_sector = best_match.get("canonical_sector") or best_match.get("sector")
     market_context = context.get("market_context") if isinstance(context.get("market_context"), dict) else {}
     agent_result = _run_volume_price_resonance_agent(
         asset=asset,
@@ -2059,6 +2383,8 @@ def _score_selection_candidate(
         "name": _derive_asset_display_name(asset),
         "matched_sectors": matches,
         "primary_sector": primary_sector,
+        "canonical_sector": best_match.get("canonical_sector") or primary_sector,
+        "match_score": round(_safe_float(best_match.get("match_score")), 2),
         "heat_score": round(heat_score, 2),
         "tech_score": _safe_float(agent_result.get("agent_score")),
         "composite_score": _safe_float(agent_result.get("composite_score")),

@@ -36,6 +36,27 @@ class SectorStrategyAgentsTests(unittest.TestCase):
                 "limit_up": 80,
                 "limit_down": 5,
             },
+            macro_data={
+                "source": "macro_analysis_cache",
+                "timestamp": "2026-04-09 09:30:00",
+                "macro_snapshot": {
+                    "gdp_yoy": {
+                        "label": "GDP当季同比",
+                        "value": 5.0,
+                        "unit": "%",
+                        "change": -0.2,
+                    },
+                    "manufacturing_pmi": {
+                        "label": "制造业PMI",
+                        "value": 50.2,
+                        "unit": "",
+                    },
+                },
+                "rule_based_sector_view": {
+                    "market_view": "结构性机会为主",
+                    "bullish_sectors": [{"sector": "公用事业"}],
+                },
+            },
             news_data=[{"publish_time": "2026-04-03 09:00", "title": "央行降准", "content": "释放长期流动性"}],
             analysis_date="2026-04-09 22:51:31",
         )
@@ -46,6 +67,10 @@ class SectorStrategyAgentsTests(unittest.TestCase):
         self.assertIn("宏观策略分析师", captured["messages"][0]["content"])
         self.assertIn("分析基准日期", captured["messages"][1]["content"])
         self.assertIn("2026-04-09 22:51:31", captured["messages"][1]["content"])
+        self.assertIn("【宏观指标快照】", captured["messages"][1]["content"])
+        self.assertIn("GDP当季同比: 5.0%", captured["messages"][1]["content"])
+        self.assertIn("制造业PMI: 50.2", captured["messages"][1]["content"])
+        self.assertIn("宏观相对受益板块: 公用事业", captured["messages"][1]["content"])
         self.assertIn("【市场概况】", captured["messages"][1]["content"])
         self.assertIn("【重要财经新闻】", captured["messages"][1]["content"])
 

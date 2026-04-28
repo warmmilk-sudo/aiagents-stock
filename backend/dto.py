@@ -107,7 +107,7 @@ class SectorStrategySchedulerRequest(BaseModel):
     enabled: bool = True
 
 
-class SectorStrategyLifecycleConfigRequest(BaseModel):
+class SmartSelectionLifecycleConfigRequest(BaseModel):
     values: dict[str, float | int] = Field(default_factory=dict)
     auto_rebuild: bool = False
 

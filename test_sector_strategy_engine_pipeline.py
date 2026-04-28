@@ -42,10 +42,13 @@ class SectorStrategyEnginePipelineTests(unittest.TestCase):
         engine.llm_client = None
         engine.database = None
         engine.save_analysis_report = lambda results, data: 99
+        captured_macro_kwargs = {}
 
         def sleep_agent(name):
             def _inner(*args, **kwargs):
                 time.sleep(0.2)
+                if name == "宏观策略师":
+                    captured_macro_kwargs.update(kwargs)
                 return {"agent_name": name, "analysis": f"{name}分析"}
             return _inner
 
@@ -63,6 +66,7 @@ class SectorStrategyEnginePipelineTests(unittest.TestCase):
         result = engine.run_comprehensive_analysis(
             {
                 "market_overview": {},
+                "macro_data": {"macro_snapshot": {"gdp_yoy": {"value": 5.0}}},
                 "news": [],
                 "sectors": {},
                 "concepts": {},
@@ -76,6 +80,7 @@ class SectorStrategyEnginePipelineTests(unittest.TestCase):
         self.assertTrue(result["success"])
         self.assertLess(elapsed, 0.45)
         self.assertEqual(result["report_id"], 99)
+        self.assertEqual(captured_macro_kwargs["macro_data"]["macro_snapshot"]["gdp_yoy"]["value"], 5.0)
         self.assertEqual(
             progress_events,
             [

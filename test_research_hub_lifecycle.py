@@ -274,6 +274,35 @@ class ResearchHubLifecycleTests(unittest.TestCase):
         self.assertEqual([item["sector"] for item in sectors], ["算力租赁", "机器人", "半导体"])
         self.assertEqual(warnings, [])
 
+    def test_match_asset_to_themes_supports_alias_family_and_hierarchy_scores(self):
+        context = {
+            "tags": ["共封装光学(CPO)", "电子-元件-印制电路板", "风电"],
+            "haystack": "公司业务聚焦光模块和风电零部件",
+        }
+        extracted = [
+            {"sector": "CPO概念", "canonical_sector": "CPO概念", "aliases": ["共封装光学(CPO)", "光通信模块"], "heat_score": 90},
+            {"sector": "印制电路板", "canonical_sector": "印制电路板", "aliases": ["PCB概念", "电子-元件-印制电路板"], "heat_score": 80},
+            {"sector": "风力发电", "canonical_sector": "风力发电", "aliases": ["风电"], "heat_score": 78},
+        ]
+
+        matches = research_hub_service._match_asset_to_themes({}, context, extracted)
+        by_sector = {item["sector"]: item for item in matches}
+
+        self.assertEqual(by_sector["CPO概念"]["match_score"], 1.0)
+        self.assertEqual(by_sector["印制电路板"]["match_score"], 1.0)
+        self.assertEqual(by_sector["风力发电"]["match_score"], 1.0)
+
+    def test_generic_theme_requires_llm_review_before_matching(self):
+        context = {"tags": ["低估值"], "haystack": "公司暂无超跌股标签"}
+        extracted = [
+            {"sector": "超跌股", "canonical_sector": "超跌股", "aliases": ["超跌反弹"], "heat_score": 68, "generic_theme": True},
+        ]
+
+        with patch("research_hub_service._review_sector_alias_with_llm", return_value={"is_same_theme": False, "match_score": 0.0}):
+            matches = research_hub_service._match_asset_to_themes({}, context, extracted)
+
+        self.assertEqual(matches, [])
+
     def test_market_context_classifies_momentum_and_ice_states(self):
         momentum_report = {
             "analysis_content_parsed": {
@@ -531,6 +560,25 @@ class ResearchHubLifecycleTests(unittest.TestCase):
         refreshed = repo.get_asset(asset_id)
         self.assertEqual(refreshed["name"], "贵州茅台")
         self.assertIn("白酒", refreshed["sector_tags"])
+
+    def test_hub_overview_degrades_when_sector_report_loading_fails(self):
+        repo = AssetRepository(str(self.base / "investment.db"))
+        analysis_repo = AnalysisRepository(str(self.base / "investment.db"))
+        repo.create_or_update_research_asset(symbol="600519", name="贵州茅台", note="测试概览")
+        research_hub_service.invalidate_hub_cache("overview", "assets:", "sector-report:recent")
+
+        with patch("research_hub_service.asset_repository", repo), patch(
+            "research_hub_service.analysis_repository",
+            analysis_repo,
+        ), patch("research_hub_service._list_ai_decisions", return_value=[]), patch(
+            "research_hub_service.get_recent_sector_strategy_report",
+            side_effect=RuntimeError("sector report unavailable"),
+        ):
+            overview = research_hub_service.get_hub_overview()
+
+        self.assertEqual(overview["counts"]["research"], 1)
+        self.assertFalse(overview["sector_report"]["available"])
+        self.assertIn("读取失败", overview["sector_report_warning"])
 
     def test_asset_match_context_limits_core_concepts_for_selection_matching(self):
         repo = AssetRepository(str(self.base / "investment.db"))

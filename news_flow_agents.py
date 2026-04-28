@@ -100,7 +100,6 @@ class NewsFlowAgents:
             
             response = self.llm_client.call_api(
                 messages,
-                temperature=0.5,
                 max_tokens=2000,
                 tier=ModelTier.REASONING,
             )
@@ -167,7 +166,6 @@ class NewsFlowAgents:
             
             response = self.llm_client.call_api(
                 messages,
-                temperature=0.6,
                 max_tokens=2000,
                 tier=ModelTier.REASONING,
             )
@@ -223,7 +221,7 @@ class NewsFlowAgents:
             
             response = self.llm_client.call_api(
                 messages,
-                temperature=0.4,
+                sampling_profile="factual",
                 max_tokens=1500,
                 tier=ModelTier.REASONING,
             )
@@ -295,7 +293,7 @@ class NewsFlowAgents:
             
             response = self.llm_client.call_api(
                 messages,
-                temperature=0.5,
+                sampling_profile="factual",
                 max_tokens=2000,
                 tier=ModelTier.REASONING,
             )
@@ -429,7 +427,6 @@ class NewsFlowAgents:
             
             response = self.llm_client.call_api(
                 messages,
-                temperature=0.5,
                 max_tokens=2000,
                 tier=ModelTier.REASONING,
             )

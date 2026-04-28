@@ -383,7 +383,7 @@ export function NewsFlowPage() {
   const peakTrendScore = trendMaxScores.length ? Math.max(...trendMaxScores) : null;
   const latestTrendSentiment = sentimentHistory.length ? sentimentHistory[0] : null;
   const trendTopicTimeline = buildTrendTopicTimeline(dailyStatistics);
-  const shouldPollTask = !task || task.status === "queued" || task.status === "running";
+  const taskStatusVisible = task?.status === "queued" || task?.status === "running" || task?.status === "failed" || task?.status === "cancelled";
   const loadTask = async () => {
     setTask(await apiFetch<TaskDetail<NewsFlowTaskPayload> | null>("/api/strategies/news-flow/tasks/latest"));
   };
@@ -461,7 +461,7 @@ export function NewsFlowPage() {
     );
   };
 
-  usePollingLoader({ load: loadTask, intervalMs: 2000, enabled: shouldPollTask });
+  usePollingLoader({ load: loadTask, intervalMs: 2000 });
   usePollingLoader({
     load: async () => {
       await Promise.all([loadDashboard(), loadSettings()]);
@@ -694,19 +694,18 @@ export function NewsFlowPage() {
               </div>
             </div>
 
-            {task ? (
+            {taskStatusVisible ? (
               <div className={styles.moduleSection}>
                 <strong>AI 分析任务状态</strong>
                 <div style={{ marginTop: 12 }}>
                   <TaskProgressBar
-                    current={task.current}
-                    total={task.total}
-                    message={task.message || "等待新闻流量任务状态..."}
+                    current={task?.current}
+                    total={task?.total}
+                    message={task?.message || "等待新闻流量任务状态..."}
                     tone={getTaskProgressTone(task)}
-                    showCounter={false}
                   />
                 </div>
-                {task.error ? <div className={styles.dangerText}>{task.error}</div> : null}
+                {task?.error ? <div className={styles.dangerText}>{task.error}</div> : null}
               </div>
             ) : null}
 

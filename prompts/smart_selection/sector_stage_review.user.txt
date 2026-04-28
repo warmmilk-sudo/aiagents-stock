@@ -1,0 +1,25 @@
+板块名称：$sector_name
+别名列表：$aliases_payload
+来源类型：$source_type
+
+量化初判：$quant_stage
+量化置信度：$quant_confidence
+
+最近 15 日热度轨迹：
+$trajectory_payload
+
+窗口统计：
+$lifecycle_details_payload
+
+智策报告侧证据：
+$report_bias_payload
+
+请仅输出 JSON：
+{
+  "final_stage": "startup|explosive|decay|neutral",
+  "confidence": 0.0,
+  "agree_with_quant": true,
+  "override_allowed": false,
+  "reason": "一句话",
+  "risk_flag": "none|conflict|stale|insufficient"
+}

@@ -125,6 +125,62 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
 
+function asObjectArray<T>(value: unknown): T[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter((item): item is T => Boolean(item) && typeof item === "object" && !Array.isArray(item));
+}
+
+function sanitizeStockSummaries(value: unknown): AnalysisHistoryStockSummary[] {
+  return asObjectArray<AnalysisHistoryStockSummary>(value);
+}
+
+function sanitizeStockRecords(value: unknown): AnalysisHistoryItem[] {
+  return asObjectArray<AnalysisHistoryItem>(value);
+}
+
+function sanitizeRecordDetail(value: unknown): AnalysisRecordDetail | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as AnalysisRecordDetail) : null;
+}
+
+function sanitizeMemoryArchive(value: unknown): MemoryArchive | null {
+  const record = asRecord(value);
+  if (!Object.keys(record).length) {
+    return null;
+  }
+  const longTermProfile = asRecord(record.long_term_profile);
+  const summary = asRecord(record.summary);
+  const workingMemories = asObjectArray<Record<string, unknown>>(record.working_memories).map((item) => ({
+    analysis_date: String(item.analysis_date || ""),
+    decision_summary: String(item.decision_summary || ""),
+  }));
+  const factualMemories = asObjectArray<Record<string, unknown>>(record.factual_memories).map((item) => ({
+    id: Number(item.id) || 0,
+    fact_content: String(item.fact_content || ""),
+    category: String(item.category || ""),
+    timestamp: String(item.timestamp || ""),
+    importance_score: Number(item.importance_score) || 0,
+    is_ignored: Boolean(item.is_ignored),
+  }));
+  return {
+    stock_code: String(record.stock_code || ""),
+    long_term_profile: Object.keys(longTermProfile).length
+      ? {
+          macro_profile: String(longTermProfile.macro_profile || ""),
+          last_updated: String(longTermProfile.last_updated || ""),
+        }
+      : null,
+    working_memories: workingMemories,
+    factual_memories: factualMemories,
+    summary: {
+      working_count: Number(summary.working_count) || workingMemories.length,
+      factual_count: Number(summary.factual_count) || factualMemories.length,
+      has_long_term_profile: Boolean(summary.has_long_term_profile ?? Object.keys(longTermProfile).length > 0),
+    },
+  };
+}
+
 function sanitizeDiscussionSpeakers(value: unknown): string {
   return String(value || "").replace(
     /【(投资总监（主持）|技术分析师|基本面分析师|资金面分析师|风险管理师|市场情绪分析师|新闻分析师)(?:\s+[^\]】:：]{1,12})?】(?=[:：])/g,
@@ -534,24 +590,25 @@ export function StockArchiveContent({ embedded = false, initialSymbol = "", onBa
 
   // States for Level 1 (Stock Summaries)
   const [stockSummaries, setStockSummaries] = useState<AnalysisHistoryStockSummary[]>(
-    () => (initialSummaryCache?.items as AnalysisHistoryStockSummary[]) ?? [],
+    () => sanitizeStockSummaries(initialSummaryCache?.items),
   );
 
   // States for Level 2 (Stock Profile)
   const [stockRecords, setStockRecords] = useState<AnalysisHistoryItem[]>(
-    () => (initialProfileCache?.records as AnalysisHistoryItem[]) ?? [],
+    () => sanitizeStockRecords(initialProfileCache?.records),
   );
   const [memoryArchive, setMemoryArchive] = useState<MemoryArchive | null>(
-    () => (initialProfileCache?.memoryArchive as MemoryArchive | null) ?? null,
+    () => sanitizeMemoryArchive(initialProfileCache?.memoryArchive),
   );
 
   // States for Level 3 (Record Detail)
   const [recordDetails, setRecordDetails] = useState<Record<number, AnalysisRecordDetail>>(() => {
-    if (!initialSelectedRecordId || !initialDetailCache?.detail) {
+    const initialDetail = sanitizeRecordDetail(initialDetailCache?.detail);
+    if (!initialSelectedRecordId || !initialDetail) {
       return {};
     }
     return {
-      [initialSelectedRecordId]: initialDetailCache.detail as AnalysisRecordDetail,
+      [initialSelectedRecordId]: initialDetail,
     };
   });
 
@@ -611,9 +668,10 @@ export function StockArchiveContent({ embedded = false, initialSymbol = "", onBa
     if (summaryRequestRef.current !== requestId) {
       return;
     }
-    setStockSummaries(data);
+    const normalizedData = sanitizeStockSummaries(data);
+    setStockSummaries(normalizedData);
     setSummaryCache(summaryCacheKey, {
-      items: data,
+      items: normalizedData,
       updatedAt: Date.now(),
     });
   };
@@ -631,14 +689,16 @@ export function StockArchiveContent({ embedded = false, initialSymbol = "", onBa
       if (profileRequestRef.current !== requestId) {
         return;
       }
-      setStockRecords(records);
+      const normalizedRecords = sanitizeStockRecords(records);
+      setStockRecords(normalizedRecords);
 
       let nextMemoryArchive: MemoryArchive | null = null;
       try {
         const memoryPath = `/api/memory/${encodeURIComponent(symbol)}`;
-        nextMemoryArchive = options?.background
+        const memoryResponse = options?.background
           ? await apiFetch<MemoryArchive>(memoryPath)
           : await apiFetchCached<MemoryArchive>(memoryPath, {}, { ttlMs: ARCHIVE_PROFILE_CACHE_TTL_MS });
+        nextMemoryArchive = sanitizeMemoryArchive(memoryResponse);
       } catch (memError) {
         console.warn("Memory not available for", symbol, memError);
         nextMemoryArchive = null;
@@ -649,7 +709,7 @@ export function StockArchiveContent({ embedded = false, initialSymbol = "", onBa
       }
       setMemoryArchive(nextMemoryArchive);
       setProfileCache(symbol, {
-        records,
+        records: normalizedRecords,
         memoryArchive: nextMemoryArchive,
         updatedAt: Date.now(),
       });
@@ -670,9 +730,13 @@ export function StockArchiveContent({ embedded = false, initialSymbol = "", onBa
     if (detailRequestRef.current !== requestId) {
       return;
     }
-    setRecordDetails((current) => ({ ...current, [recordId]: data }));
+    const normalizedData = sanitizeRecordDetail(data);
+    if (!normalizedData) {
+      return;
+    }
+    setRecordDetails((current) => ({ ...current, [recordId]: normalizedData }));
     setDetailCache(recordId, {
-      detail: data,
+      detail: normalizedData,
       updatedAt: Date.now(),
     });
   };
@@ -680,7 +744,7 @@ export function StockArchiveContent({ embedded = false, initialSymbol = "", onBa
   useEffect(() => {
     if (!selectedSymbol && !selectedRecordId) {
       if (summaryCache && isArchiveCacheUsable(summaryCache.updatedAt)) {
-        setStockSummaries((summaryCache.items as AnalysisHistoryStockSummary[]) ?? []);
+        setStockSummaries(sanitizeStockSummaries(summaryCache.items));
       } else {
         setStockSummaries([]);
       }
@@ -696,8 +760,8 @@ export function StockArchiveContent({ embedded = false, initialSymbol = "", onBa
   useEffect(() => {
     if (selectedSymbol && !selectedRecordId) {
       if (profileCache && isArchiveCacheUsable(profileCache.updatedAt)) {
-        setStockRecords((profileCache.records as AnalysisHistoryItem[]) ?? []);
-        setMemoryArchive((profileCache.memoryArchive as MemoryArchive | null) ?? null);
+        setStockRecords(sanitizeStockRecords(profileCache.records));
+        setMemoryArchive(sanitizeMemoryArchive(profileCache.memoryArchive));
       } else {
         setStockRecords([]);
         setMemoryArchive(null);
@@ -714,9 +778,13 @@ export function StockArchiveContent({ embedded = false, initialSymbol = "", onBa
   useEffect(() => {
     if (selectedRecordId) {
       if (detailCache?.detail && isArchiveCacheUsable(detailCache.updatedAt)) {
+        const normalizedDetail = sanitizeRecordDetail(detailCache.detail);
+        if (!normalizedDetail) {
+          return;
+        }
         setRecordDetails((current) => ({
           ...current,
-          [selectedRecordId]: detailCache.detail as AnalysisRecordDetail,
+          [selectedRecordId]: normalizedDetail,
         }));
       }
     }
@@ -904,7 +972,7 @@ export function StockArchiveContent({ embedded = false, initialSymbol = "", onBa
               }}
             />
 
-            <section className={styles.card}>
+            <section className={`${styles.card} ${styles.historyRecordListPanel}`}>
               <div className={styles.historyDetailSummary} style={{ marginBottom: '1rem' }}>档案记录 ({stockRecords.length})</div>
               <div className={styles.list}>
                 {stockRecords.map((record) => (
@@ -982,7 +1050,7 @@ export function StockArchiveContent({ embedded = false, initialSymbol = "", onBa
               </div>
             </section>
 
-            <section className={styles.card}>
+            <section className={`${styles.card} ${styles.historyRecordListPanel}`}>
               <div className={styles.list}>
                 {visibleStockSummaries.map((stock) => (
                   <div className={styles.historyRecordCard} key={stock.symbol}>

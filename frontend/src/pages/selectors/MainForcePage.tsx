@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import { PageFeedback } from "../../components/common/PageFeedback";
 import { PageFrame } from "../../components/common/PageFrame";
+import { TaskProgressBar } from "../../components/common/TaskProgressBar";
 import { StatusBadge } from "../../components/common/StatusBadge";
 import { AnalysisActionButtons, type ActionPayload } from "../../components/research/AnalysisActionButtons";
 import { useSelectedModels } from "../../hooks/useSelectedModels";
@@ -279,6 +280,8 @@ export function MainForcePage() {
 
   const selectionResult = selectionTask?.status === "success" ? selectionTask.result?.result ?? null : null;
   const selectionContext = selectionTask?.status === "success" ? selectionTask.result?.context_snapshot ?? null : null;
+  const selectionTaskStatusVisible = selectionTask?.status === "queued" || selectionTask?.status === "running" || selectionTask?.status === "failed" || selectionTask?.status === "cancelled";
+  const batchTaskStatusVisible = batchTask?.status === "queued" || batchTask?.status === "running" || batchTask?.status === "failed" || batchTask?.status === "cancelled";
   const rawStocks = selectionContext?.raw_stocks ?? [];
 
   const candidateMeta = useMemo(() => {
@@ -480,14 +483,17 @@ export function MainForcePage() {
               </form>
             </section>
 
-            {selectionTask ? (
+            {selectionTaskStatusVisible ? (
               <section className={styles.card}>
                 <h2>筛选任务状态</h2>
-                <p>{selectionTask.message || "等待主力选股任务..."}</p>
-                <p className={styles.muted}>
-                  进度: {selectionTask.current ?? 0} / {selectionTask.total ?? 0}
-                </p>
-                {selectionTask.error ? <p className={styles.dangerText}>{selectionTask.error}</p> : null}
+                <p>{selectionTask?.message || "等待主力选股任务..."}</p>
+                <TaskProgressBar
+                  current={selectionTask?.current ?? 0}
+                  total={selectionTask?.total ?? 0}
+                  message={selectionTask?.message || "等待主力选股任务..."}
+                  tone={selectionTask?.status === "failed" || selectionTask?.status === "cancelled" ? "danger" : "running"}
+                />
+                {selectionTask?.error ? <p className={styles.dangerText}>{selectionTask.error}</p> : null}
               </section>
             ) : null}
 
@@ -668,14 +674,17 @@ export function MainForcePage() {
           </>
         ) : null}
 
-        {section === "batch" && batchTask ? (
+        {section === "batch" && batchTaskStatusVisible ? (
           <section className={styles.card}>
             <h2>批量分析任务状态</h2>
-            <p>{batchTask.message || "等待批量分析任务..."}</p>
-            <p className={styles.muted}>
-              进度: {batchTask.current ?? 0} / {batchTask.total ?? 0}
-            </p>
-            {batchTask.error ? <p className={styles.dangerText}>{batchTask.error}</p> : null}
+            <p>{batchTask?.message || "等待批量分析任务..."}</p>
+            <TaskProgressBar
+              current={batchTask?.current ?? 0}
+              total={batchTask?.total ?? 0}
+              message={batchTask?.message || "等待批量分析任务..."}
+              tone={batchTask?.status === "failed" || batchTask?.status === "cancelled" ? "danger" : "running"}
+            />
+            {batchTask?.error ? <p className={styles.dangerText}>{batchTask.error}</p> : null}
           </section>
         ) : null}
 

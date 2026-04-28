@@ -65,6 +65,10 @@
 # .env 文件
 LIGHTWEIGHT_MODEL_NAME="gemini-3-flash"    # 轻量任务
 REASONING_MODEL_NAME="doubao-2-0-pro"      # 推理任务
+LLM_DEFAULT_TEMPERATURE=0.2                # 未命中模型专属配置时的通用温度
+LLM_FACTUAL_TEMPERATURE=0.1                # 未命中模型专属配置时的事实类温度
+LLM_DEFAULT_TOP_P=1.0                      # 1.0 表示不主动覆盖供应商默认 top_p
+LLM_MODEL_SAMPLING_CONFIG={"gemini-3-flash":{"temperature":1.0,"factual_temperature":1.0,"top_p":1.0},"doubao-2-0-pro":{"temperature":0.2,"factual_temperature":0.1,"top_p":1.0},"doubao-2-0-lite":{"temperature":0.2,"factual_temperature":0.1,"top_p":1.0},"doubao-2-0-mini":{"temperature":0.2,"factual_temperature":0.1,"top_p":1.0},"deepseek-v3-2":{"temperature":0.2,"factual_temperature":0.1,"top_p":1.0}}
 WARMMILK_CONFIG={"API_KEY":"your_key","BASE_URL":"https://generativelanguage.googleapis.com/v1beta/openai/"}
 VOICE_CONFIG={"API_KEY":"your_key","BASE_URL":"https://api.deepseek.com/v1"}
 ```
@@ -651,6 +655,10 @@ VOICE_CONFIG={"API_KEY":"your_voice_api_key_here","BASE_URL":"https://api.deepse
 # 轻量 / 推理模型名称（可选，支持OpenAI兼容模型）
 LIGHTWEIGHT_MODEL_NAME=gemini-3-flash
 REASONING_MODEL_NAME=doubao-2-0-pro
+LLM_DEFAULT_TEMPERATURE=0.2
+LLM_FACTUAL_TEMPERATURE=0.1
+LLM_DEFAULT_TOP_P=1.0
+LLM_MODEL_SAMPLING_CONFIG={"gemini-3-flash":{"temperature":1.0,"factual_temperature":1.0,"top_p":1.0},"doubao-2-0-pro":{"temperature":0.2,"factual_temperature":0.1,"top_p":1.0},"doubao-2-0-lite":{"temperature":0.2,"factual_temperature":0.1,"top_p":1.0},"doubao-2-0-mini":{"temperature":0.2,"factual_temperature":0.1,"top_p":1.0},"deepseek-v3-2":{"temperature":0.2,"factual_temperature":0.1,"top_p":1.0}}
 LIGHTWEIGHT_MODEL_OPTIONS=gemini-3-flash,doubao-2-0-mini,doubao-2-0-lite
 REASONING_MODEL_OPTIONS=deepseek-v3-2,doubao-2-0-pro
 

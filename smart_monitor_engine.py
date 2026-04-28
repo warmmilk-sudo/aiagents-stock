@@ -18,7 +18,7 @@ from smart_monitor_data import SmartMonitorDataFetcher
 from smart_monitor_db import SmartMonitorDB
 from notification_service import notification_service  # 复用主程序的通知服务
 from asset_repository import STATUS_PORTFOLIO
-from investment_action_utils import normalize_strategy_context, normalize_swing_type, swing_type_label
+from investment_action_utils import normalize_condition_list, normalize_strategy_context, normalize_swing_type, swing_type_label
 from investment_db_utils import DEFAULT_ACCOUNT_NAME, normalize_account_name
 from investment_lifecycle_service import InvestmentLifecycleService, investment_lifecycle_service
 from internal_events import event_bus, Events
@@ -27,6 +27,7 @@ from internal_events import event_bus, Events
 class SmartMonitorEngine:
     """智能盯盘引擎"""
 
+    PROMPT_OPTIMIZATION_VERSION = "execution_conditions_v1"
     DATA_FETCH_TIMEOUT_SECONDS = 45
     AI_DECISION_TIMEOUT_SECONDS = 25
     BASELINE_ANALYSTS_CONFIG = {
@@ -550,6 +551,71 @@ class SmartMonitorEngine:
         return cls._normalize_monitor_levels_payload(raw_levels)
 
     @staticmethod
+    def _extract_execution_conditions_from_strategy_context(strategy_context: Optional[Dict]) -> Dict[str, List[str]]:
+        if not isinstance(strategy_context, dict) or not strategy_context:
+            return {
+                "entry_conditions": [],
+                "exit_conditions": [],
+                "hold_conditions": [],
+                "invalidation_conditions": [],
+            }
+        execution_plan = strategy_context.get("execution_plan") if isinstance(strategy_context.get("execution_plan"), dict) else {}
+        final_decision = strategy_context.get("final_decision") if isinstance(strategy_context.get("final_decision"), dict) else {}
+
+        def _pick(key: str) -> List[str]:
+            return normalize_condition_list(
+                strategy_context.get(key)
+                or execution_plan.get(key)
+                or final_decision.get(key),
+                max_items=6,
+            )
+
+        return {
+            "entry_conditions": _pick("entry_conditions"),
+            "exit_conditions": _pick("exit_conditions"),
+            "hold_conditions": _pick("hold_conditions"),
+            "invalidation_conditions": _pick("invalidation_conditions"),
+        }
+
+    @staticmethod
+    def _format_execution_conditions(conditions: List[str]) -> str:
+        return "；".join(conditions[:4])
+
+    @staticmethod
+    def _reasoning_matches_execution_conditions(reasoning: object, conditions: List[str], *, action: str) -> bool:
+        text = str(reasoning or "").strip()
+        if not text or not conditions:
+            return False
+
+        normalized_action = str(action or "").upper()
+        if normalized_action == "BUY" and re.search(r"满足.{0,12}(?:进场|买入|加仓|建仓).{0,12}条件", text):
+            return True
+        if normalized_action == "SELL" and re.search(r"满足.{0,12}(?:离场|卖出|减仓|清仓|止盈|止损|失效).{0,12}条件", text):
+            return True
+
+        stop_words = {
+            "条件", "触发", "出现", "确认", "之后", "可以", "考虑", "执行", "当前", "价格",
+            "进场", "加仓", "买入", "离场", "减仓", "卖出", "清仓", "止盈", "止损",
+        }
+        for condition in conditions:
+            condition_text = str(condition or "").strip()
+            if not condition_text:
+                continue
+            if condition_text in text:
+                return True
+            keywords = [
+                token
+                for token in re.findall(r"[\u4e00-\u9fffA-Za-z0-9]{2,}", condition_text)
+                if token not in stop_words
+            ]
+            if not keywords:
+                continue
+            required = 1 if len(keywords) == 1 else 2
+            if sum(1 for token in keywords if token in text) >= required:
+                return True
+        return False
+
+    @staticmethod
     def _rating_supports_buying(rating: object) -> bool:
         text = str(rating or "").strip()
         return any(keyword in text for keyword in ("买入", "强烈买入", "加仓"))
@@ -566,20 +632,23 @@ class SmartMonitorEngine:
         if current_price is None or not monitor_levels:
             return None
 
+        conditions = self._extract_execution_conditions_from_strategy_context(strategy_context)
+        has_entry_conditions = bool(conditions["entry_conditions"])
+        has_exit_conditions = bool(conditions["exit_conditions"] or conditions["invalidation_conditions"])
         take_profit = self._float_or_none(monitor_levels.get("take_profit"))
         stop_loss = self._float_or_none(monitor_levels.get("stop_loss"))
         entry_min = self._float_or_none(monitor_levels.get("entry_min"))
         entry_max = self._float_or_none(monitor_levels.get("entry_max"))
         rating = (strategy_context or {}).get("rating")
 
-        if has_position and stop_loss is not None and current_price <= stop_loss:
+        if has_position and not has_exit_conditions and stop_loss is not None and current_price <= stop_loss:
             return {
                 "action": "SELL",
                 "action_detail": "止损",
                 "reasoning": f"当前价格 {current_price:.3f} 已触发深度分析交易计划的止损位 {stop_loss:.3f}。",
                 "monitor_levels": monitor_levels,
             }
-        if has_position and take_profit is not None and current_price >= take_profit:
+        if has_position and not has_exit_conditions and take_profit is not None and current_price >= take_profit:
             return {
                 "action": "SELL",
                 "action_detail": "止盈",
@@ -591,6 +660,7 @@ class SmartMonitorEngine:
             and entry_max is not None
             and entry_min <= current_price <= entry_max
             and self._rating_supports_buying(rating)
+            and not has_entry_conditions
         ):
             return {
                 "action": "BUY",
@@ -613,6 +683,7 @@ class SmartMonitorEngine:
     ) -> Dict[str, object]:
         decision_monitor_levels = self._normalize_monitor_levels(decision)
         plan_monitor_levels = self._extract_monitor_levels_from_strategy_context(strategy_context)
+        execution_conditions = self._extract_execution_conditions_from_strategy_context(strategy_context)
         if plan_monitor_levels and not decision_monitor_levels:
             decision["monitor_levels"] = plan_monitor_levels
 
@@ -624,6 +695,7 @@ class SmartMonitorEngine:
         )
         action = str(decision.get("action") or "").upper()
         rating = (strategy_context or {}).get("rating")
+        reasoning = decision.get("reasoning")
 
         if plan_signal and action == "HOLD":
             decision["action"] = str(plan_signal.get("action") or "HOLD")
@@ -663,6 +735,25 @@ class SmartMonitorEngine:
                         ),
                     )
 
+        action = str(decision.get("action") or "").upper()
+        if action == "BUY" and execution_conditions["entry_conditions"]:
+            if not self._reasoning_matches_execution_conditions(
+                reasoning,
+                execution_conditions["entry_conditions"],
+                action="BUY",
+            ):
+                decision["action"] = "HOLD"
+                decision["action_detail"] = "观望" if not has_position else "持有"
+                decision["action_ratio_pct"] = None
+                decision["reasoning"] = self._reasoning_with_appendix(
+                    decision.get("reasoning"),
+                    (
+                        "最新深度分析已提供结构化进场/加仓条件，当前决策未明确确认这些条件已满足，"
+                        f"先降级为HOLD。待确认条件：{self._format_execution_conditions(execution_conditions['entry_conditions'])}"
+                    ),
+                )
+
+        action = str(decision.get("action") or "").upper()
         if action == "SELL" and has_position and plan_monitor_levels and current_price is not None:
             take_profit = self._float_or_none(plan_monitor_levels.get("take_profit"))
             stop_loss = self._float_or_none(plan_monitor_levels.get("stop_loss"))
@@ -670,13 +761,22 @@ class SmartMonitorEngine:
                 (take_profit is not None and current_price >= take_profit)
                 or (stop_loss is not None and current_price <= stop_loss)
             )
-            if not sell_triggered:
+            exit_conditions = execution_conditions["exit_conditions"] + execution_conditions["invalidation_conditions"]
+            condition_confirmed = (
+                self._reasoning_matches_execution_conditions(reasoning, exit_conditions, action="SELL")
+                if exit_conditions
+                else True
+            )
+            if not sell_triggered and not condition_confirmed:
                 decision["action"] = "HOLD"
                 decision["action_detail"] = "持有"
                 decision["action_ratio_pct"] = None
                 decision["reasoning"] = self._reasoning_with_appendix(
                     decision.get("reasoning"),
-                    "当前价格尚未触发深度分析交易计划的止盈/止损阈值，盘中规则不执行脱离计划的卖出动作。",
+                    (
+                        "当前价格尚未触发深度分析交易计划的止盈/止损阈值，且未明确确认结构化离场/"
+                        "基线失效条件已满足，盘中规则不执行脱离计划的卖出动作。"
+                    ),
                 )
 
         return decision

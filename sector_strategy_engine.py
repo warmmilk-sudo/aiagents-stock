@@ -96,6 +96,7 @@ class SectorStrategyEngine:
                     "宏观策略师",
                     lambda: self.agents.macro_strategist_agent(
                         market_data=data.get("market_overview", {}),
+                        macro_data=data.get("macro_data", {}),
                         news_data=data.get("news", []),
                         analysis_date=str(data.get("timestamp") or local_now_str()),
                     ),
@@ -265,7 +266,7 @@ class SectorStrategyEngine:
         
         response = self.llm_client.call_api(
             messages,
-            temperature=0.3,
+            sampling_profile="factual",
             max_tokens=6000,
             tier=ModelTier.REASONING,
         )
@@ -418,6 +419,7 @@ class SectorStrategyEngine:
                 "cache_warning": str(original_data.get("cache_warning") or ""),
                 "data_timestamp": str(original_data.get("timestamp") or ""),
                 "market_overview": original_data.get("market_overview", {}) or {},
+                "macro_data": original_data.get("macro_data", {}) or {},
                 "sectors": original_data.get("sectors", {}) or {},
                 "concepts": original_data.get("concepts", {}) or {},
             }

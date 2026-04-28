@@ -965,6 +965,7 @@ export function PortfolioPage({ embedded = false }: PortfolioPageProps = {}) {
     schedulerTerminalTaskRef.current = terminalKey;
     void loadAll(true).catch(() => undefined);
     clearSmartMonitorPageCache();
+    clearSchedulerTask();
   }, [clearSmartMonitorPageCache, schedulerTask?.id, schedulerTask?.status]);
 
   useEffect(() => {
@@ -978,6 +979,7 @@ export function PortfolioPage({ embedded = false }: PortfolioPageProps = {}) {
     singleAnalysisTerminalTaskRef.current = terminalKey;
     void loadAll(true).catch(() => undefined);
     clearSmartMonitorPageCache();
+    clearSingleAnalysisTask();
   }, [clearSmartMonitorPageCache, singleAnalysisTask?.id, singleAnalysisTask?.status]);
 
   useEffect(() => {
