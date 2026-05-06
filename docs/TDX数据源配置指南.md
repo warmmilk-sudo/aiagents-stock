@@ -8,7 +8,7 @@ AgentStock1智能盯盘系统已集成TDX股票数据API接口，为用户提供
 
 系统采用多数据源降级机制：
 1. **TDX API**（优先）- 快速、稳定的本地化数据接口
-2. **AKShare**（备选）- 免费的金融数据接口
+2. **Tushare**（备选）- 免费的金融数据接口
 3. **Tushare**（兜底）- 需要积分的专业数据接口
 
 ---
@@ -92,7 +92,7 @@ TDX_ENABLED=true
 TDX_BASE_URL=http://192.168.1.100:8080
 ```
 
-### 场景3：禁用TDX，使用AKShare
+### 场景3：禁用TDX，使用Tushare
 
 ```bash
 # .env文件配置
@@ -116,7 +116,7 @@ TDX_ENABLED=false
 
 - **交易时段**：每次分析都获取最新数据
 - **非交易时段**：使用最近一个交易日的数据
-- **降级机制**：TDX失败时自动切换到AKShare或Tushare
+- **降级机制**：TDX失败时自动切换到Tushare
 
 ---
 
@@ -164,13 +164,13 @@ TDX未返回股票 600519 的行情数据
 
 使用TDX数据源的优势：
 
-| 对比项 | TDX | AKShare | Tushare |
-|-------|-----|---------|---------|
-| 速度 | ⚡⚡⚡ 极快 | ⚡⚡ 较快 | ⚡ 一般 |
-| 稳定性 | ✅ 极高 | ⚠️ 中等 | ✅ 高 |
-| IP限制 | ❌ 无 | ⚠️ 有 | ❌ 无 |
-| 积分要求 | ❌ 无 | ❌ 无 | ✅ 需要 |
-| 成本 | 💰 本地部署 | 🆓 免费 | 💰 积分制 |
+| 对比项 | TDX | Tushare |
+|-------|-----|---------|
+| 速度 | ⚡⚡⚡ 极快 | ⚡ 一般 |
+| 稳定性 | ✅ 极高 | ✅ 高 |
+| IP限制 | ❌ 无 | ❌ 无 |
+| 积分要求 | ❌ 无 | ✅ 需要 |
+| 成本 | 💰 本地部署 | 💰 积分制 |
 
 ---
 
@@ -181,17 +181,15 @@ TDX未返回股票 600519 的行情数据
 ```
 1. 首选TDX（如果启用）
    ↓ 失败
-2. 降级到AKShare
+2. 降级到Tushare（如果配置）
    ↓ 失败
-3. 降级到Tushare（如果配置）
-   ↓ 失败
-4. 返回错误，停止分析
+3. 返回错误，停止分析
 ```
 
 **日志示例：**
 ```
-TDX获取失败 600519，尝试降级到AKShare
-AKShare获取失败 600519，尝试降级到Tushare
+TDX获取失败 600519，尝试降级到Tushare
+Tushare获取失败 600519，请检查 Tushare 配置
 ✅ Tushare降级成功，获取到 600519 数据
 ```
 
@@ -236,7 +234,7 @@ data = fetcher.get_comprehensive_data('600519')
 # 数据包含：
 # - 实时行情：current_price, change_pct, volume, amount...
 # - 技术指标：ma5, ma20, macd, rsi, kdj, boll...
-# - 数据源标识：data_source='tdx'/'akshare'/'tushare'
+# - 数据源标识：data_source='tdx'/'tushare'/'tushare'
 ```
 
 ### 手动指定数据源
@@ -245,7 +243,7 @@ data = fetcher.get_comprehensive_data('600519')
 # 强制使用TDX
 fetcher = SmartMonitorDataFetcher(use_tdx=True, tdx_base_url='http://localhost:8080')
 
-# 禁用TDX，使用AKShare
+# 禁用TDX，使用Tushare
 fetcher = SmartMonitorDataFetcher(use_tdx=False)
 ```
 
@@ -270,4 +268,3 @@ fetcher = SmartMonitorDataFetcher(use_tdx=False)
 
 **更新日期：** 2024-11-04  
 **版本：** v1.0
-

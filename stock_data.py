@@ -687,7 +687,8 @@ class StockDataFetcher:
                 print(f"✅ 成功获取 {symbol} 的历史数据，共 {len(df)} 条记录")
                 return df
             else:
-                return {"error": "所有数据源均无法获取历史数据"}
+                detail = getattr(self.data_source_manager, "last_stock_hist_error", "") or "Tushare 未返回历史数据"
+                return {"error": f"无法获取股票历史数据: {detail}"}
                 
         except Exception as e:
             return {"error": f"获取中国股票数据失败: {str(e)}"}

@@ -73,12 +73,12 @@ class SmartMonitorTDXDataFetcher:
 
 - ✅ **智能数据源选择**
   - A股（6位数字代码）优先使用TDX
-  - 港股/美股使用原有数据源（AKShare/yfinance）
+  - 港股/美股使用原有数据源（Tushare/yfinance）
   - TDX失败自动降级到默认数据源
 
 - ✅ **完整降级机制**
   ```
-  TDX数据源 → 默认数据源（AKShare/yfinance）
+  TDX数据源 → 默认数据源（Tushare/yfinance）
   ```
 
 #### 核心代码：
@@ -101,7 +101,7 @@ def _update_stock_price(self, stock: Dict):
             print(f"⚠️ TDX获取失败，降级到默认数据源: {symbol}")
             current_price = self._get_price_from_default_source(symbol)
     else:
-        # 使用默认数据源（AKShare/yfinance）
+        # 使用默认数据源（Tushare/yfinance）
         current_price = self._get_price_from_default_source(symbol)
 ```
 
@@ -169,7 +169,7 @@ docker-compose restart
 | 数据源 | 响应时间 | 成功率 | 调用限制 |
 |--------|----------|--------|----------|
 | **TDX（本地）** | <50ms | 99.9% | 无限制 |
-| **AKShare** | 500-2000ms | 80% | 频繁限流 |
+| **Tushare** | 500-2000ms | 80% | 频繁限流 |
 | **Tushare** | 300-1000ms | 95% | 积分限制 |
 
 **实际测试**（平安银行 000001）：
@@ -222,7 +222,7 @@ TDX数据源初始化成功，接口地址: http://192.168.1.222:8080
     │   YES   │   NO
     ▼         ▼
 ┌────────┐  ┌──────────────┐
-│  TDX   │  │ AKShare/     │
+│  TDX   │  │ Tushare/     │
 │ 数据源  │  │ yfinance     │
 └───┬────┘  └──────┬───────┘
     │              │
@@ -230,7 +230,7 @@ TDX数据源初始化成功，接口地址: http://192.168.1.222:8080
     ▼              │
 ┌───────────┐      │
 │   降级     │◄─────┘
-│ AKShare   │
+│ Tushare   │
 └─────┬─────┘
       │
       ▼
@@ -294,7 +294,7 @@ monitor_ui.py                →  监测管理界面
 **临时方案**: 
 - 检查防火墙设置
 - 使用`localhost`（本机部署时）
-- 系统会自动降级到AKShare
+- 系统会自动降级到Tushare
 
 ### 2. 股票名称获取失败
 **问题**: TDX搜索接口返回空结果

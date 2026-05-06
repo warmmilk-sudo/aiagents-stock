@@ -82,6 +82,20 @@ class BatchAnalysisServiceTests(unittest.TestCase):
         self.assertEqual(stock_data, [{"close": 18.88}])
         self.assertEqual(indicators, {"rsi": 55.0})
 
+    @patch("batch_analysis_service.StockDataFetcher")
+    def test_get_stock_data_preserves_history_error_detail(self, mock_fetcher_cls):
+        mock_fetcher = MagicMock()
+        mock_fetcher.get_stock_info.return_value = {"symbol": "600519", "name": "贵州茅台"}
+        mock_fetcher.get_realtime_quote.return_value = None
+        mock_fetcher.get_stock_data.return_value = {"error": "无法获取股票历史数据: daily 调用失败: token expired"}
+        mock_fetcher_cls.return_value = mock_fetcher
+
+        stock_info, stock_data, indicators = batch_analysis_service._get_stock_data("600519", "1y")
+
+        self.assertEqual(stock_info["symbol"], "600519")
+        self.assertIsNone(stock_data)
+        self.assertEqual(indicators["error"], "无法获取股票历史数据: daily 调用失败: token expired")
+
     @patch("batch_analysis_service.db")
     @patch("batch_analysis_service.asset_service")
     @patch("batch_analysis_service.StockAnalysisAgents")

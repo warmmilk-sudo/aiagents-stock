@@ -49,6 +49,8 @@ class DataSourceManager:
         self.tdx_enabled = bool(config.TDX_CONFIG.get('enabled', False) or config.TDX_CONFIG.get('base_url', ''))
         self.tdx_base_url = str(config.TDX_CONFIG.get('base_url', '') or '').strip()
         self.tdx_timeout_seconds = max(5, int(getattr(config, 'TDX_TIMEOUT_SECONDS', 10) or 10))
+        self.last_tushare_error = ""
+        self.last_stock_hist_error = ""
         
         # 初始化tushare
         if self.tushare_token:
@@ -301,6 +303,7 @@ class DataSourceManager:
     def call_tushare_api(self, api_name, *, empty_ok=False, **kwargs):
         """调用 Tushare 接口，并在异常或空返回时做轻量重试。"""
         if not self.tushare_available or self.tushare_api is None:
+            self.last_tushare_error = "Tushare 未配置或未初始化"
             return None
 
         method = getattr(self.tushare_api, api_name, None)
@@ -321,10 +324,12 @@ class DataSourceManager:
                     time.sleep(self.tushare_retry_delay_seconds)
                     continue
                 print(f"[Tushare] {api_name} 调用失败: {exc}")
+                self.last_tushare_error = f"{api_name} 调用失败: {exc}"
                 return None
 
             is_empty = result is None or (isinstance(result, pd.DataFrame) and result.empty)
             if not is_empty or empty_ok:
+                self.last_tushare_error = ""
                 return result
 
             if attempt < self.tushare_retry_count:
@@ -334,10 +339,14 @@ class DataSourceManager:
                 )
                 time.sleep(self.tushare_retry_delay_seconds)
 
+        if result is None or (isinstance(result, pd.DataFrame) and result.empty):
+            self.last_tushare_error = f"{api_name} 返回空数据"
         return result
     
     def _fetch_stock_hist_data_from_tushare(self, symbol, start_date=None, end_date=None, adjust='qfq'):
+        self.last_stock_hist_error = ""
         if not self.tushare_available:
+            self.last_stock_hist_error = "Tushare 未配置或未初始化"
             return None
 
         print(f"[Tushare] 正在获取 {symbol} 的历史数据...")
@@ -386,6 +395,8 @@ class DataSourceManager:
                     df = None
 
         if df is None or df.empty:
+            detail = self.last_tushare_error or f"{symbol} 未返回历史数据"
+            self.last_stock_hist_error = detail
             print(f"[Tushare] 未返回 {symbol} 的历史数据")
             return None
 
@@ -404,7 +415,7 @@ class DataSourceManager:
 
     def get_stock_hist_data(self, symbol, start_date=None, end_date=None, adjust='qfq'):
         """
-        获取股票历史数据（优先 Tushare）
+        获取股票历史数据（Tushare）
         
         Args:
             symbol: 股票代码（6位数字）

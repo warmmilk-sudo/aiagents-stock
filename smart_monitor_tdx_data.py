@@ -971,9 +971,11 @@ class SmartMonitorTDXDataFetcher:
             # 获取K线数据（需要足够的数据计算指标，至少200条）
             df = self.get_kline_data(stock_code, kline_type=kline_type, limit=200)
             
-            if df is None or df.empty or len(df) < 60:
+            if df is None or df.empty or len(df) < 2:
                 self.logger.warning(f"股票 {stock_code} K线数据不足，无法计算技术指标")
                 return None
+            elif len(df) < 60:
+                self.logger.warning(f"股票 {stock_code} K线数据较少，部分长周期指标可能为空")
             
             # 计算技术指标
             return self._calculate_all_indicators(df, stock_code)
@@ -994,7 +996,7 @@ class SmartMonitorTDXDataFetcher:
             技术指标数据
         """
         try:
-            if df.empty or len(df) < 60:
+            if df.empty or len(df) < 2:
                 self.logger.warning(f"股票 {stock_code} 历史数据不足")
                 return None
             
@@ -1022,53 +1024,66 @@ class SmartMonitorTDXDataFetcher:
             # 取最后一行数据
             latest = df.iloc[-1]
             
+            def safe_float(val):
+                return float(val) if pd.notna(val) else None
+                
             # 判断趋势
-            current_price = float(latest['收盘'])
-            ma5 = float(latest['ma5'])
-            ma20 = float(latest['ma20'])
-            ma60 = float(latest['ma60'])
+            current_price = safe_float(latest['收盘'])
+            ma5 = safe_float(latest['ma5'])
+            ma20 = safe_float(latest['ma20'])
+            ma60 = safe_float(latest['ma60'])
             
-            if current_price > ma5 > ma20 > ma60:
-                trend = 'up'
-            elif current_price < ma5 < ma20 < ma60:
-                trend = 'down'
+            if ma5 is not None and ma20 is not None and ma60 is not None and current_price is not None:
+                if current_price > ma5 > ma20 > ma60:
+                    trend = 'up'
+                elif current_price < ma5 < ma20 < ma60:
+                    trend = 'down'
+                else:
+                    trend = 'sideways'
             else:
                 trend = 'sideways'
             
             # 布林带位置
-            boll_upper = float(latest['boll_upper'])
-            boll_mid = float(latest['boll_mid'])
-            boll_lower = float(latest['boll_lower'])
+            boll_upper = safe_float(latest['boll_upper'])
+            boll_mid = safe_float(latest['boll_mid'])
+            boll_lower = safe_float(latest['boll_lower'])
             
-            if current_price >= boll_upper:
-                boll_position = '上轨附近（超买）'
-            elif current_price <= boll_lower:
-                boll_position = '下轨附近（超卖）'
-            elif current_price > boll_mid:
-                boll_position = '中轨上方'
+            if boll_upper is not None and boll_lower is not None and boll_mid is not None and current_price is not None:
+                if current_price >= boll_upper:
+                    boll_position = '上轨附近（超买）'
+                elif current_price <= boll_lower:
+                    boll_position = '下轨附近（超卖）'
+                elif current_price > boll_mid:
+                    boll_position = '中轨上方'
+                else:
+                    boll_position = '中轨下方'
             else:
-                boll_position = '中轨下方'
+                boll_position = '未知（数据不足）'
+            
+            vol_ma5 = safe_float(latest['vol_ma5'])
+            latest_vol = safe_float(latest['成交量'])
+            volume_ratio_vs_vol_ma5 = (latest_vol / vol_ma5) if vol_ma5 and vol_ma5 > 0 and latest_vol is not None else None
             
             return {
                 'ma5': ma5,
                 'ma20': ma20,
                 'ma60': ma60,
                 'trend': trend,
-                'macd_dif': float(latest['dif']),
-                'macd_dea': float(latest['dea']),
-                'macd': float(latest['macd']),
-                'rsi6': float(latest['rsi6']),
-                'rsi12': float(latest['rsi12']),
-                'rsi24': float(latest['rsi24']),
-                'kdj_k': float(latest['kdj_k']),
-                'kdj_d': float(latest['kdj_d']),
-                'kdj_j': float(latest['kdj_j']),
+                'macd_dif': safe_float(latest['dif']),
+                'macd_dea': safe_float(latest['dea']),
+                'macd': safe_float(latest['macd']),
+                'rsi6': safe_float(latest['rsi6']),
+                'rsi12': safe_float(latest['rsi12']),
+                'rsi24': safe_float(latest['rsi24']),
+                'kdj_k': safe_float(latest['kdj_k']),
+                'kdj_d': safe_float(latest['kdj_d']),
+                'kdj_j': safe_float(latest['kdj_j']),
                 'boll_upper': boll_upper,
                 'boll_mid': boll_mid,
                 'boll_lower': boll_lower,
                 'boll_position': boll_position,
-                'vol_ma5': float(latest['vol_ma5']),
-                'volume_ratio_vs_vol_ma5': float(latest['成交量']) / float(latest['vol_ma5']) if latest['vol_ma5'] > 0 else None
+                'vol_ma5': vol_ma5,
+                'volume_ratio_vs_vol_ma5': volume_ratio_vs_vol_ma5
             }
             
         except Exception as e:

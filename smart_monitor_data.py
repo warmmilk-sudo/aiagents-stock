@@ -726,9 +726,11 @@ class SmartMonitorDataFetcher:
             })
             df["日期"] = pd.to_datetime(df["日期"], errors="coerce")
             df = df.dropna(subset=["日期", "开盘", "最高", "最低", "收盘", "成交量"])
-            if len(df) < 60:
+            if len(df) < 2:
                 self.logger.warning(f"Tushare历史数据不足 {stock_code}（仅{len(df)}条）")
                 return None
+            elif len(df) < 60:
+                self.logger.warning(f"Tushare历史数据较少 {stock_code}（仅{len(df)}条），部分长周期指标可能为空")
 
             self.logger.info(
                 "✅ Tushare成功获取 %s 历史数据，共%s条，复权模式: %s",
@@ -848,7 +850,7 @@ class SmartMonitorDataFetcher:
             技术指标数据
         """
         try:
-            if df.empty or len(df) < 60:
+            if df.empty or len(df) < 2:
                 self.logger.warning(f"股票 {stock_code} 历史数据不足")
                 return None
             
@@ -901,35 +903,44 @@ class SmartMonitorDataFetcher:
             # 取最后一行数据
             latest = df.iloc[-1]
             
+            def safe_float(val):
+                return float(val) if pd.notna(val) else None
+                
             # 判断趋势
-            current_price = float(latest['收盘'])
-            ma5 = float(latest['ma5'])
-            ma10 = float(latest['ma10'])
-            ma20 = float(latest['ma20'])
-            ma60 = float(latest['ma60'])
-            atr14 = float(latest['atr14']) if pd.notna(latest['atr14']) else None
-            atr14_pct = (atr14 / current_price * 100) if atr14 and current_price > 0 else None
+            current_price = safe_float(latest['收盘'])
+            ma5 = safe_float(latest['ma5'])
+            ma10 = safe_float(latest['ma10'])
+            ma20 = safe_float(latest['ma20'])
+            ma60 = safe_float(latest['ma60'])
+            atr14 = safe_float(latest['atr14'])
+            atr14_pct = (atr14 / current_price * 100) if atr14 is not None and current_price is not None and current_price > 0 else None
             
-            if current_price > ma5 > ma20 > ma60:
-                trend = 'up'
-            elif current_price < ma5 < ma20 < ma60:
-                trend = 'down'
+            if ma5 is not None and ma20 is not None and ma60 is not None and current_price is not None:
+                if current_price > ma5 > ma20 > ma60:
+                    trend = 'up'
+                elif current_price < ma5 < ma20 < ma60:
+                    trend = 'down'
+                else:
+                    trend = 'sideways'
             else:
                 trend = 'sideways'
             
             # 布林带位置
-            boll_upper = float(latest['boll_upper'])
-            boll_mid = float(latest['boll_mid'])
-            boll_lower = float(latest['boll_lower'])
+            boll_upper = safe_float(latest['boll_upper'])
+            boll_mid = safe_float(latest['boll_mid'])
+            boll_lower = safe_float(latest['boll_lower'])
             
-            if current_price >= boll_upper:
-                boll_position = '上轨附近（超买）'
-            elif current_price <= boll_lower:
-                boll_position = '下轨附近（超卖）'
-            elif current_price > boll_mid:
-                boll_position = '中轨上方'
+            if boll_upper is not None and boll_lower is not None and boll_mid is not None and current_price is not None:
+                if current_price >= boll_upper:
+                    boll_position = '上轨附近（超买）'
+                elif current_price <= boll_lower:
+                    boll_position = '下轨附近（超卖）'
+                elif current_price > boll_mid:
+                    boll_position = '中轨上方'
+                else:
+                    boll_position = '中轨下方'
             else:
-                boll_position = '中轨下方'
+                boll_position = '未知（数据不足）'
                 
             # --- 语义化标签生成 (Semantic Labels) ---
             semantic_labels = []
@@ -941,31 +952,38 @@ class SmartMonitorDataFetcher:
                 semantic_labels.append("均线空头排列")
                 
             # 2. MACD形态
-            macd = float(latest['macd'])
-            dif = float(latest['dif'])
-            dea = float(latest['dea'])
-            prev_macd = float(df.iloc[-2]['macd'])
-            prev_dif = float(df.iloc[-2]['dif'])
-            if dif > 0 and dea > 0 and macd > 0 and prev_macd <= 0:
-                semantic_labels.append("MACD水上金叉")
-            elif dif < 0 and dea < 0 and macd > 0 and prev_macd <= 0:
-                semantic_labels.append("MACD水下金叉(反弹概率大)")
-            elif macd < 0 and prev_macd >= 0:
-                semantic_labels.append("MACD高位死叉")
+            macd = safe_float(latest['macd'])
+            dif = safe_float(latest['dif'])
+            dea = safe_float(latest['dea'])
+            prev_macd = safe_float(df.iloc[-2]['macd']) if len(df) > 1 else None
+            
+            if dif is not None and dea is not None and macd is not None and prev_macd is not None:
+                if dif > 0 and dea > 0 and macd > 0 and prev_macd <= 0:
+                    semantic_labels.append("MACD水上金叉")
+                elif dif < 0 and dea < 0 and macd > 0 and prev_macd <= 0:
+                    semantic_labels.append("MACD水下金叉(反弹概率大)")
+                elif macd < 0 and prev_macd >= 0:
+                    semantic_labels.append("MACD高位死叉")
                 
             # 3. KDJ超买超卖
-            kdj_k = float(latest['kdj_k'])
-            kdj_j = float(latest['kdj_j'])
-            if kdj_j > 100 or kdj_k > 80:
-                semantic_labels.append("KDJ严重超买(风险变大)")
-            elif kdj_j < 0 or kdj_k < 20:
-                semantic_labels.append("KDJ严重超卖(具备反弹条件)")
+            kdj_k = safe_float(latest['kdj_k'])
+            kdj_j = safe_float(latest['kdj_j'])
+            if kdj_j is not None and kdj_k is not None:
+                if kdj_j > 100 or kdj_k > 80:
+                    semantic_labels.append("KDJ严重超买(风险变大)")
+                elif kdj_j < 0 or kdj_k < 20:
+                    semantic_labels.append("KDJ严重超卖(具备反弹条件)")
                 
             # 4. 布林带极端
-            if current_price > boll_upper * 1.02:
-                semantic_labels.append("强势突破布林上轨")
-            elif current_price < boll_lower * 0.98:
-                semantic_labels.append("跌出布林下轨极限范围")
+            if current_price is not None and boll_upper is not None and boll_lower is not None:
+                if current_price > boll_upper * 1.02:
+                    semantic_labels.append("强势突破布林上轨")
+                elif current_price < boll_lower * 0.98:
+                    semantic_labels.append("跌出布林下轨极限范围")
+            
+            vol_ma5 = safe_float(latest['vol_ma5'])
+            latest_vol = safe_float(latest['成交量'])
+            volume_ratio_vs_vol_ma5 = (latest_vol / vol_ma5) if vol_ma5 and vol_ma5 > 0 and latest_vol is not None else None
             
             return {
                 'ma5': ma5,
@@ -975,24 +993,24 @@ class SmartMonitorDataFetcher:
                 'trend': trend,
                 'atr14': atr14,
                 'atr14_pct': atr14_pct,
-                'macd_dif': float(latest['dif']),
-                'macd_dea': float(latest['dea']),
-                'macd': float(latest['macd']),
-                'rsi6': float(latest['rsi6']),
-                'rsi12': float(latest['rsi12']),
-                'rsi24': float(latest['rsi24']),
-                'kdj_k': float(latest['kdj_k']),
-                'kdj_d': float(latest['kdj_d']),
-                'kdj_j': float(latest['kdj_j']),
+                'macd_dif': dif,
+                'macd_dea': dea,
+                'macd': macd,
+                'rsi6': safe_float(latest['rsi6']),
+                'rsi12': safe_float(latest['rsi12']),
+                'rsi24': safe_float(latest['rsi24']),
+                'kdj_k': kdj_k,
+                'kdj_d': safe_float(latest['kdj_d']),
+                'kdj_j': kdj_j,
                 'boll_upper': boll_upper,
                 'boll_mid': boll_mid,
                 'boll_lower': boll_lower,
                 'boll_position': boll_position,
-                'vol_ma5': float(latest['vol_ma5']),
-                'prev_20d_high': float(latest['prev_20d_high']) if pd.notna(latest['prev_20d_high']) else None,
-                'prev_60d_high': float(latest['prev_60d_high']) if pd.notna(latest['prev_60d_high']) else None,
+                'vol_ma5': vol_ma5,
+                'prev_20d_high': safe_float(latest['prev_20d_high']),
+                'prev_60d_high': safe_float(latest['prev_60d_high']),
                 'recent_limit_up_streak': int(latest['limit_up_streak']) if pd.notna(latest['limit_up_streak']) else 0,
-                'volume_ratio_vs_vol_ma5': float(latest['成交量']) / float(latest['vol_ma5']) if latest['vol_ma5'] > 0 else None,
+                'volume_ratio_vs_vol_ma5': volume_ratio_vs_vol_ma5,
                 'semantic_labels': semantic_labels  # 新增语义标签
             }
             

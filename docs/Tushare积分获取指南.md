@@ -126,20 +126,18 @@ Tushare获取失败: 抱歉，您没有接口访问权限
 
 ---
 
-## ⚙️ 智能盯盘的降级策略
+## ⚙️ 智能盯盘的 Tushare 接口策略
 
-### 当前实现的多层降级
+### 当前实现
 
 ```
-Level 1: AKShare（主数据源）
-   ↓ 失败
-Level 2: Tushare基础接口（免费，0积分）
+Level 1: Tushare基础接口（免费，0积分）
    ├─ daily_basic（基础日线）
    ├─ pro_bar（社区版）
    └─ stock_basic（股票列表）
    ↓ 成功 → 返回行情数据（无资金流向）
    ↓ 失败
-Level 3: Tushare高级接口（需120积分）
+Level 2: Tushare高级接口（需120积分）
    └─ moneyflow（资金流向）
    ↓ 成功 → 返回完整数据
    ↓ 失败 → 返回部分数据（无资金流向）
@@ -166,9 +164,8 @@ Level 3: Tushare高级接口（需120积分）
 
 ```bash
 # 日志输出
-✅ Tushare备用数据源初始化成功
-AKShare获取失败，尝试降级到Tushare
-✅ Tushare降级成功（pro_bar接口），获取到数据
+✅ Tushare数据源初始化成功
+✅ Tushare基础接口获取到数据
 ⚠️ Tushare资金流向接口需要120积分，当前积分不足
 
 # 结果
@@ -182,10 +179,9 @@ AKShare获取失败，尝试降级到Tushare
 
 ```bash
 # 日志输出
-✅ Tushare备用数据源初始化成功
-AKShare获取失败，尝试降级到Tushare
-✅ Tushare降级成功（基础接口），获取到数据
-✅ Tushare降级成功，获取到资金流向
+✅ Tushare数据源初始化成功
+✅ Tushare基础接口获取到数据
+✅ Tushare资金流向接口获取到数据
 
 # 结果
 - 行情数据：✅ 成功获取
@@ -264,9 +260,9 @@ print("当前积分:", pro.query('user', fields='id,nick,credits'))
 ### Q4: 不想获取积分，有其他办法吗？
 
 **A:** 
-- ✅ 继续使用AKShare主数据源（大多数时候能用）
-- ✅ 不配置Tushare Token（智能盯盘仍可正常运行）
-- ⚠️ 但稳定性会降低（~70% vs ~95%）
+- ✅ 可以继续使用 Tushare 基础接口
+- ⚠️ 缺少资金流向等高级接口数据
+- ⚠️ 如果不配置 Tushare Token，依赖历史行情的深度分析无法正常运行
 
 ### Q5: 积分会扣除吗？
 
@@ -303,7 +299,7 @@ TUSHARE_TOKEN="your_token_here"  # 0积分也可以
 - ✅ 基础行情可获取
 - ⚠️ 缺少资金流向
 
-### 不配置（仅AKShare）
+### 不配置
 
 ```env
 # 不设置Tushare
@@ -347,4 +343,3 @@ TUSHARE_TOKEN="your_token_here"  # 0积分也可以
 
 **更新时间**: 2025-10-25  
 **版本**: v1.0
-

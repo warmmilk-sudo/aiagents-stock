@@ -3,6 +3,9 @@ import sys
 import types
 import unittest
 
+_pandas_module = sys.modules.get("pandas")
+if _pandas_module is not None and not hasattr(_pandas_module, "__version__"):
+    sys.modules.pop("pandas", None)
 import pandas as pd
 
 
@@ -46,9 +49,11 @@ class DataSourceManagerTushareFundFallbackTests(unittest.TestCase):
     def setUp(self):
         self.original_modules = {
             name: sys.modules.get(name)
-            for name in ["data_source_manager", "dotenv", "tushare_utils", "config"]
+            for name in ["data_source_manager", "dotenv", "pywencai", "pywencai_runtime", "tushare_utils", "config"]
         }
         sys.modules["dotenv"] = types.SimpleNamespace(load_dotenv=lambda *args, **kwargs: None)
+        sys.modules["pywencai"] = types.SimpleNamespace(get=lambda *args, **kwargs: None)
+        sys.modules["pywencai_runtime"] = types.SimpleNamespace(setup_pywencai_runtime_env=lambda: None)
         sys.modules["tushare_utils"] = types.SimpleNamespace(create_tushare_pro=lambda *args, **kwargs: (None, ""))
         sys.modules["config"] = types.SimpleNamespace(TDX_CONFIG={}, TDX_TIMEOUT_SECONDS=10)
         sys.modules.pop("data_source_manager", None)

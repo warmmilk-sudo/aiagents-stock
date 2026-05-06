@@ -33,7 +33,7 @@ def _get_stock_data(symbol: str, period: str):
     stock_data = fetcher.get_stock_data(symbol, period)
 
     if isinstance(stock_data, dict) and "error" in stock_data:
-        return stock_info, None, None
+        return stock_info, None, {"error": stock_data["error"]}
 
     if isinstance(stock_info, dict) and "error" not in stock_info:
         stock_info = dict(stock_info)
@@ -256,7 +256,9 @@ def analyze_single_stock_for_batch(
         if "error" in stock_info:
             return {"symbol": symbol, "error": stock_info["error"], "success": False}
         if stock_data is None:
-            return {"symbol": symbol, "error": "无法获取股票历史数据", "success": False}
+            detail = indicators.get("error") if isinstance(indicators, dict) else ""
+            message = detail or "无法获取股票历史数据"
+            return {"symbol": symbol, "error": message, "success": False}
 
         stock_info = strip_cache_meta(stock_info)
         stock_data = strip_cache_meta(stock_data)
