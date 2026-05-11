@@ -248,6 +248,10 @@ class MarketSentimentDataFetcher:
                 df = df.reset_index()
                 if 'Date' in df.columns:
                     df = df.rename(columns={'Date': 'date'})
+                elif 'trade_date' in df.columns:
+                    df = df.rename(columns={'trade_date': 'date'})
+                elif 'index' in df.columns:
+                    df = df.rename(columns={'index': 'date'})
             
             # 确保日期列为datetime类型
             if 'date' in df.columns:
@@ -329,7 +333,7 @@ class MarketSentimentDataFetcher:
                 "signals": signals,
                 "statistics": stats,
                 "signal_statistics": signal_stats,
-                "calculation_date": latest['date'].strftime('%Y-%m-%d') if pd.notna(latest['date']) else datetime.now().strftime('%Y-%m-%d'),
+                "calculation_date": latest['date'].strftime('%Y-%m-%d') if 'date' in latest.index and pd.notna(latest['date']) else datetime.now().strftime('%Y-%m-%d'),
                 "period": self.arbr_period
             }
             

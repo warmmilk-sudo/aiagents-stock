@@ -75,6 +75,15 @@ def _get_stock_data(symbol: str, period: str):
 
     stock_data_with_indicators = fetcher.calculate_technical_indicators(stock_data)
     indicators = fetcher.get_latest_indicators(stock_data_with_indicators, symbol=symbol)
+    if isinstance(stock_info, dict) and isinstance(indicators, dict):
+        volume_ratio = indicators.get("volume_ratio")
+        if stock_info.get("volume_ratio") in (None, "", "N/A") and volume_ratio not in (None, "", "N/A"):
+            try:
+                volume_ratio = float(volume_ratio)
+            except (TypeError, ValueError):
+                pass
+            stock_info["volume_ratio"] = volume_ratio
+            stock_info["volume_ratio_source"] = "history_volume_ma5"
     return stock_info, stock_data_with_indicators, indicators
 
 

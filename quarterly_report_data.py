@@ -132,6 +132,8 @@ class QuarterlyReportDataFetcher:
                 data["financial_indicators"] = indicators_data
                 data["source"] = indicators_data.get("source", data["source"])
                 print(f"   ✓ 成功获取 {len(indicators_data.get('data', []))} 期财务指标数据")
+
+            self._enrich_computed_metrics(data)
             
             # 如果至少有一个成功，则标记为成功
             if income_data or balance_data or cash_flow_data or indicators_data:
@@ -205,6 +207,7 @@ class QuarterlyReportDataFetcher:
                         "total_revenue": "营业总收入",
                         "revenue": "营业收入",
                         "total_cogs": "营业总成本",
+                        "oper_cost": "营业成本",
                         "operate_profit": "营业利润",
                         "total_profit": "利润总额",
                         "n_income": "净利润",
@@ -237,6 +240,7 @@ class QuarterlyReportDataFetcher:
                     {
                         "total_assets": "资产总计",
                         "total_cur_assets": "流动资产合计",
+                        "inventories": "存货",
                         "total_nca": "非流动资产合计",
                         "total_liab": "负债合计",
                         "total_cur_liab": "流动负债合计",
@@ -296,10 +300,16 @@ class QuarterlyReportDataFetcher:
                         "current_ratio": "流动比率",
                         "quick_ratio": "速动比率",
                         "ar_turn": "应收账款周转率",
+                        "inv_turn": "存货周转率",
                         "assets_turn": "总资产周转率",
                         "eps": "每股收益",
                         "bps": "每股净资产",
                         "cfps": "每股经营现金流",
+                        "tr_yoy": "营业总收入同比增长",
+                        "or_yoy": "营业收入同比增长",
+                        "netprofit_yoy": "净利润同比增长",
+                        "dt_netprofit_yoy": "扣非净利润同比增长",
+                        "basic_eps_yoy": "基本每股收益同比增长",
                     },
                 )
                 if tushare_data:
@@ -311,6 +321,45 @@ class QuarterlyReportDataFetcher:
         except Exception as e:
             print(f"   获取财务指标异常: {e}")
             return None
+
+    def _enrich_computed_metrics(self, data):
+        """用同一 Tushare 报表内字段补充可计算指标。"""
+        indicators = ((data.get("financial_indicators") or {}).get("data") or [])
+        income_records = ((data.get("income_statement") or {}).get("data") or [])
+        balance_records = ((data.get("balance_sheet") or {}).get("data") or [])
+        if not indicators or not income_records or not balance_records:
+            return
+
+        def _to_float(value):
+            try:
+                return float(str(value).replace(",", ""))
+            except Exception:
+                return None
+
+        income_by_period = {str(item.get("报告期")): item for item in income_records if item.get("报告期")}
+        balance_by_period = {str(item.get("报告期")): item for item in balance_records if item.get("报告期")}
+        sorted_periods = sorted(balance_by_period.keys(), reverse=True)
+
+        for item in indicators:
+            period = str(item.get("报告期") or "")
+            if not period or item.get("存货周转率") not in (None, "", "N/A"):
+                continue
+
+            income = income_by_period.get(period) or {}
+            balance = balance_by_period.get(period) or {}
+            cost = _to_float(income.get("营业成本")) or _to_float(income.get("营业总成本"))
+            inventory = _to_float(balance.get("存货"))
+            try:
+                next_index = sorted_periods.index(period) + 1
+                prev_inventory = _to_float(balance_by_period.get(sorted_periods[next_index], {}).get("存货"))
+            except Exception:
+                prev_inventory = None
+
+            if cost is None or inventory is None or inventory <= 0:
+                continue
+            avg_inventory = (inventory + prev_inventory) / 2 if prev_inventory and prev_inventory > 0 else inventory
+            if avg_inventory > 0:
+                item["存货周转率"] = f"{cost / avg_inventory:.4f}（营业成本/平均存货估算）"
     
     def format_quarterly_reports_for_ai(self, data):
         """
@@ -409,7 +458,9 @@ class QuarterlyReportDataFetcher:
             key_fields = ['报告期', '净资产收益率', '总资产净利率', '销售净利率',
                          '销售毛利率', '资产负债率', '流动比率', '速动比率',
                          '应收账款周转率', '存货周转率', '总资产周转率',
-                         '每股收益', '每股净资产', '每股经营现金流']
+                         '每股收益', '每股净资产', '每股经营现金流',
+                         '营业收入同比增长', '营业总收入同比增长', '净利润同比增长',
+                         '扣非净利润同比增长', '基本每股收益同比增长']
             
             for idx, item in enumerate(indicators_data.get('data', []), 1):
                 text_parts.append(f"\n第 {idx} 期:")

@@ -730,7 +730,7 @@ class SmartMonitorDeepSeekTests(unittest.TestCase):
         self.assertIn("若趋势重新走强、`60分钟` 结构先行转强", messages[0]["content"])
         self.assertIn("`回踩确认加仓` 更适合用于价格回踩成本区、均线、前支撑或突破后的回踩确认", messages[0]["content"])
         self.assertIn("`突破确认加仓` 更适合用于关键压力位被有效突破后，价格站稳、量能跟随", messages[0]["content"])
-        self.assertIn("`主动减仓锁盈` 更适合用于趋势仍在但短线偏离过大、接近动态止盈区、或量价开始出现边际背离的场景", messages[0]["content"])
+        self.assertIn("`主动减仓锁盈` 仅限 `risk_level = \"high\"` 时执行；更适合用于趋势仍在但短线偏离过大、接近动态止盈区、或量价开始出现边际背离的场景", messages[0]["content"])
         self.assertIn("`防守减仓` 更适合用于 `15/30/60分钟` 明显转弱但尚未完全失控", messages[0]["content"])
         self.assertIn("若未进入止盈/止损等执行区且退出证据不足，可继续 `HOLD` 并跟踪阈值变化", messages[0]["content"])
         self.assertIn("持仓日期: 2026-03-18", messages[1]["content"])
@@ -764,7 +764,7 @@ class SmartMonitorDeepSeekTests(unittest.TestCase):
         self.assertIn("`swing_execution_mode` 只能是 `pullback_add` 或 `breakout_add`", messages[0]["content"])
         self.assertIn("\"swing_execution_mode\": \"watch_hold\"", messages[0]["content"])
         self.assertIn("若盈利且趋势仍强，只是做止盈管理，`action = \"SELL\"` 时优先考虑 `减仓`，不要轻易给出 `清仓`", messages[0]["content"])
-        self.assertIn("若 `action = \"SELL\"` 且 `action_detail = \"减仓\"`，必须说明“为什么不是继续 `HOLD`”", messages[0]["content"])
+        self.assertIn("若 `action = \"SELL\"` 且 `action_detail = \"减仓\"`，必须说明“为什么不是继续 `HOLD`”；若属于“主动减仓锁盈”，必须同时确认 `risk_level` 为 `high` 并说明风险来源", messages[0]["content"])
         self.assertIn("若 `action = \"SELL\"` 且 `action_detail = \"清仓\"`，必须同时说明“为什么不是 `HOLD`”以及“为什么不是更温和的 `减仓`”", messages[0]["content"])
         self.assertIn("如果选择 `加仓`，要注意当日新增仓位同样受 `T+1` 限制，不能当日卖出", messages[1]["content"])
 
@@ -1003,7 +1003,7 @@ class SmartMonitorDeepSeekTests(unittest.TestCase):
 
         hint = client._derive_take_profit_adjustment_hint(intraday_context, has_position=True)
 
-        self.assertEqual(hint, "若接近止盈位且60分钟转弱，再结合15/30分钟与短时量能确认卖点")
+        self.assertEqual(hint, "若接近止盈位且60分钟转弱、风险较高时，再结合15/30分钟与短时量能确认卖点")
 
     def test_take_profit_trim_resolves_as_proactive_trim_without_volume_trigger(self):
         client = SmartMonitorDeepSeek(api_key="test-key")

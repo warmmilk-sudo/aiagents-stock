@@ -160,16 +160,23 @@ class StockAnalysisAgents:
         if report_period:
             lines.append(f"- 最新财务指标报告期：{report_period}")
 
+        def _ratio_value(*keys):
+            for key in keys:
+                value = ratios.get(key)
+                if value not in (None, "", "N/A"):
+                    return value
+            return None
+
         ratio_mapping = (
-            ("营收增速", ratios.get("营业收入同比增长", ratios.get("收入增长"))),
-            ("净利润增速", ratios.get("净利润同比增长", ratios.get("盈利增长"))),
-            ("毛利率", ratios.get("销售毛利率", ratios.get("毛利率"))),
-            ("净利率", ratios.get("销售净利率", ratios.get("净利率"))),
-            ("ROE", ratios.get("净资产收益率ROE", ratios.get("ROE"))),
-            ("ROA", ratios.get("总资产收益率ROA", ratios.get("ROA"))),
-            ("资产负债率", ratios.get("资产负债率")),
-            ("流动比率", ratios.get("流动比率")),
-            ("速动比率", ratios.get("速动比率")),
+            ("营收增速", _ratio_value("营业收入同比增长", "营业总收入同比增长", "收入增长")),
+            ("净利润增速", _ratio_value("净利润同比增长", "扣非净利润同比增长", "盈利增长")),
+            ("毛利率", _ratio_value("销售毛利率", "毛利率")),
+            ("净利率", _ratio_value("销售净利率", "净利率")),
+            ("ROE", _ratio_value("净资产收益率ROE", "ROE", "净资产收益率")),
+            ("ROA", _ratio_value("总资产收益率ROA", "ROA", "总资产净利率")),
+            ("资产负债率", _ratio_value("资产负债率")),
+            ("流动比率", _ratio_value("流动比率")),
+            ("速动比率", _ratio_value("速动比率")),
         )
         for label, value in ratio_mapping:
             if value not in (None, "", "N/A"):

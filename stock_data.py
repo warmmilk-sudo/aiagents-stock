@@ -317,18 +317,26 @@ class StockDataFetcher:
                 ts_code=ts_code,
                 start_date=start_date,
                 end_date=end_date,
-                fields='ts_code,trade_date,pe,pb,total_mv',
+                fields='ts_code,trade_date,pe,pe_ttm,pb,total_mv,turnover_rate,volume_ratio,dv_ratio,dv_ttm',
             )
             if df is not None and not df.empty:
                 df = df.sort_values('trade_date', ascending=False)
                 for _, row in df.iterrows():
-                    if self._is_missing_scalar(info.get('pe_ratio')) and not self._is_missing_scalar(row.get('pe')):
-                        info['pe_ratio'] = row.get('pe')
+                    pe_value = row.get('pe') if not self._is_missing_scalar(row.get('pe')) else row.get('pe_ttm')
+                    if self._is_missing_scalar(info.get('pe_ratio')) and not self._is_missing_scalar(pe_value):
+                        info['pe_ratio'] = pe_value
                     if self._is_missing_scalar(info.get('pb_ratio')) and not self._is_missing_scalar(row.get('pb')):
                         info['pb_ratio'] = row.get('pb')
                     if self._is_missing_scalar(info.get('market_cap')) and not self._is_missing_scalar(row.get('total_mv')):
                         info['market_cap'] = row.get('total_mv')
-                    if not any(self._is_missing_scalar(info.get(key)) for key in ('pe_ratio', 'pb_ratio', 'market_cap')):
+                    if self._is_missing_scalar(info.get('turnover_rate')) and not self._is_missing_scalar(row.get('turnover_rate')):
+                        info['turnover_rate'] = row.get('turnover_rate')
+                    if self._is_missing_scalar(info.get('volume_ratio')) and not self._is_missing_scalar(row.get('volume_ratio')):
+                        info['volume_ratio'] = row.get('volume_ratio')
+                    dividend_yield = row.get('dv_ttm') if not self._is_missing_scalar(row.get('dv_ttm')) else row.get('dv_ratio')
+                    if self._is_missing_scalar(info.get('dividend_yield')) and not self._is_missing_scalar(dividend_yield):
+                        info['dividend_yield'] = dividend_yield
+                    if not any(self._is_missing_scalar(info.get(key)) for key in ('pe_ratio', 'pb_ratio', 'market_cap', 'turnover_rate', 'dividend_yield')):
                         break
                 print("[Tushare] ✅ 成功获取估值补充信息")
                 return info

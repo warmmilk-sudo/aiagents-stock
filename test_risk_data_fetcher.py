@@ -64,6 +64,68 @@ class RiskDataFetcherPromptFormatTests(unittest.TestCase):
         self.assertNotIn("source_id", formatted)
         self.assertNotIn("id=", formatted)
 
+    def test_format_risk_data_for_ai_surfaces_checked_empty_sections(self):
+        fetcher = RiskDataFetcher()
+
+        formatted = fetcher.format_risk_data_for_ai(
+            {
+                "data_success": False,
+                "lifting_ban": {
+                    "has_data": False,
+                    "checked": True,
+                    "summary": "Tushare未发现未来限售解禁记录",
+                },
+                "shareholder_reduction": {
+                    "has_data": False,
+                    "checked": True,
+                    "summary": "Tushare近180日未发现股东减持记录",
+                },
+            }
+        )
+
+        self.assertIn("【限售解禁】", formatted)
+        self.assertIn("Tushare未发现未来限售解禁记录", formatted)
+        self.assertIn("【大股东减持】", formatted)
+        self.assertIn("Tushare近180日未发现股东减持记录", formatted)
+        self.assertNotEqual("未获取到风险数据", formatted)
+
+    def test_tushare_holder_trade_data_filters_to_reductions(self):
+        fetcher = RiskDataFetcher()
+        ann_date = pd.Timestamp.today().strftime("%Y%m%d")
+        fetcher._call_tushare_risk_api = lambda api_name, symbol: pd.DataFrame(
+            [
+                {
+                    "ann_date": ann_date,
+                    "holder_name": "增持股东",
+                    "holder_type": "高管",
+                    "in_de": "IN",
+                    "change_vol": 100,
+                    "change_ratio": 0.2,
+                    "avg_price": 15.5,
+                    "after_share": 1000,
+                    "after_ratio": 2.1,
+                },
+                {
+                    "ann_date": ann_date,
+                    "holder_name": "减持股东",
+                    "holder_type": "大股东",
+                    "in_de": "DE",
+                    "change_vol": 200,
+                    "change_ratio": 0.4,
+                    "avg_price": 16.5,
+                    "after_share": 800,
+                    "after_ratio": 1.8,
+                },
+            ]
+        )
+
+        result = fetcher._get_tushare_holder_trade_data("603986.SH")
+
+        self.assertTrue(result["has_data"])
+        self.assertEqual("Tushare发现近180日 1 条股东减持记录", result["summary"])
+        self.assertEqual(["减持股东"], result["data"]["股东名称"].tolist())
+        self.assertEqual(["减持"], result["data"]["方式"].tolist())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -354,36 +354,47 @@ class LLMClient:
         if financial_data and not financial_data.get('error'):
             ratios = financial_data.get('financial_ratios', {})
             if ratios:
+                def _ratio_value(*keys):
+                    for key in keys:
+                        value = ratios.get(key)
+                        if value not in (None, "", "N/A"):
+                            return value
+                    return "N/A"
+
+                dividend_yield = _ratio_value("股息率")
+                if dividend_yield == "N/A" and stock_info.get("dividend_yield") not in (None, "", "N/A"):
+                    dividend_yield = stock_info.get("dividend_yield")
+
                 financial_section = f"""
 主营业务/业务结构概况：
 - {business_profile or 'N/A'}
 
 详细财务指标：
 【盈利能力】
-- 净资产收益率(ROE)：{ratios.get('净资产收益率ROE', ratios.get('ROE', 'N/A'))}
-- 总资产收益率(ROA)：{ratios.get('总资产收益率ROA', ratios.get('ROA', 'N/A'))}
-- 销售毛利率：{ratios.get('销售毛利率', ratios.get('毛利率', 'N/A'))}
-- 销售净利率：{ratios.get('销售净利率', ratios.get('净利率', 'N/A'))}
+- 净资产收益率(ROE)：{_ratio_value('净资产收益率ROE', 'ROE', '净资产收益率')}
+- 总资产收益率(ROA)：{_ratio_value('总资产收益率ROA', 'ROA', '总资产净利率')}
+- 销售毛利率：{_ratio_value('销售毛利率', '毛利率')}
+- 销售净利率：{_ratio_value('销售净利率', '净利率')}
 
 【偿债能力】
-- 资产负债率：{ratios.get('资产负债率', 'N/A')}
-- 流动比率：{ratios.get('流动比率', 'N/A')}
-- 速动比率：{ratios.get('速动比率', 'N/A')}
+- 资产负债率：{_ratio_value('资产负债率')}
+- 流动比率：{_ratio_value('流动比率')}
+- 速动比率：{_ratio_value('速动比率')}
 
 【运营能力】
-- 存货周转率：{ratios.get('存货周转率', 'N/A')}
-- 应收账款周转率：{ratios.get('应收账款周转率', 'N/A')}
-- 总资产周转率：{ratios.get('总资产周转率', 'N/A')}
+- 存货周转率：{_ratio_value('存货周转率')}
+- 应收账款周转率：{_ratio_value('应收账款周转率')}
+- 总资产周转率：{_ratio_value('总资产周转率')}
 
 【成长能力】
-- 营业收入同比增长：{ratios.get('营业收入同比增长', ratios.get('收入增长', 'N/A'))}
-- 净利润同比增长：{ratios.get('净利润同比增长', ratios.get('盈利增长', 'N/A'))}
+- 营业收入同比增长：{_ratio_value('营业收入同比增长', '营业总收入同比增长', '收入增长')}
+- 净利润同比增长：{_ratio_value('净利润同比增长', '扣非净利润同比增长', '盈利增长')}
 
 【每股指标】
-- 每股收益(EPS)：{ratios.get('EPS', 'N/A')}
-- 每股账面价值：{ratios.get('每股账面价值', 'N/A')}
-- 股息率：{ratios.get('股息率', stock_info.get('dividend_yield', 'N/A'))}
-- 派息率：{ratios.get('派息率', 'N/A')}
+- 每股收益(EPS)：{_ratio_value('EPS', '每股收益')}
+- 每股账面价值：{_ratio_value('每股账面价值', '每股净资产')}
+- 股息率：{dividend_yield}
+- 派息率：{_ratio_value('派息率')}
 """
         elif business_profile:
             financial_section = f"""

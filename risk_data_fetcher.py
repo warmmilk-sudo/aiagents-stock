@@ -123,6 +123,118 @@ class RiskDataFetcher:
         if self.pause_seconds > 0:
             time.sleep(self.pause_seconds)
 
+    @staticmethod
+    def _format_yyyymmdd(value: Any) -> str:
+        text = str(value or "").strip()
+        if len(text) == 8 and text.isdigit():
+            return f"{text[:4]}-{text[4:6]}-{text[6:]}"
+        return text
+
+    def _call_tushare_risk_api(self, api_name: str, symbol: str):
+        try:
+            from data_source_manager import data_source_manager
+
+            if not getattr(data_source_manager, "tushare_available", False):
+                return None
+            return data_source_manager.call_tushare_api(
+                api_name,
+                ts_code=data_source_manager._convert_to_ts_code(symbol),
+                empty_ok=True,
+            )
+        except Exception:
+            return None
+
+    def _get_tushare_lifting_ban_data(self, symbol: str) -> Dict[str, Any]:
+        result = {
+            'has_data': False,
+            'query': f"{symbol} Tushare限售解禁",
+            'data': None,
+            'summary': None,
+            'source': 'tushare.share_float',
+            'checked': False,
+            'error': None,
+        }
+        df = self._call_tushare_risk_api("share_float", symbol)
+        if df is None:
+            return result
+        result['checked'] = True
+        if df.empty or 'float_date' not in df.columns:
+            result['summary'] = "Tushare未返回限售解禁记录"
+            return result
+
+        view = df.copy()
+        view['float_date'] = view['float_date'].astype(str)
+        today = pd.Timestamp.today().strftime("%Y%m%d")
+        view = view.loc[view['float_date'] >= today].sort_values('float_date')
+        if view.empty:
+            result['summary'] = "Tushare未发现未来限售解禁记录"
+            return result
+
+        normalized = pd.DataFrame({
+            "解禁日期": view.get("float_date", "").map(self._format_yyyymmdd),
+            "公告日期": view.get("ann_date", "").map(self._format_yyyymmdd) if "ann_date" in view.columns else "",
+            "股东名称": view.get("holder_name", ""),
+            "解禁股数": view.get("float_share", ""),
+            "解禁比例": view.get("float_ratio", ""),
+            "股份类型": view.get("share_type", ""),
+        })
+        result['has_data'] = True
+        result['data'] = normalized
+        result['summary'] = f"Tushare发现 {len(normalized)} 条未来限售解禁记录"
+        return result
+
+    def _get_tushare_holder_trade_data(self, symbol: str) -> Dict[str, Any]:
+        result = {
+            'has_data': False,
+            'query': f"{symbol} Tushare股东增减持",
+            'data': None,
+            'summary': None,
+            'source': 'tushare.stk_holdertrade',
+            'checked': False,
+            'error': None,
+        }
+        df = self._call_tushare_risk_api("stk_holdertrade", symbol)
+        if df is None:
+            return result
+        result['checked'] = True
+        if df.empty or 'ann_date' not in df.columns:
+            result['summary'] = "Tushare未返回股东增减持记录"
+            return result
+
+        view = df.copy()
+        view['ann_date'] = view['ann_date'].astype(str)
+        since = (pd.Timestamp.today() - pd.Timedelta(days=180)).strftime("%Y%m%d")
+        view = view.loc[view['ann_date'] >= since].sort_values('ann_date', ascending=False)
+        if view.empty:
+            result['summary'] = "Tushare近180日未发现股东减持记录"
+            return result
+
+        if "in_de" not in view.columns:
+            result['summary'] = "Tushare股东增减持数据缺少方向字段，无法确认减持记录"
+            return result
+
+        view = view.loc[view["in_de"].astype(str).str.upper() == "DE"]
+        if view.empty:
+            result['summary'] = "Tushare近180日未发现股东减持记录"
+            return result
+
+        normalized = pd.DataFrame({
+            "公告日期": view.get("ann_date", "").map(self._format_yyyymmdd),
+            "股东名称": view.get("holder_name", ""),
+            "股东类型": view.get("holder_type", ""),
+            "方式": "减持",
+            "减持股数": view.get("change_vol", ""),
+            "减持比例": view.get("change_ratio", ""),
+            "减持均价": view.get("avg_price", ""),
+            "变动后持股": view.get("after_share", ""),
+            "变动后持股比例": view.get("after_ratio", ""),
+        })
+        normalized = normalized.drop_duplicates().reset_index(drop=True)
+        result['has_data'] = True
+        result['data'] = normalized
+        result['summary'] = f"Tushare发现近180日 {len(normalized)} 条股东减持记录"
+        return result
+
     def _query_wencai(self, query: str):
         """在后台线程中执行问财查询，防止单次请求长期阻塞主流程。"""
         result_holder: Dict[str, Any] = {}
@@ -146,6 +258,10 @@ class RiskDataFetcher:
     
     def _get_lifting_ban_data(self, symbol: str) -> Dict[str, Any]:
         """获取限售解禁数据"""
+        tushare_result = self._get_tushare_lifting_ban_data(symbol)
+        if tushare_result.get('checked'):
+            return tushare_result
+
         result = {
             'has_data': False,
             'query': f"{symbol}限售解禁",
@@ -169,7 +285,7 @@ class RiskDataFetcher:
             
             if df_result is None or df_result.empty:
                 return result
-            
+
             # 提取有用的信息
             result['has_data'] = True
             result['data'] = df_result
@@ -210,6 +326,10 @@ class RiskDataFetcher:
     
     def _get_shareholder_reduction_data(self, symbol: str) -> Dict[str, Any]:
         """获取大股东减持公告数据"""
+        tushare_result = self._get_tushare_holder_trade_data(symbol)
+        if tushare_result.get('checked'):
+            return tushare_result
+
         result = {
             'has_data': False,
             'query': f"{symbol}大股东减持公告",
@@ -233,7 +353,7 @@ class RiskDataFetcher:
             
             if df_result is None or df_result.empty:
                 return result
-            
+
             # 提取有用的信息
             result['has_data'] = True
             result['data'] = df_result
@@ -297,6 +417,23 @@ class RiskDataFetcher:
             
             if df_result is None or df_result.empty:
                 return result
+
+            if "近期重要事件" in df_result.columns:
+                expanded_events = []
+                for value in df_result["近期重要事件"]:
+                    if isinstance(value, list):
+                        for event in value:
+                            if not isinstance(event, dict):
+                                continue
+                            expanded_events.append({
+                                "日期": self._format_yyyymmdd(event.get("日期")),
+                                "事件类型": event.get("事件"),
+                                "事件内容": event.get("概要"),
+                                "股票简称": event.get("股票简称"),
+                                "股票代码": event.get("股票代码"),
+                            })
+                if expanded_events:
+                    df_result = pd.DataFrame(expanded_events)
             
             # 提取有用的信息
             result['has_data'] = True
@@ -306,8 +443,8 @@ class RiskDataFetcher:
             summary = []
             
             # 尝试提取关键字段
-            if '事件时间' in df_result.columns or '公告日期' in df_result.columns:
-                time_col = '事件时间' if '事件时间' in df_result.columns else '公告日期'
+            if '事件时间' in df_result.columns or '公告日期' in df_result.columns or '日期' in df_result.columns:
+                time_col = '事件时间' if '事件时间' in df_result.columns else ('公告日期' if '公告日期' in df_result.columns else '日期')
                 summary.append(f"发现 {len(df_result)} 条重要事件")
                 
                 # 提取最近的事件
@@ -386,7 +523,7 @@ class RiskDataFetcher:
     
     def format_risk_data_for_ai(self, risk_data: Dict[str, Any]) -> str:
         """格式化风险数据供AI分析使用，避免将原始 DataFrame 整表塞入提示词。"""
-        if not risk_data or not risk_data.get('data_success'):
+        if not risk_data:
             return "未获取到风险数据"
 
         formatted_text = []
@@ -433,7 +570,9 @@ class RiskDataFetcher:
                 if section_text:
                     formatted_text.append(section_text)
 
-            return "\n".join(formatted_text) if formatted_text else "暂无风险数据"
+            if formatted_text:
+                return "\n".join(formatted_text)
+            return "暂无风险数据" if risk_data.get('data_success') else "未获取到风险数据"
 
         except Exception as e:
             print(f"格式化风险数据时出错: {str(e)}")
@@ -540,6 +679,9 @@ class RiskDataFetcher:
         keyword_groups: tuple[tuple[str, ...], ...],
     ) -> str:
         if not section_data or not section_data.get('has_data'):
+            if section_data and section_data.get("checked") and section_data.get("summary"):
+                summary = self._normalize_ai_value(section_data.get("summary"), max_length=self.ai_value_char_limit * 2)
+                return f"【{section_name}】\n- 摘要：{summary}" if summary else ""
             return ""
 
         df = section_data.get('data')
