@@ -185,6 +185,10 @@ class SmartSelectionServiceTests(unittest.TestCase):
         self.assertEqual([item["symbol"] for item in result["observed_startup_candidates"]], ["600001"])
         self.assertEqual([item["symbol"] for item in result["final_selected"]], ["600002"])
         self.assertEqual([item["symbol"] for item in result["excluded_by_lifecycle_veto"]], ["600003"])
+        self.assertEqual(result["standard_funnel"]["outputs"]["daily_shortlist"][0]["symbol"], "600002")
+        self.assertGreaterEqual(result["match_diagnostics"]["candidate_universe_count"], 3)
+        self.assertEqual(result["match_diagnostics"]["theme_matched_count"], 3)
+        self.assertEqual(result["match_diagnostics"]["scored_candidate_count"], 3)
         self.assertEqual(result["market_context"]["state"], "momentum")
         watch_pool = self.service.list_watch_pool()
         self.assertEqual([item["symbol"] for item in watch_pool], ["600001"])
@@ -202,6 +206,11 @@ class SmartSelectionServiceTests(unittest.TestCase):
         self.assertTrue(result["news_flow_context"]["sync_success"])
         self.assertEqual(result["news_flow_context"]["sync_snapshot_id"], 1001)
         self.assertTrue(result["longhubang_sync"]["success"])
+
+        saved_run = self.service.get_run(run_id)
+        self.assertIn("candidate_universe", saved_run["result"])
+        self.assertIn("standard_funnel", saved_run["result"])
+        self.assertEqual(saved_run["result"]["standard_funnel"]["outputs"]["daily_shortlist"][0]["symbol"], "600002")
 
     def test_import_replaces_existing_focus(self):
         run_id = self.service._insert_run(trigger_source="manual", lightweight_model=None, reasoning_model=None)
@@ -307,6 +316,7 @@ class SmartSelectionServiceTests(unittest.TestCase):
 
         self.assertEqual(result["final_selected"], [])
         self.assertTrue(any("未到尾盘时段" in warning for warning in result["warnings"]))
+        self.assertIn("600002", [item["symbol"] for item in result["daily_shortlist"]])
 
     def test_manual_pipeline_relaxes_tail_session_requirement(self):
         run_id = self.service._insert_run(trigger_source="manual", lightweight_model=None, reasoning_model=None)
@@ -323,6 +333,7 @@ class SmartSelectionServiceTests(unittest.TestCase):
 
         self.assertEqual(result["final_selected"], [])
         self.assertCountEqual([item["symbol"] for item in result["observe_candidates"]], ["600001", "600002"])
+        self.assertEqual(result["daily_shortlist"][0]["symbol"], "600002")
         explosive_observe = next(item for item in result["observe_candidates"] if item["symbol"] == "600002")
         self.assertFalse(explosive_observe["execution_ready"])
         self.assertIn("未到尾盘执行时段", explosive_observe["reason"])
@@ -481,6 +492,60 @@ class SmartSelectionServiceTests(unittest.TestCase):
         self.assertEqual(gated_item["execution_gate_type"], "news_risk")
         self.assertTrue(gated_item["news_risk_flag"])
         self.assertIn("监管函", gated_item["news_negative_hits"][0]["title"])
+
+    def test_broad_negative_news_is_soft_penalty_not_veto(self):
+        run_id = self.service._insert_run(trigger_source="manual", lightweight_model=None, reasoning_model=None)
+        news_context = {
+            "available": True,
+            "fresh": True,
+            "status": "fresh",
+            "age_hours": 0.5,
+            "snapshot": {"flow_level": "高", "total_score": 82},
+            "sentiment": {"sentiment_index": 70, "sentiment_class": "乐观", "flow_stage": "加速"},
+            "hot_topics": [{"topic": "机器人", "heat": 92, "count": 8}],
+            "stock_news": [
+                {
+                    "title": "机器人行业海外龙头出现亏损压力",
+                    "content": "行业新闻只讨论海外供应链和需求压力",
+                    "score": 80,
+                    "cross_platform": 2,
+                    "matched_keywords": ["机器人"],
+                }
+            ],
+        }
+
+        common_patches = self._run_with_common_patches()
+        with common_patches[0], common_patches[1], common_patches[2], common_patches[3], common_patches[4], common_patches[5], common_patches[6], common_patches[7], patch.object(
+            self.service,
+            "_load_news_flow_context",
+            return_value=news_context,
+        ):
+            result = self.service._run_pipeline(run_id)
+
+        self.assertEqual([item["symbol"] for item in result["final_selected"]], ["600002"])
+        selected = result["final_selected"][0]
+        self.assertFalse(selected["news_risk_flag"])
+        self.assertTrue(selected["news_soft_risk_flag"])
+        self.assertTrue(any(note["type"] == "news_risk" for note in selected["execution_gate_notes"]))
+
+    def test_import_falls_back_to_daily_shortlist_when_final_empty(self):
+        run_id = self.service._insert_run(trigger_source="manual", lightweight_model=None, reasoning_model=None)
+
+        def non_tail_candidate(asset, context, lifecycle_snapshot):
+            candidate = self._fake_candidate(asset, context, lifecycle_snapshot)
+            candidate["technical_metrics"]["tail_session"] = False
+            candidate["technical_metrics"]["latest_minute_time"] = "13:20"
+            return candidate
+
+        common_patches = self._run_with_common_patches(score_side_effect=non_tail_candidate)
+        with common_patches[0], common_patches[1], common_patches[2], common_patches[3], common_patches[4], common_patches[5], common_patches[6], common_patches[7]:
+            result = self.service._run_pipeline(run_id, trigger_source="scheduled")
+            import_result = self.service.import_run_selection(run_id=run_id, symbols=["600002"], replace_existing_focus=False)
+
+        self.assertEqual(result["final_selected"], [])
+        self.assertIn("600002", [item["symbol"] for item in result["daily_shortlist"]])
+        self.assertEqual(import_result["imported_symbols"], ["600002"])
+        self.assertEqual(self.asset_repo.get_asset_by_symbol("600002")["status"], STATUS_FOCUS)
 
     def test_execution_gate_degraded_freshness_is_soft_penalty_not_veto(self):
         run_id = self.service._insert_run(trigger_source="manual", lightweight_model=None, reasoning_model=None)

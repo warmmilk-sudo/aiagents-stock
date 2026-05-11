@@ -92,6 +92,15 @@ interface SmartSelectionResultItem {
   turnover_rate?: number | null;
   volume_ratio?: number | null;
   leader_score?: number | null;
+  daily_shortlist_source?: string;
+  daily_shortlist_reason?: string;
+  daily_shortlist_rank?: number;
+  news_soft_risk_flag?: boolean;
+  news_broad_negative_hits?: Array<{ title?: string; score?: number; cross_platform?: number }>;
+  universe_source?: string;
+  risk_adjusted_decision?: string;
+  risk_adjusted_reason?: string;
+  funnel_stage?: string;
 }
 
 interface SmartSelectionRun {
@@ -125,6 +134,11 @@ interface SmartSelectionRun {
     observed_decay_candidates?: SmartSelectionResultItem[];
     ranked_action_candidates?: SmartSelectionResultItem[];
     excluded_by_execution_gate?: SmartSelectionResultItem[];
+    daily_shortlist?: SmartSelectionResultItem[];
+    candidate_universe?: SmartSelectionResultItem[];
+    theme_matched_candidates?: SmartSelectionResultItem[];
+    scored_candidates?: SmartSelectionResultItem[];
+    risk_adjusted_candidates?: SmartSelectionResultItem[];
     final_selected?: SmartSelectionResultItem[];
     excluded_by_lifecycle_veto?: SmartSelectionResultItem[];
   };
@@ -244,6 +258,7 @@ export function SmartSelectionPage() {
   const [error, setError] = useState("");
   const [isSubmittingRun, setIsSubmittingRun] = useState(false);
   const [isSavingScheduler, setIsSavingScheduler] = useState(false);
+  const [isImportingDaily, setIsImportingDaily] = useState(false);
   const [focusUpdatingSymbol, setFocusUpdatingSymbol] = useState("");
 
   const loadOverview = async () => {
@@ -280,7 +295,12 @@ export function SmartSelectionPage() {
   }, [scheduler?.enabled, scheduler?.max_workers, scheduler?.schedule_time, schedulerDirty]);
 
   const finalSelected = latestRun?.result?.final_selected ?? [];
+  const dailyShortlist = latestRun?.result?.daily_shortlist ?? [];
+  const candidateUniverse = latestRun?.result?.candidate_universe ?? [];
   const matchedCandidates = latestRun?.result?.matched_candidates ?? [];
+  const themeMatchedCandidates = latestRun?.result?.theme_matched_candidates ?? matchedCandidates;
+  const scoredCandidates = latestRun?.result?.scored_candidates ?? [];
+  const riskAdjustedCandidates = latestRun?.result?.risk_adjusted_candidates ?? [];
   const observeCandidates = latestRun?.result?.observe_candidates ?? [];
   const externalDiscoveryCandidates = latestRun?.result?.external_discovery_candidates ?? [];
   const observedStartupCandidates = latestRun?.result?.observed_startup_candidates ?? [];
@@ -359,6 +379,31 @@ export function SmartSelectionPage() {
       setError(requestError instanceof ApiRequestError ? requestError.message : "提交智能选股任务失败");
     } finally {
       setIsSubmittingRun(false);
+    }
+  };
+
+  const handleImportDailyShortlist = async () => {
+    if (!latestRun?.run_id || !dailyShortlist.length) {
+      return;
+    }
+    setMessage("");
+    setError("");
+    setIsImportingDaily(true);
+    try {
+      const result = await apiFetch<{ imported_count?: number; imported_symbols?: string[] }>("/api/smart-selection/import", {
+        method: "POST",
+        body: JSON.stringify({
+          run_id: latestRun.run_id,
+          symbols: dailyShortlist.map((item) => item.symbol).filter(Boolean),
+          replace_existing_focus: false,
+        }),
+      });
+      setMessage(`已导入每日候选 ${result.imported_count ?? result.imported_symbols?.length ?? 0} 只到备选关注`);
+      await loadOverview();
+    } catch (requestError) {
+      setError(requestError instanceof ApiRequestError ? requestError.message : "导入每日候选失败");
+    } finally {
+      setIsImportingDaily(false);
     }
   };
 
@@ -527,6 +572,50 @@ export function SmartSelectionPage() {
     </section>
   );
 
+  const renderDailyShortlistCard = () => (
+    <section className={`${styles.selectionResultCard} ${styles.selectionResultWide}`}>
+      <div className={styles.cardHeader}>
+        <div>
+          <strong>每日候选短名单</strong>
+          <p className={styles.helperText}>每天稳定输出的候选层，执行池为空时仍可用于备选关注和次日跟踪。</p>
+        </div>
+      </div>
+      <div className={styles.actions} style={{ marginBottom: 12 }}>
+        <button
+          className={styles.secondaryButton}
+          disabled={!dailyShortlist.length || isImportingDaily}
+          onClick={() => void handleImportDailyShortlist()}
+          type="button"
+        >
+          {isImportingDaily ? "导入中..." : "导入每日候选到备选"}
+        </button>
+      </div>
+      <div className={styles.selectionCompactList}>
+        {dailyShortlist.map((item) => (
+          <div className={styles.selectionCompactItem} key={`daily-${item.symbol}-${item.daily_shortlist_rank || ""}`}>
+            <div className={styles.selectionCardHeader}>
+              <div>
+                <strong>{item.daily_shortlist_rank ? `${item.daily_shortlist_rank}. ` : ""}{item.name || item.symbol}</strong>
+                <div className={styles.muted}>
+                  {item.symbol} | {item.primary_sector || "-"} | {stageLabel(item.lifecycle_stage)}
+                </div>
+              </div>
+              <StatusBadge label={item.daily_shortlist_source === "final_selected" ? "执行级" : "候选"} tone={item.daily_shortlist_source === "final_selected" ? "success" : "warning"} />
+            </div>
+            <div className={styles.selectionMetaRow}>
+              <span>综合分 {formatScore(item.score ?? item.leader_score)}</span>
+              <span>匹配 {formatScore(item.match_score, 2)}</span>
+              <span>Gate {formatScore(item.gate_score ?? item.base_gate_score, 1)}</span>
+            </div>
+            <div className={styles.selectionCompactReason}>{item.daily_shortlist_reason || item.execution_gate_reason || item.reason || "暂无说明"}</div>
+            {item.news_soft_risk_flag ? <div className={styles.selectionCompactReason}>行业/宏观负面新闻已按扣分处理，未硬阻断。</div> : null}
+          </div>
+        ))}
+        {!dailyShortlist.length ? <div className={styles.muted}>暂无每日候选短名单</div> : null}
+      </div>
+    </section>
+  );
+
   const renderOverview = () => (
     <div className={styles.stack}>
       <section className={styles.card}>
@@ -617,6 +706,11 @@ export function SmartSelectionPage() {
             <strong>{observeCandidates.length}</strong>
             <div className={styles.muted}>有匹配但未达执行级</div>
           </button>
+          <button className={styles.historySummaryCellButtonActive} onClick={() => setSection("overview")} type="button">
+            <span>每日候选</span>
+            <strong>{dailyShortlist.length}</strong>
+            <div className={styles.muted}>稳定输出短名单</div>
+          </button>
           <button className={styles.historySummaryCellButton} onClick={() => setSection("pipeline")} type="button">
             <span>外部发现</span>
             <strong>{externalDiscoveryCandidates.length}</strong>
@@ -653,6 +747,7 @@ export function SmartSelectionPage() {
 
       <section className={styles.card}>
         <div className={styles.selectionResultGrid}>
+          {renderDailyShortlistCard()}
           {renderFinalSelectionCard()}
         </div>
         {finalSelected.length === 0 && observeCandidates.length > 0 ? (
@@ -722,6 +817,54 @@ export function SmartSelectionPage() {
 
   const renderPipeline = () => (
     <div className={styles.stack}>
+      <section className={styles.card}>
+        <div className={styles.cardHeader}>
+          <div>
+            <h2>标准漏斗</h2>
+            <p className={styles.helperText}>先召回候选宇宙，再做主题匹配、量价评分、风控调整和输出分层。</p>
+          </div>
+        </div>
+        <div className={styles.summaryMetricGrid}>
+          <button className={styles.historySummaryCellButton} type="button">
+            <span>候选宇宙</span>
+            <strong>{candidateUniverse.length}</strong>
+            <div className={styles.muted}>研究池/关注/新闻/外部</div>
+          </button>
+          <button className={styles.historySummaryCellButton} type="button">
+            <span>主题匹配</span>
+            <strong>{themeMatchedCandidates.length}</strong>
+            <div className={styles.muted}>主线语义对齐</div>
+          </button>
+          <button className={styles.historySummaryCellButton} type="button">
+            <span>评分完成</span>
+            <strong>{scoredCandidates.length}</strong>
+            <div className={styles.muted}>量价资金融合</div>
+          </button>
+          <button className={styles.historySummaryCellButton} type="button">
+            <span>风控调整</span>
+            <strong>{riskAdjustedCandidates.length}</strong>
+            <div className={styles.muted}>执行/观察/否决</div>
+          </button>
+          <button className={styles.historySummaryCellButtonActive} type="button">
+            <span>输出短名单</span>
+            <strong>{dailyShortlist.length}</strong>
+            <div className={styles.muted}>每日候选</div>
+          </button>
+        </div>
+        <div className={styles.selectionCompactList} style={{ marginTop: 12 }}>
+          {candidateUniverse.slice(0, 8).map((item) => (
+            <div className={styles.selectionCompactItem} key={`universe-${item.symbol}-${item.universe_source}`}>
+              <strong>{item.name || item.symbol}</strong>
+              <div className={styles.muted}>
+                {item.symbol} | 来源 {item.universe_source || item.source_type || "-"} | {item.primary_sector || "-"}
+              </div>
+              <div className={styles.selectionCompactReason}>{item.reason || "候选宇宙成员"}</div>
+            </div>
+          ))}
+          {!candidateUniverse.length ? <div className={styles.muted}>暂无候选宇宙数据</div> : null}
+        </div>
+      </section>
+
       <section className={styles.card}>
         <div className={styles.selectionResultGrid}>
           <section className={styles.selectionResultCard}>
@@ -953,9 +1096,11 @@ export function SmartSelectionPage() {
         </div>
         {Object.keys(matchDiagnostics).length ? (
           <div className={styles.muted}>
-            匹配诊断：研究池 {matchDiagnostics.research_asset_count ?? 0} 只，主线板块 {matchDiagnostics.selection_sector_count ?? 0} 个，
-            已匹配 {matchDiagnostics.matched_candidate_count ?? 0} 只，观察级 {matchDiagnostics.observe_candidate_count ?? 0} 只，
-            外部发现 {matchDiagnostics.external_discovery_count ?? 0} 只，执行级 {matchDiagnostics.final_selected_count ?? 0} 只。
+            匹配诊断：候选宇宙 {matchDiagnostics.candidate_universe_count ?? candidateUniverse.length} 只，主线板块{" "}
+            {matchDiagnostics.selection_sector_count ?? 0} 个，主题匹配 {matchDiagnostics.theme_matched_count ?? themeMatchedCandidates.length} 只，评分{" "}
+            {matchDiagnostics.scored_candidate_count ?? scoredCandidates.length} 只，观察级 {matchDiagnostics.observe_candidate_count ?? 0} 只，
+            外部发现 {matchDiagnostics.external_discovery_count ?? 0} 只，每日候选 {matchDiagnostics.daily_shortlist_count ?? dailyShortlist.length} 只，执行级{" "}
+            {matchDiagnostics.final_selected_count ?? 0} 只。
           </div>
         ) : null}
       </section>

@@ -25,6 +25,7 @@ SMART_SELECTION_MAX_WORKERS_KEY = "smart_selection_max_workers"
 DEFAULT_SCHEDULE_TIME = "14:30"
 DEFAULT_MAX_WORKERS = 6
 FINAL_SELECTION_LIMIT = 10
+DAILY_SHORTLIST_LIMIT = 10
 SECTOR_WATCH_LIMIT = 3
 HOT_LIFECYCLE_STAGES = {"startup", "explosive", "decay"}
 STRICT_EXECUTION_TRIGGER_SOURCES = {"scheduled"}
@@ -482,9 +483,26 @@ class SmartSelectionService:
             "observed_decay_candidates": items.get("observed_decay_candidates", []),
             "ranked_action_candidates": items.get("ranked_action_candidates", []),
             "excluded_by_execution_gate": items.get("excluded_by_execution_gate", []),
+            "daily_shortlist": items.get("daily_shortlist", []),
+            "candidate_universe": items.get("candidate_universe", []),
+            "theme_matched_candidates": items.get("theme_matched_candidates", []),
+            "scored_candidates": items.get("scored_candidates", []),
+            "risk_adjusted_candidates": items.get("risk_adjusted_candidates", []),
             "final_selected": items.get("final_selected", []),
             "excluded_by_lifecycle_veto": items.get("excluded_by_lifecycle_veto", []),
             "excluded_by_risk_veto": items.get("excluded_by_risk_veto", []),
+        }
+        payload["result"]["standard_funnel"] = {
+            "candidate_universe": payload["result"]["candidate_universe"],
+            "theme_matched": payload["result"]["theme_matched_candidates"],
+            "scored_candidates": payload["result"]["scored_candidates"],
+            "risk_adjusted_candidates": payload["result"]["risk_adjusted_candidates"],
+            "outputs": {
+                "execution_candidates": payload["result"]["final_selected"],
+                "daily_shortlist": payload["result"]["daily_shortlist"],
+                "watch_candidates": payload["result"]["observe_candidates"],
+                "external_discovery_candidates": payload["result"]["external_discovery_candidates"],
+            },
         }
         return payload
 
@@ -756,8 +774,10 @@ class SmartSelectionService:
                 "news_context_status": str(news_context.get("status") or "missing"),
                 "news_context_fresh": False,
                 "news_risk_flag": False,
+                "news_soft_risk_flag": False,
                 "news_positive_hits": [],
                 "news_negative_hits": [],
+                "news_broad_negative_hits": [],
                 "topic_hits": [],
                 "sentiment_note": str(news_context.get("reason") or "暂无新闻流上下文"),
             }
@@ -792,6 +812,18 @@ class SmartSelectionService:
 
         positive_hits: list[dict[str, Any]] = []
         negative_hits: list[dict[str, Any]] = []
+        broad_negative_hits: list[dict[str, Any]] = []
+        candidate_name = str(candidate.get("name") or "").strip()
+        candidate_symbol = str(candidate.get("symbol") or "").strip()
+        candidate_symbol_digits = re.sub(r"\D", "", candidate_symbol)
+
+        def has_direct_stock_reference(text: str) -> bool:
+            if candidate_name and len(candidate_name) >= 2 and candidate_name in text:
+                return True
+            if candidate_symbol and candidate_symbol in text:
+                return True
+            return bool(candidate_symbol_digits and candidate_symbol_digits in text)
+
         for news in stock_news[:80]:
             text = " ".join(
                 [
@@ -802,17 +834,25 @@ class SmartSelectionService:
             )
             if not self._text_matches_any_theme(text, themes):
                 continue
+            direct_stock_match = has_direct_stock_reference(text)
             hit_payload = {
                 "title": _safe_text(news.get("title"))[:120],
                 "score": _safe_float(news.get("score"), 0.0),
                 "cross_platform": _safe_int(news.get("cross_platform"), 1),
+                "direct_stock_match": direct_stock_match,
             }
             if any(keyword in text for keyword in NEWS_RISK_KEYWORDS):
-                negative_hits.append(hit_payload)
+                if direct_stock_match:
+                    hit_payload["risk_scope"] = "stock"
+                    negative_hits.append(hit_payload)
+                else:
+                    hit_payload["risk_scope"] = "theme"
+                    broad_negative_hits.append(hit_payload)
             else:
                 positive_hits.append(hit_payload)
         positive_hits.sort(key=lambda item: (_safe_int(item.get("cross_platform"), 1), _safe_float(item.get("score"), 0.0)), reverse=True)
         negative_hits.sort(key=lambda item: (_safe_int(item.get("cross_platform"), 1), _safe_float(item.get("score"), 0.0)), reverse=True)
+        broad_negative_hits.sort(key=lambda item: (_safe_int(item.get("cross_platform"), 1), _safe_float(item.get("score"), 0.0)), reverse=True)
 
         sentiment = news_context.get("sentiment") if isinstance(news_context.get("sentiment"), dict) else {}
         sentiment_index = _safe_float(sentiment.get("sentiment_index"), 50.0)
@@ -856,6 +896,8 @@ class SmartSelectionService:
             news_score -= 4.0
         if negative_hits:
             news_score -= min(40.0, 18.0 + len(negative_hits) * 6.0)
+        elif broad_negative_hits:
+            news_score -= min(12.0, 4.0 + len(broad_negative_hits) * 2.0)
         if not bool(news_context.get("fresh")):
             news_score -= 4.0
         news_score = round(_clamp_score(news_score), 2)
@@ -871,8 +913,10 @@ class SmartSelectionService:
             "news_context_fresh": bool(news_context.get("fresh")),
             "news_context_age_hours": news_context.get("age_hours"),
             "news_risk_flag": bool(negative_hits),
+            "news_soft_risk_flag": bool(broad_negative_hits),
             "news_positive_hits": positive_hits[:3],
             "news_negative_hits": negative_hits[:3],
+            "news_broad_negative_hits": broad_negative_hits[:3],
             "topic_hits": topic_hits[:3],
             "sentiment_note": f"情绪{sentiment_index:.0f}，阶段{flow_stage or '未知'}，流量{flow_level or '未知'}",
         }
@@ -981,8 +1025,10 @@ class SmartSelectionService:
             "news_context_fresh": bool(context_confirmation.get("news_context_fresh")),
             "news_context_age_hours": context_confirmation.get("news_context_age_hours"),
             "news_risk_flag": bool(context_confirmation.get("news_risk_flag")),
+            "news_soft_risk_flag": bool(context_confirmation.get("news_soft_risk_flag")),
             "news_positive_hits": context_confirmation.get("news_positive_hits") or [],
             "news_negative_hits": context_confirmation.get("news_negative_hits") or [],
+            "news_broad_negative_hits": context_confirmation.get("news_broad_negative_hits") or [],
             "topic_hits": context_confirmation.get("topic_hits") or [],
             "sentiment_note": context_confirmation.get("sentiment_note") or "",
         }
@@ -1198,7 +1244,9 @@ class SmartSelectionService:
 
         news_context_status = str(item.get("news_context_status") or "").strip()
         if bool(item.get("news_risk_flag")):
-            add_hard("news_risk", "新闻/公告流出现负面风险词，降级观察")
+            add_hard("news_risk", "新闻/公告流直接命中个股负面风险，降级观察")
+        elif bool(item.get("news_soft_risk_flag")):
+            add_soft("news_risk", "行业/宏观负面新闻命中主线，仅扣分不硬阻断", 4.0)
         elif news_context_status in {"missing", "unavailable"} and strict_execution_mode:
             add_soft("news_context", "严格尾盘缺少新闻情绪上下文", 2.5)
         elif news_context_status == "stale":
@@ -1291,10 +1339,165 @@ class SmartSelectionService:
             "news_context_fresh": bool(metrics.get("news_context_fresh")),
             "news_context_age_hours": metrics.get("news_context_age_hours"),
             "news_risk_flag": bool(metrics.get("news_risk_flag")),
+            "news_soft_risk_flag": bool(metrics.get("news_soft_risk_flag")),
             "news_positive_hits": metrics.get("news_positive_hits") or [],
             "news_negative_hits": metrics.get("news_negative_hits") or [],
+            "news_broad_negative_hits": metrics.get("news_broad_negative_hits") or [],
             "topic_hits": metrics.get("topic_hits") or [],
             "sentiment_note": metrics.get("sentiment_note") or "",
+        }
+
+    def _build_daily_shortlist(
+        self,
+        *,
+        final_selected: list[dict[str, Any]],
+        ranked_action_candidates: list[dict[str, Any]],
+        observe_candidates: list[dict[str, Any]],
+        external_discovery_candidates: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        shortlist_by_symbol: dict[str, dict[str, Any]] = {}
+        source_priority = {
+            "final_selected": 4,
+            "ranked_action_candidates": 3,
+            "observe_candidates": 2,
+            "external_discovery_candidates": 1,
+        }
+
+        def ranking_score(item: dict[str, Any], bucket: str) -> tuple[float, float, float, float]:
+            return (
+                float(source_priority.get(bucket, 0)),
+                _safe_float(item.get("score") if item.get("score") is not None else item.get("leader_score"), 0.0),
+                _safe_float(item.get("gate_score") if item.get("gate_score") is not None else item.get("leader_score"), 0.0),
+                _safe_float(item.get("match_score"), 0.0),
+            )
+
+        def add_items(items: list[dict[str, Any]], bucket: str) -> None:
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                symbol = _safe_text(item.get("symbol")).upper()
+                if not symbol:
+                    continue
+                shortlist_item = dict(item)
+                shortlist_item["daily_shortlist_source"] = bucket
+                shortlist_item["daily_shortlist_score"] = round(ranking_score(shortlist_item, bucket)[1], 2)
+                if bucket != "final_selected" and not shortlist_item.get("daily_shortlist_reason"):
+                    if bucket == "ranked_action_candidates":
+                        shortlist_item["daily_shortlist_reason"] = "爆发期候选，未进入或待确认执行池"
+                    elif bucket == "observe_candidates":
+                        shortlist_item["daily_shortlist_reason"] = "观察级候选，保留为当日短名单"
+                    else:
+                        shortlist_item["daily_shortlist_reason"] = "研究池外发现，作为补池短名单"
+                previous = shortlist_by_symbol.get(symbol)
+                if previous is None or ranking_score(shortlist_item, bucket) > ranking_score(previous, previous.get("daily_shortlist_source") or ""):
+                    shortlist_by_symbol[symbol] = shortlist_item
+
+        add_items(final_selected, "final_selected")
+        add_items(ranked_action_candidates, "ranked_action_candidates")
+        add_items(observe_candidates, "observe_candidates")
+        add_items(external_discovery_candidates, "external_discovery_candidates")
+
+        shortlist = sorted(
+            shortlist_by_symbol.values(),
+            key=lambda item: ranking_score(item, item.get("daily_shortlist_source") or ""),
+            reverse=True,
+        )[:DAILY_SHORTLIST_LIMIT]
+        for index, item in enumerate(shortlist, start=1):
+            item["daily_shortlist_rank"] = index
+        return shortlist
+
+    def _build_asset_universe(
+        self,
+        *,
+        research_assets: list[dict[str, Any]],
+        focus_assets: list[dict[str, Any]],
+        external_discovery_candidates: list[dict[str, Any]],
+        news_flow_context: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        universe_by_symbol: dict[str, dict[str, Any]] = {}
+
+        def add_item(item: dict[str, Any], source_type: str, priority: int) -> None:
+            symbol = _safe_text(item.get("symbol")).upper()
+            if not symbol:
+                return
+            payload = {
+                "asset_id": item.get("id") or item.get("asset_id"),
+                "symbol": symbol,
+                "name": item.get("name") or item.get("stock_name") or symbol,
+                "source_type": source_type,
+                "universe_source": source_type,
+                "primary_sector": item.get("primary_sector"),
+                "canonical_sector": item.get("canonical_sector") or item.get("primary_sector"),
+                "score": item.get("score"),
+                "leader_score": item.get("leader_score"),
+                "reason": item.get("reason") or item.get("external_discovery_reason") or f"{source_type} 候选宇宙",
+                "external_discovery": bool(item.get("external_discovery")),
+                "funnel_stage": "candidate_universe",
+                "_universe_priority": priority,
+            }
+            previous = universe_by_symbol.get(symbol)
+            if previous is None or priority > _safe_int(previous.get("_universe_priority"), 0):
+                universe_by_symbol[symbol] = payload
+
+        for asset in research_assets:
+            add_item(asset, "research_pool", 3)
+        for asset in focus_assets:
+            add_item(asset, "focus_pool", 4)
+        for item in external_discovery_candidates:
+            add_item(item, "external_discovery", 2)
+
+        for news in [item for item in news_flow_context.get("stock_news") or [] if isinstance(item, dict)][:80]:
+            text = " ".join([str(news.get("title") or ""), str(news.get("content") or "")])
+            for symbol in dict.fromkeys(re.findall(r"(?<!\d)(?:[036]\d{5})(?!\d)", text)):
+                if not research_hub_service._is_a_share_symbol(symbol):
+                    continue
+                add_item(
+                    {
+                        "symbol": symbol,
+                        "name": symbol,
+                        "score": _safe_float(news.get("score"), 0.0),
+                        "reason": f"新闻热股候选：{_safe_text(news.get('title'))[:80]}",
+                    },
+                    "news_hot",
+                    1,
+                )
+
+        universe = sorted(
+            universe_by_symbol.values(),
+            key=lambda item: (
+                _safe_int(item.get("_universe_priority"), 0),
+                _safe_float(item.get("score") if item.get("score") is not None else item.get("leader_score"), 0.0),
+                str(item.get("symbol") or ""),
+            ),
+            reverse=True,
+        )
+        for item in universe:
+            item.pop("_universe_priority", None)
+        return universe
+
+    @staticmethod
+    def _build_standard_funnel(
+        *,
+        candidate_universe: list[dict[str, Any]],
+        theme_matched_candidates: list[dict[str, Any]],
+        scored_candidates: list[dict[str, Any]],
+        risk_adjusted_candidates: list[dict[str, Any]],
+        final_selected: list[dict[str, Any]],
+        daily_shortlist: list[dict[str, Any]],
+        observe_candidates: list[dict[str, Any]],
+        external_discovery_candidates: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        return {
+            "candidate_universe": candidate_universe,
+            "theme_matched": theme_matched_candidates,
+            "scored_candidates": scored_candidates,
+            "risk_adjusted_candidates": risk_adjusted_candidates,
+            "outputs": {
+                "execution_candidates": final_selected,
+                "daily_shortlist": daily_shortlist,
+                "watch_candidates": observe_candidates,
+                "external_discovery_candidates": external_discovery_candidates,
+            },
         }
 
     def _find_lifecycle_match(
@@ -1934,7 +2137,10 @@ class SmartSelectionService:
             reverse=True,
         )[:EXTERNAL_DISCOVERY_LIMIT]
         if discovered:
-            warnings.append(f"研究池匹配不足，已补充 {len(discovered)} 只研究池外候选，仅作补池线索")
+            if any("候选宇宙" in str(item) for item in shortages):
+                warnings.append(f"统一候选宇宙已前置补充 {len(discovered)} 只研究池外候选，仅作补池线索")
+            else:
+                warnings.append(f"研究池匹配不足，已补充 {len(discovered)} 只研究池外候选，仅作补池线索")
         return discovered
 
     def _run_pipeline(
@@ -2002,6 +2208,21 @@ class SmartSelectionService:
                 "external_discovery_candidates": [],
                 "observed_decay_candidates": [],
                 "ranked_action_candidates": [],
+                "daily_shortlist": [],
+                "candidate_universe": [],
+                "theme_matched_candidates": [],
+                "scored_candidates": [],
+                "risk_adjusted_candidates": [],
+                "standard_funnel": self._build_standard_funnel(
+                    candidate_universe=[],
+                    theme_matched_candidates=[],
+                    scored_candidates=[],
+                    risk_adjusted_candidates=[],
+                    final_selected=[],
+                    daily_shortlist=[],
+                    observe_candidates=[],
+                    external_discovery_candidates=[],
+                ),
                 "final_selected": [],
                 "excluded_by_lifecycle_veto": [],
                 "excluded_by_risk_veto": [],
@@ -2039,6 +2260,21 @@ class SmartSelectionService:
                 "external_discovery_candidates": [],
                 "observed_decay_candidates": [],
                 "ranked_action_candidates": [],
+                "daily_shortlist": [],
+                "candidate_universe": [],
+                "theme_matched_candidates": [],
+                "scored_candidates": [],
+                "risk_adjusted_candidates": [],
+                "standard_funnel": self._build_standard_funnel(
+                    candidate_universe=[],
+                    theme_matched_candidates=[],
+                    scored_candidates=[],
+                    risk_adjusted_candidates=[],
+                    final_selected=[],
+                    daily_shortlist=[],
+                    observe_candidates=[],
+                    external_discovery_candidates=[],
+                ),
                 "final_selected": [],
                 "excluded_by_lifecycle_veto": [],
                 "excluded_by_risk_veto": [],
@@ -2051,11 +2287,35 @@ class SmartSelectionService:
             for asset in asset_repository.list_assets(status=STATUS_RESEARCH, include_deleted=False)
             if research_hub_service._is_a_share_symbol(asset.get("symbol"))
         ]
+        focus_assets = [
+            asset
+            for asset in asset_repository.list_assets(status=STATUS_FOCUS, include_deleted=False)
+            if research_hub_service._is_a_share_symbol(asset.get("symbol"))
+        ]
+        all_existing_symbols = {
+            _safe_text(asset.get("symbol"))
+            for asset in asset_repository.list_assets(include_deleted=False)
+            if _safe_text(asset.get("symbol"))
+        }
+        report_progress(32, "构建统一候选宇宙...")
+        external_discovery_candidates = self._discover_external_candidates(
+            selection_sectors=selection_sectors,
+            existing_symbols=all_existing_symbols,
+            shortages=["候选宇宙前置补池"],
+            warnings=warnings,
+        )
+        candidate_universe = self._build_asset_universe(
+            research_assets=research_assets,
+            focus_assets=focus_assets,
+            external_discovery_candidates=external_discovery_candidates,
+            news_flow_context=news_flow_context,
+        )
 
         startup_by_sector: dict[str, list[dict[str, Any]]] = {}
         decay_candidates: list[dict[str, Any]] = []
         explosive_candidates: list[dict[str, Any]] = []
         matched_candidates: list[dict[str, Any]] = []
+        scored_candidates: list[dict[str, Any]] = []
         vetoed_candidates: list[dict[str, Any]] = []
         max_workers = self.get_scheduler_config().get("max_workers", DEFAULT_MAX_WORKERS)
         unmatched_by_sector = 0
@@ -2067,7 +2327,12 @@ class SmartSelectionService:
             local_warnings: list[str] = []
             context = research_hub_service._collect_asset_match_context(asset, local_warnings)
             context["market_context"] = market_context
-            candidate = research_hub_service._score_selection_candidate(asset, context, selection_sectors)
+            try:
+                candidate = research_hub_service._score_selection_candidate(asset, context, selection_sectors)
+            except Exception as exc:
+                with warnings_lock:
+                    warnings.append(f"{asset.get('symbol')} 候选评分失败，已跳过: {exc}")
+                return None
             if local_warnings:
                 with warnings_lock:
                     warnings.extend(local_warnings)
@@ -2080,6 +2345,8 @@ class SmartSelectionService:
             metrics = self._build_candidate_metrics(candidate, lifecycle_item, news_flow_context)
             result_item = self._format_result_item(candidate, lifecycle_item, metrics)
             result_item["primary_sector"] = lifecycle_item.get("sector_name") or result_item.get("primary_sector")
+            result_item["funnel_stage"] = "scored"
+            result_item["universe_source"] = "focus_pool" if str(asset.get("status") or "") == STATUS_FOCUS else "research_pool"
             primary_sector = research_hub_service._normalize_sector_text(result_item.get("primary_sector"))
 
             if metrics["selection_veto"]:
@@ -2109,14 +2376,18 @@ class SmartSelectionService:
                 if bucket == "unmatched":
                     unmatched_by_sector += 1
                 elif bucket == "veto":
+                    scored_candidates.append(result_item)
                     vetoed_candidates.append(result_item)
                 elif bucket == "startup":
+                    scored_candidates.append(result_item)
                     matched_candidates.append(result_item)
                     startup_by_sector.setdefault(primary_sector, []).append(result_item)
                 elif bucket == "decay":
+                    scored_candidates.append(result_item)
                     matched_candidates.append(result_item)
                     decay_candidates.append(result_item)
                 elif bucket == "explosive":
+                    scored_candidates.append(result_item)
                     matched_candidates.append(result_item)
                     explosive_candidates.append(result_item)
 
@@ -2148,6 +2419,15 @@ class SmartSelectionService:
             ),
             reverse=True,
         )
+        theme_matched_candidates = sorted(
+            [*matched_candidates, *vetoed_candidates],
+            key=lambda item: (
+                _safe_float(item.get("match_score"), 0.0),
+                _safe_float(item.get("score"), 0.0),
+                _safe_float(item.get("heat_score"), 0.0),
+            ),
+            reverse=True,
+        )
 
         report_progress(72, "筛选尾盘执行候选...")
         ranked_action_candidates = sorted(explosive_candidates, key=lambda item: _safe_float(item.get("score")), reverse=True)
@@ -2155,6 +2435,7 @@ class SmartSelectionService:
         final_selected: list[dict[str, Any]] = []
         observe_candidates: list[dict[str, Any]] = list(observed_startup_candidates)
         risk_vetoed_candidates: list[dict[str, Any]] = []
+        risk_adjusted_candidates: list[dict[str, Any]] = []
         execution_gated_candidates: list[dict[str, Any]] = []
         sector_counts: dict[str, int] = {}
         report_progress(70, "检查龙虎榜数据...")
@@ -2224,6 +2505,11 @@ class SmartSelectionService:
                 gate_reason = gate_result["primary_reason"] or "执行门槛不足，降级观察"
                 gate_type = gate_result["primary_type"] or "gate_score"
                 gated_item = build_execution_gate_item(item, gate_reason, gate_type)
+                risk_adjusted_item = dict(gated_item)
+                risk_adjusted_item["risk_adjusted_decision"] = "observe"
+                risk_adjusted_item["risk_adjusted_reason"] = gate_reason
+                risk_adjusted_item["funnel_stage"] = "risk_adjusted"
+                risk_adjusted_candidates.append(risk_adjusted_item)
                 execution_gated_candidates.append(gated_item)
                 append_observe_candidate(gated_item, gate_reason, gate_type)
                 continue
@@ -2279,24 +2565,43 @@ class SmartSelectionService:
                     risk_results[resolved_symbol] = risk_result if isinstance(risk_result, dict) else {}
 
         for item in pre_risk_candidates:
+            risk_adjusted_item = dict(item)
+            risk_adjusted_item["funnel_stage"] = "risk_adjusted"
             if len(final_selected) >= FINAL_SELECTION_LIMIT:
-                break
+                risk_adjusted_item["risk_adjusted_decision"] = "capacity_limited"
+                risk_adjusted_item["risk_adjusted_reason"] = f"执行池容量已达 {FINAL_SELECTION_LIMIT} 只"
+                risk_adjusted_candidates.append(risk_adjusted_item)
+                continue
             risk_result = risk_results.get(str(item.get("symbol") or ""), {})
             risk_notes = [str(note).strip() for note in risk_result.get("risk_notes") or [] if str(note).strip()]
             if risk_notes:
                 item["risk_notes"] = risk_notes
                 item["risk_level"] = str(risk_result.get("risk_level") or "")
                 item["reason"] = f"{item.get('reason') or ''} | 风控提示: {'；'.join(risk_notes[:2])}".strip(" |")
+                risk_adjusted_item["risk_notes"] = risk_notes
+                risk_adjusted_item["risk_level"] = item["risk_level"]
+                risk_adjusted_item["reason"] = item["reason"]
             if risk_result.get("vetoed"):
                 item["selection_veto"] = True
                 item["reason"] = f"{item.get('reason') or ''} | 个股风控否决".strip(" |")
+                risk_adjusted_item["selection_veto"] = True
+                risk_adjusted_item["reason"] = item["reason"]
+                risk_adjusted_item["risk_adjusted_decision"] = "veto"
+                risk_adjusted_item["risk_adjusted_reason"] = "个股风控否决"
+                risk_adjusted_candidates.append(risk_adjusted_item)
                 risk_vetoed_candidates.append(item)
                 continue
             bucket = research_hub_service._normalize_sector_text(item.get("primary_sector")) or "other"
             sector_limit = max(1, _safe_int((item.get("execution_gate_policy") or {}).get("sector_limit"), 2))
             if sector_counts.get(bucket, 0) >= sector_limit:
+                risk_adjusted_item["risk_adjusted_decision"] = "sector_limited"
+                risk_adjusted_item["risk_adjusted_reason"] = f"{item.get('primary_sector') or '板块'} 执行池名额已满"
+                risk_adjusted_candidates.append(risk_adjusted_item)
                 continue
             sector_counts[bucket] = sector_counts.get(bucket, 0) + 1
+            risk_adjusted_item["risk_adjusted_decision"] = "execute"
+            risk_adjusted_item["risk_adjusted_reason"] = "通过执行门槛与个股风控"
+            risk_adjusted_candidates.append(risk_adjusted_item)
             final_selected.append(item)
 
         if filtered_by_session_time:
@@ -2310,32 +2615,48 @@ class SmartSelectionService:
         if not final_selected and observe_candidates:
             warnings.append("已有主线匹配标的，但当前仅达到观察级，未进入执行级名单")
 
-        all_existing_symbols = {
-            _safe_text(asset.get("symbol"))
-            for asset in asset_repository.list_assets(include_deleted=False)
-            if _safe_text(asset.get("symbol"))
-        }
         discovery_shortages = self._build_external_discovery_shortages(
             matched_candidates=matched_candidates,
             observed_startup_candidates=observed_startup_candidates,
             ranked_action_candidates=ranked_action_candidates,
             final_selected=final_selected,
         )
-        external_discovery_candidates = self._discover_external_candidates(
-            selection_sectors=selection_sectors,
-            existing_symbols=all_existing_symbols,
-            shortages=discovery_shortages,
-            warnings=warnings,
+        if discovery_shortages and external_discovery_candidates:
+            for item in external_discovery_candidates:
+                item["external_discovery_reason"] = item.get("external_discovery_reason") or "；".join(discovery_shortages[:3])
+        elif discovery_shortages:
+            warnings.append(f"统一候选宇宙仍有缺口：{'；'.join(discovery_shortages[:3])}")
+        daily_shortlist = self._build_daily_shortlist(
+            final_selected=final_selected,
+            ranked_action_candidates=ranked_action_candidates,
+            observe_candidates=observe_candidates,
+            external_discovery_candidates=external_discovery_candidates,
+        )
+        standard_funnel = self._build_standard_funnel(
+            candidate_universe=candidate_universe,
+            theme_matched_candidates=theme_matched_candidates,
+            scored_candidates=scored_candidates,
+            risk_adjusted_candidates=risk_adjusted_candidates,
+            final_selected=final_selected,
+            daily_shortlist=daily_shortlist,
+            observe_candidates=observe_candidates,
+            external_discovery_candidates=external_discovery_candidates,
         )
 
         match_diagnostics = {
+            "candidate_universe_count": len(candidate_universe),
             "research_asset_count": len(research_assets),
+            "focus_asset_count": len(focus_assets),
             "selection_sector_count": len(selection_sectors),
             "matched_candidate_count": len(matched_candidates),
+            "theme_matched_count": len(theme_matched_candidates),
+            "scored_candidate_count": len(scored_candidates),
+            "risk_adjusted_count": len(risk_adjusted_candidates),
             "startup_observe_count": len(observed_startup_candidates),
             "observe_candidate_count": len(observe_candidates),
             "external_discovery_count": len(external_discovery_candidates),
             "ranked_action_count": len(ranked_action_candidates),
+            "daily_shortlist_count": len(daily_shortlist),
             "final_selected_count": len(final_selected),
             "lifecycle_veto_count": len(vetoed_candidates),
             "risk_veto_count": len(risk_vetoed_candidates),
@@ -2360,6 +2681,11 @@ class SmartSelectionService:
         self._replace_run_items(run_id, "observed_decay_candidates", observed_decay_candidates)
         self._replace_run_items(run_id, "ranked_action_candidates", ranked_action_candidates)
         self._replace_run_items(run_id, "excluded_by_execution_gate", execution_gated_candidates)
+        self._replace_run_items(run_id, "daily_shortlist", daily_shortlist)
+        self._replace_run_items(run_id, "candidate_universe", candidate_universe)
+        self._replace_run_items(run_id, "theme_matched_candidates", theme_matched_candidates)
+        self._replace_run_items(run_id, "scored_candidates", scored_candidates)
+        self._replace_run_items(run_id, "risk_adjusted_candidates", risk_adjusted_candidates)
         self._replace_run_items(run_id, "final_selected", final_selected)
         self._replace_run_items(run_id, "excluded_by_lifecycle_veto", vetoed_candidates)
         self._replace_run_items(run_id, "excluded_by_risk_veto", risk_vetoed_candidates)
@@ -2388,6 +2714,12 @@ class SmartSelectionService:
             "observed_decay_candidates": observed_decay_candidates,
             "ranked_action_candidates": ranked_action_candidates,
             "excluded_by_execution_gate": execution_gated_candidates,
+            "daily_shortlist": daily_shortlist,
+            "candidate_universe": candidate_universe,
+            "theme_matched_candidates": theme_matched_candidates,
+            "scored_candidates": scored_candidates,
+            "risk_adjusted_candidates": risk_adjusted_candidates,
+            "standard_funnel": standard_funnel,
             "final_selected": final_selected,
             "excluded_by_lifecycle_veto": vetoed_candidates,
             "excluded_by_risk_veto": risk_vetoed_candidates,
@@ -2455,17 +2787,33 @@ class SmartSelectionService:
         run = self.get_run(run_id)
         if not run:
             raise ValueError("未找到智能选股运行记录")
-        final_selected = run.get("result", {}).get("final_selected") or []
-        final_lookup = {
-            str(item.get("symbol") or "").strip(): item
-            for item in final_selected
-            if isinstance(item, dict) and str(item.get("symbol") or "").strip()
-        }
-        if not final_lookup:
-            raise ValueError("当前运行结果没有可导入的最终入选股票")
-        target_symbols = [symbol for symbol in dict.fromkeys([str(item).strip().upper() for item in (symbols or []) if str(item).strip()]) if symbol in final_lookup]
+        result_payload = run.get("result", {}) if isinstance(run.get("result"), dict) else {}
+        import_buckets = [
+            ("final_selected", result_payload.get("final_selected") or []),
+            ("daily_shortlist", result_payload.get("daily_shortlist") or []),
+            ("observe_candidates", result_payload.get("observe_candidates") or []),
+        ]
+        lookup_by_symbol: dict[str, dict[str, Any]] = {}
+        for bucket, items in import_buckets:
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                symbol = str(item.get("symbol") or "").strip().upper()
+                if not symbol:
+                    continue
+                lookup_by_symbol.setdefault(symbol, {**item, "import_source": bucket})
+        if not lookup_by_symbol:
+            raise ValueError("当前运行结果没有可导入的执行或每日候选股票")
+
+        normalized_requested_symbols = [str(item).strip().upper() for item in (symbols or []) if str(item).strip()]
+        target_symbols = [symbol for symbol in dict.fromkeys(normalized_requested_symbols) if symbol in lookup_by_symbol]
         if not target_symbols:
-            target_symbols = list(final_lookup.keys())
+            default_items = result_payload.get("final_selected") or result_payload.get("daily_shortlist") or result_payload.get("observe_candidates") or []
+            target_symbols = [
+                str(item.get("symbol") or "").strip().upper()
+                for item in default_items
+                if isinstance(item, dict) and str(item.get("symbol") or "").strip().upper() in lookup_by_symbol
+            ]
         if not target_symbols:
             raise ValueError("没有可导入的股票")
 
@@ -2485,7 +2833,7 @@ class SmartSelectionService:
                 demoted_symbols.append(str(asset.get("symbol") or ""))
 
         for symbol in target_symbols:
-            item = final_lookup[symbol]
+            item = lookup_by_symbol[symbol]
             asset_id = asset_repository.promote_to_watchlist(
                 symbol=symbol,
                 name=item.get("name") or symbol,
@@ -2507,6 +2855,7 @@ class SmartSelectionService:
                     "trajectory": item.get("trajectory") or [],
                     "delta_1": item.get("delta_1"),
                     "delta_2": item.get("delta_2"),
+                    "import_source": item.get("import_source"),
                 },
             )
             imported_symbols.append(symbol)
