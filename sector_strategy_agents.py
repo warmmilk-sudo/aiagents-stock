@@ -329,22 +329,24 @@ class SectorStrategyAgents:
             flow_list = fund_flow_data["today"]
             
             # 净流入前15
-            sorted_inflow = sorted(flow_list, key=lambda x: x["main_net_inflow"], reverse=True)
+            sorted_inflow = sorted(flow_list, key=lambda x: float(x.get("main_net_inflow") or 0), reverse=True)
             fund_flow_summary = "【板块资金流向】"
             update_time = fund_flow_data.get("update_time")
             if update_time:
                 fund_flow_summary += f"(更新时间: {update_time})"
             fund_flow_summary += "\n\n主力资金净流入 TOP15:\n"
             for idx, item in enumerate(sorted_inflow[:15], 1):
-                fund_flow_summary += f"{idx}. {item['sector']}: {item['main_net_inflow']:.2f}万 ({item['main_net_inflow_pct']:+.2f}%) | 涨跌: {item['change_pct']:+.2f}% | 超大单: {item['super_large_net_inflow']:.2f}万\n"
+                source_label = "概念" if item.get("source_type") == "concept" else "行业"
+                fund_flow_summary += f"{idx}. [{source_label}] {item['sector']}: {float(item.get('main_net_inflow') or 0):.2f}万 ({float(item.get('main_net_inflow_pct') or 0):+.2f}%) | 涨跌: {float(item.get('change_pct') or 0):+.2f}% | 超大单: {float(item.get('super_large_net_inflow') or 0):.2f}万\n"
             
             # 净流出前10
-            sorted_outflow = sorted(flow_list, key=lambda x: x["main_net_inflow"])
+            sorted_outflow = sorted(flow_list, key=lambda x: float(x.get("main_net_inflow") or 0))
             fund_flow_summary += f"""
 主力资金净流出 TOP10:
 """
             for idx, item in enumerate(sorted_outflow[:10], 1):
-                fund_flow_summary += f"{idx}. {item['sector']}: {item['main_net_inflow']:.2f}万 ({item['main_net_inflow_pct']:+.2f}%) | 涨跌: {item['change_pct']:+.2f}%\n"
+                source_label = "概念" if item.get("source_type") == "concept" else "行业"
+                fund_flow_summary += f"{idx}. [{source_label}] {item['sector']}: {float(item.get('main_net_inflow') or 0):.2f}万 ({float(item.get('main_net_inflow_pct') or 0):+.2f}%) | 涨跌: {float(item.get('change_pct') or 0):+.2f}%\n"
         
         # 构建北向资金数据
         north_summary = ""

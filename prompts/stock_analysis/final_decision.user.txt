@@ -9,6 +9,9 @@
 综合分析讨论结果：
 $comprehensive_discussion
 
+历史记忆参考（长期底色、近期决策、核心事实）：
+$memory_prompt_block
+
 持仓波段基线约束：
 $holding_strategy_prompt_block
 

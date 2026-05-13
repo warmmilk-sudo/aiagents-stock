@@ -342,6 +342,10 @@ class AssetService:
             item["latest_analysis_scope"] = strategy_context.get("analysis_scope") or ""
             item["latest_analysis_source"] = strategy_context.get("analysis_source") or ""
             item["latest_analysis_rating"] = strategy_context.get("rating") or ""
+            item["latest_baseline_quality"] = strategy_context.get("baseline_quality") or {}
+            item["latest_baseline_status"] = strategy_context.get("baseline_status") or (
+                item["latest_baseline_quality"].get("status") if isinstance(item["latest_baseline_quality"], dict) else ""
+            )
             item["latest_analysis_summary"] = (
                 strategy_context.get("summary")
                 or asset.get("note")

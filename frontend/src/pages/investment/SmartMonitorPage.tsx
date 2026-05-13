@@ -47,7 +47,16 @@ interface SmartMonitorTask {
       take_profit?: unknown;
       stop_loss?: unknown;
     };
+    baseline_quality?: BaselineQualitySnapshot;
+    baseline_status?: string;
   };
+}
+
+interface BaselineQualitySnapshot {
+  status?: string;
+  score?: number;
+  quality_flags?: string[];
+  notes?: string[];
 }
 
 interface DecisionItem {
@@ -78,6 +87,22 @@ interface DecisionItem {
     take_profit?: number;
     take_profit_max?: number;
     stop_loss?: number;
+  };
+  decision_quality_score?: number | null;
+  quality_flags?: string[];
+  veto_reason?: string;
+  data_freshness_state?: string;
+  baseline_relation?: string;
+  matched_baseline_conditions?: string[];
+  unmet_baseline_conditions?: string[];
+  baseline_quality_snapshot?: BaselineQualitySnapshot;
+  evaluation?: {
+    feedback_status?: string;
+    outcome_label?: string;
+    max_upside_pct?: number | null;
+    max_downside_pct?: number | null;
+    take_profit_hit?: number;
+    stop_loss_hit?: number;
   };
 }
 
@@ -257,7 +282,10 @@ function formatDecisionSignature(detail?: string, action?: string, actionRatioPc
 
 function formatDecisionReasoning(item: DecisionItem): string {
   const value = item.reasoning;
-  const text = String(value || "").replace(/\s+/g, " ").trim();
+  const text = String(value || "")
+    .replace(/审计降级：[^。.!！？\n]*(?:[。.!！？]|\n|$)/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
   if (!text) return "暂无盘中决策内容";
   return text.replace(/…(?:（已截断）)?$/u, "。");
 }
@@ -352,6 +380,18 @@ const formatThresholdSummary = (
         ? `${takeProfit}-${takeProfitMax}`
         : takeProfit;
   return `${label}：入场${entryText} | 止盈:${takeProfitText} | 止损:${stopLoss}`;
+};
+
+const outcomeLabel = (value?: string) => {
+  const normalized = String(value || "").trim();
+  const mapping: Record<string, string> = {
+    favorable_follow_through: "后验有利",
+    neutral: "后验中性",
+    adverse_follow_through: "后验不利",
+    take_profit_hit: "触及止盈",
+    stop_loss_hit: "触及止损",
+  };
+  return mapping[normalized] || normalized;
 };
 
 const isTaskHolding = (task: SmartMonitorTask) =>
@@ -1257,6 +1297,13 @@ export function SmartMonitorPage() {
                           </div>
                           <strong>{stockDisplayName(item.stock_name, item.stock_code)}</strong>
                           <small className={styles.muted}>{formatDateTime(item.decision_time, "暂无时间")}</small>
+                          {item.evaluation?.outcome_label ? (
+                            <small className={styles.muted}>
+                              后验：{outcomeLabel(item.evaluation.outcome_label)}
+                              {typeof item.evaluation.max_upside_pct === "number" ? ` | 最大有利 ${item.evaluation.max_upside_pct.toFixed(1)}%` : ""}
+                              {typeof item.evaluation.max_downside_pct === "number" ? ` | 最大不利 ${item.evaluation.max_downside_pct.toFixed(1)}%` : ""}
+                            </small>
+                          ) : null}
                           <div className={styles.decisionReasoning}>{formatDecisionReasoning(item)}</div>
                         </div>
                       );

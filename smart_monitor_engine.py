@@ -14,14 +14,313 @@ import threading
 
 import config
 from smart_monitor_deepseek import SmartMonitorDeepSeek
+from smart_monitor_decision_auditor import SmartMonitorDecisionAuditor
 from smart_monitor_data import SmartMonitorDataFetcher
 from smart_monitor_db import SmartMonitorDB
+from agent_memory_service import agent_memory_service
 from notification_service import notification_service  # 复用主程序的通知服务
 from asset_repository import STATUS_PORTFOLIO
 from investment_action_utils import normalize_condition_list, normalize_strategy_context, normalize_swing_type, swing_type_label
 from investment_db_utils import DEFAULT_ACCOUNT_NAME, normalize_account_name
 from investment_lifecycle_service import InvestmentLifecycleService, investment_lifecycle_service
 from internal_events import event_bus, Events
+from portfolio_analysis_tasks import portfolio_analysis_task_manager
+
+
+SMART_MONITOR_AUTO_BASELINE_REANALYSIS_TASK_TYPE = "smart_monitor_baseline_refresh"
+SMART_MONITOR_AUTO_BASELINE_REANALYSIS_SESSION_ID = "smart-monitor-auto-baseline-reanalysis"
+_AUTO_BASELINE_REANALYSIS_LOCK = threading.Lock()
+_AUTO_BASELINE_REANALYSIS_COOLDOWN_KEYS: set[str] = set()
+_AUTO_BASELINE_REANALYSIS_STRONG_BEACONS = {
+    "limit_up_hit",
+    "consecutive_limit_up",
+    "breakout_20d_high_with_2x_volume",
+    "stage_new_high",
+}
+
+
+def _optional_float(value: object) -> Optional[float]:
+    try:
+        return float(value) if value not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _trading_date_for_cooldown(market_data: Optional[Dict[str, object]] = None) -> str:
+    market_data = market_data if isinstance(market_data, dict) else {}
+    freshness = market_data.get("realtime_freshness") if isinstance(market_data.get("realtime_freshness"), dict) else {}
+    for value in (
+        freshness.get("asof_time"),
+        market_data.get("update_time"),
+        market_data.get("trade_date"),
+    ):
+        text = str(value or "").strip()
+        if not text:
+            continue
+        normalized = text.replace("Z", "+00:00")
+        try:
+            return datetime.fromisoformat(normalized).date().isoformat()
+        except ValueError:
+            pass
+        if len(text) >= 10 and re.match(r"\d{4}-\d{2}-\d{2}", text[:10]):
+            return text[:10]
+    return datetime.now().date().isoformat()
+
+
+def _baseline_reanalysis_cooldown_key(
+    *,
+    stock_code: str,
+    account_name: str,
+    asset_id: Optional[int],
+    portfolio_stock_id: Optional[int],
+    trading_date: str,
+) -> str:
+    identity = asset_id if asset_id is not None else portfolio_stock_id if portfolio_stock_id is not None else str(stock_code or "").strip().upper()
+    account = normalize_account_name(account_name) or DEFAULT_ACCOUNT_NAME
+    return f"{account}:{identity}:{trading_date}"
+
+
+def evaluate_intraday_baseline_reanalysis_trigger(
+    *,
+    decision: Dict[str, object],
+    audit_context: Optional[Dict[str, object]],
+    strategy_context: Optional[Dict[str, object]],
+    market_data: Optional[Dict[str, object]],
+    has_position: bool,
+) -> Optional[Dict[str, object]]:
+    """Return conservative auto-reanalysis metadata when intraday action materially breaks the baseline."""
+    if not isinstance(strategy_context, dict) or not strategy_context:
+        return None
+
+    decision = decision if isinstance(decision, dict) else {}
+    audit_context = audit_context if isinstance(audit_context, dict) else {}
+    market_data = market_data if isinstance(market_data, dict) else {}
+    levels = SmartMonitorEngine._extract_monitor_levels_from_strategy_context(strategy_context)
+    current_price = _optional_float(market_data.get("current_price"))
+    take_profit = _optional_float((levels or {}).get("take_profit"))
+    stop_loss = _optional_float((levels or {}).get("stop_loss"))
+    relation = str(decision.get("baseline_relation") or "").strip()
+    conflict_score = _optional_float(decision.get("baseline_conflict_score")) or 0.0
+    decision_beacons = decision.get("feature_beacons") if isinstance(decision.get("feature_beacons"), list) else []
+    market_beacons = market_data.get("feature_beacons") if isinstance(market_data.get("feature_beacons"), list) else []
+    feature_beacons = [str(item).strip() for item in [*decision_beacons, *market_beacons] if str(item or "").strip()]
+    feature_beacons = list(dict.fromkeys(feature_beacons))
+    strong_beacons = sorted(_AUTO_BASELINE_REANALYSIS_STRONG_BEACONS.intersection(feature_beacons))
+    hard_risk_sell = bool(audit_context.get("hard_risk_sell"))
+
+    reason_code = ""
+    reason = ""
+    if relation == "invalidated":
+        reason_code = "baseline_invalidated"
+        reason = "盘中决策已判定战略基线失效。"
+    elif hard_risk_sell:
+        reason_code = "hard_risk_sell"
+        reason = "审计器判定为硬风险卖出场景。"
+    elif current_price is not None and stop_loss is not None and current_price <= stop_loss:
+        reason_code = "stop_loss_breached"
+        reason = f"当前价 {current_price:.3f} 已触发基线止损位 {stop_loss:.3f}。"
+    elif (
+        has_position
+        and current_price is not None
+        and take_profit is not None
+        and current_price >= take_profit
+        and strong_beacons
+    ):
+        reason_code = "take_profit_with_strong_extension"
+        reason = f"当前价 {current_price:.3f} 已达到基线止盈位 {take_profit:.3f}，且出现强趋势信标。"
+    elif current_price is not None and take_profit is not None and current_price >= take_profit * 1.03:
+        reason_code = "take_profit_exceeded_by_3pct"
+        reason = f"当前价 {current_price:.3f} 已超过基线止盈位 {take_profit:.3f} 的 3%。"
+    elif (
+        bool(decision.get("swing_type_upgrade"))
+        and normalize_swing_type(strategy_context.get("swing_type")) == "micro_swing"
+        and normalize_swing_type(decision.get("upgraded_swing_type")) == "standard_swing"
+        and feature_beacons
+    ):
+        reason_code = "swing_type_upgrade_requested"
+        reason = "盘中趋势信标支持从微波段升级为标准波段。"
+    elif relation in {"partially_deviated", "upgrade_requested", "invalidated"} and conflict_score >= 85:
+        reason_code = "high_baseline_conflict_score"
+        reason = f"基线冲突分 {conflict_score:.1f} 已达到自动复核阈值。"
+
+    if not reason_code:
+        return None
+
+    return {
+        "triggered": True,
+        "reason_code": reason_code,
+        "reason": reason,
+        "current_price": current_price,
+        "take_profit": take_profit,
+        "stop_loss": stop_loss,
+        "baseline_relation": relation,
+        "baseline_conflict_score": conflict_score,
+        "feature_beacons": feature_beacons,
+        "strong_beacons": strong_beacons,
+        "origin_analysis_id": strategy_context.get("origin_analysis_id"),
+    }
+
+
+def enqueue_single_symbol_baseline_reanalysis(
+    *,
+    stock_code: str,
+    stock_name: Optional[str],
+    account_name: str,
+    has_position: bool,
+    asset_id: Optional[int],
+    portfolio_stock_id: Optional[int],
+    market_data: Optional[Dict[str, object]],
+    trigger: Optional[Dict[str, object]],
+    asset_service: Optional[object] = None,
+    selected_model: Optional[str] = None,
+    selected_lightweight_model: Optional[str] = None,
+    selected_reasoning_model: Optional[str] = None,
+) -> Dict[str, object]:
+    if not trigger:
+        return {"status": "not_triggered", "submitted": False}
+
+    normalized_symbol = str(stock_code or "").strip().upper()
+    trading_date = _trading_date_for_cooldown(market_data)
+    cooldown_key = _baseline_reanalysis_cooldown_key(
+        stock_code=normalized_symbol,
+        account_name=account_name,
+        asset_id=asset_id,
+        portfolio_stock_id=portfolio_stock_id,
+        trading_date=trading_date,
+    )
+
+    with _AUTO_BASELINE_REANALYSIS_LOCK:
+        pending_tasks = portfolio_analysis_task_manager.get_pending_tasks_any(
+            task_type=SMART_MONITOR_AUTO_BASELINE_REANALYSIS_TASK_TYPE,
+        )
+        duplicate_task = next(
+            (
+                task
+                for task in pending_tasks
+                if (task.get("metadata") or {}).get("auto_baseline_reanalysis_cooldown_key") == cooldown_key
+                or (
+                    str((task.get("metadata") or {}).get("symbol") or "").strip().upper() == normalized_symbol
+                    and str((task.get("metadata") or {}).get("trading_date") or "").strip() == trading_date
+                    and (
+                        normalize_account_name((task.get("metadata") or {}).get("account_name")) or DEFAULT_ACCOUNT_NAME
+                    ) == (normalize_account_name(account_name) or DEFAULT_ACCOUNT_NAME)
+                )
+            ),
+            None,
+        )
+        if cooldown_key in _AUTO_BASELINE_REANALYSIS_COOLDOWN_KEYS or duplicate_task:
+            return {
+                "status": "skipped_duplicate",
+                "submitted": False,
+                "cooldown_key": cooldown_key,
+                "trading_date": trading_date,
+                "task_id": duplicate_task.get("id") if duplicate_task else None,
+                "task_type": SMART_MONITOR_AUTO_BASELINE_REANALYSIS_TASK_TYPE,
+            }
+
+        if not config.has_api_credentials_for_models(selected_model, selected_lightweight_model, selected_reasoning_model):
+            return {
+                "status": "skipped_no_credentials",
+                "submitted": False,
+                "cooldown_key": cooldown_key,
+                "trading_date": trading_date,
+                "task_type": SMART_MONITOR_AUTO_BASELINE_REANALYSIS_TASK_TYPE,
+            }
+
+        _AUTO_BASELINE_REANALYSIS_COOLDOWN_KEYS.add(cooldown_key)
+
+    def runner(_task_id: str, report_progress) -> Dict[str, object]:
+        report_progress(
+            current=0,
+            total=2,
+            step_code=normalized_symbol,
+            step_status="analyzing",
+            message=f"{normalized_symbol} 盘中偏离触发，开始自动重分析基线...",
+        )
+        from batch_analysis_service import analyze_single_stock_for_batch
+
+        result = analyze_single_stock_for_batch(
+            symbol=normalized_symbol,
+            period=getattr(config, "DATA_PERIOD", "1y"),
+            enabled_analysts_config=dict(SmartMonitorEngine.BASELINE_ANALYSTS_CONFIG),
+            selected_model=selected_model,
+            selected_lightweight_model=selected_lightweight_model,
+            selected_reasoning_model=selected_reasoning_model,
+            save_to_global_history=True,
+            progress_callback=lambda current, total, message: report_progress(
+                current=1,
+                total=2,
+                step_code=normalized_symbol,
+                step_status="analyzing",
+                message=message,
+            ),
+            has_position=has_position,
+            account_name=account_name,
+            asset_id=asset_id,
+            portfolio_stock_id=portfolio_stock_id,
+        )
+        if not result.get("success"):
+            raise RuntimeError(result.get("error") or f"{normalized_symbol} 自动重分析失败")
+
+        sync_result = {}
+        sync_func = getattr(asset_service, "sync_managed_monitors_for_symbol", None)
+        if callable(sync_func):
+            sync_result = sync_func(normalized_symbol, account_name=account_name) or {}
+        report_progress(
+            current=2,
+            total=2,
+            step_code=normalized_symbol,
+            step_status="success",
+            message=f"{normalized_symbol} 自动重分析完成，已同步盯盘基线。",
+        )
+        return {
+            "mode": "auto_single",
+            "symbol": normalized_symbol,
+            "stock_name": stock_name or normalized_symbol,
+            "record_id": result.get("record_id"),
+            "saved_to_db": bool(result.get("saved_to_db")),
+            "trigger": trigger,
+            "baseline_sync": sync_result,
+        }
+
+    try:
+        task_id = portfolio_analysis_task_manager.start_task(
+            SMART_MONITOR_AUTO_BASELINE_REANALYSIS_SESSION_ID,
+            task_type=SMART_MONITOR_AUTO_BASELINE_REANALYSIS_TASK_TYPE,
+            label=f"盘中偏离自动重分析 {normalized_symbol}",
+            runner=runner,
+            metadata={
+                "mode": "auto_single",
+                "symbol": normalized_symbol,
+                "stock_name": stock_name or normalized_symbol,
+                "account_name": account_name,
+                "asset_id": asset_id,
+                "portfolio_stock_id": portfolio_stock_id,
+                "trading_date": trading_date,
+                "auto_baseline_reanalysis_cooldown_key": cooldown_key,
+                "trigger": trigger,
+            },
+        )
+    except Exception as exc:
+        with _AUTO_BASELINE_REANALYSIS_LOCK:
+            _AUTO_BASELINE_REANALYSIS_COOLDOWN_KEYS.discard(cooldown_key)
+        return {
+            "status": "enqueue_failed",
+            "submitted": False,
+            "error": str(exc),
+            "cooldown_key": cooldown_key,
+            "trading_date": trading_date,
+            "task_type": SMART_MONITOR_AUTO_BASELINE_REANALYSIS_TASK_TYPE,
+        }
+
+    return {
+        "status": "submitted",
+        "submitted": True,
+        "task_id": task_id,
+        "task_type": SMART_MONITOR_AUTO_BASELINE_REANALYSIS_TASK_TYPE,
+        "cooldown_key": cooldown_key,
+        "trading_date": trading_date,
+    }
 
 
 class SmartMonitorEngine:
@@ -83,6 +382,7 @@ class SmartMonitorEngine:
         )
         self.data_fetcher = SmartMonitorDataFetcher()
         self.db = SmartMonitorDB()
+        self.decision_auditor = SmartMonitorDecisionAuditor()
         self.notification = notification_service  # 使用主程序的通知服务
         self.lifecycle_service = lifecycle_service or investment_lifecycle_service
         
@@ -819,9 +1119,18 @@ class SmartMonitorEngine:
 
     def _prepare_market_structure_features(self, market_data: Dict[str, object]) -> Dict[str, object]:
         prepared = dict(market_data or {})
-        feature_beacons = self.llm_client._derive_feature_beacons(prepared)
+        derive_feature_beacons = getattr(self.llm_client, "_derive_feature_beacons", None)
+        if callable(derive_feature_beacons):
+            feature_beacons = derive_feature_beacons(prepared)
+        else:
+            existing_beacons = prepared.get("feature_beacons") if isinstance(prepared.get("feature_beacons"), list) else []
+            feature_beacons = [str(item).strip() for item in existing_beacons if str(item or "").strip()]
         prepared["feature_beacons"] = feature_beacons
-        trend_anchor_type, trend_anchor_value = self.llm_client._select_trend_anchor(prepared)
+        select_trend_anchor = getattr(self.llm_client, "_select_trend_anchor", None)
+        if callable(select_trend_anchor):
+            trend_anchor_type, trend_anchor_value = select_trend_anchor(prepared)
+        else:
+            trend_anchor_type, trend_anchor_value = "MA10", self._float_or_none(prepared.get("ma10"))
         prepared["trend_anchor_type"] = trend_anchor_type
         prepared["trend_anchor_value"] = trend_anchor_value
         return prepared
@@ -1326,6 +1635,25 @@ class SmartMonitorEngine:
             "upgraded_swing_type": str(current_decision.get("upgraded_swing_type") or "").strip() or None,
             "upgrade_reason": str(current_decision.get("upgrade_reason") or "").strip() or None,
             "feature_beacons": current_decision.get("feature_beacons") if isinstance(current_decision.get("feature_beacons"), list) else [],
+            "baseline_relation": str(current_decision.get("baseline_relation") or "").strip() or None,
+            "matched_baseline_conditions": (
+                current_decision.get("matched_baseline_conditions")
+                if isinstance(current_decision.get("matched_baseline_conditions"), list)
+                else []
+            ),
+            "unmet_baseline_conditions": (
+                current_decision.get("unmet_baseline_conditions")
+                if isinstance(current_decision.get("unmet_baseline_conditions"), list)
+                else []
+            ),
+            "baseline_conflict_score": _to_float(current_decision.get("baseline_conflict_score")),
+            "memory_evidence_ids": (
+                current_decision.get("memory_evidence_ids")
+                if isinstance(current_decision.get("memory_evidence_ids"), list)
+                else []
+            ),
+            "deviation_reason": str(current_decision.get("deviation_reason") or "").strip() or None,
+            "decision_state": str(current_decision.get("decision_state") or "").strip() or None,
         }
 
         previous_bias_text = str(previous_intraday.get("intraday_bias_text") or "").strip()
@@ -1461,6 +1789,414 @@ class SmartMonitorEngine:
             return normalize_strategy_context(latest_context)
 
         return normalize_strategy_context(provided_strategy_context) if provided_strategy_context else {}
+
+    @staticmethod
+    def _build_memory_recall_query(
+        *,
+        market_data: Optional[Dict],
+        strategy_context: Optional[Dict],
+    ) -> str:
+        market_data = market_data if isinstance(market_data, dict) else {}
+        strategy_context = strategy_context if isinstance(strategy_context, dict) else {}
+        intraday_context = market_data.get("intraday_context") if isinstance(market_data.get("intraday_context"), dict) else {}
+        parts = [
+            f"当前价 {market_data.get('current_price')}" if market_data.get("current_price") not in (None, "") else "",
+            f"涨跌幅 {market_data.get('change_pct')}%" if market_data.get("change_pct") not in (None, "") else "",
+            str(intraday_context.get("intraday_bias_text") or "").strip(),
+            "；".join(str(item).strip() for item in (intraday_context.get("intraday_signal_labels") or []) if str(item).strip())
+            if isinstance(intraday_context.get("intraday_signal_labels"), list)
+            else "",
+            str(strategy_context.get("rating") or "").strip(),
+            str(strategy_context.get("summary") or "").strip(),
+            "；".join(normalize_condition_list(strategy_context.get("entry_conditions"), max_items=3)),
+            "；".join(normalize_condition_list(strategy_context.get("exit_conditions"), max_items=3)),
+            "；".join(normalize_condition_list(strategy_context.get("invalidation_conditions"), max_items=3)),
+        ]
+        return " | ".join(part for part in parts if part)[:700]
+
+    def _assemble_intraday_memory_context(
+        self,
+        *,
+        stock_code: str,
+        market_data: Optional[Dict],
+        strategy_context: Optional[Dict],
+        has_position: bool = False,
+    ) -> Dict[str, object]:
+        stock_name = str((market_data or {}).get("name") or stock_code).strip() or stock_code
+        query = self._build_memory_recall_query(
+            market_data=market_data,
+            strategy_context=strategy_context,
+        )
+        try:
+            memory_context = agent_memory_service.assemble_memory_context(
+                stock_code=stock_code,
+                current_summary=query,
+                stock_name=stock_name,
+            )
+        except Exception as exc:
+            self.logger.warning("[%s] 盘中历史记忆召回失败: %s", stock_code, exc)
+            return {}
+
+        if not isinstance(memory_context, dict):
+            return {}
+        has_memory = any(
+            memory_context.get(key)
+            for key in ("long_term_profile", "working_memories", "recalled_facts")
+        )
+        if not has_memory:
+            return {}
+        return self._filter_intraday_memory_context(
+            memory_context=memory_context,
+            market_data=market_data,
+            strategy_context=strategy_context,
+            has_position=has_position,
+        )
+
+    @classmethod
+    def _filter_intraday_memory_context(
+        cls,
+        *,
+        memory_context: Dict[str, object],
+        market_data: Optional[Dict],
+        strategy_context: Optional[Dict],
+        has_position: bool,
+    ) -> Dict[str, object]:
+        filtered = dict(memory_context)
+        filtered["working_memories"] = list(memory_context.get("working_memories") or [])[:2]
+        facts = [fact for fact in (memory_context.get("recalled_facts") or []) if isinstance(fact, dict)]
+        if not facts:
+            filtered["recalled_facts"] = []
+            return filtered
+
+        market_data = market_data if isinstance(market_data, dict) else {}
+        strategy_context = strategy_context if isinstance(strategy_context, dict) else {}
+        current_price = cls._float_or_none(market_data.get("current_price"))
+        take_profit = cls._float_or_none(strategy_context.get("take_profit"))
+        stop_loss = cls._float_or_none(strategy_context.get("stop_loss"))
+        near_take_profit = bool(current_price is not None and take_profit is not None and current_price >= take_profit * 0.97)
+        near_stop_loss = bool(current_price is not None and stop_loss is not None and current_price <= stop_loss * 1.03)
+        intraday_context = market_data.get("intraday_context") if isinstance(market_data.get("intraday_context"), dict) else {}
+        intraday_text = " ".join(
+            str(item or "").strip()
+            for item in [
+                intraday_context.get("intraday_bias_text"),
+                *(intraday_context.get("intraday_signal_labels") if isinstance(intraday_context.get("intraday_signal_labels"), list) else []),
+                *(intraday_context.get("intraday_observations") if isinstance(intraday_context.get("intraday_observations"), list) else []),
+            ]
+            if str(item or "").strip()
+        )
+
+        scenario_keywords: List[str] = []
+        if has_position:
+            scenario_keywords.extend(["持有", "止盈", "止损", "减仓", "离场", "失效", "风控"])
+            if near_take_profit:
+                scenario_keywords.extend(["止盈", "锁盈", "兑现"])
+            if near_stop_loss:
+                scenario_keywords.extend(["止损", "破位", "失效", "风险"])
+        else:
+            scenario_keywords.extend(["进场", "买入", "建仓", "回踩", "突破", "追高"])
+        if any(keyword in intraday_text for keyword in ("追高", "冲高", "新高", "突破")):
+            scenario_keywords.extend(["追高", "假突破", "冲高回落", "突破"])
+        if any(keyword in intraday_text for keyword in ("回踩", "支撑", "企稳")):
+            scenario_keywords.extend(["回踩", "支撑", "企稳"])
+
+        def _score(fact: Dict[str, object]) -> tuple[float, float]:
+            content = str(fact.get("fact_content") or "")
+            tags = " ".join(str(tag) for tag in (fact.get("concept_tags") or []) if str(tag).strip())
+            haystack = f"{content} {tags}"
+            active_score = cls._float_or_none(fact.get("_active_score")) or cls._float_or_none(fact.get("importance_score")) or 0.0
+            scenario_score = sum(1 for keyword in scenario_keywords if keyword and keyword in haystack)
+            if str(fact.get("category") or "").strip().lower() in {"risk", "execution", "execution_result"}:
+                scenario_score += 1
+            return float(scenario_score), float(active_score)
+
+        ranked = sorted(facts, key=lambda item: (-_score(item)[0], -_score(item)[1], str(item.get("timestamp") or "")))
+        filtered["recalled_facts"] = ranked[:3]
+        return filtered
+
+    @staticmethod
+    def _derive_decision_state(decision: Dict[str, object], *, has_position: bool) -> str:
+        action = str(decision.get("action") or "").upper()
+        detail = str(decision.get("action_detail") or "").strip()
+        swing_mode = str(decision.get("swing_execution_mode") or "").strip().lower()
+        relation = str(decision.get("baseline_relation") or "").strip()
+        if relation == "invalidated":
+            return "EXIT_INVALIDATED"
+        if action == "BUY":
+            return "ADD_READY" if has_position else "ENTRY_READY"
+        if action == "SELL":
+            if detail == "清仓" or swing_mode == "defensive_exit":
+                return "EXIT_INVALIDATED"
+            if swing_mode == "proactive_trim":
+                return "TRIM_PROFIT"
+            return "DEFENSIVE_REDUCE"
+        if has_position:
+            return "HOLD_BASELINE" if relation in {"followed", "upgrade_requested"} else "WAIT"
+        return "WAIT"
+
+    @staticmethod
+    def _append_guardrail_reason(decision: Dict[str, object], message: str) -> None:
+        base = str(decision.get("reasoning") or "").strip()
+        if base:
+            if message not in base:
+                decision["reasoning"] = f"{base}\n\n补充说明：{message}"
+        else:
+            decision["reasoning"] = f"补充说明：{message}"
+
+    def _persist_intraday_outcome_memories(self, updated_outcomes: List[Dict[str, Any]]) -> int:
+        saved = 0
+        for item in updated_outcomes:
+            outcome = item.get("outcome_snapshot")
+            if not isinstance(outcome, dict):
+                continue
+            try:
+                fact_id = agent_memory_service.save_intraday_outcome_memory(
+                    stock_code=str(item.get("stock_code") or "").strip(),
+                    stock_name=str(item.get("stock_name") or item.get("stock_code") or "").strip(),
+                    decision_time=str(item.get("decision_time") or "").strip(),
+                    action=str(item.get("action") or "").strip(),
+                    decision_context=item.get("decision_context") if isinstance(item.get("decision_context"), dict) else {},
+                    outcome_snapshot=outcome,
+                )
+            except Exception as exc:
+                self.logger.warning("[%s] 盘中结果记忆写入失败: %s", item.get("stock_code"), exc)
+                continue
+            if fact_id:
+                saved += 1
+        return saved
+
+    def _backfill_recent_outcomes_after_decision(self, *, stock_code: str, account_name: str) -> Dict[str, Any]:
+        try:
+            result = self.db.backfill_ai_decision_outcomes(
+                stock_code=stock_code,
+                account_name=account_name,
+                limit=160,
+                horizon_days=21,
+            )
+        except Exception as exc:
+            self.logger.warning("[%s] 盘中结果回填失败: %s", stock_code, exc)
+            return {"updated": 0, "memory_saved": 0, "error": str(exc)}
+        saved = self._persist_intraday_outcome_memories(result.get("updated_outcomes") or [])
+        result["memory_saved"] = saved
+        if result.get("updated") or saved:
+            self.logger.info("[%s] 盘中结果回填完成: updated=%s memory=%s", stock_code, result.get("updated", 0), saved)
+        return result
+
+    @staticmethod
+    def _normalize_baseline_relation_value(value: object, *, has_baseline: bool) -> str:
+        text = str(value or "").strip().lower()
+        aliases = {
+            "followed": "followed",
+            "沿用": "followed",
+            "遵守": "followed",
+            "符合基线": "followed",
+            "partially_deviated": "partially_deviated",
+            "partial": "partially_deviated",
+            "partial_deviation": "partially_deviated",
+            "deviated": "partially_deviated",
+            "局部偏离": "partially_deviated",
+            "部分偏离": "partially_deviated",
+            "invalidated": "invalidated",
+            "失效": "invalidated",
+            "基线失效": "invalidated",
+            "upgrade_requested": "upgrade_requested",
+            "upgrade": "upgrade_requested",
+            "升级": "upgrade_requested",
+            "no_baseline": "no_baseline",
+            "无基线": "no_baseline",
+        }
+        normalized = aliases.get(text, "")
+        if normalized:
+            return normalized
+        return "followed" if has_baseline else "no_baseline"
+
+    @staticmethod
+    def _memory_evidence_ids(memory_context: Optional[Dict]) -> List[int]:
+        if not isinstance(memory_context, dict):
+            return []
+        ids: List[int] = []
+        for item in memory_context.get("recalled_facts") or []:
+            if not isinstance(item, dict):
+                continue
+            try:
+                fact_id = int(item.get("id"))
+            except (TypeError, ValueError):
+                continue
+            if fact_id not in ids:
+                ids.append(fact_id)
+            if len(ids) >= 8:
+                break
+        return ids
+
+    @staticmethod
+    def _merge_condition_labels(existing: object, additions: List[str], *, max_items: int = 8) -> List[str]:
+        merged = normalize_condition_list(existing, max_items=max_items)
+        for item in additions:
+            text = str(item or "").strip()
+            if text and text not in merged:
+                merged.append(text)
+            if len(merged) >= max_items:
+                break
+        return merged
+
+    def _apply_baseline_metadata_guardrails(
+        self,
+        *,
+        decision: Dict[str, object],
+        strategy_context: Optional[Dict],
+        market_data: Optional[Dict],
+        has_position: bool,
+        memory_context: Optional[Dict] = None,
+    ) -> Dict[str, object]:
+        has_baseline = isinstance(strategy_context, dict) and bool(strategy_context)
+        if not has_baseline:
+            decision["baseline_relation"] = "no_baseline"
+            decision["matched_baseline_conditions"] = normalize_condition_list(decision.get("matched_baseline_conditions"))
+            decision["unmet_baseline_conditions"] = normalize_condition_list(decision.get("unmet_baseline_conditions"))
+            decision["baseline_conflict_score"] = int(self._float_or_none(decision.get("baseline_conflict_score")) or 0)
+            decision["memory_evidence_ids"] = self._memory_evidence_ids(memory_context) or (
+                decision.get("memory_evidence_ids") if isinstance(decision.get("memory_evidence_ids"), list) else []
+            )
+            decision["deviation_reason"] = str(decision.get("deviation_reason") or "").strip()
+            return decision
+
+        action = str(decision.get("action") or "").upper()
+        reasoning = str(decision.get("reasoning") or "").strip()
+        execution_conditions = self._extract_execution_conditions_from_strategy_context(strategy_context)
+        matched: List[str] = []
+        unmet: List[str] = []
+        invalidation_matched = False
+
+        if action == "BUY":
+            entry_conditions = execution_conditions["entry_conditions"]
+            if entry_conditions:
+                if self._reasoning_matches_execution_conditions(reasoning, entry_conditions, action="BUY"):
+                    matched.extend(entry_conditions[:3])
+                else:
+                    unmet.extend(entry_conditions[:3])
+        elif action == "SELL" and has_position:
+            exit_conditions = execution_conditions["exit_conditions"]
+            invalidation_conditions = execution_conditions["invalidation_conditions"]
+            combined_exit = exit_conditions + invalidation_conditions
+            if combined_exit:
+                if self._reasoning_matches_execution_conditions(reasoning, combined_exit, action="SELL"):
+                    matched.extend(combined_exit[:3])
+                    invalidation_matched = bool(
+                        invalidation_conditions
+                        and self._reasoning_matches_execution_conditions(reasoning, invalidation_conditions, action="SELL")
+                    )
+                else:
+                    unmet.extend(combined_exit[:3])
+
+            current_price = self._float_or_none((market_data or {}).get("current_price"))
+            plan_levels = self._extract_monitor_levels_from_strategy_context(strategy_context)
+            if current_price is not None and plan_levels:
+                take_profit = self._float_or_none(plan_levels.get("take_profit"))
+                stop_loss = self._float_or_none(plan_levels.get("stop_loss"))
+                if stop_loss is not None and current_price <= stop_loss:
+                    matched.append(f"价格触发基线止损位 {stop_loss:.3f}")
+                    invalidation_matched = True
+                if take_profit is not None and current_price >= take_profit:
+                    matched.append(f"价格进入基线止盈区 {take_profit:.3f}")
+        elif action == "HOLD":
+            hold_conditions = execution_conditions["hold_conditions"]
+            if hold_conditions and self._reasoning_matches_execution_conditions(reasoning, hold_conditions, action="HOLD"):
+                matched.extend(hold_conditions[:3])
+            if "未明确确认" in reasoning or "待确认条件" in reasoning:
+                candidate_unmet = (
+                    execution_conditions["entry_conditions"]
+                    if not has_position
+                    else execution_conditions["entry_conditions"]
+                    + execution_conditions["exit_conditions"]
+                    + execution_conditions["invalidation_conditions"]
+                )
+                unmet.extend(candidate_unmet[:3])
+
+        downgraded_by_guardrail = any(
+            marker in reasoning
+            for marker in (
+                "已阻断",
+                "降级为HOLD",
+                "盘中规则禁止",
+                "不执行脱离计划",
+                "未明确确认这些条件已满足",
+            )
+        )
+        relation = self._normalize_baseline_relation_value(
+            decision.get("baseline_relation"),
+            has_baseline=True,
+        )
+        if relation == "followed":
+            if bool(decision.get("swing_type_upgrade")):
+                relation = "upgrade_requested"
+            elif invalidation_matched:
+                relation = "invalidated"
+            elif downgraded_by_guardrail or unmet:
+                relation = "partially_deviated"
+        strong_invalidation_markers = (
+            "基线失效", "失效条件", "触发止损", "跌破", "破位", "放量转弱",
+            "承接恶化", "明确利空", "重大利空", "风险快速放大",
+        )
+        strong_invalidation = invalidation_matched or any(marker in reasoning for marker in strong_invalidation_markers)
+        if relation == "invalidated" and not strong_invalidation:
+            relation = "partially_deviated"
+            if action == "SELL":
+                decision["action"] = "HOLD"
+                decision["action_detail"] = "持有" if has_position else "观望"
+                decision["action_ratio_pct"] = None
+                self._append_guardrail_reason(
+                    decision,
+                    "基线失效证据未通过强校验，未命中止损/失效条件或明确结构破坏，已降级为HOLD。",
+                )
+                action = "HOLD"
+        decision["baseline_relation"] = relation
+        decision["matched_baseline_conditions"] = self._merge_condition_labels(
+            decision.get("matched_baseline_conditions"),
+            matched,
+        )
+        decision["unmet_baseline_conditions"] = self._merge_condition_labels(
+            decision.get("unmet_baseline_conditions"),
+            unmet,
+        )
+
+        explicit_score = self._float_or_none(decision.get("baseline_conflict_score"))
+        if explicit_score is None or explicit_score <= 0:
+            if relation == "invalidated":
+                explicit_score = 90
+            elif relation == "partially_deviated":
+                explicit_score = 55
+            elif relation == "upgrade_requested":
+                explicit_score = 35
+            else:
+                explicit_score = 10
+            explicit_score += min(20, len(decision["unmet_baseline_conditions"]) * 5)
+        decision["baseline_conflict_score"] = int(max(0, min(100, round(explicit_score))))
+
+        memory_ids = self._memory_evidence_ids(memory_context)
+        existing_memory_ids = decision.get("memory_evidence_ids") if isinstance(decision.get("memory_evidence_ids"), list) else []
+        merged_memory_ids: List[int] = []
+        for raw_id in [*existing_memory_ids, *memory_ids]:
+            try:
+                fact_id = int(raw_id)
+            except (TypeError, ValueError):
+                continue
+            if fact_id not in merged_memory_ids:
+                merged_memory_ids.append(fact_id)
+            if len(merged_memory_ids) >= 8:
+                break
+        decision["memory_evidence_ids"] = merged_memory_ids
+
+        deviation_reason = str(decision.get("deviation_reason") or "").strip()
+        if not deviation_reason and relation in {"partially_deviated", "invalidated", "upgrade_requested"}:
+            if relation == "partially_deviated":
+                deviation_reason = "盘中证据或结构化条件与模型原始动作存在偏离，已按战略基线守卫收敛执行。"
+            elif relation == "invalidated":
+                deviation_reason = "盘中风险触发了基线止损、离场或失效逻辑。"
+            else:
+                deviation_reason = "盘中趋势信标支持从微波段升级为标准波段的讨论。"
+        decision["deviation_reason"] = deviation_reason
+        decision["decision_state"] = self._derive_decision_state(decision, has_position=has_position)
+        return decision
 
     def _find_ai_task_item(
         self,
@@ -1830,6 +2566,20 @@ class SmartMonitorEngine:
                     strategy_context.get("analysis_scope"),
                     strategy_context.get("analysis_date"),
                 )
+            memory_context = self._assemble_intraday_memory_context(
+                stock_code=stock_code,
+                market_data=market_data,
+                strategy_context=strategy_context,
+                has_position=has_position,
+            )
+            if memory_context:
+                self.logger.info(
+                    "[%s] 盘中历史记忆已召回: profile=%s working=%s facts=%s",
+                    stock_code,
+                    bool(memory_context.get("long_term_profile")),
+                    len(memory_context.get("working_memories") or []),
+                    len(memory_context.get("recalled_facts") or []),
+                )
             latest_decision = self.db.get_latest_ai_decision_for_context(
                 stock_code=stock_code,
                 account_name=account_name,
@@ -1853,6 +2603,7 @@ class SmartMonitorEngine:
                 asset_id=asset_id,
                 portfolio_stock_id=portfolio_stock_id,
                 strategy_context=strategy_context,
+                memory_context=memory_context,
                 risk_profile=risk_profile,
             )
 
@@ -1908,6 +2659,27 @@ class SmartMonitorEngine:
                 account_info=account_info,
                 risk_profile=risk_profile,
             )
+            decision = self._apply_baseline_metadata_guardrails(
+                decision=decision,
+                strategy_context=strategy_context,
+                market_data=market_data,
+                has_position=has_position,
+                memory_context=memory_context,
+            )
+            auditor = getattr(self, "decision_auditor", None) or SmartMonitorDecisionAuditor()
+            decision, audit_context = auditor.audit(
+                decision=decision,
+                strategy_context=strategy_context,
+                market_data=market_data,
+                has_position=has_position,
+                account_info=account_info,
+                risk_profile=risk_profile,
+                memory_context=memory_context,
+                can_sell_today=can_sell_today,
+                session_info=session_info,
+                notify=notify,
+                trading_hours_only=trading_hours_only,
+            )
             t1_sell_blocked = original_action == "SELL" and str(decision.get("action") or "").upper() != "SELL"
             
             self.logger.info(f"[{stock_code}] AI决策: {decision['action']} "
@@ -1921,6 +2693,64 @@ class SmartMonitorEngine:
             thresholds_changed = bool(change_flags["thresholds_changed"])
             decision_changed = bool(change_flags["decision_changed"])
             actionable_signal = str(decision.get("action", "")).upper() in {"BUY", "SELL"}
+            auto_reanalysis_trigger = evaluate_intraday_baseline_reanalysis_trigger(
+                decision=decision,
+                audit_context=audit_context,
+                strategy_context=strategy_context,
+                market_data=market_data,
+                has_position=has_position,
+            )
+            auto_reanalysis_context = None
+            if auto_reanalysis_trigger:
+                auto_reanalysis_enqueue = enqueue_single_symbol_baseline_reanalysis(
+                    stock_code=stock_code,
+                    stock_name=market_data.get("name") or stock_code,
+                    account_name=account_name,
+                    has_position=has_position,
+                    asset_id=asset_id,
+                    portfolio_stock_id=portfolio_stock_id,
+                    market_data=market_data,
+                    trigger=auto_reanalysis_trigger,
+                    asset_service=getattr(self.lifecycle_service, "asset_service", None),
+                    selected_model=self.model,
+                    selected_lightweight_model=self.lightweight_model,
+                    selected_reasoning_model=self.reasoning_model,
+                )
+                auto_reanalysis_context = {
+                    **auto_reanalysis_trigger,
+                    **auto_reanalysis_enqueue,
+                }
+                self.logger.info(
+                    "[%s] 盘中偏离自动基线重分析: status=%s task_id=%s reason=%s",
+                    stock_code,
+                    auto_reanalysis_context.get("status"),
+                    auto_reanalysis_context.get("task_id"),
+                    auto_reanalysis_context.get("reason_code"),
+                )
+
+            decision_context_payload = self._build_decision_context_delta(
+                latest_decision=latest_decision,
+                current_decision=decision,
+                market_data=market_data,
+                change_flags=change_flags,
+            ) | {
+                "decision_quality_score": audit_context.get("decision_quality_score"),
+                "quality_flags": audit_context.get("quality_flags") or [],
+                "veto_reason": audit_context.get("veto_reason") or "",
+                "original_action": audit_context.get("original_action"),
+                "final_action": audit_context.get("final_action"),
+                "data_freshness_state": audit_context.get("data_freshness_state"),
+                "baseline_quality_snapshot": audit_context.get("baseline_quality_snapshot") or {},
+                "decision_audit": audit_context,
+            } | (
+                {"atr_guardrail_clamped": atr_guardrail_info}
+                if atr_guardrail_info
+                else {}
+            ) | (
+                {"auto_baseline_reanalysis": auto_reanalysis_context}
+                if auto_reanalysis_context
+                else {}
+            )
 
             # 6. 保存AI决策到数据库
             decision_id = self.db.save_ai_decision({
@@ -1953,16 +2783,7 @@ class SmartMonitorEngine:
                 'risk_level': decision.get('risk_level'),
                 'key_price_levels': decision.get('key_price_levels', {}),
                 'monitor_levels': decision.get('monitor_levels', {}),
-                'decision_context': self._build_decision_context_delta(
-                    latest_decision=latest_decision,
-                    current_decision=decision,
-                    market_data=market_data,
-                    change_flags=change_flags,
-                ) | (
-                    {"atr_guardrail_clamped": atr_guardrail_info}
-                    if atr_guardrail_info
-                    else {}
-                ),
+                'decision_context': decision_context_payload,
                 'market_data': market_data,
                 'account_info': account_info,
                 'execution_mode': 'manual_only',
@@ -1990,6 +2811,11 @@ class SmartMonitorEngine:
                     portfolio_stock_id=portfolio_stock_id,
                     strategy_context=strategy_context,
                 )
+
+            outcome_backfill_result = self._backfill_recent_outcomes_after_decision(
+                stock_code=stock_code,
+                account_name=account_name,
+            )
 
             # 7. 手工执行模式下只生成待处理动作
             execution_result = None
@@ -2036,12 +2862,14 @@ class SmartMonitorEngine:
                 'decision_changed': decision_changed,
                 'action_changed': action_changed,
                 'thresholds_changed': thresholds_changed,
+                'outcome_backfill': outcome_backfill_result,
                 'execution_result': execution_result,
                 'pending_action': pending_action,
                 'account_name': account_name,
                 'asset_id': asset_id,
                 'portfolio_stock_id': portfolio_stock_id,
                 'strategy_context': strategy_context or {},
+                'memory_context': memory_context or {},
                 'final_decision': {
                     'rating': decision.get('rating'),
                     'confidence_level': decision.get('confidence_level'),

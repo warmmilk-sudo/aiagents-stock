@@ -577,15 +577,23 @@ class StockAnalysisAgents:
         indicators: Dict,
         strategy_context: Optional[Dict[str, Any]] = None,
         is_initial_holding_analysis: bool = False,
+        memory_context: Dict = None,
     ) -> Dict[str, Any]:
         """制定最终投资决策"""
         print("📋 正在制定最终投资决策...")
+        memory_prompt_block = ""
+        if memory_context:
+            from agent_memory_service import agent_memory_service
+            memory_prompt_block = agent_memory_service.format_memory_prompt_block(memory_context)
+            if len(memory_prompt_block) > 3000:
+                memory_prompt_block = f"{memory_prompt_block[:3000].rstrip()}\n\n[历史记忆已截断]"
         decision = self.llm_client.final_decision(
             discussion_result,
             stock_info,
             indicators,
             strategy_context=strategy_context,
             is_initial_holding_analysis=is_initial_holding_analysis,
+            memory_prompt_block=memory_prompt_block,
         )
 
         print("✅ 最终投资决策完成")

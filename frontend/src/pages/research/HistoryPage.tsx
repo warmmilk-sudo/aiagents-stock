@@ -5,10 +5,12 @@ import { PageFeedback } from "../../components/common/PageFeedback";
 import { PageFrame } from "../../components/common/PageFrame";
 import { MarkdownReport } from "../../components/research/MarkdownReport";
 import { usePageFeedback } from "../../hooks/usePageFeedback";
+import { useSelectedModels } from "../../hooks/useSelectedModels";
 import { markAnalysisViewed } from "../../lib/analysisReadState";
 import { apiFetch, apiFetchCached, buildQuery } from "../../lib/api";
 import { formatDateTime } from "../../lib/datetime";
 import { useArchiveStore } from "../../stores/archiveStore";
+import { useDeepAnalysisStore } from "../../stores/deepAnalysisStore";
 import styles from "../ConsolePage.module.scss";
 
 interface ActionPayload {
@@ -83,7 +85,7 @@ interface FactualMemory {
 interface MemoryArchive {
   stock_code: string;
   long_term_profile: { macro_profile: string; last_updated: string } | null;
-  working_memories: { analysis_date: string; decision_summary: string }[];
+  working_memories: { analysis_date: string; decision_summary: string; strategy?: Record<string, unknown> }[];
   factual_memories: FactualMemory[];
   summary: { working_count: number; factual_count: number; has_long_term_profile: boolean };
 }
@@ -154,6 +156,7 @@ function sanitizeMemoryArchive(value: unknown): MemoryArchive | null {
   const workingMemories = asObjectArray<Record<string, unknown>>(record.working_memories).map((item) => ({
     analysis_date: String(item.analysis_date || ""),
     decision_summary: String(item.decision_summary || ""),
+    strategy: asRecord(item.strategy),
   }));
   const factualMemories = asObjectArray<Record<string, unknown>>(record.factual_memories).map((item) => ({
     id: Number(item.id) || 0,
@@ -315,6 +318,13 @@ function getRatingLabel(record: { final_decision?: Record<string, unknown>; deci
     asRecord(record.final_decision).rating || record.decision_label || record.latest_decision_label,
     "暂无",
   );
+}
+
+function formatRecentDecisionLine(memory: { analysis_date: string; decision_summary: string; strategy?: Record<string, unknown> }): string {
+  const summary = String(memory.decision_summary || "");
+  const summaryRating = summary.match(/评级[:：]\s*([^|｜\s]+)/)?.[1];
+  const rating = formatMetric(asRecord(memory.strategy).rating || summaryRating, "未知");
+  return `${formatDateTime(memory.analysis_date, "暂无时间")}: 评级: ${rating}`;
 }
 
 function getArchiveCategoryLabel(item: { is_in_portfolio?: boolean; linked_asset_status_label?: string }): ArchiveCategory {
@@ -492,7 +502,7 @@ function StockMemoryPanel({
               {archive.working_memories.length > 0 ? (
                 <ul className={styles.historyListSummary} style={{ paddingLeft: '1.2rem', margin: 0, textAlign: "justify" }}>
                   {archive.working_memories.map((m, i) => (
-                    <li key={i}><span className={styles.muted}>{formatDateTime(m.analysis_date)}</span>: {m.decision_summary}</li>
+                    <li key={i}>{formatRecentDecisionLine(m)}</li>
                   ))}
                 </ul>
               ) : <div className={styles.muted}>暂无近期工作记忆。</div>}
@@ -576,6 +586,8 @@ function RawReportWorkspace({
 }
 
 export function StockArchiveContent({ embedded = false, initialSymbol = "", onBackToHub }: StockArchiveContentProps = {}) {
+  const { lightweightModel, reasoningModel } = useSelectedModels();
+  const analysts = useDeepAnalysisStore((state) => state.analysts);
   const [searchParams, setSearchParams] = useSearchParams();
   const initialSelectedSymbol = initialSymbol || searchParams.get("symbol") || "";
   const initialSelectedRecordId = Number(searchParams.get("recordId") || 0);
@@ -616,6 +628,7 @@ export function StockArchiveContent({ embedded = false, initialSymbol = "", onBa
   const [archiveCategory, setArchiveCategory] = useState<ArchiveCategory>("持仓");
   const [searchTerm, setSearchTerm] = useState("");
   const [deletingRecordId, setDeletingRecordId] = useState<number | null>(null);
+  const [submittingAnalysis, setSubmittingAnalysis] = useState(false);
   const { message, error, clear, showError, showMessage } = usePageFeedback();
 
   // Navigation state derived from URL
@@ -837,6 +850,36 @@ export function StockArchiveContent({ embedded = false, initialSymbol = "", onBa
     clear();
   };
 
+  const handleAnalyzeSelectedStock = async () => {
+    if (!selectedSymbol || submittingAnalysis) {
+      return;
+    }
+    clear();
+    setSubmittingAnalysis(true);
+    try {
+      await apiFetch<{ task_id: string }>("/api/analysis/tasks", {
+        method: "POST",
+        body: JSON.stringify({
+          stock_input: selectedSymbol,
+          batch_mode: "顺序分析",
+          max_workers: 1,
+          analysts,
+          lightweight_model: lightweightModel || undefined,
+          reasoning_model: reasoningModel || undefined,
+        }),
+      });
+      clearSummaryCache();
+      clearProfileCache(selectedSymbol);
+      clearDetailCache();
+      showMessage(`已提交 ${selectedSymbol} 的深度分析任务`);
+      setSearchParams({ section: "analysis", symbol: selectedSymbol });
+    } catch (requestError) {
+      showError(requestError instanceof Error ? requestError.message : "再次分析失败");
+    } finally {
+      setSubmittingAnalysis(false);
+    }
+  };
+
   const handleDelete = async (recordId: number) => {
     if (deletingRecordId === recordId) {
       return;
@@ -959,7 +1002,17 @@ export function StockArchiveContent({ embedded = false, initialSymbol = "", onBa
                     {embedded ? "返回投研中心" : "返回所有股票"}
                   </button>
                 </div>
-                <h2 style={{ margin: 0, textAlign: "center" }}>{stockRecords[0]?.stock_name || "加载中..."} ({selectedSymbol}) 个股档案</h2>
+                <div className={styles.historyRecordTop} style={{ alignItems: "center" }}>
+                  <h2 style={{ margin: 0 }}>{stockRecords[0]?.stock_name || "加载中..."} ({selectedSymbol}) 个股档案</h2>
+                  <button
+                    className={styles.primaryButton}
+                    disabled={submittingAnalysis}
+                    onClick={() => void handleAnalyzeSelectedStock()}
+                    type="button"
+                  >
+                    {submittingAnalysis ? "提交中..." : "再次分析"}
+                  </button>
+                </div>
               </div>
             </section>
 

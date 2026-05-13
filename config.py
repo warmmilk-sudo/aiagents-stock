@@ -89,6 +89,7 @@ LLM_DEFAULT_TEMPERATURE = _clamp_float(_safe_float_env("LLM_DEFAULT_TEMPERATURE"
 LLM_FACTUAL_TEMPERATURE = _clamp_float(_safe_float_env("LLM_FACTUAL_TEMPERATURE", 0.1), 0.0, 2.0)
 LLM_DEFAULT_TOP_P = _clamp_float(_safe_float_env("LLM_DEFAULT_TOP_P", 0.85), 0.01, 1.0)
 LLM_MODEL_SAMPLING_CONFIG = _parse_json_object_env("LLM_MODEL_SAMPLING_CONFIG")
+LLM_MODEL_API_NAME_ALIASES = _parse_json_object_env("LLM_MODEL_API_NAME_ALIASES")
 ANALYSIS_TASK_TIMEOUT_SECONDS = max(
     LLM_API_TIMEOUT_SECONDS + 120,
     _safe_int_env("ANALYSIS_TASK_TIMEOUT_SECONDS", 600),
@@ -103,12 +104,19 @@ MODEL_CONFIG_ENV_BY_NAME = {
 }
 MODEL_API_NAME_BY_CONFIG_ENV = {
     "VOICE_CONFIG": {
-        "doubao-2-0-mini": "doubao-seed-2-0-mini-260215",
-        "doubao-2-0-lite": "doubao-seed-2-0-lite-260215",
+        "doubao-2-0-mini": _safe_str_env("DOUBAO_2_0_MINI_API_NAME", "doubao-seed-2-0-mini-260215"),
+        "doubao-2-0-lite": _safe_str_env("DOUBAO_2_0_LITE_API_NAME", "doubao-seed-2-0-lite-260215"),
         "deepseek-v3-2": "deepseek-v3-2-251201",
-        "doubao-2-0-pro": "doubao-seed-2-0-pro-260215",
+        "doubao-2-0-pro": _safe_str_env("DOUBAO_2_0_PRO_API_NAME", "doubao-seed-2-0-pro-260215"),
     },
 }
+for _alias, _api_name in LLM_MODEL_API_NAME_ALIASES.items():
+    _alias_text = str(_alias or "").strip()
+    _api_name_text = str(_api_name or "").strip()
+    if _alias_text and _api_name_text:
+        _config_key = MODEL_CONFIG_ENV_BY_NAME.get(_alias_text, "VOICE_CONFIG")
+        MODEL_CONFIG_ENV_BY_NAME.setdefault(_alias_text, _config_key)
+        MODEL_API_NAME_BY_CONFIG_ENV.setdefault(_config_key, {})[_alias_text] = _api_name_text
 SUPPORTED_LLM_MODEL_NAMES = tuple(MODEL_CONFIG_ENV_BY_NAME.keys())
 
 LIGHTWEIGHT_MODEL_NAME = _safe_str_env("LIGHTWEIGHT_MODEL_NAME", "gemini-3-flash")
@@ -203,9 +211,6 @@ def get_model_api_name(
 
     config_key = get_model_config_env_key(normalized)
     if not config_key:
-        return normalized
-
-    if not all(get_model_api_credentials(normalized, overrides)):
         return normalized
 
     return MODEL_API_NAME_BY_CONFIG_ENV.get(config_key, {}).get(normalized, normalized)

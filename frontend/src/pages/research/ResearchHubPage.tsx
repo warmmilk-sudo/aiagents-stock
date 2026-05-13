@@ -12,6 +12,7 @@ import { useSelectedModels } from "../../hooks/useSelectedModels";
 import { getViewedAnalysisId, isAnalysisUnread, markAnalysisViewed } from "../../lib/analysisReadState";
 import { ApiRequestError, apiFetch, apiFetchCached, buildQuery } from "../../lib/api";
 import { formatDateTime } from "../../lib/datetime";
+import { useArchiveStore } from "../../stores/archiveStore";
 import { useResearchStore, type ResearchHubPageCache } from "../../stores/researchStore";
 import { DeepAnalysisPage } from "./DeepAnalysisPage";
 import { PortfolioPage } from "../investment/PortfolioPage";
@@ -300,6 +301,9 @@ export function ResearchHubPage() {
   const cachedPage = useResearchStore((state) => state.hubPageCache);
   const setHubPageCache = useResearchStore((state) => state.setHubPageCache);
   const clearHubPageCache = useResearchStore((state) => state.clearHubPageCache);
+  const clearArchiveSummaryCache = useArchiveStore((state) => state.clearSummaryCache);
+  const clearArchiveProfileCache = useArchiveStore((state) => state.clearProfileCache);
+  const clearArchiveDetailCache = useArchiveStore((state) => state.clearDetailCache);
   const initialCachedPage = useResearchStore.getState().hubPageCache;
   const archiveSymbol = searchParams.get("symbol") || "";
   const archiveRecordId = searchParams.get("recordId") || "";
@@ -900,6 +904,9 @@ export function ResearchHubPage() {
                 startOnly
                 onAnalysisSettled={() => {
                   clearHubPageCache();
+                  clearArchiveSummaryCache();
+                  clearArchiveProfileCache(archiveSymbol || undefined);
+                  clearArchiveDetailCache();
                   void loadAssets({ background: true }).catch(() => undefined);
                 }}
               />

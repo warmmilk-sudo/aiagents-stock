@@ -12,6 +12,7 @@ from backend.dto import (
     SmartMonitorAccountRiskConfigRequest,
     SmartMonitorAnalyzeRequest,
     SmartMonitorConfigRequest,
+    SmartMonitorDecisionFeedbackRequest,
     SmartMonitorRunOnceRequest,
     SmartMonitorRuntimeConfigRequest,
     SmartMonitorTaskRequest,
@@ -228,6 +229,21 @@ def get_decision_summary(
     limit: int = 120,
 ) -> dict:
     return success_payload(services.get_smart_monitor_decision_summary(limit=limit))
+
+
+@router.post("/decisions/{decision_id}/feedback")
+def record_decision_feedback(
+    request: Request,
+    decision_id: int,
+    payload: SmartMonitorDecisionFeedbackRequest,
+) -> dict:
+    require_session(request)
+    if not services.record_smart_monitor_decision_feedback(
+        decision_id,
+        payload.model_dump(),
+    ):
+        raise ApiError(404, "未找到可反馈的智能盯盘决策", error_code="smart_monitor_decision_not_found")
+    return success_payload({"decision_id": decision_id}, message="决策反馈已记录")
 
 
 @router.get("/trades")

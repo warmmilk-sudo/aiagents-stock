@@ -475,7 +475,20 @@ def _normalize_market_snapshot(data_summary: Any) -> dict[str, Any] | None:
     sectors = _as_dict(payload.get("sectors"))
     concepts = _as_dict(payload.get("concepts"))
     market_overview = _as_dict(payload.get("market_overview"))
-    if not sectors and not concepts and not market_overview and not payload.get("cache_warning"):
+    fund_flow = _as_dict(payload.get("sector_fund_flow"))
+    north_flow = _as_dict(payload.get("north_flow"))
+    macro_data = _as_dict(payload.get("macro_data"))
+    news_items = _as_list(payload.get("news"))
+    if (
+        not sectors
+        and not concepts
+        and not market_overview
+        and not fund_flow
+        and not north_flow
+        and not macro_data
+        and not news_items
+        and not payload.get("cache_warning")
+    ):
         return None
 
     def _top_board_items(board_payload: dict[str, Any], limit: int = 10) -> list[dict[str, Any]]:
@@ -497,15 +510,65 @@ def _normalize_market_snapshot(data_summary: Any) -> dict[str, Any] | None:
         items.sort(key=lambda item: item.get("change_pct", 0.0), reverse=True)
         return items[:limit]
 
+    def _top_fund_items(flow_payload: dict[str, Any], *, reverse: bool, limit: int = 10) -> list[dict[str, Any]]:
+        raw_items = _as_list(flow_payload.get("today"))
+        items: list[dict[str, Any]] = []
+        for item in raw_items:
+            info = _as_dict(item)
+            if not info:
+                continue
+            items.append(
+                {
+                    "sector": _normalize_text(info.get("sector"), allow_english_only=True),
+                    "source_type": _normalize_text(info.get("source_type"), fallback="", allow_english_only=True),
+                    "main_net_inflow": _normalize_number(info.get("main_net_inflow"), 0.0),
+                    "main_net_inflow_pct": _normalize_number(info.get("main_net_inflow_pct"), 0.0),
+                    "change_pct": _normalize_number(info.get("change_pct"), 0.0),
+                }
+            )
+        items.sort(key=lambda item: item.get("main_net_inflow", 0.0), reverse=reverse)
+        return items[:limit]
+
+    def _top_news(items_payload: list[Any], limit: int = 8) -> list[dict[str, Any]]:
+        items: list[dict[str, Any]] = []
+        for item in items_payload:
+            info = _as_dict(item)
+            if not info:
+                continue
+            items.append(
+                {
+                    "title": _normalize_text(info.get("title"), allow_english_only=True),
+                    "source": _normalize_text(info.get("source"), fallback="", allow_english_only=True),
+                    "publish_time": _normalize_text(info.get("publish_time") or info.get("news_date"), fallback="", allow_english_only=True),
+                    "related_sectors": [
+                        _normalize_text(value, allow_english_only=True)
+                        for value in _as_list(info.get("related_sectors"))[:5]
+                    ],
+                    "sentiment_score": _normalize_number(info.get("sentiment_score"), 0.0),
+                    "importance_score": _normalize_number(info.get("importance_score"), 0.0),
+                }
+            )
+        items.sort(key=lambda item: item.get("importance_score", 0.0), reverse=True)
+        return items[:limit]
+
     return {
         "from_cache": bool(payload.get("from_cache")),
         "cache_warning": _normalize_text(payload.get("cache_warning"), fallback="", allow_english_only=True),
         "data_timestamp": _normalize_text(payload.get("data_timestamp"), fallback="", allow_english_only=True),
+        "fetch_timestamp": _normalize_text(payload.get("fetch_timestamp"), fallback="", allow_english_only=True),
+        "source_trade_date": _normalize_text(payload.get("source_trade_date"), fallback="", allow_english_only=True),
         "market_overview": market_overview,
         "sectors_count": len(sectors),
         "concepts_count": len(concepts),
         "top_sectors": _top_board_items(sectors),
         "top_concepts": _top_board_items(concepts),
+        "fund_flow_count": len(_as_list(fund_flow.get("today"))),
+        "top_fund_inflows": _top_fund_items(fund_flow, reverse=True),
+        "top_fund_outflows": _top_fund_items(fund_flow, reverse=False),
+        "north_flow": north_flow,
+        "macro_snapshot_count": len(_as_dict(macro_data.get("macro_snapshot"))),
+        "news_count": len(news_items),
+        "top_news": _top_news(news_items),
     }
 
 
@@ -575,6 +638,16 @@ def normalize_sector_strategy_result(
         ),
         "data_timestamp": _normalize_text(
             _first_non_empty(cache_meta.get("data_timestamp"), resolved_data_summary.get("data_timestamp")),
+            fallback="",
+            allow_english_only=True,
+        ),
+        "source_trade_date": _normalize_text(
+            resolved_data_summary.get("source_trade_date"),
+            fallback="",
+            allow_english_only=True,
+        ),
+        "fetch_timestamp": _normalize_text(
+            resolved_data_summary.get("fetch_timestamp"),
             fallback="",
             allow_english_only=True,
         ),

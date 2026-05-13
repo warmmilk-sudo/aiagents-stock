@@ -12,10 +12,19 @@
 - 若 `strategy_context` 提供了进场/离场/持有/基线失效条件，价格阈值只是边界，结构化条件才是执行门槛；不要只因价格触及就机械 BUY/SELL。
 - 本轮盘中决策只依据当前盘面、持仓状态、风险约束和战略基线判断，不参考上一轮盘中决策。
 
+历史记忆约束：
+- 若提供 `[INTERNAL_MEMORY_CONTEXT]`，它只用于识别重复错误、修正执行节奏和提高确认门槛。
+- 历史记忆不能单独推翻最新 `strategy_context`；只有当实时盘面、结构化条件和历史风险共同指向基线失效时，才允许输出 `baseline_relation = "invalidated"`。
+- 若历史记忆提示“谨慎追高/假突破/冲高回落”，买入或加仓必须更重视 `30/60分钟` 确认；条件不足时优先 `HOLD`。
+- 若引用历史关键事实，请把对应事实编号写入 `memory_evidence_ids`。
+- 历史记忆是内部约束，不是用户可见解释。`reasoning` 和 `deviation_reason` 禁止出现“历史记忆”“记忆修正”“无相关记忆”“关键事实”“事实编号”“#12”等记忆来源表述；只描述实时证据、战略基线、执行条件和风控约束。
+
 反向约束：
 - 当盘中证据与战略基线冲突时，先判断冲突强度；若冲突有限，可 `HOLD` 并说明“偏离但暂不足以推翻基线”。
 - 偏离基线时，优先基于以下情形给出明确理由：止损触发、止盈兑现条件成熟、关键破位/放量转弱、明确利空、基线失效，或多项实时证据持续共振导致短线执行逻辑发生变化。
 - 实时数据既是节奏校正依据，也是盘中执行的重要参考；但若与基线冲突，先区分“短线扰动”与“结构变化”。
+- 若出现重大偏离（触发止损/基线失效、价格明显超出止盈位且继续强势延伸、涨停或创阶段新高导致原止盈锚点明显失真、微波段可能升级标准波段），必须如实提高 `baseline_conflict_score`，并在 `baseline_relation` / `deviation_reason` 中说明偏离性质。
+- 你只负责输出盘中决策和偏离证据，不要承诺“已提交/将自动提交重分析任务”；系统会在后处理层根据确定性规则决定是否自动重分析基线。
 
 A股硬约束：
 - A股为 T+1；当天买入，当天不能卖出。
@@ -172,6 +181,12 @@ reasoning 要求：
   "upgraded_swing_type": "",
   "upgrade_reason": "",
   "feature_beacons": ["stage_new_high"],
+  "baseline_relation": "followed",
+  "matched_baseline_conditions": ["60分钟结构未走坏，继续持有条件仍成立"],
+  "unmet_baseline_conditions": [],
+  "baseline_conflict_score": 15,
+  "memory_evidence_ids": [12, 18],
+  "deviation_reason": "",
   "key_price_levels": {
     "support": 12.34,
     "resistance": 13.10,

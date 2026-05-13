@@ -30,8 +30,9 @@ class SmartMonitorDeepSeek:
     """A股智能盯盘 - DeepSeek AI决策引擎"""
 
     OPTIONAL_SECTION_PRIORITY_HEADERS = (
-        "[INTRADAY_FLOW]",
         "[STRATEGY_CONTEXT]",
+        "[INTERNAL_MEMORY_CONTEXT]",
+        "[INTRADAY_FLOW]",
     )
     MAX_STRATEGY_SUMMARY_CHARS = 240
     MAX_SEMANTIC_LABELS = 8
@@ -54,6 +55,7 @@ class SmartMonitorDeepSeek:
     SECTION_ACCOUNT_RISK_PROFILE_TEMPLATE = "smart_monitor/sections/account_risk_profile.txt"
     SECTION_INTRADAY_FLOW_TEMPLATE = "smart_monitor/sections/intraday_flow.txt"
     SECTION_STRATEGY_CONTEXT_TEMPLATE = "smart_monitor/sections/strategy_context.txt"
+    SECTION_MEMORY_CONTEXT_TEMPLATE = "smart_monitor/sections/memory_context.txt"
     SECTION_AI_PATTERN_RECOGNITION_TEMPLATE = "smart_monitor/sections/ai_pattern_recognition.txt"
     SECTION_POSITION_HOLDING_TEMPLATE = "smart_monitor/sections/position_holding.txt"
     SECTION_POSITION_EMPTY_TEMPLATE = "smart_monitor/sections/position_empty.txt"
@@ -341,6 +343,146 @@ class SmartMonitorDeepSeek:
             if beacon in allowed and beacon not in normalized:
                 normalized.append(beacon)
         return normalized
+
+    @staticmethod
+    def _normalize_text_list(value: Any, *, max_items: int = 6, max_chars: int = 120) -> List[str]:
+        return normalize_condition_list(value, max_items=max_items, max_chars=max_chars)
+
+    @staticmethod
+    def _normalize_memory_evidence_ids(value: Any, *, max_items: int = 8) -> List[int]:
+        if value in (None, ""):
+            return []
+        raw_items = value if isinstance(value, list) else [value]
+        normalized: List[int] = []
+        for item in raw_items:
+            try:
+                fact_id = int(item)
+            except (TypeError, ValueError):
+                continue
+            if fact_id not in normalized:
+                normalized.append(fact_id)
+            if len(normalized) >= max_items:
+                break
+        return normalized
+
+    @staticmethod
+    def _normalize_baseline_relation(value: Any) -> str:
+        text = str(value or "").strip().lower()
+        aliases = {
+            "followed": "followed",
+            "沿用": "followed",
+            "遵守": "followed",
+            "符合基线": "followed",
+            "partially_deviated": "partially_deviated",
+            "partial": "partially_deviated",
+            "partial_deviation": "partially_deviated",
+            "deviated": "partially_deviated",
+            "局部偏离": "partially_deviated",
+            "部分偏离": "partially_deviated",
+            "invalidated": "invalidated",
+            "失效": "invalidated",
+            "基线失效": "invalidated",
+            "upgrade_requested": "upgrade_requested",
+            "upgrade": "upgrade_requested",
+            "请求升级": "upgrade_requested",
+            "升级": "upgrade_requested",
+            "no_baseline": "no_baseline",
+            "无基线": "no_baseline",
+        }
+        return aliases.get(text, "")
+
+    @classmethod
+    def _memory_fact_category(cls, fact: Dict[str, Any]) -> str:
+        category = str(fact.get("category") or "").strip().lower()
+        if category:
+            return category
+        content = cls._normalize_evidence_text(fact.get("fact_content"))
+        if any(keyword in content for keyword in ("风险", "止损", "失效", "跌破", "破位", "减仓", "清仓")):
+            return "risk"
+        if any(keyword in content for keyword in ("进场", "加仓", "执行", "持有", "止盈", "离场")):
+            return "execution"
+        return "general"
+
+    @classmethod
+    def _derive_memory_bias(cls, memory_context: Optional[Dict[str, Any]]) -> str:
+        if not isinstance(memory_context, dict):
+            return ""
+        text_parts: List[str] = []
+        profile = str(memory_context.get("long_term_profile") or "").strip()
+        if profile:
+            text_parts.append(profile)
+        for fact in memory_context.get("recalled_facts") or []:
+            if isinstance(fact, dict):
+                text_parts.append(str(fact.get("fact_content") or ""))
+        blob = " ".join(text_parts)
+        if not blob:
+            return ""
+        if any(keyword in blob for keyword in ("追高", "冲高回落", "假突破", "高位派发")):
+            return "谨慎追高，买点需要更高一级别量价确认"
+        if any(keyword in blob for keyword in ("止损", "失效", "破位", "跌破")):
+            return "严格执行基线止损/失效条件，风险信号需优先处理"
+        if any(keyword in blob for keyword in ("回踩", "支撑", "缩量企稳")):
+            return "优先等待回踩承接确认，避免脱离计划追价"
+        return "仅作执行节奏修正，默认仍以最新战略基线为主"
+
+    def _build_memory_context_section(self, memory_context: Optional[Dict[str, Any]]) -> str:
+        if not isinstance(memory_context, dict) or not memory_context:
+            return ""
+
+        profile = self._truncate_prompt_text(memory_context.get("long_term_profile"), 220)
+        working_lines: List[str] = []
+        for item in (memory_context.get("working_memories") or [])[:3]:
+            if not isinstance(item, dict):
+                continue
+            line = self._join_prompt_values(
+                item.get("analysis_date"),
+                self._truncate_prompt_text(item.get("decision_summary"), 110),
+                separator=": ",
+            )
+            if line:
+                working_lines.append(f"- {line}")
+
+        fact_lines: List[str] = []
+        risk_lessons: List[str] = []
+        execution_lessons: List[str] = []
+        for fact in (memory_context.get("recalled_facts") or [])[:5]:
+            if not isinstance(fact, dict):
+                continue
+            content = self._truncate_prompt_text(fact.get("fact_content"), 120)
+            if not content:
+                continue
+            fact_id = fact.get("id")
+            timestamp = str(fact.get("timestamp") or "").strip()
+            score = fact.get("_active_score")
+            score_text = ""
+            try:
+                if score not in (None, ""):
+                    score_text = f" 活跃度{float(score):.0f}"
+            except (TypeError, ValueError):
+                score_text = ""
+            prefix = f"#{fact_id} " if fact_id not in (None, "") else ""
+            time_text = f"[{timestamp}] " if timestamp else ""
+            fact_lines.append(f"- {prefix}{time_text}{content}{score_text}")
+
+            category = self._memory_fact_category(fact)
+            if category == "risk" and len(risk_lessons) < 3:
+                risk_lessons.append(content)
+            elif category in {"execution", "general"} and len(execution_lessons) < 3:
+                execution_lessons.append(content)
+
+        if not profile and not working_lines and not fact_lines:
+            return ""
+
+        return render_prompt(
+            self.SECTION_MEMORY_CONTEXT_TEMPLATE,
+            omit_empty_lines=True,
+            memory_bias=self._derive_memory_bias(memory_context),
+            long_term_profile=profile,
+            working_memory_text="\n".join(working_lines),
+            recalled_facts_text="\n".join(fact_lines),
+            risk_lessons_text="；".join(risk_lessons),
+            execution_lessons_text="；".join(execution_lessons),
+        )
 
     @classmethod
     def _resolve_effective_swing_type_code(
@@ -1686,6 +1828,7 @@ class SmartMonitorDeepSeek:
                                  asset_id: Optional[int] = None,
                                  portfolio_stock_id: Optional[int] = None,
                                  strategy_context: Optional[Dict] = None,
+                                 memory_context: Optional[Dict[str, Any]] = None,
                                  risk_profile: Optional[Dict[str, Any]] = None) -> Dict:
         """
         分析股票并做出交易决策（A股T+1规则）
@@ -1710,6 +1853,7 @@ class SmartMonitorDeepSeek:
             has_position=has_position,
             market_data=market_data,
             strategy_context=strategy_context,
+            memory_context=memory_context,
         )
         messages = self._build_prompt_messages(
             stock_code, market_data, account_info,
@@ -1719,6 +1863,7 @@ class SmartMonitorDeepSeek:
             asset_id=asset_id,
             portfolio_stock_id=portfolio_stock_id,
             strategy_context=strategy_context,
+            memory_context=memory_context,
             risk_profile=resolved_risk_profile,
         )
 
@@ -1799,6 +1944,7 @@ class SmartMonitorDeepSeek:
         has_position: bool,
         market_data: Dict[str, Any],
         strategy_context: Optional[Dict[str, Any]],
+        memory_context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         intraday_context = market_data.get("intraday_context") if isinstance(market_data.get("intraday_context"), dict) else {}
         realtime_freshness = market_data.get("realtime_freshness") if isinstance(market_data.get("realtime_freshness"), dict) else {}
@@ -1824,6 +1970,7 @@ class SmartMonitorDeepSeek:
             "intraday_context": intraday_context,
             "freshness_status": str(realtime_freshness.get("overall_status") or "").strip().lower() or "unknown",
             "has_strategy": bool(strategy_context),
+            "has_memory": bool(memory_context),
             "cross_layer_summary": self._build_cross_layer_evidence_summary(
                 has_position=has_position,
                 strategy_context=strategy_context,
@@ -2231,7 +2378,7 @@ class SmartMonitorDeepSeek:
         original_reasoning = str(decision.get("reasoning") or "").strip()
         if not original_reasoning or original_reasoning.startswith("AI响应解析失败:"):
             return original_reasoning
-        normalized_reasoning = re.sub(r"\s+", " ", original_reasoning).strip()
+        normalized_reasoning = self._sanitize_memory_disclosure_text(original_reasoning)
         return normalized_reasoning
 
     def _build_prompt_context(self, stock_code: str, market_data: Dict,
@@ -2244,6 +2391,7 @@ class SmartMonitorDeepSeek:
                               asset_id: Optional[int] = None,
                               portfolio_stock_id: Optional[int] = None,
                               strategy_context: Optional[Dict] = None,
+                              memory_context: Optional[Dict[str, Any]] = None,
                               risk_profile: Optional[Dict[str, Any]] = None) -> Dict[str, str]:
         """Build template context for intraday decision prompts."""
         resolved_risk_profile = self._resolve_risk_profile(risk_profile)
@@ -2613,6 +2761,9 @@ class SmartMonitorDeepSeek:
                 ),
                 feature_beacons_text=feature_beacons_text,
             ))
+        memory_section = self._build_memory_context_section(memory_context)
+        if memory_section:
+            optional_sections.append(memory_section)
         if intraday_context or cross_layer_summary:
             optional_sections.append(render_prompt(
                 self.SECTION_INTRADAY_FLOW_TEMPLATE,
@@ -2841,6 +2992,7 @@ class SmartMonitorDeepSeek:
                                asset_id: Optional[int] = None,
                                portfolio_stock_id: Optional[int] = None,
                                strategy_context: Optional[Dict] = None,
+                               memory_context: Optional[Dict[str, Any]] = None,
                                risk_profile: Optional[Dict[str, Any]] = None) -> List[Dict[str, str]]:
         context = self._build_prompt_context(
             stock_code, market_data, account_info,
@@ -2851,6 +3003,7 @@ class SmartMonitorDeepSeek:
             asset_id=asset_id,
             portfolio_stock_id=portfolio_stock_id,
             strategy_context=strategy_context,
+            memory_context=memory_context,
             risk_profile=risk_profile,
         )
         optional_sections = context.pop("_optional_sections_list", [])
@@ -2893,6 +3046,7 @@ class SmartMonitorDeepSeek:
                               asset_id: Optional[int] = None,
                               portfolio_stock_id: Optional[int] = None,
                               strategy_context: Optional[Dict] = None,
+                              memory_context: Optional[Dict[str, Any]] = None,
                               risk_profile: Optional[Dict[str, Any]] = None) -> str:
         """构建A股分析提示词。"""
         return self._build_prompt_messages(
@@ -2904,6 +3058,7 @@ class SmartMonitorDeepSeek:
             asset_id=asset_id,
             portfolio_stock_id=portfolio_stock_id,
             strategy_context=strategy_context,
+            memory_context=memory_context,
             risk_profile=risk_profile,
         )[1]["content"]
 
@@ -3023,6 +3178,7 @@ class SmartMonitorDeepSeek:
                 r"主动减仓锁盈|防守减仓|防守清仓|趋势持有|观察持有"
             ),
             "risk_level": r"low|medium|high|低|中|高",
+            "baseline_relation": r"followed|partially_deviated|invalidated|upgrade_requested|no_baseline",
         }
         normalized = text
         for field, options in replacements.items():
@@ -3330,6 +3486,46 @@ class SmartMonitorDeepSeek:
                 continue
         return normalized
 
+    @staticmethod
+    def _sanitize_memory_disclosure_text(value: Any) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        normalized = re.sub(r"\s+", " ", text)
+        memory_markers = (
+            "历史记忆",
+            "记忆修正",
+            "无相关记忆",
+            "关键事实",
+            "事实编号",
+            "记忆提示",
+            "memory_evidence",
+            "INTERNAL_MEMORY_CONTEXT",
+            "HISTORICAL_MEMORY",
+        )
+        parts = re.split(r"(?<=[。！？!?；;])", normalized)
+        kept: List[str] = []
+        for part in parts:
+            segment = part.strip()
+            if not segment:
+                continue
+            if any(marker in segment for marker in memory_markers):
+                continue
+            if "历史" in segment and any(marker in segment for marker in ("假突破", "追高", "事实", "冲高", "回落", "重复错误")):
+                continue
+            if re.search(r"(?:历史|记忆).{0,12}#\d+", segment):
+                continue
+            if re.search(r"#\d+.{0,12}(?:历史|记忆|事实)", segment):
+                continue
+            kept.append(segment)
+        cleaned = "".join(kept).strip()
+        if not cleaned and (
+            any(marker in normalized for marker in memory_markers)
+            or ("历史" in normalized and any(marker in normalized for marker in ("假突破", "追高", "事实", "冲高", "回落", "重复错误")))
+        ):
+            return "按战略基线、实时盘面与风控约束综合评估，当前维持既定执行意图。"
+        return cleaned or normalized
+
     def _normalize_decision_payload(
         self,
         decision: Dict[str, Any],
@@ -3341,7 +3537,7 @@ class SmartMonitorDeepSeek:
         reasoning_text = decision.get("reasoning")
         if isinstance(reasoning_text, (dict, list)):
             reasoning_text = json.dumps(reasoning_text, ensure_ascii=False)
-        reasoning = str(reasoning_text or "").strip()
+        reasoning = self._sanitize_memory_disclosure_text(reasoning_text)
         if not reasoning:
             raise ValueError("缺少必需字段: reasoning")
 
@@ -3380,6 +3576,15 @@ class SmartMonitorDeepSeek:
             "upgraded_swing_type": swing_type_label(decision.get("upgraded_swing_type")),
             "upgrade_reason": str(decision.get("upgrade_reason") or "").strip(),
             "feature_beacons": self._normalize_feature_beacons(decision.get("feature_beacons")),
+            "baseline_relation": self._normalize_baseline_relation(decision.get("baseline_relation")),
+            "matched_baseline_conditions": self._normalize_text_list(decision.get("matched_baseline_conditions")),
+            "unmet_baseline_conditions": self._normalize_text_list(decision.get("unmet_baseline_conditions")),
+            "baseline_conflict_score": int(max(0, min(100, round(self._coerce_numeric(
+                decision.get("baseline_conflict_score"),
+                default=0,
+            ))))),
+            "memory_evidence_ids": self._normalize_memory_evidence_ids(decision.get("memory_evidence_ids")),
+            "deviation_reason": self._sanitize_memory_disclosure_text(decision.get("deviation_reason")),
         }
         normalized["swing_execution_mode"] = self._resolve_swing_execution_mode(
             decision.get("swing_execution_mode"),
@@ -3500,6 +3705,12 @@ class SmartMonitorDeepSeek:
             'risk_level': 'high',
             'key_price_levels': {},
             'action_ratio_pct': None,
+            'baseline_relation': 'no_baseline',
+            'matched_baseline_conditions': [],
+            'unmet_baseline_conditions': [],
+            'baseline_conflict_score': 0,
+            'memory_evidence_ids': [],
+            'deviation_reason': '',
         }
 
     @staticmethod

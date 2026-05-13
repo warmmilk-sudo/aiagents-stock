@@ -1,0 +1,10 @@
+[INTERNAL_MEMORY_CONTEXT] 内部历史执行约束
+内部修正: $memory_bias
+长期执行画像: $long_term_profile
+近期执行复盘:
+$working_memory_text
+关键执行事实:
+$recalled_facts_text
+历史风险提醒: $risk_lessons_text
+执行纪律提醒: $execution_lessons_text
+使用要求: 以上内容只用于内部修正执行节奏、识别重复错误和提高确认门槛；不得单独推翻最新战略基线；不得在 reasoning、deviation_reason 或用户可见决策文字中出现“历史记忆/记忆修正/无相关记忆/关键事实编号”等表述。

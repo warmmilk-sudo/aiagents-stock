@@ -633,6 +633,90 @@ class ManualOnlyMonitoringTests(unittest.TestCase):
         self.assertEqual(captured_strategy_context["analysis_date"], "2026-03-13 10:30:00")
         self.assertEqual(result["strategy_context"]["origin_analysis_id"], 99)
 
+    def test_intraday_deviation_enqueues_auto_baseline_reanalysis_metadata(self):
+        fake_db = FakeSmartMonitorDB()
+
+        with patch.object(smart_monitor_engine_module, "SmartMonitorDB", return_value=fake_db), patch.object(
+            smart_monitor_engine_module.event_bus,
+            "subscribe",
+            return_value=None,
+        ):
+            engine = smart_monitor_engine_module.SmartMonitorEngine(llm_api_key="stub")
+        engine.lifecycle_service.asset_service = fake_db.asset_service
+        engine._refresh_analysis_baseline_before_decision = lambda **kwargs: True
+
+        engine.llm_client.get_trading_session = lambda: {
+            "session": "上午盘",
+            "can_trade": True,
+            "recommendation": "",
+        }
+        engine.data_fetcher.get_comprehensive_data = lambda stock_code, intraday_strict=False: {
+            "name": "贵州茅台",
+            "current_price": 13.45,
+            "change_pct": 9.8,
+            "change_amount": 1.2,
+            "volume": 123456,
+            "turnover_rate": 0.75,
+            "feature_beacons": ["limit_up_hit"],
+            "realtime_freshness": {"overall_status": "ready", "asof_time": "2026-04-20 10:30:00"},
+        }
+        engine.llm_client.analyze_stock_and_decide = lambda **kwargs: {
+            "success": True,
+            "decision": {
+                "action": "HOLD",
+                "action_detail": "持有",
+                "confidence": 82,
+                "reasoning": "价格已明显超过原止盈位但趋势仍强，先按持有观察。",
+                "position_size_pct": 20,
+                "stop_loss_pct": 5,
+                "take_profit_pct": 12,
+                "risk_level": "medium",
+                "key_price_levels": {"support": 12.8, "resistance": 13.8},
+            },
+        }
+        engine._send_notification = lambda **kwargs: None
+        engine._sync_runtime_thresholds = lambda **kwargs: True
+
+        with patch.object(
+            smart_monitor_engine_module,
+            "enqueue_single_symbol_baseline_reanalysis",
+            return_value={
+                "status": "submitted",
+                "submitted": True,
+                "task_id": "task-auto-1",
+                "task_type": "smart_monitor_baseline_refresh",
+                "cooldown_key": "测试账户:101:2026-04-20",
+                "trading_date": "2026-04-20",
+            },
+        ) as enqueue_mock:
+            result = engine.analyze_stock(
+                "600519",
+                notify=False,
+                has_position=True,
+                account_name="测试账户",
+                asset_id=101,
+                portfolio_stock_id=101,
+                strategy_context={
+                    "origin_analysis_id": 99,
+                    "analysis_scope": "research",
+                    "analysis_date": "2026-04-20 09:30:00",
+                    "rating": "持有",
+                    "entry_min": 10.0,
+                    "entry_max": 10.5,
+                    "take_profit": 12.0,
+                    "stop_loss": 9.5,
+                    "swing_type": "微波段",
+                    "hold_conditions": ["60分钟趋势未破坏则继续持有"],
+                },
+            )
+
+        self.assertTrue(result["success"])
+        enqueue_mock.assert_called_once()
+        auto_context = fake_db.saved_decisions[0]["decision_context"]["auto_baseline_reanalysis"]
+        self.assertEqual(auto_context["reason_code"], "take_profit_with_strong_extension")
+        self.assertEqual(auto_context["task_id"], "task-auto-1")
+        self.assertEqual(auto_context["status"], "submitted")
+
     def test_buy_signal_outside_entry_range_is_blocked_by_strategy_plan(self):
         fake_db = FakeSmartMonitorDB()
 

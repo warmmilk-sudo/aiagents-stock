@@ -165,7 +165,9 @@ class SectorStrategyDataFetcherTests(unittest.TestCase):
 
         result = fetcher._get_sector_fund_flow()
 
-        self.assertEqual(len(result["today"]), 1)
+        self.assertEqual(len(result["today"]), 2)
+        self.assertEqual(len(result["industry"]), 1)
+        self.assertEqual(len(result["concept"]), 1)
         self.assertEqual(result["today"][0]["sector"], "半导体")
         self.assertEqual(result["today"][0]["change_pct"], 3.2)
         self.assertEqual(result["today"][0]["small_net_inflow"], -150.0)

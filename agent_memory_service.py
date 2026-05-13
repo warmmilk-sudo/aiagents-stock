@@ -38,6 +38,8 @@ COMPRESS_THRESHOLD = int(os.getenv("MEMORY_COMPRESS_THRESHOLD", "30"))
 LEGACY_LONG_TERM_PROFILE_MARKERS = (
     "长期画像由历史回填本地生成",
     "核心记忆以历史深度分析中的执行计划、进出场条件、基线失效条件和风控纪律为主",
+    "A股市场中被持续跟踪的研究标的",
+    "被持续跟踪的研究标的",
 )
 
 # Weight balance: similarity vs decay in final score
@@ -362,7 +364,7 @@ class AgentMemoryService:
         logger.info("[%s] Extracted and saved %d facts from report", stock_code, len(saved))
         return saved
 
-    def maybe_compress_long_term(self, stock_code: str, stock_name: str = "") -> bool:
+    def maybe_compress_long_term(self, stock_code: str, stock_name: str = "", force: bool = False) -> bool:
         """
         Check if fact_count_since_update exceeds threshold,
         and if so, call LLM to rewrite the long-term profile.
@@ -373,7 +375,7 @@ class AgentMemoryService:
         fact_count = (profile_row or {}).get("fact_count_since_update", 0)
 
         # Also compress if there's no profile yet but we have facts
-        if profile_row and fact_count < COMPRESS_THRESHOLD:
+        if profile_row and fact_count < COMPRESS_THRESHOLD and not force:
             return False
 
         # Gather recent facts for compression context
@@ -450,6 +452,65 @@ class AgentMemoryService:
             analysis_date=analysis_date,
             decision_summary=decision_summary,
             strategy=final_decision,
+        )
+
+    def save_intraday_outcome_memory(
+        self,
+        *,
+        stock_code: str,
+        stock_name: str,
+        decision_time: str,
+        action: str,
+        decision_context: Optional[Dict[str, Any]],
+        outcome_snapshot: Dict[str, Any],
+    ) -> Optional[int]:
+        """Persist deterministic post-trade outcome feedback as factual memory."""
+        if not isinstance(outcome_snapshot, dict) or not outcome_snapshot:
+            return None
+        decision_id = outcome_snapshot.get("decision_id")
+        if decision_id in (None, ""):
+            return None
+
+        marker = f"盘中结果回填#{decision_id}"
+        existing = self.db.get_factual_memories(stock_code, include_ignored=True)
+        if any(marker in str(item.get("fact_content") or "") for item in existing):
+            return None
+
+        decision_context = decision_context if isinstance(decision_context, dict) else {}
+        relation = str(decision_context.get("baseline_relation") or "unknown").strip() or "unknown"
+        state = str(decision_context.get("decision_state") or "unknown").strip() or "unknown"
+        label = str(outcome_snapshot.get("outcome_label") or "neutral").strip() or "neutral"
+        content = (
+            f"{stock_name or stock_code} {marker}: 动作{str(action or '').upper()}，状态{state}，"
+            f"基线关系{relation}，决策价{outcome_snapshot.get('decision_price')}，"
+            f"后续最高{outcome_snapshot.get('max_forward_price')}、最低{outcome_snapshot.get('min_forward_price')}，"
+            f"最大上行{outcome_snapshot.get('max_upside_pct')}%，最大回撤{outcome_snapshot.get('max_drawdown_pct')}%，"
+            f"最新收益{outcome_snapshot.get('latest_return_pct')}%，结果标签{label}。"
+        )
+        importance = 78.0
+        if label in {"risk_realized", "missed_upside", "early_exit_risk"}:
+            importance = 90.0
+        elif label in {"favorable_follow_through", "risk_avoided", "avoided_drawdown"}:
+            importance = 84.0
+        if relation in {"invalidated", "partially_deviated"}:
+            importance = max(importance, 86.0)
+
+        return self.db.save_factual_memory(
+            stock_code=stock_code,
+            fact_content=content,
+            timestamp=decision_time or str(outcome_snapshot.get("evaluated_at") or datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+            importance_score=importance,
+            category="execution_result",
+            concept_tags=[
+                stock_code,
+                "intraday_outcome",
+                f"action:{str(action or '').upper()}",
+                f"state:{state}",
+                f"baseline:{relation}",
+                f"outcome:{label}",
+            ],
+            embedding=None,
+            source_analysis_id=None,
         )
 
     def backfill_from_analysis_history(
@@ -689,7 +750,10 @@ class AgentMemoryService:
                 used.add(cleaned)
                 return cleaned
         for fact in facts:
+            category = str(fact.get("category") or "").strip()
             content = str(fact.get("fact_content") or "").strip()
+            if categories and category not in categories:
+                continue
             if keywords and not any(keyword in content for keyword in keywords):
                 continue
             cleaned = cls._clean_profile_fact_text(content, stock_code=stock_code, stock_name=stock_name)
@@ -697,6 +761,129 @@ class AgentMemoryService:
                 used.add(cleaned)
                 return cleaned
         return ""
+
+    @classmethod
+    def _select_profile_facts(
+        cls,
+        facts: List[Dict[str, Any]],
+        *,
+        stock_code: str,
+        stock_name: str,
+        selectors: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...],
+        used: Optional[set[str]] = None,
+        limit: int = 3,
+    ) -> list[str]:
+        selected: list[str] = []
+        used = used if used is not None else set()
+        for keywords, categories in selectors:
+            fact = cls._select_profile_fact(
+                facts,
+                stock_code=stock_code,
+                stock_name=stock_name,
+                keywords=keywords,
+                categories=categories,
+                used=used,
+            )
+            if fact:
+                selected.append(fact)
+            if len(selected) >= limit:
+                break
+        return selected
+
+    @staticmethod
+    def _existing_profile_opening(existing_profile: str, *, stock_code: str, stock_name: str) -> str:
+        if AgentMemoryService._contains_legacy_profile_marker(existing_profile):
+            return ""
+        cleaned = AgentMemoryService._sanitize_long_term_profile(existing_profile)
+        if not cleaned or AgentMemoryService._contains_legacy_profile_marker(cleaned):
+            return ""
+        first_sentence = re.split(r"(?<=[。！？])", cleaned, maxsplit=1)[0].strip()
+        if not first_sentence or AgentMemoryService._contains_legacy_profile_marker(first_sentence):
+            return ""
+        name = stock_name or stock_code
+        if "是" not in first_sentence or re.search(r"是\s*[，,。；;]", first_sentence):
+            return ""
+        first_sentence = re.sub(rf"^(?:{re.escape(name)}|{re.escape(stock_code)})\s*[（(]{re.escape(stock_code)}[）)]", f"{name}（{stock_code}）", first_sentence)
+        if not first_sentence.startswith(f"{name}（{stock_code}）"):
+            first_sentence = re.sub(rf"^(?:{re.escape(name)}|{re.escape(stock_code)})", f"{name}（{stock_code}）", first_sentence)
+        if not first_sentence.startswith(f"{name}（{stock_code}）"):
+            return ""
+        if not AgentMemoryService._is_business_profile_clause(first_sentence):
+            return ""
+        return first_sentence.rstrip("。！？")[:260] + "。"
+
+    @staticmethod
+    def _is_business_profile_clause(text: str) -> bool:
+        normalized = str(text or "").strip()
+        if not normalized:
+            return False
+        business_keywords = (
+            "公司",
+            "企业",
+            "厂商",
+            "供应商",
+            "龙头",
+            "赛道",
+            "行业",
+            "产业",
+            "业务",
+            "主营",
+            "产品",
+            "客户",
+            "订单",
+            "产能",
+            "营收",
+            "收入",
+            "净利润",
+            "领域",
+            "材料",
+            "设备",
+            "半导体",
+            "新能源",
+            "消费电子",
+            "汽车电子",
+            "光模块",
+            "PCB",
+        )
+        trading_starts = (
+            "当前",
+            "触发",
+            "有效跌破",
+            "股价",
+            "收盘价",
+            "持仓",
+            "禁止",
+            "单日",
+            "连续",
+            "回踩",
+            "突破",
+            "止盈",
+            "止损",
+            "中报预告",
+            "股东大会",
+            "当日无",
+            "高管减持",
+        )
+        trading_terms = (
+            "支撑位",
+            "压力位",
+            "止损线",
+            "止盈位",
+            "主力净流",
+            "仓位",
+            "清仓",
+            "减仓",
+            "加仓",
+            "观望",
+            "低吸",
+            "换手率",
+        )
+        clause = re.sub(r"^[^是]{1,40}是", "", normalized, count=1).strip()
+        if clause.startswith(trading_starts):
+            return False
+        if any(term in clause for term in trading_terms) and not any(keyword in clause for keyword in business_keywords):
+            return False
+        return any(keyword in normalized for keyword in business_keywords)
 
     @staticmethod
     def _fallback_long_term_profile(
@@ -713,33 +900,40 @@ class AgentMemoryService:
             reverse=True,
         )
         used: set[str] = set()
-        business = AgentMemoryService._select_profile_fact(
+        opening = AgentMemoryService._existing_profile_opening(existing_profile, stock_code=stock_code, stock_name=name)
+        if not opening:
+            business = AgentMemoryService._select_profile_fact(
+                sorted_facts,
+                stock_code=stock_code,
+                stock_name=name,
+                categories=("fundamental",),
+                keywords=(),
+                used=used,
+            ) or AgentMemoryService._select_profile_fact(
+                sorted_facts,
+                stock_code=stock_code,
+                stock_name=name,
+                keywords=("核心", "业务", "行业", "赛道", "龙头", "客户", "订单", "产能", "增长", "净利润", "营收"),
+                used=used,
+            )
+            if business and not AgentMemoryService._is_business_profile_clause(business):
+                business = ""
+            if business:
+                opening = f"{name}（{stock_code}）是{business.rstrip('。')}。"
+            else:
+                opening = f"{name}（{stock_code}）的长期底色以业务验证、关键筹码位、资金承接和风控纪律为主。"
+        execution_parts = AgentMemoryService._select_profile_facts(
             sorted_facts,
             stock_code=stock_code,
             stock_name=name,
-            categories=("fundamental",),
-            keywords=(),
+            selectors=(
+                (("微波段", "标准波段", "仓位", "执行计划", "轻仓", "低吸", "加仓", "止盈"), ("execution", "general")),
+                (("筹码", "支撑", "压力", "主峰", "回踩", "突破", "量比", "主力", "换手", "成本"), ()),
+                (("进场", "加仓", "低吸", "回踩", "突破"), ("execution",)),
+                (("止盈", "止损", "清仓", "减仓", "跌破", "失效"), ("risk", "execution")),
+            ),
             used=used,
-        ) or AgentMemoryService._select_profile_fact(
-            sorted_facts,
-            stock_code=stock_code,
-            stock_name=name,
-            keywords=("核心", "业务", "行业", "赛道", "龙头", "客户", "订单", "产能", "增长", "净利润", "营收"),
-            used=used,
-        )
-        technical = AgentMemoryService._select_profile_fact(
-            sorted_facts,
-            stock_code=stock_code,
-            stock_name=name,
-            keywords=("筹码", "支撑", "压力", "主峰", "回踩", "突破", "量比", "主力", "换手", "成本"),
-            used=used,
-        )
-        expectation = AgentMemoryService._select_profile_fact(
-            sorted_facts,
-            stock_code=stock_code,
-            stock_name=name,
-            keywords=("一季报", "业绩", "增速", "净利润", "预期", "阈值", "公告", "催化"),
-            used=used,
+            limit=4,
         )
         risk = AgentMemoryService._select_profile_fact(
             sorted_facts,
@@ -750,14 +944,12 @@ class AgentMemoryService:
             used=used,
         )
 
-        business_clause = business or "核心关注点集中在业务景气验证、资金承接、筹码支撑与纪律化交易条件的持续跟踪"
-        technical_clause = technical or "筹码、资金与价格支撑信号仍是判断趋势延续性的核心依据"
-        expectation_clause = expectation or "后续业绩兑现、关键公告和资金流向变化"
+        execution_clause = "；".join(execution_parts) if execution_parts else "筹码、资金与价格支撑信号仍是判断趋势延续性的核心依据，后续需围绕业绩兑现、关键公告和资金流向变化滚动验证"
         risk_clause = risk or "业绩兑现不及预期、资金承接转弱、关键支撑失守以及市场系统性波动风险"
 
         profile = (
-            f"{name}（{stock_code}）是A股市场中被持续跟踪的研究标的，{business_clause}。"
-            f"当前其交易画像显示{technical_clause}；业绩与事件验证主要围绕{expectation_clause}。"
+            f"{opening}"
+            f"当前其交易画像显示{execution_clause}。"
             f"主要风险包括{risk_clause}。"
         )
         return AgentMemoryService._sanitize_long_term_profile(profile)

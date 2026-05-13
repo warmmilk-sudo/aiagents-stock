@@ -202,6 +202,120 @@ class SmartMonitorDeepSeekTests(unittest.TestCase):
         self.assertEqual(decision["stop_loss_pct"], 7.0)
         self.assertEqual(decision["take_profit_pct"], 18.0)
 
+    def test_parse_decision_preserves_baseline_and_memory_fields(self):
+        client = SmartMonitorDeepSeek(api_key="test-key")
+        ai_response = """
+{
+  "action": "HOLD",
+  "confidence": 73,
+  "reasoning": "战略基线仍有效，历史记忆提示谨慎追高，当前30/60分钟确认不足。",
+  "risk_level": "中",
+  "baseline_relation": "partially_deviated",
+  "matched_baseline_conditions": ["价格仍在计划区间"],
+  "unmet_baseline_conditions": ["30/60分钟放量确认"],
+  "baseline_conflict_score": 58,
+  "memory_evidence_ids": [12, "18"],
+  "deviation_reason": "历史假突破较多，等待更高一级别确认。",
+  "monitor_levels": {
+    "entry_min": 12.10,
+    "entry_max": 12.40,
+    "take_profit": 13.20,
+    "stop_loss": 11.70
+  }
+}
+"""
+
+        decision = client._parse_decision(ai_response)
+
+        self.assertEqual(decision["baseline_relation"], "partially_deviated")
+        self.assertEqual(decision["baseline_conflict_score"], 58)
+        self.assertEqual(decision["memory_evidence_ids"], [12, 18])
+        self.assertNotIn("历史记忆", decision["reasoning"])
+        self.assertNotIn("历史假突破", decision["deviation_reason"])
+        self.assertIn("30/60分钟放量确认", decision["unmet_baseline_conditions"])
+
+    def test_build_prompt_includes_internal_memory_section(self):
+        client = SmartMonitorDeepSeek(api_key="test-key")
+        prompt = client._build_a_stock_prompt(
+            "600000",
+            market_data={
+                "name": "测试银行",
+                "current_price": 10.2,
+                "change_pct": 1.2,
+                "update_time": "2026-05-12 10:30:00",
+            },
+            account_info={
+                "available_cash": 100000,
+                "total_value": 100000,
+                "total_market_value": 0,
+                "position_usage_pct": 0,
+                "positions_count": 0,
+            },
+            has_position=False,
+            session_info={
+                "session": "上午盘",
+                "volatility": "high",
+                "recommendation": "交易活跃",
+                "can_trade": True,
+                "beijing_hour": 10,
+                "beijing_time": "10:30",
+            },
+            strategy_context={
+                "rating": "买入",
+                "entry_min": 10.0,
+                "entry_max": 10.5,
+                "take_profit": 12.0,
+                "stop_loss": 9.5,
+            },
+            memory_context={
+                "long_term_profile": "该股历史上多次追高后冲高回落。",
+                "working_memories": [
+                    {"analysis_date": "2026-05-10", "decision_summary": "等待回踩确认。"}
+                ],
+                "recalled_facts": [
+                    {
+                        "id": 7,
+                        "timestamp": "2026-05-09",
+                        "fact_content": "测试银行历史假突破较多，进场需要30分钟确认。",
+                        "category": "risk",
+                        "_active_score": 88,
+                    }
+                ],
+            },
+        )
+
+        self.assertIn("[INTERNAL_MEMORY_CONTEXT]", prompt)
+        self.assertIn("谨慎追高", prompt)
+        self.assertIn("#7", prompt)
+        self.assertIn("不得在 reasoning", prompt)
+
+    def test_memory_disclosure_is_removed_from_visible_decision_text(self):
+        client = SmartMonitorDeepSeek(api_key="test-key")
+        decision = client._parse_decision(
+            """
+{
+  "action": "HOLD",
+  "confidence": 73,
+  "reasoning": "战略基线仍有效。历史记忆提示谨慎追高，事实编号#7需要参考。当前30/60分钟确认不足，继续观望。",
+  "risk_level": "中",
+  "deviation_reason": "历史记忆显示假突破较多，等待更高一级别确认。",
+  "memory_evidence_ids": [7],
+  "monitor_levels": {
+    "entry_min": 12.10,
+    "entry_max": 12.40,
+    "take_profit": 13.20,
+    "stop_loss": 11.70
+  }
+}
+"""
+        )
+
+        self.assertNotIn("历史记忆", decision["reasoning"])
+        self.assertNotIn("事实编号", decision["reasoning"])
+        self.assertIn("当前30/60分钟确认不足", decision["reasoning"])
+        self.assertEqual(decision["deviation_reason"], "按战略基线、实时盘面与风控约束综合评估，当前维持既定执行意图。")
+        self.assertEqual(decision["memory_evidence_ids"], [7])
+
     def test_parse_decision_strict_rejects_reasoning_action_conflict(self):
         client = SmartMonitorDeepSeek(api_key="test-key")
         ai_response = """
@@ -324,14 +438,18 @@ class SmartMonitorDeepSeekTests(unittest.TestCase):
         mock_post.return_value = response
 
         client = SmartMonitorDeepSeek(api_key="test-key")
-        client.chat_completion(
-            messages=[{"role": "user", "content": "test"}],
-            model="doubao-2-0-mini",
-        )
+        with patch.dict(
+            config.MODEL_API_NAME_BY_CONFIG_ENV["VOICE_CONFIG"],
+            {"doubao-2-0-mini": "doubao-seed-2-0-mini-260425"},
+        ):
+            client.chat_completion(
+                messages=[{"role": "user", "content": "test"}],
+                model="doubao-2-0-mini",
+            )
 
         self.assertEqual(
             mock_post.call_args.kwargs["json"]["model"],
-            "doubao-seed-2-0-mini-260215",
+            "doubao-seed-2-0-mini-260425",
         )
 
     @patch("smart_monitor_deepseek.time_module.sleep", return_value=None)

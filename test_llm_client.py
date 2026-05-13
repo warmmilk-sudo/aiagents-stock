@@ -208,6 +208,8 @@ class LLMClientTests(unittest.TestCase):
         self.assertIn("投资决策专家", messages[0]["content"])
         self.assertIn("股票代码：000001", messages[1]["content"])
         self.assertIn("若当前状态为“未持仓”，只能输出：买入 / 强烈买入 / 观望", messages[0]["content"])
+        self.assertIn("基线质量硬约束", messages[0]["content"])
+        self.assertIn("stop_loss < entry_range下沿 <= entry_range上沿 < take_profit", messages[0]["content"])
 
     def test_technical_analysis_uses_external_prompt_template(self):
         captured = {}

@@ -5,6 +5,7 @@ import { AnalystSelector } from "../../components/common/AnalystSelector";
 import { ModuleCard } from "../../components/common/ModuleCard";
 import { PageFeedback } from "../../components/common/PageFeedback";
 import { PageFrame } from "../../components/common/PageFrame";
+import { StatusBadge } from "../../components/common/StatusBadge";
 import { TaskProgressBar } from "../../components/common/TaskProgressBar";
 import type { ActionPayload } from "../../components/research/AnalysisActionButtons";
 import { ANALYST_OPTIONS, analystConfigToKeys, analystKeysToConfig, type AnalystKey } from "../../constants/analysts";
@@ -57,6 +58,13 @@ interface FollowupAsset {
   latest_analysis_rating?: string;
   latest_analysis_summary?: string;
   latest_analysis_id?: number;
+  latest_baseline_status?: string;
+  latest_baseline_quality?: {
+    status?: string;
+    score?: number;
+    quality_flags?: string[];
+    notes?: string[];
+  };
   status?: string;
   action_payload?: ActionPayload | null;
 }
@@ -89,6 +97,15 @@ function taskProgressTone(task: TaskDetail | null): "running" | "success" | "dan
     return "danger";
   }
   return "running";
+}
+
+function baselineStatusMeta(status?: string, score?: number): { label: string; tone: "success" | "warning" | "danger" | "default" } {
+  const normalized = String(status || "").trim();
+  const scoreText = typeof score === "number" && Number.isFinite(score) ? ` ${Math.round(score)}` : "";
+  if (normalized === "healthy") return { label: `基线健康${scoreText}`, tone: "success" };
+  if (normalized === "incomplete") return { label: `基线待完善${scoreText}`, tone: "warning" };
+  if (normalized === "needs_review") return { label: `基线需复核${scoreText}`, tone: "danger" };
+  return { label: "基线缺失", tone: "default" };
 }
 
 function isPendingTask(task?: TaskDetail | null) {
@@ -146,6 +163,13 @@ function FollowupAssetList({
         <div className={styles.list}>
           {assets.map((asset) => (
             <div className={styles.listItem} key={asset.id}>
+              {(() => {
+                const baselineMeta = baselineStatusMeta(
+                  asset.latest_baseline_status || asset.latest_baseline_quality?.status,
+                  asset.latest_baseline_quality?.score,
+                );
+                return <StatusBadge label={baselineMeta.label} tone={baselineMeta.tone} />;
+              })()}
               <strong>
                 {asset.name} ({asset.symbol})
               </strong>
@@ -338,6 +362,12 @@ export function DeepAnalysisPage({ startOnly = false, onAnalysisSettled }: DeepA
       : "/investment/smart-monitor";
 
   const handleOpenMonitor = async (asset: FollowupAsset) => {
+    const baselineStatus = asset.latest_baseline_status || asset.latest_baseline_quality?.status;
+    if (baselineStatus === "needs_review") {
+      showMessage(`${asset.symbol} 的分析基线需要复核，已先提交重新分析任务。`);
+      await handleReAnalyze(asset.symbol);
+      return;
+    }
     if (!isWatchlistAsset(asset)) {
       void handlePromoteWatchlist(asset.id).catch(() => undefined);
     }

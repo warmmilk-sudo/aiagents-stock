@@ -1,17 +1,274 @@
 import unittest
 import sys
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 sys.modules.setdefault("pandas", MagicMock())
 sys.modules.setdefault("dotenv", MagicMock())
 sys.modules.setdefault("tushare", MagicMock())
 
 from asset_repository import STATUS_PORTFOLIO
-from smart_monitor_engine import SmartMonitorEngine
+from smart_monitor_decision_auditor import SmartMonitorDecisionAuditor
+import smart_monitor_engine as smart_monitor_engine_module
+from smart_monitor_engine import (
+    SmartMonitorEngine,
+    enqueue_single_symbol_baseline_reanalysis,
+    evaluate_intraday_baseline_reanalysis_trigger,
+)
 
 
 class SmartMonitorEngineTests(unittest.TestCase):
+    def test_baseline_reanalysis_trigger_fires_on_limit_up_above_take_profit(self):
+        trigger = evaluate_intraday_baseline_reanalysis_trigger(
+            decision={"action": "HOLD", "baseline_relation": "followed", "baseline_conflict_score": 10},
+            audit_context={"hard_risk_sell": False},
+            strategy_context={
+                "origin_analysis_id": 91,
+                "entry_min": 10.0,
+                "entry_max": 10.5,
+                "take_profit": 12.0,
+                "stop_loss": 9.5,
+            },
+            market_data={"current_price": 12.1, "feature_beacons": ["limit_up_hit"]},
+            has_position=True,
+        )
+
+        self.assertIsNotNone(trigger)
+        self.assertEqual(trigger["reason_code"], "take_profit_with_strong_extension")
+        self.assertIn("limit_up_hit", trigger["strong_beacons"])
+
+    def test_baseline_reanalysis_trigger_fires_when_take_profit_exceeded_by_3pct(self):
+        trigger = evaluate_intraday_baseline_reanalysis_trigger(
+            decision={"action": "HOLD", "baseline_relation": "followed", "baseline_conflict_score": 10},
+            audit_context={},
+            strategy_context={
+                "entry_min": 10.0,
+                "entry_max": 10.5,
+                "take_profit": 12.0,
+                "stop_loss": 9.5,
+            },
+            market_data={"current_price": 12.36, "feature_beacons": []},
+            has_position=True,
+        )
+
+        self.assertIsNotNone(trigger)
+        self.assertEqual(trigger["reason_code"], "take_profit_exceeded_by_3pct")
+
+    def test_baseline_reanalysis_trigger_ignores_plain_take_profit_touch(self):
+        trigger = evaluate_intraday_baseline_reanalysis_trigger(
+            decision={"action": "HOLD", "baseline_relation": "followed", "baseline_conflict_score": 10},
+            audit_context={},
+            strategy_context={
+                "entry_min": 10.0,
+                "entry_max": 10.5,
+                "take_profit": 12.0,
+                "stop_loss": 9.5,
+            },
+            market_data={"current_price": 12.01, "feature_beacons": []},
+            has_position=True,
+        )
+
+        self.assertIsNone(trigger)
+
+    def test_baseline_reanalysis_trigger_fires_on_stop_loss_breach(self):
+        trigger = evaluate_intraday_baseline_reanalysis_trigger(
+            decision={"action": "HOLD", "baseline_relation": "followed", "baseline_conflict_score": 10},
+            audit_context={},
+            strategy_context={
+                "entry_min": 10.0,
+                "entry_max": 10.5,
+                "take_profit": 12.0,
+                "stop_loss": 9.5,
+            },
+            market_data={"current_price": 9.49},
+            has_position=True,
+        )
+
+        self.assertIsNotNone(trigger)
+        self.assertEqual(trigger["reason_code"], "stop_loss_breached")
+
+    def test_baseline_reanalysis_trigger_respects_conflict_score_threshold(self):
+        low_trigger = evaluate_intraday_baseline_reanalysis_trigger(
+            decision={"baseline_relation": "partially_deviated", "baseline_conflict_score": 55},
+            audit_context={},
+            strategy_context={
+                "entry_min": 10.0,
+                "entry_max": 10.5,
+                "take_profit": 12.0,
+                "stop_loss": 9.5,
+            },
+            market_data={"current_price": 10.8},
+            has_position=True,
+        )
+        high_trigger = evaluate_intraday_baseline_reanalysis_trigger(
+            decision={"baseline_relation": "partially_deviated", "baseline_conflict_score": 85},
+            audit_context={},
+            strategy_context={
+                "entry_min": 10.0,
+                "entry_max": 10.5,
+                "take_profit": 12.0,
+                "stop_loss": 9.5,
+            },
+            market_data={"current_price": 10.8},
+            has_position=True,
+        )
+
+        self.assertIsNone(low_trigger)
+        self.assertIsNotNone(high_trigger)
+        self.assertEqual(high_trigger["reason_code"], "high_baseline_conflict_score")
+
+    def test_baseline_reanalysis_enqueue_cools_down_same_symbol_once_per_day(self):
+        smart_monitor_engine_module._AUTO_BASELINE_REANALYSIS_COOLDOWN_KEYS.clear()
+        started_tasks = []
+
+        def fake_start_task(_session_id, **kwargs):
+            started_tasks.append(kwargs)
+            return "task-auto-1"
+
+        try:
+            with patch.object(
+                smart_monitor_engine_module.config,
+                "has_api_credentials_for_models",
+                return_value=True,
+            ), patch.object(
+                smart_monitor_engine_module.portfolio_analysis_task_manager,
+                "get_pending_tasks_any",
+                return_value=[],
+            ), patch.object(
+                smart_monitor_engine_module.portfolio_analysis_task_manager,
+                "start_task",
+                side_effect=fake_start_task,
+            ):
+                first = enqueue_single_symbol_baseline_reanalysis(
+                    stock_code="600519",
+                    stock_name="贵州茅台",
+                    account_name="测试账户",
+                    has_position=True,
+                    asset_id=101,
+                    portfolio_stock_id=101,
+                    market_data={"realtime_freshness": {"asof_time": "2026-04-20 10:30:00"}},
+                    trigger={"reason_code": "stop_loss_breached"},
+                    asset_service=None,
+                )
+                second = enqueue_single_symbol_baseline_reanalysis(
+                    stock_code="600519",
+                    stock_name="贵州茅台",
+                    account_name="测试账户",
+                    has_position=True,
+                    asset_id=101,
+                    portfolio_stock_id=101,
+                    market_data={"realtime_freshness": {"asof_time": "2026-04-20 13:30:00"}},
+                    trigger={"reason_code": "baseline_invalidated"},
+                    asset_service=None,
+                )
+
+            self.assertEqual(first["status"], "submitted")
+            self.assertEqual(first["task_id"], "task-auto-1")
+            self.assertEqual(second["status"], "skipped_duplicate")
+            self.assertEqual(len(started_tasks), 1)
+        finally:
+            smart_monitor_engine_module._AUTO_BASELINE_REANALYSIS_COOLDOWN_KEYS.clear()
+
+    def test_decision_auditor_downgrades_buy_when_realtime_not_ready(self):
+        auditor = SmartMonitorDecisionAuditor()
+        decision, audit = auditor.audit(
+            decision={
+                "action": "BUY",
+                "action_detail": "建仓",
+                "action_ratio_pct": 20,
+                "confidence": 82,
+                "reasoning": "盘中结构转强。",
+                "monitor_levels": {"entry_min": 10.0, "entry_max": 10.8, "take_profit": 12.5, "stop_loss": 9.5},
+            },
+            strategy_context={
+                "baseline_quality": {"status": "healthy", "score": 88},
+                "entry_conditions": ["回踩后缩量企稳"],
+            },
+            market_data={
+                "current_price": 10.4,
+                "realtime_freshness": {"overall_status": "stale"},
+            },
+            has_position=False,
+            account_info={},
+            risk_profile={"position_size_pct": 20, "total_position_pct": 100},
+            memory_context={},
+            can_sell_today=False,
+            session_info={"can_trade": True},
+            notify=True,
+            trading_hours_only=True,
+        )
+
+        self.assertEqual(decision["action"], "HOLD")
+        self.assertEqual(decision["original_action"], "BUY")
+        self.assertIn("realtime_not_ready", audit["quality_flags"])
+        self.assertTrue(audit["veto_reason"])
+
+    def test_decision_auditor_allows_hard_risk_sell_below_score_threshold(self):
+        auditor = SmartMonitorDecisionAuditor()
+        decision, audit = auditor.audit(
+            decision={
+                "action": "SELL",
+                "action_detail": "清仓",
+                "action_ratio_pct": 100,
+                "confidence": 65,
+                "reasoning": "跌破止损位，基线失效。",
+                "monitor_levels": {"entry_min": 10.0, "entry_max": 10.8, "take_profit": 12.5, "stop_loss": 9.5},
+                "baseline_relation": "invalidated",
+            },
+            strategy_context={"baseline_quality": {"status": "incomplete", "score": 70}},
+            market_data={
+                "current_price": 9.3,
+                "realtime_freshness": {"overall_status": "ready"},
+            },
+            has_position=True,
+            account_info={},
+            risk_profile={"position_size_pct": 20, "total_position_pct": 100},
+            memory_context={},
+            can_sell_today=True,
+            session_info={"can_trade": True},
+            notify=True,
+            trading_hours_only=True,
+        )
+
+        self.assertEqual(decision["action"], "SELL")
+        self.assertTrue(audit["hard_risk_sell"])
+        self.assertEqual(audit["veto_reason"], "")
+
+    def test_decision_auditor_ignores_incomplete_baseline_quality(self):
+        auditor = SmartMonitorDecisionAuditor()
+        decision, audit = auditor.audit(
+            decision={
+                "action": "BUY",
+                "action_detail": "建仓",
+                "action_ratio_pct": 10,
+                "confidence": 82,
+                "reasoning": "盘中结构转强。",
+                "monitor_levels": {"entry_min": 10.0, "entry_max": 10.8, "take_profit": 12.5, "stop_loss": 9.5},
+                "matched_baseline_conditions": ["回踩后缩量企稳"],
+            },
+            strategy_context={
+                "baseline_quality": {"status": "incomplete", "score": 70},
+                "entry_conditions": ["回踩后缩量企稳"],
+            },
+            market_data={
+                "current_price": 10.4,
+                "realtime_freshness": {"overall_status": "ready"},
+            },
+            has_position=False,
+            account_info={},
+            risk_profile={"position_size_pct": 20, "total_position_pct": 100},
+            memory_context={},
+            can_sell_today=False,
+            session_info={"can_trade": True},
+            notify=True,
+            trading_hours_only=True,
+        )
+
+        self.assertEqual(decision["action"], "BUY")
+        self.assertEqual(audit["decision_quality_score"], 100.0)
+        self.assertNotIn("baseline_incomplete", audit["quality_flags"])
+        self.assertEqual(audit["veto_reason"], "")
+
     def test_apply_atr_guardrail_clamps_all_stop_loss_fields(self):
         decision = {
             "stop_loss": 9.0,
@@ -218,6 +475,86 @@ class SmartMonitorEngineTests(unittest.TestCase):
         self.assertEqual(updated["action"], "BUY")
         self.assertEqual(updated["action_detail"], "买入")
         self.assertEqual(updated["action_ratio_pct"], 20)
+
+    def test_baseline_metadata_records_unmet_conditions_and_memory_ids(self):
+        engine = SmartMonitorEngine.__new__(SmartMonitorEngine)
+
+        decision = {
+            "action": "HOLD",
+            "action_detail": "观望",
+            "reasoning": "当前进入计划区间，但未明确确认这些条件已满足，先降级为HOLD。",
+            "baseline_relation": "followed",
+        }
+
+        updated = engine._apply_baseline_metadata_guardrails(
+            decision=decision,
+            strategy_context={
+                "rating": "买入",
+                "entry_min": 10.0,
+                "entry_max": 11.0,
+                "take_profit": 13.0,
+                "stop_loss": 9.5,
+                "entry_conditions": ["回踩后缩量企稳"],
+            },
+            market_data={"current_price": 10.5},
+            has_position=False,
+            memory_context={
+                "recalled_facts": [
+                    {"id": 31, "fact_content": "历史上多次追高后冲高回落"},
+                    {"id": 32, "fact_content": "进场需要30分钟缩量企稳"},
+                ]
+            },
+        )
+
+        self.assertEqual(updated["baseline_relation"], "partially_deviated")
+        self.assertGreaterEqual(updated["baseline_conflict_score"], 55)
+        self.assertEqual(updated["memory_evidence_ids"], [31, 32])
+        self.assertIn("回踩后缩量企稳", updated["unmet_baseline_conditions"])
+
+    def test_invalidated_relation_requires_strong_evidence(self):
+        engine = SmartMonitorEngine.__new__(SmartMonitorEngine)
+
+        decision = {
+            "action": "SELL",
+            "action_detail": "减仓",
+            "action_ratio_pct": 30,
+            "reasoning": "盘中略有分歧，模型倾向先卖出。",
+            "baseline_relation": "invalidated",
+        }
+
+        updated = engine._apply_baseline_metadata_guardrails(
+            decision=decision,
+            strategy_context={
+                "rating": "持有",
+                "entry_min": 10.0,
+                "entry_max": 11.0,
+                "take_profit": 13.0,
+                "stop_loss": 9.5,
+                "invalidation_conditions": ["跌破9.5且30分钟无法收回"],
+            },
+            market_data={"current_price": 10.2},
+            has_position=True,
+            memory_context={},
+        )
+
+        self.assertEqual(updated["baseline_relation"], "partially_deviated")
+        self.assertEqual(updated["action"], "HOLD")
+        self.assertEqual(updated["decision_state"], "WAIT")
+        self.assertIn("强校验", updated["reasoning"])
+
+    def test_decision_state_derives_action_state_without_prompt(self):
+        self.assertEqual(
+            SmartMonitorEngine._derive_decision_state({"action": "BUY", "action_detail": "加仓"}, has_position=True),
+            "ADD_READY",
+        )
+        self.assertEqual(
+            SmartMonitorEngine._derive_decision_state({"action": "SELL", "swing_execution_mode": "proactive_trim"}, has_position=True),
+            "TRIM_PROFIT",
+        )
+        self.assertEqual(
+            SmartMonitorEngine._derive_decision_state({"action": "HOLD", "baseline_relation": "followed"}, has_position=True),
+            "HOLD_BASELINE",
+        )
 
 
 if __name__ == "__main__":

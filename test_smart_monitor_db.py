@@ -80,6 +80,52 @@ class SmartMonitorDBTests(unittest.TestCase):
         self.assertEqual(decisions[1]["decision_time"], "2026-03-12 09:30:00")
         self.assertEqual(decisions[1]["monitor_levels"]["entry_min"], 1498.0)
 
+    def test_ai_decision_persists_quality_evaluation_and_feedback(self):
+        decision_id = self.db.save_ai_decision(
+            {
+                "stock_code": "600519",
+                "stock_name": "贵州茅台",
+                "account_name": "默认账户",
+                "decision_time": "2026-03-12 09:30:00",
+                "trading_session": "上午盘",
+                "action": "BUY",
+                "confidence": 82,
+                "reasoning": "满足计划条件。",
+                "risk_level": "medium",
+                "monitor_levels": {
+                    "entry_min": 1498.0,
+                    "entry_max": 1506.0,
+                    "take_profit": 1588.0,
+                    "stop_loss": 1452.0,
+                },
+                "decision_context": {
+                    "decision_quality_score": 84,
+                    "quality_flags": ["baseline_incomplete"],
+                    "veto_reason": "",
+                    "baseline_relation": "followed",
+                    "data_freshness_state": "ready",
+                },
+                "market_data": {"current_price": 1502.0},
+                "account_info": {"account_name": "默认账户"},
+            }
+        )
+
+        decisions = self.db.get_ai_decisions(stock_code="600519", limit=1)
+        self.assertEqual(decisions[0]["decision_quality_score"], 84)
+        self.assertEqual(decisions[0]["quality_flags"], ["baseline_incomplete"])
+        self.assertEqual(decisions[0]["evaluation"]["baseline_relation"], "followed")
+
+        self.assertTrue(
+            self.db.record_decision_feedback(
+                decision_id,
+                status="rejected",
+                note="人工判断不追价",
+            )
+        )
+        decisions = self.db.get_ai_decisions(stock_code="600519", limit=1)
+        self.assertEqual(decisions[0]["evaluation"]["feedback_status"], "rejected")
+        self.assertEqual(decisions[0]["evaluation"]["feedback_note"], "人工判断不追价")
+
     def test_get_ai_decisions_exposes_intraday_decision_context(self):
         decision_id = self.db.save_ai_decision(
             {
@@ -111,6 +157,112 @@ class SmartMonitorDBTests(unittest.TestCase):
         self.assertEqual(decisions[0]["intraday_bias_text"], "价格靠近日内高位，但量能衰减")
         self.assertEqual(decisions[0]["intraday_signal_labels"], ["价格运行在分时均价上方", "高位量能衰减"])
         self.assertEqual(decisions[0]["intraday_observations"], ["当前价格接近日内高位"])
+
+    def test_backfill_ai_decision_outcomes_updates_prior_context(self):
+        first_id = self.db.save_ai_decision(
+            {
+                "stock_code": "600519",
+                "stock_name": "贵州茅台",
+                "account_name": "默认账户",
+                "decision_time": "2026-04-10 10:00:00",
+                "trading_session": "上午盘",
+                "action": "BUY",
+                "confidence": 76,
+                "reasoning": "按基线买入。",
+                "risk_level": "中",
+                "decision_context": {
+                    "baseline_relation": "followed",
+                    "decision_state": "ENTRY_READY",
+                    "baseline_conflict_score": 12,
+                },
+                "monitor_levels": {
+                    "entry_min": 100.0,
+                    "entry_max": 102.0,
+                    "take_profit": 110.0,
+                    "stop_loss": 96.0,
+                },
+                "market_data": {"current_price": 100.0},
+                "account_info": {"account_name": "默认账户"},
+            }
+        )
+        self.db.save_ai_decision(
+            {
+                "stock_code": "600519",
+                "stock_name": "贵州茅台",
+                "account_name": "默认账户",
+                "decision_time": "2026-04-11 10:00:00",
+                "trading_session": "上午盘",
+                "action": "HOLD",
+                "confidence": 78,
+                "reasoning": "继续跟踪。",
+                "risk_level": "中",
+                "market_data": {"current_price": 111.0},
+                "account_info": {"account_name": "默认账户"},
+            }
+        )
+
+        result = self.db.backfill_ai_decision_outcomes(stock_code="600519", account_name="默认账户")
+
+        self.assertEqual(result["updated"], 1)
+        decisions = self.db.get_ai_decisions(stock_code="600519", limit=2)
+        first = next(item for item in decisions if item["id"] == first_id)
+        outcome = first["decision_context"]["outcome_snapshot"]
+        self.assertEqual(outcome["outcome_label"], "favorable_follow_through")
+        self.assertTrue(outcome["take_profit_hit"])
+        self.assertEqual(first["outcome_snapshot"]["max_upside_pct"], 11.0)
+
+    def test_decision_summary_includes_baseline_compliance_metrics(self):
+        self.db.save_ai_decision(
+            {
+                "stock_code": "600519",
+                "stock_name": "贵州茅台",
+                "account_name": "默认账户",
+                "decision_time": "2026-04-10 10:00:00",
+                "trading_session": "上午盘",
+                "action": "HOLD",
+                "confidence": 76,
+                "reasoning": "沿用基线。",
+                "risk_level": "中",
+                "decision_context": {
+                    "baseline_relation": "followed",
+                    "decision_state": "HOLD_BASELINE",
+                    "baseline_conflict_score": 10,
+                    "outcome_snapshot": {"outcome_label": "neutral"},
+                },
+                "market_data": {"current_price": 100.0},
+                "account_info": {"account_name": "默认账户"},
+            }
+        )
+        self.db.save_ai_decision(
+            {
+                "stock_code": "600519",
+                "stock_name": "贵州茅台",
+                "account_name": "默认账户",
+                "decision_time": "2026-04-10 10:30:00",
+                "trading_session": "上午盘",
+                "action": "HOLD",
+                "confidence": 70,
+                "reasoning": "条件不足。",
+                "risk_level": "中",
+                "decision_context": {
+                    "baseline_relation": "partially_deviated",
+                    "decision_state": "WAIT",
+                    "baseline_conflict_score": 60,
+                },
+                "market_data": {"current_price": 101.0},
+                "account_info": {"account_name": "默认账户"},
+            }
+        )
+
+        summary = self.db.get_ai_decision_intraday_summary(limit=10)
+        compliance = summary["baseline_compliance"]
+
+        self.assertEqual(compliance["total"], 2)
+        self.assertEqual(compliance["followed_pct"], 50.0)
+        self.assertEqual(compliance["partial_deviation_pct"], 50.0)
+        self.assertEqual(compliance["avg_conflict_score"], 35.0)
+        self.assertEqual(compliance["outcome_count"], 1)
+        self.assertEqual(compliance["stock_rows"][0]["followed_pct"], 50.0)
 
     def test_get_ai_decisions_exposes_unified_analysis_fields(self):
         decision_id = self.db.save_ai_decision(

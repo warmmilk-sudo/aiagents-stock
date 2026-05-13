@@ -63,6 +63,8 @@ export interface SectorStrategyReportView {
     from_cache?: boolean;
     cache_warning?: string;
     data_timestamp?: string;
+    source_trade_date?: string;
+    fetch_timestamp?: string;
   };
   summary?: SectorStrategySummaryView;
   predictions?: SectorStrategyPredictionGroups;
@@ -70,6 +72,8 @@ export interface SectorStrategyReportView {
     from_cache?: boolean;
     cache_warning?: string;
     data_timestamp?: string;
+    source_trade_date?: string;
+    fetch_timestamp?: string;
     top_sectors?: Array<{
       name?: string;
       change_pct?: number;
@@ -84,6 +88,35 @@ export interface SectorStrategyReportView {
       top_stock?: string;
       top_stock_change?: number;
     }>;
+    top_fund_inflows?: Array<{
+      sector?: string;
+      source_type?: string;
+      main_net_inflow?: number;
+      main_net_inflow_pct?: number;
+      change_pct?: number;
+    }>;
+    top_fund_outflows?: Array<{
+      sector?: string;
+      source_type?: string;
+      main_net_inflow?: number;
+      main_net_inflow_pct?: number;
+      change_pct?: number;
+    }>;
+    north_flow?: {
+      date?: string;
+      source_trade_date?: string;
+      north_net_inflow?: number;
+      hgt_net_inflow?: number;
+      sgt_net_inflow?: number;
+    };
+    top_news?: Array<{
+      title?: string;
+      source?: string;
+      publish_time?: string;
+      related_sectors?: string[];
+      sentiment_score?: number;
+      importance_score?: number;
+    }>;
     market_overview?: {
       sh_index?: { close?: number; change_pct?: number };
       sz_index?: { close?: number; change_pct?: number };
@@ -95,6 +128,9 @@ export interface SectorStrategyReportView {
     };
     sectors_count?: number;
     concepts_count?: number;
+    fund_flow_count?: number;
+    macro_snapshot_count?: number;
+    news_count?: number;
   } | null;
   raw_reports?: Partial<SectorStrategyRawReportMap> | null;
   warnings?: SectorStrategyWarningState;
@@ -244,11 +280,14 @@ function BoardSourceSection({
 }: {
   marketSnapshot?: SectorStrategyReportView["market_snapshot"] | null;
 }) {
-  const [activeKey, setActiveKey] = useState<"industry" | "concept">("industry");
+  const [activeKey, setActiveKey] = useState<"industry" | "concept" | "fund" | "news">("industry");
   const industryItems = marketSnapshot?.top_sectors ?? [];
   const conceptItems = marketSnapshot?.top_concepts ?? [];
+  const fundItems = marketSnapshot?.top_fund_inflows ?? [];
+  const newsItems = marketSnapshot?.top_news ?? [];
   const activeItems = activeKey === "industry" ? industryItems : conceptItems;
-  const tabsStyle = { "--nested-tab-count": 2 } as CSSProperties;
+  const tabsStyle = { "--nested-tab-count": 4 } as CSSProperties;
+  const northFlow = marketSnapshot?.north_flow;
 
   return (
     <div className={`${styles.sectionControlStack} ${styles.tabControlStack}`}>
@@ -267,13 +306,36 @@ function BoardSourceSection({
         >
           概念板块
         </button>
+        <button
+          className={activeKey === "fund" ? styles.nestedTabButtonActive : styles.nestedTabButton}
+          onClick={() => setActiveKey("fund")}
+          type="button"
+        >
+          资金流
+        </button>
+        <button
+          className={activeKey === "news" ? styles.nestedTabButtonActive : styles.nestedTabButton}
+          onClick={() => setActiveKey("news")}
+          type="button"
+        >
+          新闻
+        </button>
       </div>
       {activeKey === "industry" ? (
         <div className={styles.muted}>共 {marketSnapshot?.sectors_count ?? 0} 个行业板块</div>
-      ) : (
+      ) : activeKey === "concept" ? (
         <div className={styles.muted}>共 {marketSnapshot?.concepts_count ?? 0} 个概念板块</div>
+      ) : activeKey === "fund" ? (
+        <div className={styles.muted}>
+          共 {marketSnapshot?.fund_flow_count ?? 0} 条资金流记录
+          {northFlow ? ` | 北向 ${formatNumber(northFlow.north_net_inflow, 2, "0.00")}` : ""}
+        </div>
+      ) : (
+        <div className={styles.muted}>
+          共 {marketSnapshot?.news_count ?? 0} 条新闻 | 宏观指标 {marketSnapshot?.macro_snapshot_count ?? 0} 项
+        </div>
       )}
-      {activeItems.length ? (
+      {(activeKey === "industry" || activeKey === "concept") && activeItems.length ? (
         <div className={styles.strategyBoardList}>
           {activeItems.map((item, index) => (
             <div className={styles.strategyBoardItem} key={`${activeKey}-${item.name || "board"}-${index}`}>
@@ -284,6 +346,38 @@ function BoardSourceSection({
               <div className={styles.strategyBoardMeta}>
                 <span>换手率：{formatNumber(item.turnover, 2)}</span>
                 <span>领涨：{asText(item.top_stock)}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : activeKey === "fund" && fundItems.length ? (
+        <div className={styles.strategyBoardList}>
+          {fundItems.map((item, index) => (
+            <div className={styles.strategyBoardItem} key={`fund-${item.sector || "board"}-${index}`}>
+              <div className={styles.heatChartTop}>
+                <strong>{asText(item.sector)}</strong>
+                <span>{formatNumber(item.main_net_inflow, 2, "0.00")}</span>
+              </div>
+              <div className={styles.strategyBoardMeta}>
+                <span>{item.source_type === "concept" ? "概念" : "行业"}</span>
+                <span>净占比：{formatPercent(item.main_net_inflow_pct)}</span>
+                <span>涨跌：{formatPercent(item.change_pct)}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : activeKey === "news" && newsItems.length ? (
+        <div className={styles.strategyBoardList}>
+          {newsItems.map((item, index) => (
+            <div className={styles.strategyBoardItem} key={`news-${item.title || "item"}-${index}`}>
+              <div className={styles.heatChartTop}>
+                <strong>{asText(item.title)}</strong>
+                <span>{formatNumber(item.importance_score, 0, "0")}</span>
+              </div>
+              <div className={styles.strategyBoardMeta}>
+                <span>{asText(item.source, "-")}</span>
+                <span>情绪：{formatNumber(item.sentiment_score, 2, "0.00")}</span>
+                <span>{(item.related_sectors ?? []).slice(0, 3).join("、") || "未匹配板块"}</span>
               </div>
             </div>
           ))}
@@ -464,14 +558,16 @@ function SectorReportStructuredPanels({
   const predictions = reportView?.predictions;
   const warnings = reportView?.warnings;
   const headlineSegments = splitSegments([summary?.headline, summary?.market_view, summary?.key_opportunity]);
-  const dataTimestamp = reportView?.meta?.data_timestamp;
+  const dataTimestamp = reportView?.meta?.source_trade_date || reportView?.meta?.data_timestamp;
+  const fetchTimestamp = reportView?.meta?.fetch_timestamp;
 
   return (
     <>
       <section className={styles.card}>
         <p className={styles.helperText}>
           {formatDateTime(reportView?.meta?.timestamp, "暂无时间")}
-          {dataTimestamp ? ` | 数据时间 ${formatDateTime(dataTimestamp, dataTimestamp)}` : ""}
+          {dataTimestamp ? ` | 行情日 ${formatDateTime(dataTimestamp, dataTimestamp)}` : ""}
+          {fetchTimestamp ? ` | 采集 ${formatDateTime(fetchTimestamp, fetchTimestamp)}` : ""}
         </p>
 
         {headlineSegments.length ? (

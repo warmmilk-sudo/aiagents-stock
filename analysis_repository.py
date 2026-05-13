@@ -13,6 +13,10 @@ from investment_db_utils import (
     resolve_investment_db_path,
     set_metadata,
 )
+from analysis_baseline_quality import (
+    BASELINE_QUALITY_SCHEMA_VERSION,
+    assess_baseline_quality,
+)
 from investment_action_utils import normalize_strategy_context
 
 
@@ -282,6 +286,29 @@ class AnalysisRepository:
         record["agents_results"] = self._safe_json_loads(record.pop("agents_results_json", None), {})
         record["discussion_result"] = self._safe_json_loads(record.get("discussion_result"), "")
         record["final_decision"] = self._safe_json_loads(record.pop("final_decision_json", None), {})
+        record["baseline_quality"] = self._safe_json_loads(record.pop("baseline_quality_json", None), {})
+        baseline_schema_version = str(record.get("baseline_schema_version") or "").strip()
+        baseline_quality_rebuilt = False
+        if (
+            record["final_decision"]
+            and (
+                not record["baseline_quality"]
+                or baseline_schema_version != BASELINE_QUALITY_SCHEMA_VERSION
+            )
+        ):
+            stock_info = record["stock_info"] if isinstance(record["stock_info"], dict) else {}
+            record["baseline_quality"] = assess_baseline_quality(
+                record["final_decision"],
+                stock_info=stock_info,
+                has_position=stock_info.get("has_position") if isinstance(stock_info, dict) else None,
+            )
+            baseline_quality_rebuilt = True
+        if (baseline_quality_rebuilt or not record.get("baseline_status")) and isinstance(record["baseline_quality"], dict):
+            record["baseline_status"] = record["baseline_quality"].get("status")
+        if (baseline_quality_rebuilt or not record.get("baseline_schema_version")) and isinstance(record["baseline_quality"], dict):
+            record["baseline_schema_version"] = (
+                record["baseline_quality"].get("schema_version") or BASELINE_QUALITY_SCHEMA_VERSION
+            )
         record["has_full_report"] = bool(record.get("has_full_report"))
         return record
 
@@ -480,6 +507,8 @@ class AnalysisRepository:
         agents_results: Optional[Dict],
         discussion_result: Optional[Any],
         final_decision: Optional[Dict],
+        baseline_quality: Optional[Dict],
+        baseline_status: Optional[str],
         has_full_report: bool,
         asset_status_snapshot: Optional[str],
     ) -> None:
@@ -504,6 +533,9 @@ class AnalysisRepository:
                 agents_results_json = ?,
                 discussion_result = ?,
                 final_decision_json = ?,
+                baseline_quality_json = ?,
+                baseline_status = ?,
+                baseline_schema_version = ?,
                 has_full_report = ?,
                 asset_status_snapshot = ?
             WHERE id = ?
@@ -527,6 +559,9 @@ class AnalysisRepository:
                 self._serialize_json(agents_results),
                 self._serialize_json(discussion_result),
                 self._serialize_json(final_decision),
+                self._serialize_json(baseline_quality),
+                baseline_status,
+                BASELINE_QUALITY_SCHEMA_VERSION,
                 1 if has_full_report else 0,
                 asset_status_snapshot,
                 record_id,
@@ -609,6 +644,9 @@ class AnalysisRepository:
                 agents_results_json TEXT,
                 discussion_result TEXT,
                 final_decision_json TEXT,
+                baseline_quality_json TEXT,
+                baseline_status TEXT,
+                baseline_schema_version TEXT,
                 has_full_report INTEGER DEFAULT 0,
                 asset_status_snapshot TEXT,
                 created_at TEXT NOT NULL
@@ -617,6 +655,9 @@ class AnalysisRepository:
         )
         self._ensure_column(cursor, "analysis_records", "asset_id", "INTEGER")
         self._ensure_column(cursor, "analysis_records", "asset_status_snapshot", "TEXT")
+        self._ensure_column(cursor, "analysis_records", "baseline_quality_json", "TEXT")
+        self._ensure_column(cursor, "analysis_records", "baseline_status", "TEXT")
+        self._ensure_column(cursor, "analysis_records", "baseline_schema_version", "TEXT")
         cursor.execute(
             """
             CREATE INDEX IF NOT EXISTS idx_analysis_symbol_time
@@ -695,10 +736,7 @@ class AnalysisRepository:
         sector_tags = list(dict.fromkeys(sector_tags))[:12]
 
         resolved_rating = self._normalize_text(final_decision.get("rating")) or None
-        if extracted_from_decision_text:
-            rating = resolved_rating or rating
-        else:
-            rating = rating or resolved_rating
+        rating = resolved_rating or rating
 
         resolved_confidence = self._extract_first_number(
             final_decision.get("confidence_level"),
@@ -771,6 +809,12 @@ class AnalysisRepository:
                 self._payload_has_content(value)
                 for value in (agents_results, discussion_result, final_decision)
             )
+        baseline_quality = assess_baseline_quality(
+            final_decision,
+            stock_info=stock_info,
+            has_position=stock_info.get("has_position") if isinstance(stock_info, dict) else None,
+        )
+        baseline_status = str(baseline_quality.get("status") or "needs_review")
 
         if asset_id is None and symbol:
             from asset_repository import asset_repository
@@ -834,6 +878,8 @@ class AnalysisRepository:
                 agents_results=agents_results,
                 discussion_result=discussion_result,
                 final_decision=final_decision,
+                baseline_quality=baseline_quality,
+                baseline_status=baseline_status,
                 has_full_report=bool(has_full_report),
                 asset_status_snapshot=asset_status_snapshot,
             )
@@ -864,9 +910,10 @@ class AnalysisRepository:
                 analysis_source, analysis_date, period, rating, confidence,
                 current_price, target_price, entry_min, entry_max, take_profit, stop_loss,
                 summary, stock_info_json, agents_results_json, discussion_result,
-                final_decision_json, has_full_report, asset_status_snapshot, created_at
+                final_decision_json, baseline_quality_json, baseline_status, baseline_schema_version,
+                has_full_report, asset_status_snapshot, created_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 symbol,
@@ -891,6 +938,9 @@ class AnalysisRepository:
                 self._serialize_json(agents_results),
                 self._serialize_json(discussion_result),
                 self._serialize_json(final_decision),
+                self._serialize_json(baseline_quality),
+                baseline_status,
+                BASELINE_QUALITY_SCHEMA_VERSION,
                 1 if has_full_report else 0,
                 asset_status_snapshot,
                 created_at,
@@ -1048,6 +1098,14 @@ class AnalysisRepository:
         conn = self._connect()
         try:
             cursor = conn.cursor()
+            cursor.execute("SELECT stock_info_json FROM analysis_records WHERE id = ?", (record_id,))
+            existing_row = cursor.fetchone()
+            stock_info = self._safe_json_loads(existing_row["stock_info_json"], {}) if existing_row else {}
+            baseline_quality = assess_baseline_quality(
+                final_decision,
+                stock_info=stock_info if isinstance(stock_info, dict) else {},
+                has_position=(stock_info or {}).get("has_position") if isinstance(stock_info, dict) else None,
+            )
             cursor.execute(
                 """
                 UPDATE analysis_records
@@ -1056,7 +1114,10 @@ class AnalysisRepository:
                     entry_max = COALESCE(?, entry_max),
                     take_profit = COALESCE(?, take_profit),
                     stop_loss = COALESCE(?, stop_loss),
-                    summary = CASE WHEN ? != '' THEN ? ELSE summary END
+                    summary = CASE WHEN ? != '' THEN ? ELSE summary END,
+                    baseline_quality_json = ?,
+                    baseline_status = ?,
+                    baseline_schema_version = ?
                 WHERE id = ?
                 """,
                 (
@@ -1067,6 +1128,9 @@ class AnalysisRepository:
                     stop_loss,
                     summary,
                     summary,
+                    self._serialize_json(baseline_quality),
+                    baseline_quality.get("status"),
+                    BASELINE_QUALITY_SCHEMA_VERSION,
                     record_id,
                 ),
             )
@@ -1150,6 +1214,9 @@ class AnalysisRepository:
             "stop_loss": record.get("stop_loss"),
             "summary": record.get("summary"),
             "final_decision": record.get("final_decision", {}),
+            "baseline_quality": record.get("baseline_quality", {}),
+            "baseline_status": record.get("baseline_status") or (record.get("baseline_quality") or {}).get("status"),
+            "baseline_schema_version": record.get("baseline_schema_version") or (record.get("baseline_quality") or {}).get("schema_version"),
         })
         return self._apply_position_cycle_overlay(
             strategy_context,

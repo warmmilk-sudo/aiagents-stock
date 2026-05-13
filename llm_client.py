@@ -500,6 +500,7 @@ class LLMClient:
         indicators: Dict,
         strategy_context: Optional[Dict[str, Any]] = None,
         is_initial_holding_analysis: bool = False,
+        memory_prompt_block: str = "",
     ) -> Dict[str, Any]:
         """最终投资决策"""
         has_position = bool(stock_info.get("has_position"))
@@ -514,6 +515,7 @@ class LLMClient:
             position_status=position_status,
             rating_options=rating_options,
             comprehensive_discussion=comprehensive_discussion,
+            memory_prompt_block=memory_prompt_block.strip() or "无历史记忆。",
             holding_strategy_prompt_block=build_holding_strategy_prompt_block(
                 has_position=has_position,
                 strategy_context=strategy_context,

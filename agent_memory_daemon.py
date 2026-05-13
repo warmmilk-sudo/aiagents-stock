@@ -58,6 +58,7 @@ def _on_analysis_completed(**kwargs: Any) -> None:
 
     # Lazy import to avoid circular dependencies at module load time
     from agent_memory_service import agent_memory_service
+    extracted_facts: list[Dict[str, Any]] = []
 
     try:
         # 1. Save working memory
@@ -74,7 +75,7 @@ def _on_analysis_completed(**kwargs: Any) -> None:
 
     try:
         # 2. Extract factual memories via LLM
-        facts = agent_memory_service.extract_facts_from_report(
+        extracted_facts = agent_memory_service.extract_facts_from_report(
             stock_code=stock_code,
             stock_name=stock_name,
             analysis_date=analysis_date,
@@ -84,15 +85,17 @@ def _on_analysis_completed(**kwargs: Any) -> None:
             final_decision=kwargs.get("final_decision"),
             source_analysis_id=kwargs.get("source_analysis_id"),
         )
-        logger.info("[MemoryDaemon] Extracted %d facts for %s", len(facts), stock_code)
+        logger.info("[MemoryDaemon] Extracted %d facts for %s", len(extracted_facts), stock_code)
     except Exception as exc:
         logger.error("[MemoryDaemon] Fact extraction failed for %s: %s", stock_code, exc)
 
     try:
         # 3. Check if long-term profile needs compression
+        has_material_fact = any(float(fact.get("importance_score", 0) or 0) >= 80 for fact in extracted_facts)
         compressed = agent_memory_service.maybe_compress_long_term(
             stock_code=stock_code,
             stock_name=stock_name,
+            force=has_material_fact,
         )
         if compressed:
             logger.info("[MemoryDaemon] Long-term profile compressed for %s", stock_code)

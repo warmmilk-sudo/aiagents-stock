@@ -412,16 +412,23 @@ class SectorStrategyEngine:
         """
         try:
             # 提取数据日期范围
-            data_date_range = f"{local_today_str()} 数据分析"
+            source_trade_date = str(original_data.get("source_trade_date") or local_today_str())
+            data_date_range = f"{source_trade_date} 数据分析"
             analysis_payload = dict(results)
             analysis_payload["data_summary"] = {
                 "from_cache": bool(original_data.get("from_cache")),
                 "cache_warning": str(original_data.get("cache_warning") or ""),
-                "data_timestamp": str(original_data.get("timestamp") or ""),
+                "data_timestamp": source_trade_date or str(original_data.get("timestamp") or ""),
+                "fetch_timestamp": str(original_data.get("fetch_timestamp") or original_data.get("timestamp") or ""),
+                "source_trade_date": source_trade_date,
+                "source_trade_dates": original_data.get("source_trade_dates", {}) or {},
                 "market_overview": original_data.get("market_overview", {}) or {},
                 "macro_data": original_data.get("macro_data", {}) or {},
                 "sectors": original_data.get("sectors", {}) or {},
                 "concepts": original_data.get("concepts", {}) or {},
+                "sector_fund_flow": original_data.get("sector_fund_flow", {}) or {},
+                "north_flow": original_data.get("north_flow", {}) or {},
+                "news": original_data.get("news", []) or [],
             }
 
             report_view = normalize_sector_strategy_result(analysis_payload)

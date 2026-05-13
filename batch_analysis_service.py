@@ -350,6 +350,7 @@ def analyze_single_stock_for_batch(
             indicators,
             strategy_context=existing_strategy_context,
             is_initial_holding_analysis=is_initial_holding_analysis,
+            memory_context=memory_context,
         )
         logger.info("[%s] final decision completed in %.2fs", symbol, time.perf_counter() - decision_started_at)
 

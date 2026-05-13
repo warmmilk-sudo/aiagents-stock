@@ -157,6 +157,30 @@ class ConfigManager:
                 "required": False,
                 "type": "text",
             },
+            "DOUBAO_2_0_MINI_API_NAME": {
+                "value": "doubao-seed-2-0-mini-260215",
+                "description": "doubao-2-0-mini 对应的火山方舟实际模型ID；版本后缀更新时只改这里",
+                "required": False,
+                "type": "text",
+            },
+            "DOUBAO_2_0_LITE_API_NAME": {
+                "value": "doubao-seed-2-0-lite-260215",
+                "description": "doubao-2-0-lite 对应的火山方舟实际模型ID；版本后缀更新时只改这里",
+                "required": False,
+                "type": "text",
+            },
+            "DOUBAO_2_0_PRO_API_NAME": {
+                "value": "doubao-seed-2-0-pro-260215",
+                "description": "doubao-2-0-pro 对应的火山方舟实际模型ID；版本后缀更新时只改这里",
+                "required": False,
+                "type": "text",
+            },
+            "LLM_MODEL_API_NAME_ALIASES": {
+                "value": "",
+                "description": "模型别名到实际API模型ID的JSON映射，如 {\"doubao-2-0-mini\":\"doubao-seed-2-0-mini-260425\"}",
+                "required": False,
+                "type": "textarea",
+            },
             "ADMIN_PASSWORD": {
                 "value": "",
                 "description": "管理员密码（为空则无需密码）",

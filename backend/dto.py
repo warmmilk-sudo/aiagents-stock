@@ -408,6 +408,12 @@ class PendingActionResolveRequest(BaseModel):
     resolution_note: str = ""
 
 
+class SmartMonitorDecisionFeedbackRequest(BaseModel):
+    status: Literal["accepted", "rejected", "ignored", "wrong", "done"]
+    note: str = ""
+    actual_action_id: Optional[int] = None
+
+
 class ConfigUpdateRequest(BaseModel):
     values: dict[str, str]
 

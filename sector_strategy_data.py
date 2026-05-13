@@ -77,9 +77,13 @@ class SectorStrategyDataFetcher:
 
     @staticmethod
     def _new_data_payload(*, success=False):
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         return {
             "success": success,
-            "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            "timestamp": timestamp,
+            "fetch_timestamp": timestamp,
+            "source_trade_date": "",
+            "source_trade_dates": {},
             "sectors": {},
             "concepts": {},
             "sector_fund_flow": {},
@@ -124,6 +128,86 @@ class SectorStrategyDataFetcher:
         if log_on_hit:
             self.logger.warning("[智策数据] %s已回退到最近缓存快照", log_label)
         return cached_content
+
+    @staticmethod
+    def _format_trade_date(value):
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        digits = "".join(ch for ch in text if ch.isdigit())
+        if len(digits) >= 8:
+            return f"{digits[:4]}-{digits[4:6]}-{digits[6:8]}"
+        if len(text) >= 10 and text[4] == "-" and text[7] == "-":
+            return text[:10]
+        return text
+
+    @classmethod
+    def _first_trade_date_from_frame(cls, df):
+        if df is None or getattr(df, "empty", True):
+            return ""
+        try:
+            if "trade_date" not in getattr(df, "columns", []):
+                return ""
+            return cls._format_trade_date(df.iloc[0].get("trade_date"))
+        except Exception:
+            return ""
+
+    @classmethod
+    def _first_trade_date_from_boards(cls, boards):
+        if not isinstance(boards, dict):
+            return ""
+        for item in boards.values():
+            if isinstance(item, dict):
+                trade_date = cls._format_trade_date(item.get("trade_date") or item.get("source_trade_date"))
+                if trade_date:
+                    return trade_date
+        return ""
+
+    @classmethod
+    def _resolve_source_trade_date(cls, data):
+        if not isinstance(data, dict):
+            return datetime.now().strftime('%Y-%m-%d')
+
+        source_dates = data.setdefault("source_trade_dates", {})
+        if isinstance(data.get("sector_fund_flow"), dict):
+            trade_date = cls._format_trade_date(
+                data["sector_fund_flow"].get("trade_date") or data["sector_fund_flow"].get("source_trade_date")
+            )
+            if trade_date:
+                source_dates["sector_fund_flow"] = trade_date
+        for key in ("sectors", "concepts"):
+            trade_date = cls._first_trade_date_from_boards(data.get(key))
+            if trade_date:
+                source_dates[key] = trade_date
+        if isinstance(data.get("market_overview"), dict):
+            trade_date = cls._format_trade_date(
+                data["market_overview"].get("trade_date") or data["market_overview"].get("source_trade_date")
+            )
+            if trade_date:
+                source_dates["market_overview"] = trade_date
+        if isinstance(data.get("north_flow"), dict):
+            trade_date = cls._format_trade_date(
+                data["north_flow"].get("source_trade_date") or data["north_flow"].get("date")
+            )
+            if trade_date:
+                source_dates["north_flow"] = trade_date
+
+        for key in ("sector_fund_flow", "sectors", "concepts", "market_overview", "north_flow"):
+            if source_dates.get(key):
+                return source_dates[key]
+        return datetime.now().strftime('%Y-%m-%d')
+
+    @staticmethod
+    def _row_has_key(row, key):
+        try:
+            if key in row:
+                return True
+        except Exception:
+            pass
+        try:
+            return key in row.index
+        except Exception:
+            return False
 
     def _build_market_breadth_overview(self, rows):
         if not rows:
@@ -200,6 +284,7 @@ class SectorStrategyDataFetcher:
                 "close": self._clean_value(row.get('close')),
                 "change_pct": self._clean_value(row.get('pct_chg')),
                 "change": self._clean_value(row.get('change')),
+                "trade_date": self._format_trade_date(row.get('trade_date')),
             }
 
         return overview
@@ -277,6 +362,9 @@ class SectorStrategyDataFetcher:
                     missing_parts.append(f"{key}({error})" if error else key)
                 raise RuntimeError(f"核心板块数据缺失: {', '.join(missing_parts)}")
 
+            data["source_trade_date"] = self._resolve_source_trade_date(data)
+            if data.get("news"):
+                data["news"] = self._enhance_news_items(data.get("news", []), data)
             data["success"] = True
             print("[智策] ✓ 板块数据获取完成！")
             
@@ -374,16 +462,19 @@ class SectorStrategyDataFetcher:
             if not board_name:
                 continue
 
+            market_cap = self._clean_value(row['total_mv'])
             boards[board_name] = {
                 "name": board_name,
                 "change_pct": self._clean_value(row['pct_change']),
                 "turnover": self._clean_value(row['turnover_rate']),
-                "total_market_cap": self._clean_value(row['total_mv']),
+                "market_cap": market_cap,
+                "total_market_cap": market_cap,
                 "top_stock": self._clean_value(row['leading']),
                 "top_stock_change": self._clean_value(row['leading_pct']),
                 "up_count": self._clean_value(row['up_num']),
                 "down_count": self._clean_value(row['down_num']),
                 "ts_code": self._clean_value(row['ts_code']),
+                "trade_date": self._format_trade_date(row.get('trade_date')),
             }
 
         return boards
@@ -416,58 +507,96 @@ class SectorStrategyDataFetcher:
             log_on_hit=True,
         )
     
+    def _convert_fund_flow_frame(self, df, *, source_type, pct_map=None):
+        items = []
+        if df is None or df.empty:
+            return items
+        pct_map = pct_map or {}
+
+        for _, row in df.iterrows():
+            sector_name = self._clean_value(row.get('name'))
+            if not sector_name:
+                continue
+            if sector_name in pct_map:
+                change_pct = pct_map[sector_name]
+            elif self._row_has_key(row, 'pct_change'):
+                change_pct = self._clean_value(row.get('pct_change'))
+            else:
+                change_pct = None
+            items.append({
+                "sector": sector_name,
+                "source_type": source_type,
+                "content_type": self._clean_value(row.get('content_type')) or ("概念" if source_type == "concept" else "行业"),
+                "ts_code": self._clean_value(row.get('ts_code')),
+                "trade_date": self._format_trade_date(row.get('trade_date')),
+                "main_net_inflow": self._clean_value(row.get('net_amount')),
+                "main_net_inflow_pct": self._clean_value(row.get('net_amount_rate')),
+                "super_large_net_inflow": self._clean_value(row.get('buy_elg_amount')),
+                "super_large_net_inflow_pct": self._clean_value(row.get('buy_elg_amount_rate')),
+                "large_net_inflow": self._clean_value(row.get('buy_lg_amount')),
+                "large_net_inflow_pct": self._clean_value(row.get('buy_lg_amount_rate')),
+                "medium_net_inflow": self._clean_value(row.get('buy_md_amount')),
+                "medium_net_inflow_pct": self._clean_value(row.get('buy_md_amount_rate')),
+                "small_net_inflow": self._clean_value(row.get('buy_sm_amount')),
+                "small_net_inflow_pct": self._clean_value(row.get('buy_sm_amount_rate')),
+                "change_pct": change_pct,
+            })
+        return items
+
+    def _board_pct_map(self, idx_type):
+        snapshot = self._get_tushare_board_snapshot(idx_type)
+        if snapshot is None or snapshot.empty:
+            return {}
+        return {
+            self._clean_value(row['name']): self._clean_value(row['pct_change'])
+            for _, row in snapshot.iterrows()
+        }
+
     def _get_sector_fund_flow(self):
-        """获取行业资金流向"""
-        tushare_df = self._fetch_tushare_trade_data(
-            'moneyflow_ind_dc',
-            content_type="行业",
+        """获取行业与概念资金流向"""
+        fund_flow = {
+            "today": [],
+            "industry": [],
+            "concept": [],
+            "update_time": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            "trade_date": "",
+        }
+
+        fetch_plan = (
+            ("行业", "industry", "行业板块"),
+            ("概念", "concept", "概念板块"),
         )
-        if tushare_df is None or tushare_df.empty:
+        for content_type, source_type, board_snapshot_type in fetch_plan:
+            tushare_df = self._fetch_tushare_trade_data(
+                'moneyflow_ind_dc',
+                content_type=content_type,
+            )
+            if tushare_df is None or tushare_df.empty:
+                continue
+            items = self._convert_fund_flow_frame(
+                tushare_df,
+                source_type=source_type,
+                pct_map=self._board_pct_map(board_snapshot_type),
+            )
+            fund_flow[source_type] = items
+            fund_flow["today"].extend(items)
+            if not fund_flow["trade_date"]:
+                fund_flow["trade_date"] = self._first_trade_date_from_frame(tushare_df)
+
+        if not fund_flow["today"]:
             return self._read_cached_content(
                 cache_key="fund_flow",
-                log_label="行业资金流向",
+                log_label="板块资金流向",
                 default_factory=dict,
                 content_type=dict,
                 log_on_hit=True,
             )
 
-        sector_snapshot = self._get_tushare_board_snapshot("行业板块")
-        pct_map = {}
-        if sector_snapshot is not None and not sector_snapshot.empty:
-            pct_map = {
-                self._clean_value(row['name']): self._clean_value(row['pct_change'])
-                for _, row in sector_snapshot.iterrows()
-            }
-
-        fund_flow = {
-            "today": [],
-            "update_time": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        }
-
-        for _, row in tushare_df.head(50).iterrows():
-            sector_name = self._clean_value(row['name'])
-            if sector_name in pct_map:
-                change_pct = pct_map[sector_name]
-            elif 'pct_change' in row.index:
-                change_pct = self._clean_value(row['pct_change'])
-            else:
-                change_pct = None
-            fund_flow["today"].append({
-                "sector": sector_name,
-                "main_net_inflow": self._clean_value(row['net_amount']),
-                "main_net_inflow_pct": self._clean_value(row['net_amount_rate']),
-                "super_large_net_inflow": self._clean_value(row['buy_elg_amount']),
-                "super_large_net_inflow_pct": self._clean_value(row['buy_elg_amount_rate']),
-                "large_net_inflow": self._clean_value(row['buy_lg_amount']),
-                "large_net_inflow_pct": self._clean_value(row['buy_lg_amount_rate']),
-                "medium_net_inflow": self._clean_value(row['buy_md_amount']),
-                "medium_net_inflow_pct": self._clean_value(row['buy_md_amount_rate']),
-                "small_net_inflow": self._clean_value(row['buy_sm_amount']),
-                "small_net_inflow_pct": self._clean_value(row['buy_sm_amount_rate']),
-                "change_pct": change_pct,
-            })
-
-        print(f"    [Tushare] 行业资金流向获取成功，共 {len(fund_flow['today'])} 条")
+        fund_flow["today"].sort(key=lambda item: self._to_float(item.get("main_net_inflow")) or 0.0, reverse=True)
+        print(
+            "    [Tushare] 板块资金流向获取成功，行业 %s 条，概念 %s 条"
+            % (len(fund_flow["industry"]), len(fund_flow["concept"]))
+        )
         return fund_flow
     
     def _get_market_overview(self):
@@ -479,6 +608,10 @@ class SectorStrategyDataFetcher:
             overview.update(breadth_overview)
         if index_overview:
             overview.update(index_overview)
+            for item in index_overview.values():
+                if isinstance(item, dict) and item.get("trade_date"):
+                    overview["trade_date"] = item.get("trade_date")
+                    break
 
         cached_overview = self._read_cached_content(
             cache_key="market_overview",
@@ -520,8 +653,10 @@ class SectorStrategyDataFetcher:
 
         df = df.sort_values('trade_date', ascending=False)
         latest = df.iloc[0]
+        latest_trade_date = self._format_trade_date(latest['trade_date'])
         north_flow = {
             "date": str(latest['trade_date']),
+            "source_trade_date": latest_trade_date,
             "north_net_inflow": float(latest['north_money']),
             "hgt_net_inflow": float(latest['hgt']),
             "sgt_net_inflow": float(latest['sgt']),
@@ -529,6 +664,7 @@ class SectorStrategyDataFetcher:
             "history": [
                 {
                     "date": str(row['trade_date']),
+                    "source_trade_date": self._format_trade_date(row['trade_date']),
                     "net_inflow": float(row['north_money']),
                 }
                 for _, row in df.head(20).iterrows()
@@ -574,43 +710,68 @@ class SectorStrategyDataFetcher:
             log_on_hit=True,
         )
 
+    def _macro_cache_is_fresh(self, cached_payload):
+        if not isinstance(cached_payload, dict):
+            return False
+        max_age_hours = float(os.getenv("SECTOR_STRATEGY_MACRO_CACHE_HOURS", "72") or 72)
+        timestamp_text = str(
+            cached_payload.get("source_created_at")
+            or cached_payload.get("timestamp")
+            or ""
+        ).strip()
+        if not timestamp_text:
+            return False
+        try:
+            parsed = datetime.fromisoformat(timestamp_text.replace("Z", "+00:00"))
+            if parsed.tzinfo is not None:
+                parsed = parsed.replace(tzinfo=None)
+        except Exception:
+            try:
+                parsed = datetime.strptime(timestamp_text[:19], "%Y-%m-%d %H:%M:%S")
+            except Exception:
+                return False
+        return (datetime.now() - parsed) <= timedelta(hours=max_age_hours)
+
+    def _fetch_full_macro_snapshot(self):
+        from macro_analysis_data import MacroAnalysisDataFetcher
+
+        macro_fetcher = MacroAnalysisDataFetcher()
+        result = macro_fetcher.fetch_all_data()
+        macro_snapshot = result.get("macro_snapshot") if isinstance(result, dict) else {}
+        if not macro_snapshot:
+            return {}
+        return {
+            "success": bool(result.get("success", True)),
+            "timestamp": result.get("timestamp") or datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            "source": "macro_analysis_fetch_all",
+            "macro_series": result.get("macro_series", {}),
+            "macro_snapshot": macro_snapshot,
+            "macro_tables": result.get("macro_tables", {}),
+            "rule_based_sector_view": result.get("rule_based_sector_view", {}),
+            "errors": result.get("errors", []),
+        }
+
     def _get_macro_data(self):
-        """获取宏观指标快照，复用宏观分析模块的缓存与 Tushare 映射。"""
+        """获取宏观指标快照，优先使用新鲜缓存，否则触发完整宏观采集。"""
         cached = self._load_latest_macro_analysis_snapshot()
-        if cached:
+        if cached and self._macro_cache_is_fresh(cached):
             return cached
+        if not os.getenv("TUSHARE_TOKEN", "").strip():
+            if cached:
+                self.logger.warning("[智策数据] 未配置Tushare Token，宏观指标已回退到最近缓存快照")
+                return cached
+            return {}
 
         try:
-            from macro_analysis_data import MacroAnalysisDataFetcher
-
-            macro_fetcher = MacroAnalysisDataFetcher()
-            macro_series = {}
-            for key in ("gdp_yoy", "cpi_yoy", "ppi_yoy", "manufacturing_pmi", "m2_yoy"):
-                try:
-                    series = macro_fetcher._fetch_tushare_series(key)
-                except Exception as exc:
-                    self.logger.warning("[智策数据] Tushare宏观指标%s获取失败: %s", key, exc)
-                    series = []
-                if series:
-                    macro_series[key] = series
-
-            if not macro_series:
-                return {}
-
-            macro_snapshot = macro_fetcher._build_macro_snapshot(macro_series)
-            return {
-                "success": bool(macro_snapshot),
-                "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                "source": "macro_analysis_tushare",
-                "macro_series": macro_series,
-                "macro_snapshot": macro_snapshot,
-                "macro_tables": macro_fetcher._build_macro_tables(macro_series),
-                "rule_based_sector_view": macro_fetcher.build_rule_based_sector_view(macro_snapshot),
-                "errors": [],
-            }
+            refreshed = self._fetch_full_macro_snapshot()
+            if refreshed:
+                return refreshed
         except Exception as exc:
             self.logger.warning("[智策数据] 宏观指标快照获取失败: %s", exc)
-            return {}
+        if cached:
+            self.logger.warning("[智策数据] 宏观指标已回退到最近缓存快照")
+            return cached
+        return {}
 
     def _load_latest_macro_analysis_snapshot(self):
         """从宏观分析库读取最近一次已采集的宏观快照。"""
@@ -665,6 +826,73 @@ class SectorStrategyDataFetcher:
             len(cached_payload["macro_snapshot"]),
         )
         return cached_payload
+
+    def _build_news_sector_aliases(self, data):
+        aliases = {}
+        for board_key in ("sectors", "concepts"):
+            boards = data.get(board_key) if isinstance(data, dict) else {}
+            if not isinstance(boards, dict):
+                continue
+            for name in boards.keys():
+                text = str(name or "").strip()
+                normalized = text.replace("概念", "").replace("板块", "").strip()
+                for alias in {text, normalized}:
+                    if len(alias) >= 2:
+                        aliases[alias] = text
+        return aliases
+
+    @staticmethod
+    def _score_news_sentiment(text):
+        positive_keywords = (
+            "增长", "上调", "突破", "利好", "回暖", "复苏", "扩张", "创新高",
+            "签约", "中标", "增持", "降准", "降息", "补贴", "支持", "提振",
+        )
+        negative_keywords = (
+            "下调", "下跌", "亏损", "减持", "风险", "调查", "处罚", "违约",
+            "制裁", "衰退", "收缩", "暴跌", "暂停", "终止", "预警",
+        )
+        positive_count = sum(1 for keyword in positive_keywords if keyword in text)
+        negative_count = sum(1 for keyword in negative_keywords if keyword in text)
+        if positive_count == negative_count:
+            return 0.0
+        score = (positive_count - negative_count) / max(positive_count + negative_count, 1)
+        return round(max(-1.0, min(1.0, score)), 2)
+
+    @staticmethod
+    def _score_news_importance(text, related_count):
+        important_keywords = (
+            "国务院", "央行", "证监会", "发改委", "财政部", "商务部", "统计局",
+            "美国", "美联储", "关税", "AI", "芯片", "半导体", "新能源", "机器人",
+            "重大", "突发", "首次", "创新高", "政策", "会议", "财报",
+        )
+        score = 30 + min(35, int(related_count or 0) * 8)
+        score += min(35, sum(7 for keyword in important_keywords if keyword in text))
+        return float(max(0, min(100, score)))
+
+    def _enhance_news_items(self, news_list, data):
+        if not isinstance(news_list, list) or not news_list:
+            return []
+        aliases = self._build_news_sector_aliases(data)
+        enhanced = []
+        for item in news_list:
+            if not isinstance(item, dict):
+                continue
+            payload = dict(item)
+            title = str(payload.get("title") or "")
+            content = str(payload.get("content") or "")
+            text = f"{title}\n{content}"
+            related = []
+            for alias, canonical in aliases.items():
+                if alias and alias in text and canonical not in related:
+                    related.append(canonical)
+                if len(related) >= 8:
+                    break
+            payload["related_sectors"] = related
+            payload["sentiment_score"] = self._score_news_sentiment(text)
+            payload["importance_score"] = self._score_news_importance(text, len(related))
+            enhanced.append(payload)
+        enhanced.sort(key=lambda row: (self._to_float(row.get("importance_score")) or 0.0, str(row.get("publish_time") or "")), reverse=True)
+        return enhanced
     
     def format_data_for_ai(self, data):
         """
@@ -808,13 +1036,14 @@ class SectorStrategyDataFetcher:
 【行业资金流向 TOP15】
 主力资金净流入前15:
 """)
-            sorted_flow = sorted(flow, key=lambda x: x["main_net_inflow"], reverse=True)
+            sorted_flow = sorted(flow, key=lambda x: self._to_float(x.get("main_net_inflow")) or 0.0, reverse=True)
             for item in sorted_flow[:15]:
                 main_net_inflow = _fmt_num(item.get("main_net_inflow"))
                 main_net_inflow_pct = _fmt_num(item.get("main_net_inflow_pct"))
                 change_pct = _fmt_num(item.get("change_pct"))
                 if main_net_inflow is not None and main_net_inflow_pct is not None and change_pct is not None:
-                    text_parts.append(f"  {item.get('sector')}: {float(main_net_inflow):.2f}万 ({float(main_net_inflow_pct):+.2f}%) | 涨跌: {float(change_pct):+.2f}%")
+                    source_label = "概念" if item.get("source_type") == "concept" else "行业"
+                    text_parts.append(f"  [{source_label}] {item.get('sector')}: {float(main_net_inflow):.2f}万 ({float(main_net_inflow_pct):+.2f}%) | 涨跌: {float(change_pct):+.2f}%")
         
         # 重要新闻（前20条）
         if data.get("news"):
@@ -897,6 +1126,8 @@ class SectorStrategyDataFetcher:
             if not data.get("success"):
                 self.logger.warning("[智策数据] 数据获取失败，跳过保存")
                 return
+
+            data_date = self._resolve_source_trade_date(data)
             
             # 保存板块数据
             if data.get("sectors"):
@@ -907,7 +1138,7 @@ class SectorStrategyDataFetcher:
                         '板块名称': v.get('name') or k,
                         '涨跌幅': v.get('change_pct'),
                         '成交额': None,
-                        '总市值': v.get('total_market_cap'),
+                        '总市值': v.get('market_cap') or v.get('total_market_cap'),
                         '市盈率': v.get('pe_ratio'),
                         '市净率': v.get('pb_ratio'),
                         '最新价': None,
@@ -917,7 +1148,7 @@ class SectorStrategyDataFetcher:
                     for k, v in data["sectors"].items()
                 ])
                 self.database.save_sector_raw_data(
-                    data_date=datetime.now().strftime('%Y-%m-%d'),
+                    data_date=data_date,
                     data_type="industry",
                     data_df=sectors_df
                 )
@@ -931,7 +1162,7 @@ class SectorStrategyDataFetcher:
                         '板块名称': v.get('name') or k,
                         '涨跌幅': v.get('change_pct'),
                         '成交额': None,
-                        '总市值': v.get('total_market_cap'),
+                        '总市值': v.get('market_cap') or v.get('total_market_cap'),
                         '市盈率': v.get('pe_ratio'),
                         '市净率': v.get('pb_ratio'),
                         '最新价': None,
@@ -941,7 +1172,7 @@ class SectorStrategyDataFetcher:
                     for k, v in data["concepts"].items()
                 ])
                 self.database.save_sector_raw_data(
-                    data_date=datetime.now().strftime('%Y-%m-%d'),
+                    data_date=data_date,
                     data_type="concept",
                     data_df=concepts_df
                 )
@@ -952,7 +1183,9 @@ class SectorStrategyDataFetcher:
                 flow_today = data["sector_fund_flow"].get("today", [])
                 fund_df = pd.DataFrame([
                     {
+                        '板块代码': item.get('ts_code') or item.get('sector'),
                         '行业': item.get('sector'),
+                        '板块类型': item.get('source_type') or item.get('content_type') or 'industry',
                         '主力净流入-净额': item.get('main_net_inflow'),
                         '主力净流入-净占比': item.get('main_net_inflow_pct'),
                         '超大单净流入-净额': item.get('super_large_net_inflow'),
@@ -964,7 +1197,7 @@ class SectorStrategyDataFetcher:
                 ])
                 if not fund_df.empty:
                     self.database.save_sector_raw_data(
-                        data_date=datetime.now().strftime('%Y-%m-%d'),
+                        data_date=data_date,
                         data_type="fund_flow",
                         data_df=fund_df
                     )
@@ -983,14 +1216,18 @@ class SectorStrategyDataFetcher:
                     {'代码': '__MARKET_BREADTH__', '名称': '__MARKET_BREADTH__', '最新价': market.get('total_stocks'), '涨跌幅': market.get('up_ratio'), '成交量': market.get('up_count'), '成交额': market.get('down_count'), '总市值': market.get('flat_count'), '市盈率': market.get('limit_up'), '市净率': market.get('limit_down')},
                 ])
                 self.database.save_sector_raw_data(
-                    data_date=datetime.now().strftime('%Y-%m-%d'),
+                    data_date=data_date,
                     data_type="market_overview",
                     data_df=mo_df
                 )
                 self.logger.info("[智策数据] 保存市场概况数据")
             
-            # 保存北向资金数据
-            # 注：north_flow结构与原始表不一致，此处暂不保存以避免歧义
+            if data.get("north_flow") and hasattr(self.database, "save_north_flow_snapshot"):
+                self.database.save_north_flow_snapshot(
+                    north_flow=data["north_flow"],
+                    data_date=self._format_trade_date(data["north_flow"].get("source_trade_date") or data_date),
+                )
+                self.logger.info("[智策数据] 保存北向资金快照")
             
             # 保存新闻数据
             if data.get("news"):
@@ -1058,6 +1295,7 @@ class SectorStrategyDataFetcher:
             )
 
         cached_data["macro_data"] = self._get_macro_data()
+        cached_data["source_trade_date"] = self._resolve_source_trade_date(cached_data)
 
         has_data = any(cached_data[key] for key in self._CORE_DATA_KEYS + self._OPTIONAL_DATA_KEYS)
         return cached_data if has_data else None

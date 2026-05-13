@@ -4,7 +4,7 @@
 """
 
 import sqlite3
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 import json
 import os
 import re
@@ -322,6 +322,18 @@ class SectorStrategyDatabase:
             updated_at TEXT DEFAULT CURRENT_TIMESTAMP
         )
         ''')
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS sector_north_flow_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            data_date TEXT NOT NULL,
+            flow_json TEXT NOT NULL,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+        ''')
+        cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_sector_north_flow_snapshots_date
+        ON sector_north_flow_snapshots(data_date, datetime(created_at) DESC)
+        ''')
         self._ensure_table_column(cursor, "sector_heat_history", "board_date", "TEXT")
         self._ensure_table_column(cursor, "sector_heat_history", "source_type", "TEXT")
         self._ensure_table_column(cursor, "sector_heat_history", "observation_count", "INTEGER NOT NULL DEFAULT 0")
@@ -387,6 +399,33 @@ class SectorStrategyDatabase:
         except (TypeError, ValueError):
             return default
 
+    @staticmethod
+    def _pd_notna(value):
+        try:
+            notna = getattr(pd, "notna", None)
+            if callable(notna):
+                return bool(notna(value))
+            return not bool(pd.isna(value))
+        except Exception:
+            return value is not None
+
+    @classmethod
+    def _float_or_zero(cls, value):
+        if not cls._pd_notna(value):
+            return 0
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return 0
+
+    @classmethod
+    def _first_row_value(cls, row, *keys, default=0):
+        for key in keys:
+            value = row.get(key, None)
+            if cls._pd_notna(value) and value != "":
+                return value
+        return default
+
     def _extract_heat_payload(self, analysis_content):
         payload = analysis_content if isinstance(analysis_content, dict) else {}
         final_predictions = payload.get("final_predictions") if isinstance(payload.get("final_predictions"), dict) else {}
@@ -441,6 +480,7 @@ class SectorStrategyDatabase:
         data_summary = payload.get("data_summary") if isinstance(payload.get("data_summary"), dict) else {}
         sectors_payload = data_summary.get("sectors") if isinstance(data_summary.get("sectors"), dict) else {}
         concepts_payload = data_summary.get("concepts") if isinstance(data_summary.get("concepts"), dict) else {}
+        fund_flow_map = self._build_fund_flow_map_from_payload(data_summary.get("sector_fund_flow"))
         raw_entries = []
         for source_type, boards in (("industry", sectors_payload), ("concept", concepts_payload)):
             for sector_name, board in boards.items():
@@ -457,11 +497,31 @@ class SectorStrategyDatabase:
                         "source_type": source_type,
                         "change_pct": self._to_float(board.get("change_pct"), 0.0),
                         "turnover": self._to_float(board.get("turnover"), 0.0),
-                        "market_cap": self._to_float(board.get("market_cap"), 0.0),
-                        "fund_flow_pct": 0.0,
+                        "market_cap": self._to_float(board.get("market_cap", board.get("total_market_cap")), 0.0),
+                        "fund_flow_pct": self._to_float((fund_flow_map.get(normalized_name) or {}).get("value"), 0.0),
                     }
                 )
         return self._score_daily_panel_rows(raw_entries)
+
+    def _build_fund_flow_map_from_payload(self, fund_flow_payload):
+        if not isinstance(fund_flow_payload, dict):
+            return {}
+        items = []
+        for key in ("today", "industry", "concept"):
+            value = fund_flow_payload.get(key)
+            if isinstance(value, list):
+                items.extend(item for item in value if isinstance(item, dict))
+        result = {}
+        for item in items:
+            normalized_name = self._normalize_sector_name(item.get("sector") or item.get("name"))
+            if not normalized_name:
+                continue
+            value = self._to_float(item.get("main_net_inflow_pct"), 0.0)
+            rank_value = self._to_float(item.get("main_net_inflow"), 0.0)
+            existing = result.get(normalized_name)
+            if existing is None or abs(rank_value) > abs(existing.get("rank_value", 0.0)):
+                result[normalized_name] = {"value": value, "rank_value": rank_value}
+        return result
 
     def _build_panel_rows_from_heat_payload(self, board_date, analysis_content):
         heat_items = self._extract_heat_items(analysis_content)
@@ -650,10 +710,17 @@ class SectorStrategyDatabase:
 
     def _ensure_daily_heat_panel(self, cursor, board_date, analysis_content=None, *, prefer_payload=True):
         rows = []
+        payload_missing_fund_flow = False
         if prefer_payload and isinstance(analysis_content, dict):
+            data_summary = analysis_content.get("data_summary") if isinstance(analysis_content.get("data_summary"), dict) else {}
+            payload_missing_fund_flow = not bool(data_summary.get("sector_fund_flow"))
             rows = self._build_panel_rows_from_payload(board_date, analysis_content)
             if not rows:
                 rows = self._build_panel_rows_from_heat_payload(board_date, analysis_content)
+            elif payload_missing_fund_flow:
+                raw_rows = self._build_panel_rows_from_raw(cursor, board_date)
+                if raw_rows:
+                    rows = raw_rows
         if not rows:
             rows = self._build_panel_rows_from_raw(cursor, board_date)
         if rows:
@@ -1844,13 +1911,13 @@ class SectorStrategyDatabase:
                 data_date,
                 sector_code,
                 sector_name,
-                float(row.get('最新价', row.get('price', 0))) if pd.notna(row.get('最新价', row.get('price', 0))) else 0,
-                float(row.get('涨跌幅', row.get('change_pct', 0))) if pd.notna(row.get('涨跌幅', row.get('change_pct', 0))) else 0,
-                float(row.get('成交量', row.get('volume', 0))) if pd.notna(row.get('成交量', row.get('volume', 0))) else 0,
-                float(row.get('成交额', row.get('turnover', 0))) if pd.notna(row.get('成交额', row.get('turnover', 0))) else 0,
-                float(row.get('总市值', row.get('market_cap', 0))) if pd.notna(row.get('总市值', row.get('market_cap', 0))) else 0,
-                float(row.get('市盈率', row.get('pe_ratio', 0))) if pd.notna(row.get('市盈率', row.get('pe_ratio', 0))) else 0,
-                float(row.get('市净率', row.get('pb_ratio', 0))) if pd.notna(row.get('市净率', row.get('pb_ratio', 0))) else 0,
+                self._float_or_zero(self._first_row_value(row, '最新价', 'price')),
+                self._float_or_zero(self._first_row_value(row, '涨跌幅', 'change_pct')),
+                self._float_or_zero(self._first_row_value(row, '成交量', 'volume')),
+                self._float_or_zero(self._first_row_value(row, '成交额', 'turnover')),
+                self._float_or_zero(self._first_row_value(row, '总市值', 'market_cap', 'total_market_cap')),
+                self._float_or_zero(self._first_row_value(row, '市盈率', 'pe_ratio')),
+                self._float_or_zero(self._first_row_value(row, '市净率', 'pb_ratio')),
                 data_type,
                 version
             ))
@@ -1858,6 +1925,10 @@ class SectorStrategyDatabase:
     def _save_fund_flow_data(self, cursor, data_date, data_df, version):
         """保存资金流向数据"""
         for _, row in data_df.iterrows():
+            sector_name = str(row.get('行业', row.get('sector', '')))
+            source_type = str(row.get('板块类型', row.get('source_type', 'industry')) or 'industry')
+            raw_code = str(row.get('板块代码', row.get('ts_code', sector_name)) or sector_name)
+            sector_code = f"{source_type}:{raw_code or sector_name}"
             cursor.execute('''
             INSERT OR REPLACE INTO sector_raw_data 
             (data_date, sector_code, sector_name, price, change_pct, volume, 
@@ -1865,14 +1936,14 @@ class SectorStrategyDatabase:
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'fund_flow', ?)
             ''', (
                 data_date,
-                str(row.get('行业', '')),
-                str(row.get('行业', '')),
-                float(row.get('主力净流入-净额', 0)) if pd.notna(row.get('主力净流入-净额', 0)) else 0,
-                float(row.get('主力净流入-净占比', 0)) if pd.notna(row.get('主力净流入-净占比', 0)) else 0,
-                float(row.get('超大单净流入-净额', 0)) if pd.notna(row.get('超大单净流入-净额', 0)) else 0,
-                float(row.get('超大单净流入-净占比', 0)) if pd.notna(row.get('超大单净流入-净占比', 0)) else 0,
-                float(row.get('大单净流入-净额', 0)) if pd.notna(row.get('大单净流入-净额', 0)) else 0,
-                float(row.get('大单净流入-净占比', 0)) if pd.notna(row.get('大单净流入-净占比', 0)) else 0,
+                sector_code,
+                sector_name,
+                self._float_or_zero(row.get('主力净流入-净额', 0)),
+                self._float_or_zero(row.get('主力净流入-净占比', 0)),
+                self._float_or_zero(row.get('超大单净流入-净额', 0)),
+                self._float_or_zero(row.get('超大单净流入-净占比', 0)),
+                self._float_or_zero(row.get('大单净流入-净额', 0)),
+                self._float_or_zero(row.get('大单净流入-净占比', 0)),
                 0,
                 version
             ))
@@ -1889,13 +1960,13 @@ class SectorStrategyDatabase:
                 data_date,
                 str(row.get('代码', row.get('名称', ''))),
                 str(row.get('名称', '')),
-                float(row.get('最新价', 0)) if pd.notna(row.get('最新价', 0)) else 0,
-                float(row.get('涨跌幅', 0)) if pd.notna(row.get('涨跌幅', 0)) else 0,
-                float(row.get('成交量', 0)) if pd.notna(row.get('成交量', 0)) else 0,
-                float(row.get('成交额', 0)) if pd.notna(row.get('成交额', 0)) else 0,
-                float(row.get('总市值', 0)) if pd.notna(row.get('总市值', 0)) else 0,
-                float(row.get('市盈率', 0)) if pd.notna(row.get('市盈率', 0)) else 0,
-                float(row.get('市净率', 0)) if pd.notna(row.get('市净率', 0)) else 0,
+                self._float_or_zero(row.get('最新价', 0)),
+                self._float_or_zero(row.get('涨跌幅', 0)),
+                self._float_or_zero(row.get('成交量', 0)),
+                self._float_or_zero(row.get('成交额', 0)),
+                self._float_or_zero(row.get('总市值', 0)),
+                self._float_or_zero(row.get('市盈率', 0)),
+                self._float_or_zero(row.get('市净率', 0)),
                 version
             ))
     
@@ -1911,11 +1982,11 @@ class SectorStrategyDatabase:
                 data_date,
                 str(row.get('代码', '')),
                 str(row.get('名称', '')),
-                float(row.get('收盘价', 0)) if pd.notna(row.get('收盘价', 0)) else 0,
-                float(row.get('涨跌幅', 0)) if pd.notna(row.get('涨跌幅', 0)) else 0,
-                float(row.get('持股数量', 0)) if pd.notna(row.get('持股数量', 0)) else 0,
-                float(row.get('持股市值', 0)) if pd.notna(row.get('持股市值', 0)) else 0,
-                float(row.get('持股变化', 0)) if pd.notna(row.get('持股变化', 0)) else 0,
+                self._float_or_zero(row.get('收盘价', 0)),
+                self._float_or_zero(row.get('涨跌幅', 0)),
+                self._float_or_zero(row.get('持股数量', 0)),
+                self._float_or_zero(row.get('持股市值', 0)),
+                self._float_or_zero(row.get('持股变化', 0)),
                 0, 0,
                 version
             ))
@@ -1990,6 +2061,75 @@ class SectorStrategyDatabase:
     # =====================
     # 缓存与最近数据读取接口
     # =====================
+    def save_north_flow_snapshot(self, north_flow, data_date):
+        if not isinstance(north_flow, dict) or not north_flow:
+            self.logger.warning("[智策板块] 北向资金快照为空，跳过保存")
+            return 0
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                '''
+                INSERT INTO sector_north_flow_snapshots (data_date, flow_json)
+                VALUES (?, ?)
+                ''',
+                (str(data_date), self._to_json(north_flow)),
+            )
+            conn.commit()
+            return int(cursor.lastrowid or 0)
+        except Exception as e:
+            conn.rollback()
+            self.logger.error(f"[智策板块] 保存北向资金快照失败: {e}")
+            return 0
+        finally:
+            conn.close()
+
+    def _get_north_flow_snapshot(self, *, data_date=None, within_hours=24):
+        conn = self.get_connection()
+        conn.row_factory = sqlite3.Row
+        try:
+            if data_date:
+                row = conn.execute(
+                    '''
+                    SELECT data_date, flow_json, created_at
+                    FROM sector_north_flow_snapshots
+                    WHERE data_date = ?
+                    ORDER BY datetime(created_at) DESC, id DESC
+                    LIMIT 1
+                    ''',
+                    (str(data_date),),
+                ).fetchone()
+            else:
+                cutoff = (datetime.now() - timedelta(hours=within_hours or 24)).strftime('%Y-%m-%d %H:%M:%S')
+                row = conn.execute(
+                    '''
+                    SELECT data_date, flow_json, created_at
+                    FROM sector_north_flow_snapshots
+                    WHERE datetime(created_at) >= datetime(?)
+                    ORDER BY data_date DESC, datetime(created_at) DESC, id DESC
+                    LIMIT 1
+                    ''',
+                    (cutoff,),
+                ).fetchone()
+            if not row:
+                return None
+            try:
+                payload = json.loads(row["flow_json"] or "{}")
+            except Exception:
+                payload = {}
+            if not isinstance(payload, dict) or not payload:
+                return None
+            return {
+                "data_date": row["data_date"],
+                "created_at": row["created_at"],
+                "data_content": payload,
+            }
+        except Exception as e:
+            self.logger.error(f"[智策板块] 获取北向资金快照失败: {e}")
+            return None
+        finally:
+            conn.close()
+
     def save_news_data(self, news_list, news_date, source="rsshub_tushare"):
         """
         保存新闻列表（字典列表）到数据库，用于非DataFrame场景
@@ -2085,8 +2225,12 @@ class SectorStrategyDatabase:
             today = []
             for _, row in raw_df.iterrows():
                 name = str(row.get('sector_name', ''))
+                sector_code = str(row.get('sector_code', ''))
+                source_type = "concept" if sector_code.startswith("concept:") else "industry"
                 today.append({
                     'sector': name,
+                    'source_type': source_type,
+                    'ts_code': sector_code,
                     'main_net_inflow': float(row.get('price', 0) or 0),
                     'main_net_inflow_pct': float(row.get('change_pct', 0) or 0),
                     'super_large_net_inflow': float(row.get('volume', 0) or 0),
@@ -2099,7 +2243,9 @@ class SectorStrategyDatabase:
             return {
                 'data_date': data_date,
                 'data_content': {
-                    'today': today
+                    'today': today,
+                    'industry': [item for item in today if item.get('source_type') == 'industry'],
+                    'concept': [item for item in today if item.get('source_type') == 'concept'],
                 }
             }
 
@@ -2135,16 +2281,6 @@ class SectorStrategyDatabase:
                 'data_content': overview
             }
 
-        if key == 'north_flow':
-            total_value = float(raw_df['turnover'].sum()) if not raw_df.empty else 0
-            return {
-                'data_date': data_date,
-                'data_content': {
-                    'north_total_amount': total_value,
-                    'history': []
-                }
-            }
-
         return None
 
     def _get_raw_data_snapshot(self, key: str, *, data_date: str | None = None, within_hours: int | None = 24):
@@ -2157,44 +2293,48 @@ class SectorStrategyDatabase:
         Returns:
             dict 或 None
         """
+        if key == 'north_flow':
+            return self._get_north_flow_snapshot(data_date=data_date, within_hours=within_hours or 24)
+
         key_map = {
             'sectors': 'industry',
             'concepts': 'concept',
             'fund_flow': 'fund_flow',
             'market_overview': 'market_overview',
-            'north_flow': 'north_fund'
         }
         data_type = key_map.get(key)
         if not data_type:
             return None
 
         conn = self.get_connection()
+        conn.row_factory = sqlite3.Row
         try:
             if data_date:
-                version_df = pd.read_sql_query('''
+                row = conn.execute('''
                     SELECT data_date, version FROM data_versions
                     WHERE data_type = ? AND fetch_success = 1 AND data_date = ?
                     ORDER BY version DESC LIMIT 1
-                ''', conn, params=[data_type, data_date])
+                ''', (data_type, data_date)).fetchone()
             else:
-                cutoff = (pd.Timestamp.now() - pd.Timedelta(hours=within_hours or 24)).strftime('%Y-%m-%d %H:%M:%S')
-                version_df = pd.read_sql_query('''
+                cutoff = (datetime.now() - timedelta(hours=within_hours or 24)).strftime('%Y-%m-%d %H:%M:%S')
+                row = conn.execute('''
                     SELECT data_date, version FROM data_versions
                     WHERE data_type = ? AND fetch_success = 1 
                     AND datetime(created_at) >= datetime(?)
                     ORDER BY data_date DESC, version DESC LIMIT 1
-                ''', conn, params=[data_type, cutoff])
+                ''', (data_type, cutoff)).fetchone()
 
-            if version_df.empty:
+            if not row:
                 return None
 
-            resolved_date = version_df.iloc[0]['data_date']
-            version = int(version_df.iloc[0]['version'])
+            resolved_date = row['data_date']
+            version = int(row['version'])
 
-            raw_df = pd.read_sql_query('''
+            raw_rows = conn.execute('''
                 SELECT * FROM sector_raw_data 
                 WHERE data_type = ? AND data_date = ? AND data_version = ?
-            ''', conn, params=[data_type, resolved_date, version])
+            ''', (data_type, resolved_date, version)).fetchall()
+            raw_df = pd.DataFrame([dict(item) for item in raw_rows])
 
             return self._build_raw_data_payload(key, resolved_date, raw_df)
         except Exception as e:
@@ -2218,51 +2358,120 @@ class SectorStrategyDatabase:
         sectors_data = loader('sectors')
         concepts_data = loader('concepts')
         market_data = loader('market_overview')
+        fund_flow_data = loader('fund_flow')
+        north_flow_data = loader('north_flow')
+        news_data = self.get_news_data_by_date(data_date) if data_date else self.get_latest_news_data(within_hours=within_hours)
 
         summary = {
             'from_cache': True,
             'cache_warning': f"市场快照由{'历史' if data_date else '缓存'}原始数据重建，缺失字段以可恢复内容为准。",
             'data_timestamp': data_date or '',
+            'source_trade_date': data_date or '',
             'market_overview': (market_data or {}).get('data_content', {}) or {},
             'sectors': (sectors_data or {}).get('data_content', {}) or {},
             'concepts': (concepts_data or {}).get('data_content', {}) or {},
+            'sector_fund_flow': (fund_flow_data or {}).get('data_content', {}) or {},
+            'north_flow': (north_flow_data or {}).get('data_content', {}) or {},
+            'news': (news_data or {}).get('data_content', []) or [],
         }
         if not summary['market_overview'] and not summary['sectors'] and not summary['concepts']:
             return {}
         return summary
 
+    def _news_df_to_payload(self, df):
+        if df.empty:
+            return None
+        news = []
+        for _, row in df.iterrows():
+            try:
+                related = json.loads(row.get('related_sectors', '[]'))
+            except Exception:
+                related = []
+            news.append({
+                'title': row.get('title', ''),
+                'content': row.get('content', ''),
+                'source': row.get('source', ''),
+                'url': row.get('url', ''),
+                'related_sectors': related,
+                'sentiment_score': float(row.get('sentiment_score', 0) or 0),
+                'importance_score': float(row.get('importance_score', 0) or 0),
+                'news_date': row.get('news_date', '')
+            })
+        return {
+            'data_date': df.iloc[0]['news_date'] if not df.empty else None,
+            'data_content': news
+        }
+
+    def get_news_data_by_date(self, data_date: str):
+        conn = self.get_connection()
+        conn.row_factory = sqlite3.Row
+        try:
+            version_row = conn.execute(
+                '''
+                SELECT version
+                FROM data_versions
+                WHERE data_type = 'news'
+                  AND fetch_success = 1
+                  AND data_date = ?
+                ORDER BY version DESC
+                LIMIT 1
+                ''',
+                (str(data_date),),
+            ).fetchone()
+            if not version_row:
+                return None
+
+            rows = conn.execute(
+                '''
+                SELECT *
+                FROM sector_news_data
+                WHERE news_date = ?
+                  AND data_version = ?
+                ORDER BY importance_score DESC, created_at DESC
+                ''',
+                (str(data_date), int(version_row["version"])),
+            ).fetchall()
+            df = pd.DataFrame([dict(row) for row in rows])
+            return self._news_df_to_payload(df)
+        except Exception as e:
+            self.logger.error(f"[智策板块] 获取历史新闻数据失败: {e}")
+            return None
+        finally:
+            conn.close()
+
     def get_latest_news_data(self, within_hours: int = 24):
         """获取最近within_hours小时的新闻列表"""
         conn = self.get_connection()
+        conn.row_factory = sqlite3.Row
         try:
-            cutoff = (pd.Timestamp.now() - pd.Timedelta(hours=within_hours)).strftime('%Y-%m-%d %H:%M:%S')
-            df = pd.read_sql_query('''
-                SELECT * FROM sector_news_data 
-                WHERE datetime(created_at) >= datetime(?)
-                ORDER BY importance_score DESC, created_at DESC
-            ''', conn, params=[cutoff])
-            if df.empty:
+            cutoff = (datetime.now() - timedelta(hours=within_hours)).strftime('%Y-%m-%d %H:%M:%S')
+            version_row = conn.execute(
+                '''
+                SELECT data_date, version
+                FROM data_versions
+                WHERE data_type = 'news'
+                  AND fetch_success = 1
+                  AND datetime(created_at) >= datetime(?)
+                ORDER BY data_date DESC, version DESC
+                LIMIT 1
+                ''',
+                (cutoff,),
+            ).fetchone()
+            if not version_row:
                 return None
-            news = []
-            for _, row in df.iterrows():
-                try:
-                    related = json.loads(row.get('related_sectors', '[]'))
-                except Exception:
-                    related = []
-                news.append({
-                    'title': row.get('title', ''),
-                    'content': row.get('content', ''),
-                    'source': row.get('source', ''),
-                    'url': row.get('url', ''),
-                    'related_sectors': related,
-                    'sentiment_score': float(row.get('sentiment_score', 0) or 0),
-                    'importance_score': float(row.get('importance_score', 0) or 0),
-                    'news_date': row.get('news_date', '')
-                })
-            return {
-                'data_date': df.iloc[0]['news_date'] if not df.empty else None,
-                'data_content': news
-            }
+
+            rows = conn.execute(
+                '''
+                SELECT *
+                FROM sector_news_data
+                WHERE news_date = ?
+                  AND data_version = ?
+                ORDER BY importance_score DESC, created_at DESC
+                ''',
+                (version_row["data_date"], int(version_row["version"])),
+            ).fetchall()
+            df = pd.DataFrame([dict(row) for row in rows])
+            return self._news_df_to_payload(df)
         except Exception as e:
             self.logger.error(f"[智策板块] 获取最近新闻数据失败: {e}")
             return None

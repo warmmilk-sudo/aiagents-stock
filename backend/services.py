@@ -1073,13 +1073,21 @@ def submit_sector_strategy_task(
 
         invalidate_report_cache("sector:list:", "sector:latest-overview", "sector:lifecycle:latest")
         report_progress(current=100, total=100, message="智策分析完成，正在同步结果...")
+        source_trade_date = str(data.get("source_trade_date") or data.get("timestamp") or "")
         data_summary = {
             "from_cache": bool(data.get("from_cache")),
             "cache_warning": data.get("cache_warning", ""),
-            "data_timestamp": data.get("timestamp"),
+            "data_timestamp": source_trade_date,
+            "fetch_timestamp": data.get("fetch_timestamp") or data.get("timestamp"),
+            "source_trade_date": source_trade_date,
+            "source_trade_dates": data.get("source_trade_dates", {}) or {},
             "market_overview": data.get("market_overview", {}),
+            "macro_data": data.get("macro_data", {}) or {},
             "sectors": data.get("sectors", {}) or {},
             "concepts": data.get("concepts", {}) or {},
+            "sector_fund_flow": data.get("sector_fund_flow", {}) or {},
+            "north_flow": data.get("north_flow", {}) or {},
+            "news": data.get("news", []) or [],
         }
         return {
             "result": _json_safe(result),
@@ -1122,6 +1130,41 @@ def _extract_sector_strategy_summary(source: dict[str, Any]) -> dict[str, Any]:
         "market_outlook": payload.get("market_outlook") or "中性",
         "confidence_score": int(payload.get("confidence_score") or 0),
     }
+
+
+def _summary_value_empty(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return not value.strip()
+    if isinstance(value, (list, tuple, set, dict)):
+        return len(value) == 0
+    return False
+
+
+def _build_sector_report_data_summary(report: dict[str, Any]) -> dict[str, Any]:
+    embedded_data_summary = {}
+    analysis_payload = report.get("analysis_content_parsed") if isinstance(report.get("analysis_content_parsed"), dict) else {}
+    if isinstance(analysis_payload, dict):
+        embedded_data_summary = analysis_payload.get("data_summary") if isinstance(analysis_payload.get("data_summary"), dict) else {}
+
+    fallback_summary = {}
+    report_date = str(report.get("analysis_date") or report.get("created_at") or "").strip()[:10]
+    data_range_date = str(report.get("data_date_range") or "").strip()[:10]
+    lookup_date = data_range_date if len(data_range_date) >= 10 and data_range_date[4:5] == "-" else report_date
+    if lookup_date:
+        fallback_summary = sector_strategy_db.build_data_summary(data_date=lookup_date)
+
+    if not embedded_data_summary:
+        return fallback_summary
+    if not fallback_summary:
+        return embedded_data_summary
+
+    merged_summary = dict(fallback_summary)
+    for key, value in embedded_data_summary.items():
+        if not _summary_value_empty(value):
+            merged_summary[key] = value
+    return merged_summary
 
 
 def list_sector_strategy_reports(limit: int = 20) -> list[dict[str, Any]]:
@@ -1176,14 +1219,7 @@ def get_latest_sector_strategy_report_overview() -> dict[str, Any]:
                 "daily_heat_panel": {"available": False, "board_date": None, "total_count": 0, "items": []},
             }
 
-        embedded_data_summary = {}
-        analysis_payload = report.get("analysis_content_parsed") if isinstance(report.get("analysis_content_parsed"), dict) else {}
-        if isinstance(analysis_payload, dict):
-            embedded_data_summary = analysis_payload.get("data_summary") if isinstance(analysis_payload.get("data_summary"), dict) else {}
-        if not embedded_data_summary:
-            report_date = str(report.get("analysis_date") or report.get("created_at") or "").strip()[:10]
-            if report_date:
-                embedded_data_summary = sector_strategy_db.build_data_summary(data_date=report_date)
+        embedded_data_summary = _build_sector_report_data_summary(report)
 
         report_view = normalize_sector_strategy_result(
             report,
@@ -1281,14 +1317,7 @@ def get_sector_strategy_report(report_id: int, *, include_raw_reports: bool = Fa
         report = sector_strategy_db.get_analysis_report(report_id, include_lifecycle=False)
         if not report:
             return None
-        embedded_data_summary = {}
-        analysis_payload = report.get("analysis_content_parsed") if isinstance(report.get("analysis_content_parsed"), dict) else {}
-        if isinstance(analysis_payload, dict):
-            embedded_data_summary = analysis_payload.get("data_summary") if isinstance(analysis_payload.get("data_summary"), dict) else {}
-        if not embedded_data_summary:
-            report_date = str(report.get("analysis_date") or report.get("created_at") or "").strip()[:10]
-            if report_date:
-                embedded_data_summary = sector_strategy_db.build_data_summary(data_date=report_date)
+        embedded_data_summary = _build_sector_report_data_summary(report)
         report_view = normalize_sector_strategy_result(
             report,
             data_summary=embedded_data_summary,
@@ -3939,6 +3968,17 @@ def list_smart_monitor_decisions(limit: int = 100) -> list[dict[str, Any]]:
 
 def get_smart_monitor_decision_summary(limit: int = 120) -> dict[str, Any]:
     return smart_monitor_db.get_ai_decision_intraday_summary(limit=limit)
+
+
+def record_smart_monitor_decision_feedback(decision_id: int, payload: dict[str, Any]) -> bool:
+    return bool(
+        smart_monitor_db.record_decision_feedback(
+            int(decision_id),
+            status=str(payload.get("status") or ""),
+            note=str(payload.get("note") or ""),
+            actual_action_id=payload.get("actual_action_id"),
+        )
+    )
 
 
 def list_smart_monitor_trade_records(limit: int = 100) -> list[dict[str, Any]]:
