@@ -176,8 +176,18 @@ def run_all_tasks_once(
     request: Request,
     payload: Optional[SmartMonitorRunOnceRequest] = None,
 ) -> dict:
-    require_session(request)
+    session = require_session(request)
     resolved_payload = payload.model_dump() if payload is not None else {}
+    if bool(resolved_payload.get("async_run", False)):
+        task_id = services.submit_smart_monitor_run_once_task(
+            session_key=build_session_key(session),
+            enabled_only=bool(resolved_payload.get("enabled_only", True)),
+            account_name=resolved_payload.get("account_name"),
+            has_position=resolved_payload.get("has_position"),
+            ordered_task_ids=resolved_payload.get("ordered_task_ids") or [],
+            task_delay_seconds=resolved_payload.get("task_delay_seconds"),
+        )
+        return success_payload({"task_id": task_id}, message="已提交智能盯盘批量执行任务")
     return success_payload(
         services.run_smart_monitor_tasks_once(
             enabled_only=bool(resolved_payload.get("enabled_only", True)),

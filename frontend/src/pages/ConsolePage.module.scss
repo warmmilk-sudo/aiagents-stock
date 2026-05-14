@@ -367,11 +367,76 @@
   padding-left: 2px;
 }
 
+.researchHubAssetTitleRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.researchHubAssetTitleRow strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .researchHubTagList {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
   min-width: 0;
+}
+
+.researchHubDecisionBadge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  max-width: 100%;
+  min-height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line-soft);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.2;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+.researchHubAssetButton .researchHubDecisionBadge,
+.researchHubAssetButtonActive .researchHubDecisionBadge {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.2;
+}
+
+.researchHubAssetButton .researchHubDecisionBadgeSuccess,
+.researchHubAssetButtonActive .researchHubDecisionBadgeSuccess {
+  border-color: color-mix(in srgb, var(--success) 42%, var(--line-soft));
+  background: color-mix(in srgb, var(--success) 11%, transparent);
+  color: var(--success);
+}
+
+.researchHubAssetButton .researchHubDecisionBadgeWarning,
+.researchHubAssetButtonActive .researchHubDecisionBadgeWarning {
+  border-color: color-mix(in srgb, var(--warning) 42%, var(--line-soft));
+  background: color-mix(in srgb, var(--warning) 10%, transparent);
+  color: var(--warning);
+}
+
+.researchHubAssetButton .researchHubDecisionBadgeDanger,
+.researchHubAssetButtonActive .researchHubDecisionBadgeDanger {
+  border-color: color-mix(in srgb, var(--danger) 42%, var(--line-soft));
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  color: var(--danger);
+}
+
+.researchHubAssetButton .researchHubDecisionBadgeDefault,
+.researchHubAssetButtonActive .researchHubDecisionBadgeDefault {
+  border-color: var(--line-soft);
+  background: transparent;
+  color: var(--text-muted);
 }
 
 .researchHubTag,
@@ -438,7 +503,9 @@
 }
 
 .researchHubStarButton,
-.researchHubStarButtonActive {
+.researchHubStarButtonActive,
+.researchHubMonitorButton,
+.researchHubMonitorButtonActive {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -457,20 +524,38 @@
 }
 
 .researchHubStarButton svg,
-.researchHubStarButtonActive svg {
+.researchHubStarButtonActive svg,
+.researchHubMonitorButton svg,
+.researchHubMonitorButtonActive svg {
   width: 28px;
   height: 28px;
   display: block;
 }
 
 .researchHubStarButton:hover,
-.researchHubStarButtonActive:hover {
+.researchHubStarButtonActive:hover,
+.researchHubMonitorButton:hover,
+.researchHubMonitorButtonActive:hover {
   transform: translateY(-1px);
   background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
 .researchHubStarButtonActive {
   color: var(--accent);
+}
+
+.researchHubMonitorButton,
+.researchHubMonitorButtonActive {
+  margin-top: 2px;
+}
+
+.researchHubMonitorButtonActive {
+  color: var(--accent);
+}
+
+.researchHubMonitorButton[aria-busy="true"],
+.researchHubMonitorButtonActive[aria-busy="true"] {
+  color: color-mix(in srgb, var(--accent) 72%, var(--text-muted));
 }
 
 .researchHubDeleteButton {
@@ -647,6 +732,21 @@
   overflow: hidden;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
+}
+
+.taskQueueRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 6px 0;
+  min-width: 0;
+}
+
+.taskQueueRow .secondaryButton {
+  min-height: 30px;
+  padding: 0 10px;
+  white-space: nowrap;
 }
 
 .compactGrid>*,
@@ -3252,6 +3352,8 @@ details>.historyDetailSummary:hover {
 
   .researchHubStarButton,
   .researchHubStarButtonActive,
+  .researchHubMonitorButton,
+  .researchHubMonitorButtonActive,
   .researchHubDeleteButton {
     min-width: 48px;
     width: 48px;
@@ -3260,6 +3362,8 @@ details>.historyDetailSummary:hover {
 
   .researchHubStarButton svg,
   .researchHubStarButtonActive svg,
+  .researchHubMonitorButton svg,
+  .researchHubMonitorButtonActive svg,
   .researchHubDeleteButton svg {
     width: 30px;
     height: 30px;

@@ -406,6 +406,24 @@ class AssetService:
         self.monitoring_repository.upsert_item(alert_payload)
         return {"ai_tasks_upserted": 1, "price_alerts_upserted": 1, "removed": 0}
 
+    def remove_managed_monitors(self, asset_id: int) -> Dict[str, int]:
+        if not self.monitoring_repository:
+            return {"ai_tasks_upserted": 0, "price_alerts_upserted": 0, "removed": 0}
+
+        asset = self.asset_repository.get_asset(asset_id)
+        if not asset:
+            return {"ai_tasks_upserted": 0, "price_alerts_upserted": 0, "removed": 0}
+
+        removed = 0
+        for monitor_type in ("ai_task", "price_alert"):
+            if self.monitoring_repository.delete_by_symbol(
+                asset["symbol"],
+                monitor_type=monitor_type,
+                asset_id=asset["id"],
+            ):
+                removed += 1
+        return {"ai_tasks_upserted": 0, "price_alerts_upserted": 0, "removed": removed}
+
     def sync_managed_monitors_for_symbol(
         self,
         symbol: str,
@@ -429,12 +447,14 @@ class AssetService:
                 totals[key] += int(result.get(key, 0) or 0)
         return totals
 
-    def set_monitoring_enabled(self, asset_id: int, enabled: bool) -> Dict[str, int]:
+    def set_monitoring_enabled(self, asset_id: int, enabled: bool, *, remove_when_disabled: bool = False) -> Dict[str, int]:
         asset = self.asset_repository.get_asset(asset_id)
         if not asset:
             return {"ai_tasks_upserted": 0, "price_alerts_upserted": 0, "removed": 0}
 
         self.asset_repository.update_asset(asset_id, monitor_enabled=bool(enabled))
+        if not enabled and remove_when_disabled:
+            return self.remove_managed_monitors(asset_id)
         return self.sync_managed_monitors(asset_id)
 
     def create_or_update_research_asset(
@@ -470,7 +490,10 @@ class AssetService:
             origin_analysis_id=origin_analysis_id,
             monitor_enabled=monitor_enabled,
         )
-        self.sync_managed_monitors(asset_id)
+        if monitor_enabled:
+            self.sync_managed_monitors(asset_id)
+        else:
+            self.remove_managed_monitors(asset_id)
         return True, f"已加入备选关注: {symbol}", asset_id
 
     def promote_to_portfolio(
@@ -503,6 +526,7 @@ class AssetService:
             asset_id = self.asset_repository.create_or_update_research_asset(
                 symbol=symbol,
                 name=stock_name,
+                account_name=account_name,
                 note=note,
                 origin_analysis_id=origin_analysis_id,
                 monitor_enabled=monitor_enabled,

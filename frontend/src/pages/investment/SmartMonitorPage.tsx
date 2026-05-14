@@ -160,6 +160,12 @@ interface BackgroundTaskSummary {
   total?: number;
   error?: string;
   result?: {
+    task_total?: number;
+    task_success?: number;
+    task_failed?: number;
+    price_alert_total?: number;
+    price_alert_success?: number;
+    price_alert_failed?: number;
     stale_total?: number;
     fresh_total?: number;
     analysis_success?: number;
@@ -185,6 +191,7 @@ interface MonitorIntentPayload {
 type ComposerPanel = "task" | null;
 type NotificationTone = "danger" | "success" | "warning" | "info";
 type ResultPanel = "decisions" | "notifications";
+type DecisionGroup = "holding" | "watch";
 type SectionKey = "results" | "tasks" | "controls";
 type ConfirmAction = { kind: "delete"; task: SmartMonitorTask };
 type TaskGroup = {
@@ -574,9 +581,12 @@ export function SmartMonitorPage() {
   const [taskForm, setTaskForm] = useState(() => applySharedRiskDefaults(defaultTaskForm, (cachedPage?.monitorConfig as MonitorConfig | null) ?? null));
   const [activePanel, setActivePanel] = useState<ComposerPanel>(null);
   const [activeResultPanel, setActiveResultPanel] = useState<ResultPanel>("decisions");
+  const [activeDecisionGroup, setActiveDecisionGroup] = useState<DecisionGroup>("holding");
   const [activeTaskGroup, setActiveTaskGroup] = useState<TaskGroup["key"]>("holding");
   const [section, setSection] = useState<SectionKey>("results");
   const [isRunningAllTasks, setIsRunningAllTasks] = useState(false);
+  const [runOnceTaskId, setRunOnceTaskId] = useState<string | null>(null);
+  const [runOnceTask, setRunOnceTask] = useState<BackgroundTaskSummary | null>(null);
   const [isRefreshingBaselines, setIsRefreshingBaselines] = useState(false);
   const [baselineRefreshTaskId, setBaselineRefreshTaskId] = useState<string | null>(null);
   const [baselineRefreshTask, setBaselineRefreshTask] = useState<BackgroundTaskSummary | null>(null);
@@ -589,6 +599,7 @@ export function SmartMonitorPage() {
   const [pendingNotificationId, setPendingNotificationId] = useState<number | null>(null);
   const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null);
   const { message, error, clear, showError, showMessage } = usePageFeedback();
+  const runOnceTerminalTaskRef = useRef("");
   const baselineTerminalTaskRef = useRef("");
 
   const applyPageCache = (cache: SmartMonitorPageCache | null) => {
@@ -939,16 +950,15 @@ export function SmartMonitorPage() {
   const runAllTasksOnce = async () => {
     clear();
     setIsRunningAllTasks(true);
+    setRunOnceTaskId(null);
+    setRunOnceTask(null);
     try {
       const result = await apiFetch<{
-        task_total: number;
-        task_success: number;
-        price_alert_total: number;
-        price_alert_success: number;
-        task_delay_seconds?: number;
+        task_id: string;
       }>("/api/smart-monitor/tasks/run-once", {
         method: "POST",
         body: JSON.stringify({
+          async_run: true,
           enabled_only: true,
           has_position: null,
           ordered_task_ids: tasks
@@ -958,16 +968,65 @@ export function SmartMonitorPage() {
           task_delay_seconds: 1.2,
         }),
       });
-      showMessage(
-        `已按列表顺序执行 ${result.task_total} 个盯盘任务、${result.price_alert_total} 个价格监控；AI成功 ${result.task_success} 个，价格检查成功 ${result.price_alert_success} 个。`,
-      );
-      void loadAll(true).catch(() => undefined);
+      runOnceTerminalTaskRef.current = "";
+      setRunOnceTaskId(result.task_id);
+      showMessage("批量盘中决策任务已提交。");
     } catch (requestError) {
       showError(requestError instanceof ApiRequestError ? requestError.message : "批量盘中决策失败");
-    } finally {
       setIsRunningAllTasks(false);
+      setRunOnceTaskId(null);
+      setRunOnceTask(null);
     }
   };
+
+  const loadRunOnceTask = async () => {
+    if (!runOnceTaskId) {
+      setRunOnceTask(null);
+      return;
+    }
+    try {
+      const task = await apiFetch<BackgroundTaskSummary>(`/api/tasks/${runOnceTaskId}`);
+      setRunOnceTask(task);
+    } catch (requestError) {
+      if (requestError instanceof ApiRequestError && requestError.status === 404) {
+        setRunOnceTaskId(null);
+        setRunOnceTask(null);
+        setIsRunningAllTasks(false);
+      }
+    }
+  };
+
+  usePollingLoader({
+    load: loadRunOnceTask,
+    intervalMs: 2000,
+    enabled: Boolean(
+      runOnceTaskId
+      && (!runOnceTask || runOnceTask.status === "queued" || runOnceTask.status === "running")
+    ),
+    immediate: true,
+    dependencies: [runOnceTaskId, runOnceTask?.status],
+  });
+
+  useEffect(() => {
+    if (!runOnceTask || (runOnceTask.status !== "success" && runOnceTask.status !== "failed")) {
+      return;
+    }
+    const terminalKey = `${runOnceTask.id}:${runOnceTask.status}`;
+    if (runOnceTerminalTaskRef.current === terminalKey) {
+      return;
+    }
+    runOnceTerminalTaskRef.current = terminalKey;
+    setIsRunningAllTasks(false);
+    if (runOnceTask.status === "success") {
+      const result = runOnceTask.result;
+      showMessage(
+        `批量盘中决策完成：AI成功 ${Number(result?.task_success ?? 0)}/${Number(result?.task_total ?? 0)}，价格检查成功 ${Number(result?.price_alert_success ?? 0)}/${Number(result?.price_alert_total ?? 0)}。`,
+      );
+    } else {
+      showError(runOnceTask.error || "批量盘中决策失败");
+    }
+    void loadAll(true).catch(() => undefined);
+  }, [runOnceTask, showError, showMessage]);
 
   const loadBaselineRefreshTask = async () => {
     if (!baselineRefreshTaskId) {
@@ -1115,6 +1174,30 @@ export function SmartMonitorPage() {
     return accumulator;
   }, []);
   const visibleDecisions = latestDecisions.filter((item) => isVisibleDecision(item, tasks));
+  const holdingDecisions = visibleDecisions.filter((item) => isDecisionHolding(item, tasks));
+  const watchDecisions = visibleDecisions.filter((item) => !isDecisionHolding(item, tasks));
+  const decisionGroups: Array<{
+    key: DecisionGroup;
+    title: string;
+    decisions: DecisionItem[];
+    emptyText: string;
+  }> = [
+    {
+      key: "holding",
+      title: "持仓",
+      decisions: holdingDecisions,
+      emptyText: "暂无持仓标的的盘中决策。",
+    },
+    {
+      key: "watch",
+      title: "关注",
+      decisions: watchDecisions,
+      emptyText: "暂无关注标的的盘中决策。",
+    },
+  ];
+  const activeDecisionGroupConfig =
+    decisionGroups.find((group) => group.key === activeDecisionGroup) ?? decisionGroups[0];
+  const decisionGroupTabsStyle = { "--nested-tab-count": decisionGroups.length } as CSSProperties;
   const latestNotifications = notifications.reduce<PriceAlertNotification[]>((accumulator, item) => {
     const key = `${item.symbol || ""}`;
     if (!accumulator.some((existing) => `${existing.symbol || ""}` === key)) {
@@ -1280,34 +1363,51 @@ export function SmartMonitorPage() {
               <div className={styles.list}>
                 {activeResultPanel === "decisions"
                   ? (
-                    visibleDecisions.map((item) => {
-                      const badge = decisionBadge(item.action, item.action_detail, item.action_ratio_pct, item.risk_level, isDecisionHolding(item, tasks));
-                      const toneClass =
-                        badge.tone === "success"
-                          ? styles.noticeSuccess
-                          : badge.tone === "danger"
-                            ? styles.noticeDanger
-                            : badge.tone === "warning"
-                              ? styles.noticeWarning
-                              : styles.noticeInfo;
-                      return (
-                        <div className={`${styles.noticeCard} ${toneClass}`} key={item.id}>
-                          <div className={styles.noticeMeta}>
-                            <StatusBadge label={badge.label} tone={badge.tone} />
+                    <>
+                      <div className={styles.historyDetailTabs} style={decisionGroupTabsStyle}>
+                        {decisionGroups.map((group) => (
+                          <button
+                            className={activeDecisionGroup === group.key ? styles.nestedTabButtonActive : styles.nestedTabButton}
+                            key={group.key}
+                            onClick={() => setActiveDecisionGroup(group.key)}
+                            type="button"
+                          >
+                            {group.title}
+                            {` (${group.decisions.length})`}
+                          </button>
+                        ))}
+                      </div>
+                      {activeDecisionGroupConfig.decisions.map((item) => {
+                        const isHoldingDecision = isDecisionHolding(item, tasks);
+                        const badge = decisionBadge(item.action, item.action_detail, item.action_ratio_pct, item.risk_level, isHoldingDecision);
+                        const toneClass =
+                          badge.tone === "success"
+                            ? styles.noticeSuccess
+                            : badge.tone === "danger"
+                              ? styles.noticeDanger
+                              : badge.tone === "warning"
+                                ? styles.noticeWarning
+                                : styles.noticeInfo;
+                        return (
+                          <div className={`${styles.noticeCard} ${toneClass}`} key={item.id}>
+                            <div className={styles.noticeMeta}>
+                              <StatusBadge label={isHoldingDecision ? "持仓" : "关注"} tone={isHoldingDecision ? "success" : "warning"} />
+                              <StatusBadge label={badge.label} tone={badge.tone} />
+                            </div>
+                            <strong>{stockDisplayName(item.stock_name, item.stock_code)}</strong>
+                            <small className={styles.muted}>{formatDateTime(item.decision_time, "暂无时间")}</small>
+                            {item.evaluation?.outcome_label ? (
+                              <small className={styles.muted}>
+                                后验：{outcomeLabel(item.evaluation.outcome_label)}
+                                {typeof item.evaluation.max_upside_pct === "number" ? ` | 最大有利 ${item.evaluation.max_upside_pct.toFixed(1)}%` : ""}
+                                {typeof item.evaluation.max_downside_pct === "number" ? ` | 最大不利 ${item.evaluation.max_downside_pct.toFixed(1)}%` : ""}
+                              </small>
+                            ) : null}
+                            <div className={styles.decisionReasoning}>{formatDecisionReasoning(item)}</div>
                           </div>
-                          <strong>{stockDisplayName(item.stock_name, item.stock_code)}</strong>
-                          <small className={styles.muted}>{formatDateTime(item.decision_time, "暂无时间")}</small>
-                          {item.evaluation?.outcome_label ? (
-                            <small className={styles.muted}>
-                              后验：{outcomeLabel(item.evaluation.outcome_label)}
-                              {typeof item.evaluation.max_upside_pct === "number" ? ` | 最大有利 ${item.evaluation.max_upside_pct.toFixed(1)}%` : ""}
-                              {typeof item.evaluation.max_downside_pct === "number" ? ` | 最大不利 ${item.evaluation.max_downside_pct.toFixed(1)}%` : ""}
-                            </small>
-                          ) : null}
-                          <div className={styles.decisionReasoning}>{formatDecisionReasoning(item)}</div>
-                        </div>
-                      );
-                    })
+                        );
+                      })}
+                    </>
                   ) : (
                     latestNotifications.map((item) => {
                       const meta = notificationMeta(item);
@@ -1342,7 +1442,9 @@ export function SmartMonitorPage() {
                       );
                     })
                   )}
-                {activeResultPanel === "decisions" && !visibleDecisions.length ? <div className={styles.muted}>暂无盘中决策</div> : null}
+                {activeResultPanel === "decisions" && !activeDecisionGroupConfig.decisions.length ? (
+                  <div className={styles.muted}>{activeDecisionGroupConfig.emptyText}</div>
+                ) : null}
                 {activeResultPanel === "notifications" && !latestNotifications.length ? <div className={styles.noticeCard}><div>当前没有需要处理的预警通知。</div></div> : null}
               </div>
             </div>
@@ -1376,7 +1478,11 @@ export function SmartMonitorPage() {
                 >
                   {isRefreshingBaselines ? "提交中..." : baselineRefreshBusy ? "更新中..." : "更新基线"}
                 </button>
-                <span className={styles.muted}>执行当前列表内任务，完成盘中决策和价格检查。</span>
+                <span className={styles.muted}>
+                  {isRunningAllTasks && runOnceTask?.message
+                    ? runOnceTask.message
+                    : "执行当前列表内任务，完成盘中决策和价格检查。"}
+                </span>
               </div>
               <div className={styles.historyDetailTabs} style={taskGroupTabsStyle}>
                 {taskGroups.map((group) => (

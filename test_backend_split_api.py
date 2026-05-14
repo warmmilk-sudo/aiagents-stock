@@ -461,6 +461,72 @@ class BackendSplitApiTests(unittest.TestCase):
         self.assertEqual(result["execution_mode"], "sequential")
         self.assertEqual(mocked_sleep.call_count, 2)
 
+    def test_run_smart_monitor_tasks_once_async_endpoint_submits_background_task(self):
+        self.login()
+        with patch("backend.services.submit_smart_monitor_run_once_task", return_value="task-run-once") as mocked:
+            response = self.client.post(
+                "/api/smart-monitor/tasks/run-once",
+                json={
+                    "async_run": True,
+                    "enabled_only": True,
+                    "ordered_task_ids": [102, 101],
+                    "task_delay_seconds": 1.2,
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["success"])
+        self.assertEqual(payload["data"]["task_id"], "task-run-once")
+        call_kwargs = mocked.call_args.kwargs
+        self.assertEqual(call_kwargs["ordered_task_ids"], [102, 101])
+        self.assertEqual(call_kwargs["task_delay_seconds"], 1.2)
+
+    def test_submit_smart_monitor_run_once_task_uses_background_runner(self):
+        tasks = [
+            {"id": 101, "stock_code": "600519", "account_name": "默认账户"},
+            {"id": 102, "stock_code": "000001", "account_name": "默认账户"},
+        ]
+        captured = {}
+
+        def fake_start_task(session_key, **kwargs):
+            captured.update(kwargs)
+            return "task-run-once"
+
+        with patch.object(
+            services.portfolio_analysis_task_manager,
+            "get_pending_tasks",
+            return_value=[],
+        ), patch.object(
+            services.smart_monitor_db,
+            "get_monitor_tasks",
+            return_value=tasks,
+        ), patch.object(
+            services.portfolio_analysis_task_manager,
+            "start_task",
+            side_effect=fake_start_task,
+        ), patch(
+            "backend.services.run_smart_monitor_tasks_once",
+            return_value={"task_total": 2, "task_success": 2, "price_alert_total": 0, "price_alert_success": 0},
+        ) as mocked_run:
+            task_id = services.submit_smart_monitor_run_once_task(
+                session_key="session-1",
+                ordered_task_ids=[102, 101],
+                task_delay_seconds=1.2,
+            )
+
+        self.assertEqual(task_id, "task-run-once")
+        self.assertEqual(captured["task_type"], services.SMART_MONITOR_RUN_ONCE_TASK_TYPE)
+        self.assertEqual(captured["metadata"]["task_total"], 2)
+        progress_calls = []
+        result = captured["runner"]("task-run-once", lambda **kwargs: progress_calls.append(kwargs))
+        self.assertEqual(result["task_success"], 2)
+        mocked_run.assert_called_once()
+        run_kwargs = mocked_run.call_args.kwargs
+        self.assertEqual(run_kwargs["ordered_task_ids"], [102, 101])
+        self.assertEqual(run_kwargs["task_delay_seconds"], 1.2)
+        self.assertTrue(callable(run_kwargs["report_progress"]))
+
     def test_run_smart_monitor_tasks_once_runs_final_retry_for_items_still_failing_after_two_attempts(self):
         tasks = [
             {"id": 101, "stock_code": "600519", "account_name": "默认账户", "asset_id": 1, "portfolio_stock_id": 1},

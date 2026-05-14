@@ -11,6 +11,7 @@
 - 52周最高：$high_52_week
 - 52周最低：$low_52_week
 - RSI：$rsi
+$position_context_block
 $risk_fundamental_text
 $risk_liquidity_text
 $risk_data_text

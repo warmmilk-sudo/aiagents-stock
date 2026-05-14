@@ -1131,6 +1131,7 @@ def update_hub_asset(
     *,
     target_status: Optional[str] = None,
     manual_pin: Optional[bool] = None,
+    monitor_enabled: Optional[bool] = None,
     note: Optional[str] = None,
     pool_reason: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
@@ -1140,6 +1141,8 @@ def update_hub_asset(
     updates: Dict[str, Any] = {}
     if manual_pin is not None:
         updates["manual_pin"] = bool(manual_pin)
+    if monitor_enabled is not None:
+        updates["monitor_enabled"] = bool(monitor_enabled)
     if note is not None:
         updates["note"] = note
     if pool_reason is not None:
@@ -1149,12 +1152,13 @@ def update_hub_asset(
         asset_repository.update_asset(asset_id, **updates)
     if target_status and target_status != asset.get("status"):
         if target_status == STATUS_FOCUS:
+            target_monitor_enabled = bool(monitor_enabled) if monitor_enabled is not None else False
             asset_service.promote_to_watchlist(
                 symbol=asset.get("symbol"),
                 stock_name=asset.get("name") or asset.get("symbol"),
                 note=pool_reason or note or "手动晋级到备选关注",
                 origin_analysis_id=asset.get("origin_analysis_id"),
-                monitor_enabled=bool(asset.get("monitor_enabled", True)),
+                monitor_enabled=target_monitor_enabled,
             )
             _get_agent_memory_service().db.save_working_memory(
                 stock_code=asset.get("symbol"),
@@ -1169,6 +1173,12 @@ def update_hub_asset(
             )
         elif target_status == STATUS_HOLDING:
             raise ValueError("持仓状态只能通过交易记录变更")
+    elif monitor_enabled is not None:
+        asset_service.set_monitoring_enabled(
+            asset_id,
+            bool(monitor_enabled),
+            remove_when_disabled=True,
+        )
     invalidate_hub_cache("overview", "assets:", f"detail:{int(asset_id)}", f"timeline:{int(asset_id)}", "sector-report:recent")
     return get_hub_asset_detail(asset_id)
 
@@ -2804,6 +2814,7 @@ def _persist_selection_results(
         asset_repository.update_asset(
             int(asset["id"]),
             status=STATUS_FOCUS,
+            monitor_enabled=False,
             pool_reason=reason,
             pool_reason_source="selection",
             last_funnel_score=item.get("composite_score"),
@@ -2817,7 +2828,7 @@ def _persist_selection_results(
                 "market_state_label": str((market_context or {}).get("state_label") or ""),
             },
         )
-        asset_service.sync_managed_monitors(int(asset["id"]))
+        asset_service.remove_managed_monitors(int(asset["id"]))
         _get_agent_memory_service().db.save_working_memory(
             stock_code=item["symbol"],
             analysis_date=now_text,

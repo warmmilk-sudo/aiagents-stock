@@ -5,7 +5,7 @@ import time
 from typing import Any, Dict, Optional
 
 from llm_client import LLMClient
-from investment_action_utils import build_holding_strategy_prompt_block
+from investment_action_utils import build_holding_strategy_prompt_block, format_position_context_prompt_block
 from model_routing import ModelTier
 from prompt_registry import build_messages
 
@@ -280,6 +280,11 @@ class StockAnalysisAgents:
 """
         risk_fundamental_text = self._build_risk_fundamental_context(stock_info, financial_data, quarterly_data)
         risk_liquidity_text = self._build_risk_liquidity_context(stock_info, indicators)
+        position_context_block = (
+            format_position_context_prompt_block(stock_info.get("position_context"))
+            if stock_info.get("has_position")
+            else ""
+        )
         messages = build_messages(
             "stock_analysis/risk.system.txt",
             "stock_analysis/risk.user.txt",
@@ -298,6 +303,7 @@ class StockAnalysisAgents:
             risk_data_text=risk_data_text,
             risk_fundamental_text=risk_fundamental_text,
             risk_liquidity_text=risk_liquidity_text,
+            position_context_block=position_context_block,
         )
         analysis = self.llm_client.call_api(
             messages,
@@ -557,6 +563,7 @@ class StockAnalysisAgents:
                 has_position=bool(stock_info.get("has_position")),
                 strategy_context=strategy_context,
                 is_initial_holding_analysis=is_initial_holding_analysis,
+                position_context=stock_info.get("position_context"),
             ),
             all_reports=all_reports,
         )

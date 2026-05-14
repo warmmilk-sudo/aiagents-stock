@@ -4,12 +4,14 @@ import concurrent.futures
 import logging
 import sqlite3
 import time
-from typing import Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 from ai_agents import StockAnalysisAgents
 from asset_service import asset_service
 from asset_repository import STATUS_PORTFOLIO, asset_repository
 from database import db
+from investment_db_utils import DEFAULT_ACCOUNT_NAME, normalize_account_name
+from portfolio_db import portfolio_db
 from stock_data import StockDataFetcher
 from stock_data_cache import strip_cache_meta
 
@@ -100,6 +102,169 @@ def _resolve_position_state(symbol: str, has_position: Optional[bool] = None) ->
     except Exception as exc:
         logger.warning("[%s] failed resolving holding state: %s", symbol, exc)
         return False
+
+
+def _safe_float(value: Any) -> float:
+    try:
+        return float(value) if value not in (None, "") else 0.0
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _safe_int(value: Any) -> int:
+    try:
+        return int(value) if value not in (None, "") else 0
+    except (TypeError, ValueError):
+        return 0
+
+
+def _resolve_position_asset(
+    *,
+    symbol: str,
+    account_name: Optional[str],
+    asset_id: Optional[int] = None,
+    portfolio_stock_id: Optional[int] = None,
+) -> Optional[Dict[str, Any]]:
+    for candidate_id in (portfolio_stock_id, asset_id):
+        if candidate_id in (None, ""):
+            continue
+        try:
+            asset = asset_repository.get_asset(int(candidate_id))
+        except Exception as exc:
+            logger.warning("[%s] failed loading holding asset %s: %s", symbol, candidate_id, exc)
+            asset = None
+        if asset:
+            return asset
+
+    normalized_account = normalize_account_name(account_name) or DEFAULT_ACCOUNT_NAME
+    try:
+        asset = asset_repository.get_asset_by_symbol(symbol, normalized_account)
+    except Exception as exc:
+        logger.warning("[%s] failed loading holding asset by symbol: %s", symbol, exc)
+        asset = None
+    if asset:
+        return asset
+
+    try:
+        assets = asset_repository.list_assets(
+            status=STATUS_PORTFOLIO,
+            symbol=symbol,
+            include_deleted=False,
+        )
+    except Exception as exc:
+        logger.warning("[%s] failed listing holding assets: %s", symbol, exc)
+        return None
+    return assets[0] if assets else None
+
+
+def _resolve_position_context(
+    *,
+    symbol: str,
+    has_position: bool,
+    account_name: Optional[str] = None,
+    asset_id: Optional[int] = None,
+    portfolio_stock_id: Optional[int] = None,
+    current_price: Any = None,
+) -> Dict[str, Any]:
+    if not has_position:
+        return {}
+
+    normalized_symbol = str(symbol or "").strip().upper()
+    if not normalized_symbol:
+        return {}
+
+    asset = _resolve_position_asset(
+        symbol=normalized_symbol,
+        account_name=account_name,
+        asset_id=asset_id,
+        portfolio_stock_id=portfolio_stock_id,
+    )
+    if not asset:
+        return {}
+
+    quantity = _safe_int(asset.get("quantity"))
+    cost_price = _safe_float(asset.get("cost_price"))
+    if quantity <= 0:
+        return {}
+
+    normalized_account = normalize_account_name(asset.get("account_name") or account_name) or DEFAULT_ACCOUNT_NAME
+    resolved_current_price = _safe_float(current_price) or cost_price
+    market_value = max(0.0, resolved_current_price * quantity)
+    cost_value = max(0.0, cost_price * quantity)
+    profit_loss = market_value - cost_value
+    profit_loss_pct = (profit_loss / cost_value * 100.0) if cost_value > 0 else 0.0
+
+    account_total_market_value = 0.0
+    found_current_asset = False
+    try:
+        account_assets = asset_repository.list_assets(
+            status=STATUS_PORTFOLIO,
+            include_deleted=False,
+        )
+    except Exception as exc:
+        logger.warning("[%s] failed listing account holdings for position ratio: %s", normalized_symbol, exc)
+        account_assets = []
+
+    asset_identity = asset.get("id")
+    for holding in account_assets:
+        if normalize_account_name(holding.get("account_name")) != normalized_account:
+            continue
+        holding_quantity = _safe_int(holding.get("quantity"))
+        if holding_quantity <= 0:
+            continue
+        holding_cost_price = _safe_float(holding.get("cost_price"))
+        same_asset = (
+            (asset_identity is not None and holding.get("id") == asset_identity)
+            or str(holding.get("symbol") or holding.get("code") or "").strip().upper() == normalized_symbol
+        )
+        holding_price = resolved_current_price if same_asset and resolved_current_price > 0 else holding_cost_price
+        account_total_market_value += max(0.0, holding_price * holding_quantity)
+        found_current_asset = found_current_asset or same_asset
+
+    if not found_current_asset:
+        account_total_market_value += market_value
+
+    try:
+        configured_total_assets = _safe_float(portfolio_db.get_account_total_assets(normalized_account, 0.0))
+    except Exception as exc:
+        logger.warning("[%s] failed loading account total assets: %s", normalized_symbol, exc)
+        configured_total_assets = 0.0
+
+    effective_total_assets = configured_total_assets if configured_total_assets > 0 else max(
+        account_total_market_value,
+        market_value,
+    )
+    position_pct = (market_value / effective_total_assets * 100.0) if effective_total_assets > 0 else 0.0
+    position_weight_pct = (
+        market_value / account_total_market_value * 100.0
+        if account_total_market_value > 0
+        else position_pct
+    )
+    total_position_pct = (
+        account_total_market_value / effective_total_assets * 100.0
+        if effective_total_assets > 0
+        else 0.0
+    )
+
+    return {
+        "asset_id": asset.get("id"),
+        "portfolio_stock_id": asset.get("id") if asset.get("status") == STATUS_PORTFOLIO else portfolio_stock_id,
+        "account_name": normalized_account,
+        "quantity": quantity,
+        "cost_price": round(cost_price, 4),
+        "current_price": round(resolved_current_price, 4),
+        "market_value": round(market_value, 2),
+        "cost_value": round(cost_value, 2),
+        "profit_loss": round(profit_loss, 2),
+        "profit_loss_pct": round(profit_loss_pct, 2),
+        "position_pct": round(position_pct, 2),
+        "position_weight_pct": round(position_weight_pct, 2),
+        "total_position_pct": round(total_position_pct, 2),
+        "account_total_assets": round(effective_total_assets, 2),
+        "configured_total_assets": round(configured_total_assets, 2),
+        "account_total_market_value": round(account_total_market_value, 2),
+        "total_assets_configured": configured_total_assets > 0,
+    }
 
 
 def _fetch_optional_data(symbol: str, source_name: str, fetch_func: Callable[[], object], strip_meta: bool = False):
@@ -274,6 +439,24 @@ def analyze_single_stock_for_batch(
         resolved_has_position = _resolve_position_state(symbol, has_position=has_position)
         stock_info["has_position"] = resolved_has_position
         stock_info["position_status"] = "已持仓" if resolved_has_position else "未持仓"
+        position_context = _resolve_position_context(
+            symbol=symbol,
+            has_position=resolved_has_position,
+            account_name=account_name,
+            asset_id=asset_id,
+            portfolio_stock_id=portfolio_stock_id,
+            current_price=stock_info.get("current_price"),
+        )
+        if position_context:
+            stock_info["position_context"] = position_context
+            stock_info["position_cost"] = position_context.get("cost_price")
+            stock_info["position_quantity"] = position_context.get("quantity")
+            stock_info["current_position_pct"] = position_context.get("position_pct")
+            stock_info["position_market_value"] = position_context.get("market_value")
+            stock_info["account_total_assets"] = position_context.get("account_total_assets")
+            account_name = position_context.get("account_name") or account_name
+            asset_id = asset_id or position_context.get("asset_id")
+            portfolio_stock_id = portfolio_stock_id or position_context.get("portfolio_stock_id")
         existing_strategy_context = _load_latest_strategy_context(
             symbol=symbol,
             has_position=resolved_has_position,

@@ -811,6 +811,46 @@ class PortfolioAnalysisTaskManagerTests(unittest.TestCase):
             self.fail("queued task did not finish in time")
         self.assertEqual(execution_order, ["first", "second"])
 
+    def test_task_manager_can_cancel_queued_task(self):
+        manager = PortfolioAnalysisTaskManager()
+        blocker = threading.Event()
+        started = threading.Event()
+        second_started = threading.Event()
+
+        def runner(_task_id, report_progress):
+            report_progress(total=1, current=0, message="running")
+            started.set()
+            blocker.wait(1.0)
+            return {"ok": True}
+
+        def second_runner(_task_id, report_progress):
+            second_started.set()
+            return {"ok": True}
+
+        manager.start_task(
+            "session-a",
+            task_type="single",
+            label="first",
+            runner=runner,
+        )
+        self.assertTrue(started.wait(1.0))
+        second_task_id = manager.start_task(
+            "session-a",
+            task_type="single",
+            label="second",
+            runner=second_runner,
+        )
+
+        success, message, task = manager.cancel_queued_task(second_task_id, session_id="session-a")
+        self.assertTrue(success)
+        self.assertEqual(message, "任务已取消")
+        self.assertEqual(task["status"], "cancelled")
+        self.assertEqual(manager.count_queued_tasks("session-a"), 0)
+
+        blocker.set()
+        time.sleep(0.05)
+        self.assertFalse(second_started.is_set())
+
     def test_task_manager_can_recover_tasks_without_original_session_id(self):
         manager = PortfolioAnalysisTaskManager()
         blocker = threading.Event()

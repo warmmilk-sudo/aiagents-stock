@@ -18,6 +18,33 @@ from smart_monitor_engine import (
 
 
 class SmartMonitorEngineTests(unittest.TestCase):
+    def test_build_account_info_recomputes_usage_when_position_is_only_from_snapshot(self):
+        engine = SmartMonitorEngine.__new__(SmartMonitorEngine)
+        engine.db = SimpleNamespace(
+            portfolio_db=SimpleNamespace(
+                get_all_stocks=MagicMock(return_value=[]),
+                get_account_total_assets=MagicMock(return_value=100000),
+            )
+        )
+
+        account_info = engine._build_account_info(
+            account_name="zfy",
+            asset=None,
+            stock_code="600519",
+            asset_id=None,
+            portfolio_stock_id=None,
+            has_position=True,
+            position_cost=10.0,
+            position_quantity=1000,
+            position_date="2026-05-10",
+            current_market_price=12.0,
+        )
+
+        self.assertEqual(account_info["total_market_value"], 12000)
+        self.assertAlmostEqual(account_info["position_usage_pct"], 0.12)
+        self.assertAlmostEqual(account_info["current_position"]["position_pct"], 0.12)
+        self.assertEqual(account_info["available_cash"], 88000)
+
     def test_baseline_reanalysis_trigger_fires_on_limit_up_above_take_profit(self):
         trigger = evaluate_intraday_baseline_reanalysis_trigger(
             decision={"action": "HOLD", "baseline_relation": "followed", "baseline_conflict_score": 10},
@@ -232,7 +259,103 @@ class SmartMonitorEngineTests(unittest.TestCase):
 
         self.assertEqual(decision["action"], "SELL")
         self.assertTrue(audit["hard_risk_sell"])
+
+    def test_strategy_guardrail_allows_shallow_pullback_dynamic_entry(self):
+        engine = object.__new__(SmartMonitorEngine)
+        decision = {
+            "action": "BUY",
+            "action_detail": "建仓",
+            "swing_execution_mode": "watch_hold",
+            "entry_execution_mode": "shallow_pullback",
+            "action_ratio_pct": 10,
+            "reasoning": "15/30/60分钟承接恢复，量能配合，适合浅回踩试仓。",
+            "monitor_levels": {"entry_min": 100.0, "entry_max": 102.0, "take_profit": 115.0, "stop_loss": 96.0},
+        }
+
+        result = engine._apply_strategy_plan_guardrails(
+            decision=decision,
+            strategy_context={
+                "rating": "买入",
+                "entry_min": 100.0,
+                "entry_max": 102.0,
+                "take_profit": 115.0,
+                "stop_loss": 96.0,
+                "entry_execution_mode": "shallow_pullback",
+            },
+            market_data={"current_price": 103.0, "atr14": 3.0},
+            has_position=False,
+        )
+
+        self.assertEqual(result["action"], "BUY")
+        self.assertIn("动态容忍范围", result["reasoning"])
+
+    def test_strategy_guardrail_blocks_dynamic_entry_when_deviation_too_large(self):
+        engine = object.__new__(SmartMonitorEngine)
+        decision = {
+            "action": "BUY",
+            "action_detail": "建仓",
+            "entry_execution_mode": "shallow_pullback",
+            "action_ratio_pct": 10,
+            "reasoning": "分时转强。",
+            "monitor_levels": {"entry_min": 100.0, "entry_max": 102.0, "take_profit": 115.0, "stop_loss": 96.0},
+        }
+
+        result = engine._apply_strategy_plan_guardrails(
+            decision=decision,
+            strategy_context={
+                "rating": "买入",
+                "entry_min": 100.0,
+                "entry_max": 102.0,
+                "take_profit": 115.0,
+                "stop_loss": 96.0,
+                "entry_execution_mode": "shallow_pullback",
+            },
+            market_data={"current_price": 105.0, "atr14": 3.0},
+            has_position=False,
+        )
+
+        self.assertEqual(result["action"], "HOLD")
+        self.assertIn("已阻断追高", result["reasoning"])
+
+    def test_decision_auditor_does_not_veto_allowed_dynamic_entry(self):
+        auditor = SmartMonitorDecisionAuditor()
+        decision, audit = auditor.audit(
+            decision={
+                "action": "BUY",
+                "action_detail": "建仓",
+                "entry_execution_mode": "shallow_pullback",
+                "action_ratio_pct": 10,
+                "confidence": 80,
+                "reasoning": "15/30/60分钟承接恢复，量能配合，适合浅回踩试仓。",
+                "monitor_levels": {"entry_min": 100.0, "entry_max": 102.0, "take_profit": 115.0, "stop_loss": 96.0},
+            },
+            strategy_context={
+                "baseline_quality": {"status": "healthy", "score": 88},
+                "rating": "买入",
+                "entry_min": 100.0,
+                "entry_max": 102.0,
+                "take_profit": 115.0,
+                "stop_loss": 96.0,
+                "entry_execution_mode": "shallow_pullback",
+            },
+            market_data={
+                "current_price": 103.0,
+                "atr14": 3.0,
+                "realtime_freshness": {"overall_status": "ready"},
+            },
+            has_position=False,
+            account_info={},
+            risk_profile={"position_size_pct": 20, "total_position_pct": 100},
+            memory_context={},
+            can_sell_today=False,
+            session_info={"can_trade": True},
+            notify=True,
+            trading_hours_only=True,
+        )
+
+        self.assertEqual(decision["action"], "BUY")
         self.assertEqual(audit["veto_reason"], "")
+        self.assertIn("dynamic_entry_outside_range", audit["quality_flags"])
 
     def test_decision_auditor_ignores_incomplete_baseline_quality(self):
         auditor = SmartMonitorDecisionAuditor()

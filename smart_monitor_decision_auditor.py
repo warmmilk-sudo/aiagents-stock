@@ -40,8 +40,12 @@ class SmartMonitorDecisionAuditor:
     def _freshness_state(market_data: Optional[Dict[str, Any]]) -> str:
         freshness = (market_data or {}).get("realtime_freshness")
         if isinstance(freshness, dict):
-            return str(freshness.get("overall_status") or "unknown").strip() or "unknown"
-        return "unknown"
+            status = str(freshness.get("overall_status") or "").strip()
+            if status:
+                return status
+            if freshness.get("asof_time") or freshness.get("update_time"):
+                return "ready"
+        return "ready"
 
     @staticmethod
     def _entry_bounds(strategy_context: Optional[Dict[str, Any]], decision: Dict[str, Any]) -> Tuple[Optional[float], Optional[float]]:
@@ -112,6 +116,59 @@ class SmartMonitorDecisionAuditor:
             or any(keyword in reasoning for keyword in ("止损", "破位", "基线失效", "放量转弱"))
         )
 
+    @staticmethod
+    def _dynamic_entry_allows_buy(
+        *,
+        decision: Dict[str, Any],
+        market_data: Dict[str, Any],
+        strategy_context: Optional[Dict[str, Any]],
+        current_price: Optional[float],
+        entry_min: Optional[float],
+        entry_max: Optional[float],
+    ) -> bool:
+        if current_price is None or entry_min is None or entry_max is None:
+            return False
+        if entry_min <= current_price <= entry_max:
+            return True
+        if current_price < entry_min:
+            return False
+
+        context = strategy_context if isinstance(strategy_context, dict) else {}
+        final_decision = context.get("final_decision") if isinstance(context.get("final_decision"), dict) else {}
+        mode = str(
+            decision.get("entry_execution_mode")
+            or context.get("entry_execution_mode")
+            or final_decision.get("entry_execution_mode")
+            or ""
+        ).strip().lower()
+        swing_mode = str(decision.get("swing_execution_mode") or "").strip().lower()
+        if mode not in {"shallow_pullback", "breakout_confirm"}:
+            if swing_mode in {"breakout_entry", "breakout_add"}:
+                mode = "breakout_confirm"
+            elif swing_mode in {"pullback_entry", "pullback_add"}:
+                mode = "shallow_pullback"
+        if mode not in {"shallow_pullback", "breakout_confirm"}:
+            return False
+
+        levels = decision.get("monitor_levels") if isinstance(decision.get("monitor_levels"), dict) else {}
+        take_profit = _float_or_none(levels.get("take_profit"))
+        if take_profit is None:
+            take_profit = _float_or_none(context.get("take_profit") or final_decision.get("take_profit"))
+        if take_profit is not None and current_price >= take_profit:
+            return False
+
+        atr14 = _float_or_none(
+            (market_data or {}).get("atr14")
+            or decision.get("atr14")
+            or context.get("atr14")
+            or final_decision.get("atr14")
+        )
+        pct_cap = 0.015 if mode == "shallow_pullback" else 0.03
+        atr_multiplier = 0.5 if mode == "shallow_pullback" else 1.0
+        pct_deviation = entry_max * pct_cap
+        max_deviation = min(atr14 * atr_multiplier, pct_deviation) if atr14 and atr14 > 0 else pct_deviation
+        return current_price <= entry_max + max_deviation
+
     def audit(
         self,
         *,
@@ -136,7 +193,7 @@ class SmartMonitorDecisionAuditor:
         freshness_state = self._freshness_state(market_data)
         is_trade_action = action in {"BUY", "SELL"}
         session_can_trade = bool((session_info or {}).get("can_trade"))
-        manual_review_mode = bool(not notify and not trading_hours_only)
+        manual_review_mode = bool(not notify)
 
         if baseline_status in {"needs_review", "missing"}:
             score -= 35
@@ -155,8 +212,19 @@ class SmartMonitorDecisionAuditor:
 
         if action == "BUY":
             if current_price is not None and entry_min is not None and entry_max is not None and not (entry_min <= current_price <= entry_max):
-                score -= 28
-                _flag(flags, "buy_outside_entry_range")
+                if self._dynamic_entry_allows_buy(
+                    decision=audited,
+                    market_data=market_data,
+                    strategy_context=strategy_context,
+                    current_price=current_price,
+                    entry_min=entry_min,
+                    entry_max=entry_max,
+                ):
+                    score -= 8
+                    _flag(flags, "dynamic_entry_outside_range")
+                else:
+                    score -= 28
+                    _flag(flags, "buy_outside_entry_range")
             if conditions["entry_conditions"] and not matched_conditions:
                 score -= 18
                 _flag(flags, "entry_conditions_unconfirmed")
@@ -200,9 +268,9 @@ class SmartMonitorDecisionAuditor:
         if is_trade_action:
             if session_can_trade and freshness_state != "ready" and not manual_review_mode:
                 veto_reason = "实时行情新鲜度不足，禁止输出可执行买卖信号。"
-            elif baseline_status == "needs_review" and not hard_risk_sell:
+            elif baseline_status == "needs_review" and not hard_risk_sell and not manual_review_mode:
                 veto_reason = "深度分析基线质量需要复核，禁止脱离低质量基线执行买卖。"
-            elif score < threshold and not hard_risk_sell:
+            elif score < threshold and not hard_risk_sell and not manual_review_mode:
                 veto_reason = f"盘中决策质量分 {score:.1f} 低于 {action} 阈值 {threshold:.0f}。"
 
         if veto_reason:

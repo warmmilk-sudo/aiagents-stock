@@ -9,6 +9,8 @@ from unittest.mock import Mock, patch
 
 from analysis_repository import AnalysisRepository
 from asset_repository import AssetRepository, STATUS_FOCUS, STATUS_HOLDING, STATUS_RESEARCH
+from asset_service import AssetService
+from monitoring_repository import MonitoringRepository
 
 if "openai" not in sys.modules:
     openai_stub = types.ModuleType("openai")
@@ -679,6 +681,49 @@ class ResearchHubLifecycleTests(unittest.TestCase):
         self.assertTrue(deleted)
         self.assertIsNone(repo.get_asset(asset_id))
         self.assertNotIn("600003", [item["symbol"] for item in items])
+
+    def test_hub_focus_and_monitor_toggles_are_separate(self):
+        db_path = str(self.base / "investment.db")
+        repo = AssetRepository(db_path)
+        analysis_repo = AnalysisRepository(db_path)
+        monitoring_repo = MonitoringRepository(db_path)
+        service = AssetService(
+            asset_store=repo,
+            analysis_store=analysis_repo,
+            monitoring_store=monitoring_repo,
+        )
+        asset_id = repo.create_or_update_research_asset(symbol="600004", name="关注四号")
+
+        fake_memory_service = Mock()
+        fake_memory_service.db.save_working_memory = Mock()
+
+        with patch("research_hub_service.asset_repository", repo), patch(
+            "research_hub_service.analysis_repository",
+            analysis_repo,
+        ), patch("research_hub_service.asset_service", service), patch(
+            "research_hub_service._list_ai_decisions",
+            return_value=[],
+        ), patch("research_hub_service._get_agent_memory_service", return_value=fake_memory_service):
+            focused = research_hub_service.update_hub_asset(
+                asset_id,
+                target_status=STATUS_FOCUS,
+                manual_pin=True,
+                pool_reason="手动关注",
+            )
+
+            self.assertEqual(focused["status"], STATUS_FOCUS)
+            self.assertFalse(focused["monitor_enabled"])
+            self.assertFalse(monitoring_repo.list_items(symbol="600004", asset_id=asset_id))
+
+            monitored = research_hub_service.update_hub_asset(asset_id, monitor_enabled=True)
+            self.assertTrue(monitored["monitor_enabled"])
+            self.assertIsNotNone(
+                monitoring_repo.get_item_by_symbol("600004", monitor_type="ai_task", asset_id=asset_id)
+            )
+
+            unmonitored = research_hub_service.update_hub_asset(asset_id, monitor_enabled=False)
+            self.assertFalse(unmonitored["monitor_enabled"])
+            self.assertFalse(monitoring_repo.list_items(symbol="600004", asset_id=asset_id))
 
 
 if __name__ == "__main__":

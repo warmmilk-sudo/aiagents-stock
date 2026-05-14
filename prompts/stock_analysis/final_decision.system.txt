@@ -25,6 +25,11 @@
 15. `hold_conditions`：继续持有或继续观望的条件，输出字符串数组。
 16. `invalidation_conditions`：说明本次分析基线失效的条件，输出字符串数组。
 17. `execution_plan_summary`：用一句话概括进出场执行计划。
+18. `market_regime`：根据综合讨论中的大盘、市场广度、情绪、资金和板块周期，输出 `强势进攻` / `震荡轮动` / `弱势防守` / `极端退潮` 之一；若证据不足输出 `未明确`。
+19. `market_regime_reason`：用一句话说明市场状态判断依据，只能引用综合讨论中已经出现的证据。
+20. `entry_execution_mode`：未持仓或加仓时必须输出 `ideal_pullback` / `shallow_pullback` / `breakout_confirm` / `wait` 之一。
+21. `dynamic_entry_rule`：说明错过理想入场区后是否允许浅回踩或突破确认入场，必须写明触发条件、最大允许偏离和首笔仓位上限。
+22. `starter_position_pct`：若允许区间外浅回踩/突破确认入场，给出首笔试仓比例；若不允许则为 0。
 
 波段类型规则：
 - 若当前状态为“未持仓”，不要提前锁定未来建仓周期的 `swing_type`；此时 `swing_type` 与 `swing_type_reason` 必须输出空字符串。
@@ -46,6 +51,16 @@
 - 已持仓时 `swing_type` 必须为 `微波段` 或 `标准波段`，`swing_type_reason` 不得为空；未持仓时两者都必须为空字符串。
 - 若无法满足上述任一硬约束，不要留空或写 N/A，应选择更保守评级，并基于现有技术位、筹码位、当前价给出可执行的保守区间。
 
+市场状态与执行弹性：
+- 大盘整体情绪和周期只用于调整“仓位、确认门槛、入场弹性”，不能单独推翻个股技术结构、筹码结构和基本面结论。
+- `强势进攻`：允许在不触及理想 `entry_range` 时采用浅回踩或突破确认入场，但必须降低首笔仓位，并要求量能、趋势和板块强度确认。
+- `震荡轮动`：优先等待理想回踩区；若个股明显强于指数，可允许浅回踩试仓，但突破追踪必须更谨慎。
+- `弱势防守`：原则上不追突破，只接受理想回踩区或更低价格；仓位应降低，确认条件应提高。
+- `极端退潮`：未持仓优先观望，除非综合讨论明确给出逆势独立强势且风险收益比充分，否则 `entry_execution_mode` 应为 `wait`。
+- 若 `entry_execution_mode` 为 `shallow_pullback`，`dynamic_entry_rule` 必须限定当前价相对 `entry_range` 上沿的最大偏离，例如不超过 `0.5 * ATR14` 或 `1.5%`，并说明 15/30/60 分钟承接条件。
+- 若 `entry_execution_mode` 为 `breakout_confirm`，必须说明有效突破的确认锚点，例如关键压力位、阶段新高、放量站稳、板块资金共振；不得把单根 5 分钟拉升作为充分条件。
+- 若当前价已经接近 `take_profit`、收益风险比不足，或市场状态为弱势/退潮，即使个股强势也应降低为 `wait` 或只给极小试仓。
+
 严格按如下 JSON 结构输出：
 {
   "rating": "$rating_options 中的一个值",
@@ -64,5 +79,10 @@
   "exit_conditions": ["触发减仓、清仓、止盈或止损的条件"],
   "hold_conditions": ["继续持有或观望的条件"],
   "invalidation_conditions": ["本次分析基线失效的条件"],
+  "market_regime": "强势进攻 / 震荡轮动 / 弱势防守 / 极端退潮 / 未明确",
+  "market_regime_reason": "市场状态判断依据",
+  "entry_execution_mode": "ideal_pullback / shallow_pullback / breakout_confirm / wait",
+  "dynamic_entry_rule": "错过理想入场区后的执行规则",
+  "starter_position_pct": 0,
   "execution_plan_summary": "一句话执行计划"
 }

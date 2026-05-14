@@ -259,6 +259,7 @@ class FollowupStatusRequest(BaseModel):
 class ResearchHubAssetUpdateRequest(BaseModel):
     target_status: Optional[str] = None
     manual_pin: Optional[bool] = None
+    monitor_enabled: Optional[bool] = None
     note: Optional[str] = None
     pool_reason: Optional[str] = None
 
@@ -382,6 +383,7 @@ class SmartMonitorRunOnceRequest(BaseModel):
     has_position: Optional[bool] = None
     ordered_task_ids: list[int] = Field(default_factory=list)
     task_delay_seconds: Optional[float] = None
+    async_run: bool = False
 
 
 class SmartMonitorConfigRequest(BaseModel):

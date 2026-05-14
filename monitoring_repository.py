@@ -2100,9 +2100,10 @@ class MonitoringRepository:
                             is_read = 1,
                             read_at = COALESCE(read_at, CURRENT_TIMESTAMP)
                         WHERE monitoring_item_id = ?
+                          AND event_type = ?
                           AND notification_pending = 1
                         """,
-                        (item_id,),
+                        (item_id, event_type),
                     )
                 cursor.execute(
                     """
@@ -2152,6 +2153,7 @@ class MonitoringRepository:
                             SELECT 1
                             FROM monitoring_events newer_event
                             WHERE newer_event.monitoring_item_id = current_event.monitoring_item_id
+                              AND newer_event.event_type = current_event.event_type
                               AND newer_event.notification_pending = 1
                               AND (
                                     datetime(newer_event.created_at) > datetime(current_event.created_at)

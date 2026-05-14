@@ -35,3 +35,12 @@ def get_task(request: Request, task_id: str) -> dict:
     if not task:
         raise ApiError(404, "未找到任务", error_code="task_not_found")
     return success_payload(task)
+
+
+@router.post("/{task_id}/cancel")
+def cancel_task(request: Request, task_id: str) -> dict:
+    payload = require_session(request)
+    success, message, task = services.cancel_task_for_session(build_session_key(payload), task_id)
+    if not success:
+        raise ApiError(400 if task else 404, message, error_code="task_cancel_failed" if task else "task_not_found")
+    return success_payload(task, message=message)

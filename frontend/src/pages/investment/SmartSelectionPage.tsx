@@ -525,16 +525,18 @@ export function SmartSelectionPage() {
                             ? {
                                 target_status: "research",
                                 manual_pin: false,
+                                monitor_enabled: false,
                                 pool_reason: "智能选股页手动移出备选关注，回到研究池",
                               }
                             : {
                                 target_status: "focus",
                                 manual_pin: true,
+                                monitor_enabled: false,
                                 pool_reason: item.reason || "智能选股页手动加入备选关注",
                               },
                         ),
                       });
-                      setMessage(inFocus ? `${symbol} 已移出备选关注并回到研究池` : `${symbol} 已加入备选关注并自动加入盯盘`);
+                      setMessage(inFocus ? `${symbol} 已移出备选关注并回到研究池` : `${symbol} 已加入备选关注`);
                       await loadOverview();
                     } catch (requestError) {
                       setError(requestError instanceof ApiRequestError ? requestError.message : "更新备选关注失败");

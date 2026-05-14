@@ -9,6 +9,11 @@
 盘中协同重点: $intraday_execution_preference
 波段判断依据: $swing_type_reason
 阈值: $thresholds_line
+市场状态: $market_regime
+市场状态依据: $market_regime_reason
+入场执行模式: $entry_execution_mode
+动态入场规则: $dynamic_entry_rule
+首笔试仓上限: $starter_position_pct
 执行计划: $execution_plan_summary
 进场/加仓条件: $entry_conditions_text
 离场/减仓条件: $exit_conditions_text

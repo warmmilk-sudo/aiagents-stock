@@ -36,6 +36,7 @@ interface PortfolioStock {
   note?: string;
   analysis_record_id?: number;
   last_trade_at?: string;
+  optimistic?: boolean;
 }
 
 interface PortfolioStockDistribution {
@@ -307,6 +308,33 @@ function todayDateInput() {
   return new Date().toLocaleDateString("en-CA");
 }
 
+function normalizeStockCodeInput(value: string) {
+  return String(value || "").trim().toUpperCase();
+}
+
+function parseOptionalPositiveNumber(value: string, label: string) {
+  const text = String(value || "").trim();
+  if (!text) {
+    return { value: undefined as number | undefined, error: "" };
+  }
+  const numeric = Number(text);
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    return { value: undefined as number | undefined, error: `${label}必须大于 0。` };
+  }
+  return { value: numeric, error: "" };
+}
+
+function parseOptionalPositiveInteger(value: string, label: string) {
+  const parsed = parseOptionalPositiveNumber(value, label);
+  if (parsed.error || parsed.value === undefined) {
+    return parsed;
+  }
+  if (!Number.isInteger(parsed.value)) {
+    return { value: undefined as number | undefined, error: `${label}必须是整数。` };
+  }
+  return parsed;
+}
+
 function buildHoldingMetricKey(stockId?: number | null, code?: string, name?: string) {
   if (typeof stockId === "number" && Number.isFinite(stockId) && stockId > 0) {
     return `id:${stockId}`;
@@ -438,17 +466,23 @@ const PortfolioHoldingRow = memo(function PortfolioHoldingRow({
   onOpenDeepAnalysis,
 }: PortfolioHoldingRowProps) {
   const pnlClassName = resolvePnlTone(metrics?.pnl, styles);
+  const isOptimisticRow = stock.optimistic || stock.id < 0;
 
   return (
     <Fragment>
       <tr
         className={`${styles.holdingRow} ${isMenuOpen ? styles.holdingRowActive : ""}`}
-        onClick={() => onToggleHoldingMenu(stock.id)}
+        onClick={() => {
+          if (!isOptimisticRow) {
+            onToggleHoldingMenu(stock.id);
+          }
+        }}
       >
         <td>
           <div className={styles.holdingSymbolCell}>
             <strong>{stock.name}</strong>
             <span className={styles.holdingSymbolCode}>{stock.code}</span>
+            {isOptimisticRow ? <StatusBadge label="保存中" tone="warning" /> : null}
           </div>
         </td>
         <td className={styles.holdingMetricCell}>
@@ -651,6 +685,7 @@ export function PortfolioPage({ embedded = false }: PortfolioPageProps = {}) {
   const holdingsAnalysisTerminalTaskRef = useRef<string>("");
   const pageLoadRequestRef = useRef(0);
   const stocksRef = useRef<PortfolioStock[]>(stocks);
+  const optimisticPositionsRef = useRef<Map<number, PortfolioStock>>(new Map());
   const riskRef = useRef<PortfolioRisk | null>(risk);
   const schedulerRef = useRef<SchedulerStatus | null>(scheduler);
   const schedulerTimesRef = useRef(schedulerTimes);
@@ -699,7 +734,20 @@ export function PortfolioPage({ embedded = false }: PortfolioPageProps = {}) {
   };
 
   const applyStocksData = (stockData: PortfolioStock[], riskData?: PortfolioRisk | null) => {
-    const mergedStocks = mergeStocksWithRiskMetrics(stockData, riskData ?? riskRef.current);
+    const stockDataWithPending = [...stockData];
+    optimisticPositionsRef.current.forEach((pendingStock) => {
+      const hasServerRow = stockDataWithPending.some((stock) =>
+        stock.id === pendingStock.id
+        || (
+          normalizeStockCodeInput(stock.code) === normalizeStockCodeInput(pendingStock.code)
+          && (!pendingStock.account_name || stock.account_name === pendingStock.account_name)
+        )
+      );
+      if (!hasServerRow) {
+        stockDataWithPending.unshift(pendingStock);
+      }
+    });
+    const mergedStocks = mergeStocksWithRiskMetrics(stockDataWithPending, riskData ?? riskRef.current);
     setStocks(mergedStocks);
     stocksRef.current = mergedStocks;
     return mergedStocks;
@@ -1328,11 +1376,30 @@ export function PortfolioPage({ embedded = false }: PortfolioPageProps = {}) {
   const submitPosition = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     clear();
+    const submittedForm = { ...positionForm };
+    const nextCode = normalizeStockCodeInput(positionForm.code);
+    if (!nextCode) {
+      showError("股票代码不能为空。");
+      return;
+    }
+    if (stocksRef.current.some((stock) => stock.id > 0 && normalizeStockCodeInput(stock.code) === nextCode)) {
+      showError(`持仓中已存在 ${nextCode}。`);
+      return;
+    }
+    const costPriceResult = parseOptionalPositiveNumber(positionForm.cost_price, "成本价");
+    if (costPriceResult.error) {
+      showError(costPriceResult.error);
+      return;
+    }
+    const quantityResult = parseOptionalPositiveInteger(positionForm.quantity, "数量");
+    if (quantityResult.error) {
+      showError(quantityResult.error);
+      return;
+    }
     setIsSubmittingPosition(true);
-    const nextCode = positionForm.code.trim();
-    const nextName = "";
-    const nextCostPrice = positionForm.cost_price ? Number(positionForm.cost_price) : undefined;
-    const nextQuantity = positionForm.quantity ? Number(positionForm.quantity) : undefined;
+    const nextName = nextCode;
+    const nextCostPrice = costPriceResult.value;
+    const nextQuantity = quantityResult.value;
     const nextNote = positionForm.note;
     const nextBuyDate = positionForm.buy_date || undefined;
     const nextAutoMonitor = positionForm.auto_monitor;
@@ -1346,15 +1413,24 @@ export function PortfolioPage({ embedded = false }: PortfolioPageProps = {}) {
       note: nextNote,
       analysis_record_id: nextOriginAnalysisId,
       last_trade_at: nextBuyDate,
+      optimistic: true,
     } satisfies PortfolioStock;
-    setStocks((current) => [nextPosition, ...current]);
+    optimisticPositionsRef.current.set(nextPosition.id, nextPosition);
+    setStocks((current) => {
+      const nextStocks = [nextPosition, ...current];
+      stocksRef.current = nextStocks;
+      return nextStocks;
+    });
     setPositionForm(defaultPositionForm);
     setEditingStockId(null);
     setActiveEditor(null);
     closeHoldingPanel();
     showMessage(`正在保存持仓：${nextCode}`);
     try {
-      await apiFetch("/api/portfolio/stocks", {
+      const result = await apiFetch<{
+        stock_id: number;
+        warnings?: string[];
+      }>("/api/portfolio/stocks", {
         method: "POST",
         body: JSON.stringify({
           code: nextCode,
@@ -1367,10 +1443,31 @@ export function PortfolioPage({ embedded = false }: PortfolioPageProps = {}) {
           origin_analysis_id: nextOriginAnalysisId ?? null,
         }),
       });
-      showMessage(`持仓已新增：${nextCode}`);
+      optimisticPositionsRef.current.delete(nextPosition.id);
+      const savedStockId = Number(result.stock_id);
+      const savedPosition: PortfolioStock = {
+        ...nextPosition,
+        id: Number.isFinite(savedStockId) && savedStockId > 0 ? savedStockId : nextPosition.id,
+        optimistic: false,
+      };
+      setStocks((current) => {
+        const nextStocks = current.map((item) => item.id === nextPosition.id ? savedPosition : item);
+        stocksRef.current = nextStocks;
+        return nextStocks;
+      });
+      setTradeForm((current) => current.stock_id ? current : { ...current, stock_id: String(savedPosition.id) });
+      const warningText = (result.warnings ?? []).filter(Boolean).join("；");
+      showMessage(warningText ? `持仓已新增：${nextCode}（${warningText}）` : `持仓已新增：${nextCode}`);
       void loadAll(true).catch(() => undefined);
     } catch (requestError) {
-      setStocks((current) => current.filter((item) => item.id !== nextPosition.id));
+      optimisticPositionsRef.current.delete(nextPosition.id);
+      setStocks((current) => {
+        const nextStocks = current.filter((item) => item.id !== nextPosition.id);
+        stocksRef.current = nextStocks;
+        return nextStocks;
+      });
+      setPositionForm(submittedForm);
+      setActiveEditor("position");
       showError(requestError instanceof ApiRequestError ? requestError.message : "新增持仓失败");
     } finally {
       setIsSubmittingPosition(false);
@@ -1384,12 +1481,16 @@ export function PortfolioPage({ embedded = false }: PortfolioPageProps = {}) {
       return;
     }
     const isClearTrade = tradeForm.trade_type === "clear";
-    if (!tradeForm.price || Number(tradeForm.price) <= 0) {
-      showError("成交价格必须大于 0。");
+    const priceResult = parseOptionalPositiveNumber(tradeForm.price, "成交价格");
+    if (priceResult.error || priceResult.value === undefined) {
+      showError(priceResult.error || "成交价格必须大于 0。");
       return;
     }
-    if (!isClearTrade && (!tradeForm.quantity || Number(tradeForm.quantity) <= 0)) {
-      showError("交易数量必须大于 0。");
+    const quantityResult = isClearTrade
+      ? { value: 0, error: "" }
+      : parseOptionalPositiveInteger(tradeForm.quantity, "交易数量");
+    if (!isClearTrade && (quantityResult.error || quantityResult.value === undefined)) {
+      showError(quantityResult.error || "交易数量必须大于 0。");
       return;
     }
 
@@ -1397,8 +1498,8 @@ export function PortfolioPage({ embedded = false }: PortfolioPageProps = {}) {
     setIsSubmittingTrade(true);
     const tradePayload = {
       trade_type: tradeForm.trade_type,
-      quantity: isClearTrade ? 0 : Number(tradeForm.quantity),
-      price: Number(tradeForm.price),
+      quantity: isClearTrade ? 0 : Number(quantityResult.value),
+      price: Number(priceResult.value),
       trade_date: tradeForm.trade_date || null,
       note: tradeForm.note,
     };
@@ -1426,22 +1527,32 @@ export function PortfolioPage({ embedded = false }: PortfolioPageProps = {}) {
       showError("无法找到该持仓记录");
       return;
     }
-    if (!positionForm.code.trim()) {
+    const nextCode = normalizeStockCodeInput(positionForm.code);
+    if (!nextCode) {
       showError("股票代码不能为空");
+      return;
+    }
+    const costPriceResult = parseOptionalPositiveNumber(positionForm.cost_price, "成本价");
+    if (costPriceResult.error) {
+      showError(costPriceResult.error);
+      return;
+    }
+    const quantityResult = parseOptionalPositiveInteger(positionForm.quantity, "数量");
+    if (quantityResult.error) {
+      showError(quantityResult.error);
       return;
     }
 
     clear();
     setIsUpdatingPosition(true);
-    const nextCode = positionForm.code.trim();
     const nextName = positionForm.name.trim() || nextCode;
-    const nextCostPrice = positionForm.cost_price ? Number(positionForm.cost_price) : undefined;
-    const nextQuantity = positionForm.quantity ? Number(positionForm.quantity) : undefined;
+    const nextCostPrice = costPriceResult.value;
+    const nextQuantity = quantityResult.value;
     const nextNote = positionForm.note;
     const nextBuyDate = positionForm.buy_date || undefined;
     const previousStock = stocks.find((item) => item.id === editingStockId) ?? null;
-    setStocks((current) =>
-      current.map((stock) =>
+    setStocks((current) => {
+      const nextStocks = current.map((stock) =>
         stock.id === editingStockId
           ? {
             ...stock,
@@ -1453,8 +1564,10 @@ export function PortfolioPage({ embedded = false }: PortfolioPageProps = {}) {
             last_trade_at: nextBuyDate ?? stock.last_trade_at,
           }
           : stock,
-      ),
-    );
+      );
+      stocksRef.current = nextStocks;
+      return nextStocks;
+    });
     resetPositionEditor();
     closeHoldingPanel();
     showMessage(`正在保存持仓：${nextCode}`);
@@ -1474,13 +1587,15 @@ export function PortfolioPage({ embedded = false }: PortfolioPageProps = {}) {
       void loadAll(true).catch(() => undefined);
     } catch (requestError) {
       if (previousStock) {
-        setStocks((current) =>
-          current.map((stock) =>
+        setStocks((current) => {
+          const nextStocks = current.map((stock) =>
             stock.id === previousStock.id
               ? previousStock
               : stock,
-          ),
-        );
+          );
+          stocksRef.current = nextStocks;
+          return nextStocks;
+        });
       }
       showError(requestError instanceof ApiRequestError ? requestError.message : "修改持仓失败");
     } finally {
@@ -1581,15 +1696,15 @@ export function PortfolioPage({ embedded = false }: PortfolioPageProps = {}) {
       <div className={styles.formGrid}>
         <div className={styles.field}>
           <label htmlFor="position-code">股票代码</label>
-          <input id="position-code" onChange={(event) => setPositionForm((current) => ({ ...current, code: event.target.value }))} value={positionForm.code} />
+          <input id="position-code" onChange={(event) => setPositionForm((current) => ({ ...current, code: normalizeStockCodeInput(event.target.value) }))} value={positionForm.code} />
         </div>
         <div className={styles.field}>
           <label htmlFor="position-cost">成本价</label>
-          <input id="position-cost" onChange={(event) => setPositionForm((current) => ({ ...current, cost_price: event.target.value }))} value={positionForm.cost_price} />
+          <input id="position-cost" min="0" onChange={(event) => setPositionForm((current) => ({ ...current, cost_price: event.target.value }))} step="0.001" type="number" value={positionForm.cost_price} />
         </div>
         <div className={styles.field}>
           <label htmlFor="position-quantity">数量</label>
-          <input id="position-quantity" onChange={(event) => setPositionForm((current) => ({ ...current, quantity: event.target.value }))} value={positionForm.quantity} />
+          <input id="position-quantity" min="1" onChange={(event) => setPositionForm((current) => ({ ...current, quantity: event.target.value }))} step="1" type="number" value={positionForm.quantity} />
         </div>
         {!isEdit ? (
           <div className={styles.field}>
@@ -1648,7 +1763,10 @@ export function PortfolioPage({ embedded = false }: PortfolioPageProps = {}) {
           <label htmlFor="inline-position-quantity">数量</label>
           <input
             id="inline-position-quantity"
+            min="1"
             onChange={(event) => setPositionForm((current) => ({ ...current, quantity: event.target.value }))}
+            step="1"
+            type="number"
             value={positionForm.quantity}
           />
         </div>
@@ -1656,7 +1774,10 @@ export function PortfolioPage({ embedded = false }: PortfolioPageProps = {}) {
           <label htmlFor="inline-position-price">价格</label>
           <input
             id="inline-position-price"
+            min="0"
             onChange={(event) => setPositionForm((current) => ({ ...current, cost_price: event.target.value }))}
+            step="0.001"
+            type="number"
             value={positionForm.cost_price}
           />
         </div>
@@ -1723,7 +1844,10 @@ export function PortfolioPage({ embedded = false }: PortfolioPageProps = {}) {
             <label htmlFor="inline-trade-quantity">数量</label>
             <input
               id="inline-trade-quantity"
+              min="1"
               onChange={(event) => setTradeForm((current) => ({ ...current, quantity: event.target.value }))}
+              step="1"
+              type="number"
               value={tradeForm.quantity}
             />
           </div>
@@ -1732,7 +1856,10 @@ export function PortfolioPage({ embedded = false }: PortfolioPageProps = {}) {
           <label htmlFor="inline-trade-price">价格</label>
           <input
             id="inline-trade-price"
+            min="0"
             onChange={(event) => setTradeForm((current) => ({ ...current, price: event.target.value }))}
+            step="0.001"
+            type="number"
             value={tradeForm.price}
           />
         </div>

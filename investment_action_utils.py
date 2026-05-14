@@ -334,6 +334,15 @@ def normalize_strategy_context(strategy_context: Optional[Dict[str, Any]]) -> Di
     normalized = dict(strategy_context)
     final_decision = normalized.get("final_decision")
     final_decision = final_decision if isinstance(final_decision, dict) else {}
+    for key in (
+        "market_regime",
+        "market_regime_reason",
+        "entry_execution_mode",
+        "dynamic_entry_rule",
+        "starter_position_pct",
+    ):
+        if normalized.get(key) in (None, "", [], {}) and final_decision.get(key) not in (None, "", [], {}):
+            normalized[key] = final_decision.get(key)
     profile = infer_strategy_profile(
         holding_period=normalized.get("holding_period"),
         swing_type=normalized.get("swing_type"),
@@ -363,13 +372,18 @@ def build_holding_strategy_prompt_block(
     has_position: bool,
     strategy_context: Optional[Dict[str, Any]] = None,
     is_initial_holding_analysis: bool = False,
+    position_context: Optional[Dict[str, Any]] = None,
 ) -> str:
     if not has_position:
         return render_prompt("stock_analysis/sections/holding_strategy_no_position.txt")
 
+    position_context_block = format_position_context_prompt_block(position_context)
     normalized = normalize_strategy_context(strategy_context or {})
     if is_initial_holding_analysis:
-        return render_prompt("stock_analysis/sections/holding_strategy_initial_position.txt")
+        return _append_prompt_block(
+            render_prompt("stock_analysis/sections/holding_strategy_initial_position.txt"),
+            position_context_block,
+        )
 
     if normalized:
         swing_type = str(normalized.get("swing_type") or "未明确").strip() or "未明确"
@@ -384,15 +398,107 @@ def build_holding_strategy_prompt_block(
             or normalized.get("summary")
             or "未明确"
         ).strip() or "未明确"
-        return render_prompt(
+        baseline_block = render_prompt(
             "stock_analysis/sections/holding_strategy_existing_baseline.txt",
             swing_type=swing_type,
             horizon=horizon,
             style_summary=style_summary,
             execution_preference=execution_preference,
         )
+        return _append_prompt_block(baseline_block, position_context_block)
 
-    return render_prompt("stock_analysis/sections/holding_strategy_missing_baseline.txt")
+    return _append_prompt_block(
+        render_prompt("stock_analysis/sections/holding_strategy_missing_baseline.txt"),
+        position_context_block,
+    )
+
+
+def _append_prompt_block(base: str, extra: str) -> str:
+    base_text = str(base or "").strip()
+    extra_text = str(extra or "").strip()
+    if not extra_text:
+        return base_text
+    return f"{base_text}\n\n{extra_text}" if base_text else extra_text
+
+
+def _context_float(value: Any) -> Optional[float]:
+    if value in (None, ""):
+        return None
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    return numeric
+
+
+def _format_context_money(value: Any) -> str:
+    numeric = _context_float(value)
+    if numeric is None:
+        return ""
+    return f"¥{numeric:,.2f}"
+
+
+def _format_context_pct(value: Any, *, signed: bool = False) -> str:
+    numeric = _context_float(value)
+    if numeric is None:
+        return ""
+    sign = "+" if signed and numeric > 0 else ""
+    return f"{sign}{numeric:.2f}%"
+
+
+def format_position_context_prompt_block(position_context: Optional[Dict[str, Any]]) -> str:
+    if not isinstance(position_context, dict) or not position_context:
+        return ""
+
+    lines: List[str] = ["当前持仓明细（系统计算）："]
+    account_name = str(position_context.get("account_name") or DEFAULT_ACCOUNT_NAME).strip()
+    if account_name:
+        lines.append(f"- 账户：{account_name}")
+
+    quantity = position_context.get("quantity")
+    try:
+        quantity_value = int(quantity) if quantity not in (None, "") else 0
+    except (TypeError, ValueError):
+        quantity_value = 0
+    if quantity_value > 0:
+        lines.append(f"- 持仓数量：{quantity_value}股")
+
+    cost_price = _format_context_money(position_context.get("cost_price"))
+    current_price = _format_context_money(position_context.get("current_price"))
+    if cost_price or current_price:
+        lines.append(f"- 成本价 / 当前价：{cost_price or 'N/A'} / {current_price or 'N/A'}")
+
+    market_value = _format_context_money(position_context.get("market_value"))
+    cost_value = _format_context_money(position_context.get("cost_value"))
+    if market_value or cost_value:
+        lines.append(f"- 持仓市值 / 成本金额：{market_value or 'N/A'} / {cost_value or 'N/A'}")
+
+    profit_loss = _format_context_money(position_context.get("profit_loss"))
+    profit_loss_pct = _format_context_pct(position_context.get("profit_loss_pct"), signed=True)
+    if profit_loss or profit_loss_pct:
+        lines.append(f"- 浮动盈亏：{profit_loss or 'N/A'}（{profit_loss_pct or 'N/A'}）")
+
+    position_pct = _format_context_pct(position_context.get("position_pct"))
+    position_weight_pct = _format_context_pct(position_context.get("position_weight_pct"))
+    total_position_pct = _format_context_pct(position_context.get("total_position_pct"))
+    if position_pct:
+        lines.append(f"- 单票占总资产：{position_pct}")
+    if position_weight_pct:
+        lines.append(f"- 单票占持仓市值：{position_weight_pct}")
+    if total_position_pct:
+        lines.append(f"- 账户总仓位利用率：{total_position_pct}")
+
+    account_total_assets = _format_context_money(position_context.get("account_total_assets"))
+    account_total_market_value = _format_context_money(position_context.get("account_total_market_value"))
+    if account_total_assets or account_total_market_value:
+        lines.append(f"- 账户总资产 / 持仓总市值：{account_total_assets or 'N/A'} / {account_total_market_value or 'N/A'}")
+
+    if position_context.get("total_assets_configured") is False:
+        lines.append("- 仓位比例口径：未配置账户总资产，系统按当前持仓市值估算，比例仅作临时参考。")
+    else:
+        lines.append("- 仓位比例口径：按账户总资产配置计算。")
+
+    return "\n".join(lines)
 
 
 def build_strategy_context(
@@ -428,6 +534,11 @@ def build_strategy_context(
         "holding_period": str(final_decision.get("holding_period") or "").strip(),
         "swing_type": str(final_decision.get("swing_type") or final_decision.get("swing_strategy_type") or "").strip(),
         "swing_type_reason": str(final_decision.get("swing_type_reason") or "").strip(),
+        "market_regime": str(final_decision.get("market_regime") or "").strip(),
+        "market_regime_reason": str(final_decision.get("market_regime_reason") or "").strip(),
+        "entry_execution_mode": str(final_decision.get("entry_execution_mode") or "").strip(),
+        "dynamic_entry_rule": str(final_decision.get("dynamic_entry_rule") or "").strip(),
+        "starter_position_pct": extract_first_number(final_decision.get("starter_position_pct")),
         "final_decision": final_decision,
         **build_execution_plan(final_decision),
     }

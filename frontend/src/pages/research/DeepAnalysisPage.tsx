@@ -45,6 +45,12 @@ interface TaskDetail {
   current?: number;
   total?: number;
   error?: string;
+  metadata?: {
+    display_name?: string;
+    display_names?: Record<string, string>;
+    symbols?: string[];
+    mode?: string;
+  };
   result?: TaskResult | null;
 }
 
@@ -114,6 +120,23 @@ function isPendingTask(task?: TaskDetail | null) {
 
 function isVisibleLatestTask(task?: TaskDetail | null) {
   return isPendingTask(task) || task?.status === "failed" || task?.status === "cancelled";
+}
+
+function formatTaskDisplayName(task: TaskDetail) {
+  const metadata = task.metadata ?? {};
+  const symbols = Array.isArray(metadata.symbols) ? metadata.symbols.filter(Boolean) : [];
+  const displayNames = metadata.display_names ?? {};
+  if (metadata.display_name) {
+    return metadata.display_name;
+  }
+  if (symbols.length === 1) {
+    return displayNames[symbols[0]] || symbols[0];
+  }
+  if (symbols.length > 1) {
+    const first = displayNames[symbols[0]] || symbols[0];
+    return `${first} 等 ${symbols.length} 只`;
+  }
+  return task.label || "深度分析任务";
 }
 
 function FollowupAssetList({
@@ -227,6 +250,7 @@ export function DeepAnalysisPage({ startOnly = false, onAnalysisSettled }: DeepA
   const [followupSearch, setFollowupSearch] = useState("");
   const [isSubmittingAnalysis, setIsSubmittingAnalysis] = useState(false);
   const [pendingReAnalyzeSymbol, setPendingReAnalyzeSymbol] = useState("");
+  const [cancellingTaskId, setCancellingTaskId] = useState("");
   const { message, error, clear, showError, showMessage } = usePageFeedback();
   const lastTerminalTaskRef = useRef<string>("");
 
@@ -347,6 +371,20 @@ export function DeepAnalysisPage({ startOnly = false, onAnalysisSettled }: DeepA
     await loadFollowupAssets();
   };
 
+  const handleCancelTask = async (taskId: string) => {
+    clear();
+    setCancellingTaskId(taskId);
+    try {
+      await apiFetch<TaskDetail>(`/api/tasks/${taskId}/cancel`, { method: "POST" });
+      showMessage("已取消排队任务");
+      await loadTask();
+    } catch (requestError) {
+      showError(requestError instanceof ApiRequestError ? requestError.message : "取消任务失败");
+    } finally {
+      setCancellingTaskId("");
+    }
+  };
+
   const watchlistAssets = useMemo(
     () => followupAssets.filter((asset) => isWatchlistAsset(asset)),
     [followupAssets],
@@ -385,15 +423,38 @@ export function DeepAnalysisPage({ startOnly = false, onAnalysisSettled }: DeepA
         tone={taskProgressTone(visibleTask)}
         showCounter={false}
       />
+      {visibleTask.status === "queued" ? (
+        <div className={styles.taskQueueRow}>
+          <span className={styles.muted}>{formatTaskDisplayName(visibleTask)} 正在等待执行</span>
+          <button
+            className={styles.secondaryButton}
+            disabled={cancellingTaskId === visibleTask.id}
+            onClick={() => void handleCancelTask(visibleTask.id)}
+            type="button"
+          >
+            {cancellingTaskId === visibleTask.id ? "取消中..." : "取消任务"}
+          </button>
+        </div>
+      ) : null}
       {queuedTasks.length ? (
         <div className={styles.list}>
           <div className={styles.listItem}>
             <strong>排队任务</strong>
             <p className={styles.muted}>当前任务继续执行，以下任务会按顺序依次开始。</p>
             {queuedTasks.map((queuedTask, index) => (
-              <p className={styles.muted} key={queuedTask.id}>
-                {index + 1}. {queuedTask.label || "深度分析任务"} - {queuedTask.message || "等待前序任务完成后开始执行"}
-              </p>
+              <div className={styles.taskQueueRow} key={queuedTask.id}>
+                <span className={styles.muted}>
+                  {index + 1}. {formatTaskDisplayName(queuedTask)} - {queuedTask.message || "等待前序任务完成后开始执行"}
+                </span>
+                <button
+                  className={styles.secondaryButton}
+                  disabled={cancellingTaskId === queuedTask.id}
+                  onClick={() => void handleCancelTask(queuedTask.id)}
+                  type="button"
+                >
+                  {cancellingTaskId === queuedTask.id ? "取消中..." : "取消"}
+                </button>
+              </div>
             ))}
           </div>
         </div>

@@ -90,6 +90,7 @@ NEWS_FLOW_TASK_TYPE = "news_flow_analysis"
 HOME_STOCK_ANALYSIS_TASK_TYPE = "home_stock_analysis"
 PORTFOLIO_SCHEDULER_TASK_TYPE = "batch"
 SMART_MONITOR_BASELINE_REFRESH_TASK_TYPE = "smart_monitor_baseline_refresh"
+SMART_MONITOR_RUN_ONCE_TASK_TYPE = "smart_monitor_run_once"
 MONITOR_RELATED_MEMORY_BACKFILL_TASK_TYPE = "monitor_related_memory_backfill"
 SMART_MONITOR_INTRADAY_INTERVAL_KEY = "smart_monitor_intraday_decision_interval_minutes"
 SMART_MONITOR_REALTIME_INTERVAL_KEY = "smart_monitor_realtime_monitor_interval_minutes"
@@ -134,6 +135,18 @@ def _default_smart_monitor_run_once_task_delay_seconds() -> float:
     except (TypeError, ValueError):
         numeric = 1.2
     return max(0.0, min(numeric, 10.0))
+
+
+def _normalize_positive_int_list(values: Optional[list[Any]]) -> list[int]:
+    normalized: list[int] = []
+    for value in values or []:
+        try:
+            numeric = int(value)
+        except (TypeError, ValueError):
+            continue
+        if numeric > 0:
+            normalized.append(numeric)
+    return normalized
 
 
 _REPORT_CACHE_TTL_SECONDS = _clamp_int(
@@ -413,6 +426,64 @@ def _find_duplicate_research_symbols(session_key: str, symbols: list[str]) -> li
     return sorted(duplicate_symbols)
 
 
+def _is_placeholder_stock_name(name: Any, symbol: str) -> bool:
+    text = str(name or "").strip()
+    normalized_symbol = str(symbol or "").strip().upper()
+    return not text or text.upper() == normalized_symbol or text in {"N/A", "未知", "--", "-"}
+
+
+def _resolve_research_task_symbol_names(symbols: list[str]) -> dict[str, str]:
+    names: dict[str, str] = {}
+    for symbol in symbols:
+        normalized_symbol = str(symbol or "").strip().upper()
+        if not normalized_symbol:
+            continue
+
+        resolved_name = ""
+        try:
+            asset = asset_service.asset_repository.get_asset_by_symbol(normalized_symbol)
+            resolved_name = str((asset or {}).get("name") or "").strip()
+        except Exception:
+            resolved_name = ""
+
+        if _is_placeholder_stock_name(resolved_name, normalized_symbol):
+            try:
+                latest_records = analysis_repository.list_record_summaries(symbol=normalized_symbol, limit=1)
+                resolved_name = str((latest_records[0] if latest_records else {}).get("stock_name") or "").strip()
+            except Exception:
+                resolved_name = ""
+
+        if _is_placeholder_stock_name(resolved_name, normalized_symbol):
+            try:
+                from stock_data_cache import stock_data_cache_db
+
+                cached_info = stock_data_cache_db.get_stock_info(normalized_symbol) or {}
+                payload = json.loads(cached_info.get("payload_json") or "{}")
+                resolved_name = str((payload if isinstance(payload, dict) else {}).get("name") or "").strip()
+            except Exception:
+                resolved_name = ""
+
+        names[normalized_symbol] = "" if _is_placeholder_stock_name(resolved_name, normalized_symbol) else resolved_name
+    return names
+
+
+def _format_stock_display_name(symbol: str, name: Optional[str]) -> str:
+    normalized_symbol = str(symbol or "").strip().upper()
+    normalized_name = str(name or "").strip()
+    if normalized_name and not _is_placeholder_stock_name(normalized_name, normalized_symbol):
+        return f"{normalized_name}（{normalized_symbol}）"
+    return normalized_symbol
+
+
+def _format_research_task_label(symbols: list[str], symbol_names: dict[str, str]) -> str:
+    if len(symbols) == 1:
+        symbol = symbols[0]
+        return f"深度分析 {_format_stock_display_name(symbol, symbol_names.get(symbol))}"
+    first_symbol = symbols[0]
+    first_display = _format_stock_display_name(first_symbol, symbol_names.get(first_symbol))
+    return f"批量深度分析 {first_display} 等 {len(symbols)} 只"
+
+
 def submit_research_analysis_task(
     *,
     session_key: str,
@@ -439,6 +510,12 @@ def submit_research_analysis_task(
         raise ValueError(
             f"以下股票已有深度分析任务正在执行或排队：{'、'.join(duplicate_symbols)}"
         )
+
+    symbol_names = _resolve_research_task_symbol_names(normalized_symbols)
+    display_names = {
+        symbol: _format_stock_display_name(symbol, symbol_names.get(symbol))
+        for symbol in normalized_symbols
+    }
 
     if len(normalized_symbols) == 1:
         symbol = normalized_symbols[0]
@@ -476,12 +553,15 @@ def submit_research_analysis_task(
         return portfolio_analysis_task_manager.start_task(
             session_key,
             task_type=HOME_STOCK_ANALYSIS_TASK_TYPE,
-            label=f"深度分析 {symbol}",
+            label=_format_research_task_label([symbol], symbol_names),
             runner=runner,
             metadata={
                 "mode": "single",
                 "symbol": symbol,
                 "symbols": [symbol],
+                "symbol_names": symbol_names,
+                "display_name": display_names.get(symbol) or symbol,
+                "display_names": display_names,
                 "period": period,
                 "batch_mode": "顺序分析",
                 "max_workers": 1,
@@ -530,11 +610,13 @@ def submit_research_analysis_task(
     return portfolio_analysis_task_manager.start_task(
         session_key,
         task_type=HOME_STOCK_ANALYSIS_TASK_TYPE,
-        label=f"批量深度分析 {total} 只股票",
+        label=_format_research_task_label(normalized_symbols, symbol_names),
         runner=batch_runner,
         metadata={
             "mode": "batch",
             "symbols": normalized_symbols,
+            "symbol_names": symbol_names,
+            "display_names": display_names,
             "total": total,
             "batch_mode": "顺序分析",
             "max_workers": 1,
@@ -704,6 +786,11 @@ def get_task_for_session(session_key: str, task_id: str) -> Optional[dict[str, A
     if not task or task.get("session_id") != session_key:
         return None
     return build_task_summary(task)
+
+
+def cancel_task_for_session(session_key: str, task_id: str) -> tuple[bool, str, Optional[dict[str, Any]]]:
+    success, message, task = portfolio_analysis_task_manager.cancel_queued_task(task_id, session_id=session_key)
+    return success, message, build_task_summary(task) if task else None
 
 
 def get_latest_ui_task(task_type: str) -> Optional[dict[str, Any]]:
@@ -2976,7 +3063,7 @@ def promote_followup_to_watchlist(asset_id: int) -> tuple[bool, str]:
         account_name=asset.get("account_name") or DEFAULT_ACCOUNT_NAME,
         note=asset.get("note") or "",
         origin_analysis_id=asset.get("origin_analysis_id"),
-        monitor_enabled=bool(asset.get("monitor_enabled", True)),
+        monitor_enabled=False,
     )
     return success, message
 
@@ -3474,6 +3561,7 @@ def run_smart_monitor_tasks_once(
     has_position: Optional[bool] = None,
     ordered_task_ids: Optional[list[int]] = None,
     task_delay_seconds: Optional[float] = None,
+    report_progress: Optional[Callable[..., None]] = None,
 ) -> dict[str, Any]:
     tasks = smart_monitor_db.get_monitor_tasks(
         enabled_only=enabled_only,
@@ -3482,7 +3570,7 @@ def run_smart_monitor_tasks_once(
     )
     orchestrator = monitor_service.orchestrator
     processed_alert_ids: set[int] = set()
-    requested_order = [int(task_id) for task_id in (ordered_task_ids or []) if int(task_id) > 0]
+    requested_order = _normalize_positive_int_list(ordered_task_ids)
     order_rank = {task_id: index for index, task_id in enumerate(requested_order)}
     resolved_delay_seconds = _default_smart_monitor_run_once_task_delay_seconds() if task_delay_seconds is None else max(0.0, min(float(task_delay_seconds), 10.0))
     ordered_tasks = sorted(
@@ -3512,6 +3600,23 @@ def run_smart_monitor_tasks_once(
         "final_retry_failed": 0,
     }
 
+    progress_total = max(len(ordered_tasks), 1)
+
+    def report(**updates: Any) -> None:
+        if report_progress is None:
+            return
+        try:
+            report_progress(**updates)
+        except Exception:
+            logger.debug("[智能盯盘批量执行] 更新后台任务进度失败", exc_info=True)
+
+    report(
+        current=0,
+        total=progress_total,
+        step_status="running",
+        message=f"准备执行 {len(ordered_tasks)} 个盘中决策任务...",
+    )
+
     with _SMART_MONITOR_RUN_ONCE_LOCK:
         failed_tasks: list[dict[str, Any]] = []
 
@@ -3532,6 +3637,16 @@ def run_smart_monitor_tasks_once(
             else:
                 summary["task_failed"] += 1
                 failed_tasks.append(task)
+            report(
+                current=min(summary["task_total"], progress_total),
+                total=progress_total,
+                step_code=task_code,
+                step_status="success" if task_success else "failed",
+                message=(
+                    f"[{summary['task_total']}/{len(ordered_tasks)}] {task_code} "
+                    f"{'盘中决策完成' if task_success else '盘中决策失败，稍后补跑'}"
+                ),
+            )
 
             alert_item = smart_monitor_db.monitoring_repository.get_item_by_symbol(
                 task.get("stock_code") or "",
@@ -3556,6 +3671,13 @@ def run_smart_monitor_tasks_once(
                     summary["price_alert_success"] += 1
                 else:
                     summary["price_alert_failed"] += 1
+                report(
+                    current=min(summary["task_total"], progress_total),
+                    total=progress_total,
+                    step_code=alert_label,
+                    step_status="success" if alert_success else "failed",
+                    message=f"{alert_label} {'价格检查完成' if alert_success else '价格检查失败'}",
+                )
 
             if resolved_delay_seconds > 0 and index < len(ordered_tasks) - 1:
                 logger.info(
@@ -3583,6 +3705,13 @@ def run_smart_monitor_tasks_once(
                 summary["task_failed"] = max(0, int(summary["task_failed"]) - 1)
             else:
                 summary["final_retry_failed"] += 1
+            report(
+                current=progress_total,
+                total=progress_total,
+                step_code=task_code,
+                step_status="success" if final_success else "failed",
+                message=f"{task_code} {'补跑成功' if final_success else '补跑仍失败'}",
+            )
             if resolved_delay_seconds > 0 and failed_index < len(failed_tasks) - 1:
                 logger.info(
                     "[智能盯盘批量补跑] 等待 %.1f 秒后继续下一只股票: %s",
@@ -3594,7 +3723,65 @@ def run_smart_monitor_tasks_once(
     scheduler = monitor_service.get_scheduler()
     summary["service_status"] = monitor_service.get_status()
     summary["scheduler_status"] = scheduler.get_status() if scheduler else None
+    summary["message"] = (
+        f"批量盘中决策完成：AI成功 {summary['task_success']}/{summary['task_total']}，"
+        f"价格检查成功 {summary['price_alert_success']}/{summary['price_alert_total']}。"
+    )
+    report(
+        current=progress_total,
+        total=progress_total,
+        step_status="success" if int(summary["task_failed"]) == 0 and int(summary["price_alert_failed"]) == 0 else "partial_failed",
+        message=summary["message"],
+    )
     return summary
+
+
+def submit_smart_monitor_run_once_task(
+    *,
+    session_key: str,
+    enabled_only: bool = True,
+    account_name: Optional[str] = None,
+    has_position: Optional[bool] = None,
+    ordered_task_ids: Optional[list[int]] = None,
+    task_delay_seconds: Optional[float] = None,
+) -> str:
+    active_tasks = portfolio_analysis_task_manager.get_pending_tasks(
+        session_key,
+        task_type=SMART_MONITOR_RUN_ONCE_TASK_TYPE,
+    )
+    if active_tasks:
+        return str(active_tasks[0]["id"])
+
+    scoped_tasks = smart_monitor_db.get_monitor_tasks(
+        enabled_only=enabled_only,
+        account_name=account_name,
+        has_position=has_position,
+    )
+
+    def runner(_task_id: str, report_progress) -> dict[str, Any]:
+        return run_smart_monitor_tasks_once(
+            enabled_only=enabled_only,
+            account_name=account_name,
+            has_position=has_position,
+            ordered_task_ids=ordered_task_ids,
+            task_delay_seconds=task_delay_seconds,
+            report_progress=report_progress,
+        )
+
+    return portfolio_analysis_task_manager.start_task(
+        session_key,
+        task_type=SMART_MONITOR_RUN_ONCE_TASK_TYPE,
+        label=f"批量盘中决策 {len(scoped_tasks)} 个",
+        runner=runner,
+        metadata={
+            "task_total": len(scoped_tasks),
+            "enabled_only": enabled_only,
+            "account_name": account_name or "",
+            "has_position": has_position,
+            "ordered_task_ids": _normalize_positive_int_list(ordered_task_ids),
+            "task_delay_seconds": task_delay_seconds,
+        },
+    )
 
 
 def run_smart_monitor_task_once(task_id: int) -> dict[str, Any]:

@@ -179,6 +179,35 @@ class AssetServiceFollowupListTests(unittest.TestCase):
         search_by_summary = self.service.list_followup_assets(search_term="景气改善", limit=None)
         self.assertEqual([item["id"] for item in search_by_summary], [research_asset_id])
 
+    def test_focus_asset_only_syncs_monitors_when_monitor_enabled(self):
+        success, _, asset_id = self.service.promote_to_watchlist(
+            symbol="600519",
+            stock_name="贵州茅台",
+            note="只加入关注",
+            monitor_enabled=False,
+        )
+
+        self.assertTrue(success)
+        asset = self.asset_repository.get_asset(asset_id)
+        self.assertFalse(asset["monitor_enabled"])
+        self.assertFalse(self.monitoring_repository.list_items(symbol="600519"))
+
+        enabled_result = self.service.set_monitoring_enabled(asset_id, True)
+
+        self.assertEqual(enabled_result["ai_tasks_upserted"], 1)
+        self.assertEqual(enabled_result["price_alerts_upserted"], 1)
+        self.assertIsNotNone(
+            self.monitoring_repository.get_item_by_symbol("600519", monitor_type="ai_task", asset_id=asset_id)
+        )
+        self.assertIsNotNone(
+            self.monitoring_repository.get_item_by_symbol("600519", monitor_type="price_alert", asset_id=asset_id)
+        )
+
+        disabled_result = self.service.set_monitoring_enabled(asset_id, False, remove_when_disabled=True)
+
+        self.assertEqual(disabled_result["removed"], 2)
+        self.assertFalse(self.monitoring_repository.list_items(symbol="600519", asset_id=asset_id))
+
     def test_promote_to_portfolio_runs_initial_holding_analysis_for_manual_position(self):
         captured = {}
 

@@ -1719,18 +1719,23 @@ class AssetRepository:
         conn.close()
         return self._row_to_asset(row) if row else None
 
-    def get_asset_by_symbol(self, symbol: str, account_name: str = DEFAULT_ACCOUNT_NAME) -> Optional[Dict]:
+    def get_asset_by_symbol(self, symbol: str, account_name: Optional[str] = None) -> Optional[Dict]:
         conn = self._connect()
         cursor = conn.cursor()
+        clauses = ["symbol = ?", "deleted_at IS NULL"]
+        params: List[Any] = [self._normalize_symbol(symbol)]
+        if account_name is not None:
+            clauses.append("account_name = ?")
+            params.append(self._normalize_account_name(account_name))
         cursor.execute(
-            """
+            f"""
             SELECT *
             FROM assets
-            WHERE symbol = ? AND deleted_at IS NULL
+            WHERE {' AND '.join(clauses)}
             ORDER BY id DESC
             LIMIT 1
             """,
-            (self._normalize_symbol(symbol),),
+            tuple(params),
         )
         row = cursor.fetchone()
         conn.close()
@@ -1757,6 +1762,9 @@ class AssetRepository:
         if monitor_enabled is not None:
             clauses.append("monitor_enabled = ?")
             params.append(self._bool_to_int(monitor_enabled))
+        if account_name is not None:
+            clauses.append("account_name = ?")
+            params.append(self._normalize_account_name(account_name))
         if symbol:
             clauses.append("symbol = ?")
             params.append(self._normalize_symbol(symbol))
@@ -1780,6 +1788,7 @@ class AssetRepository:
         monitor_enabled: bool = True,
     ) -> int:
         symbol = self._normalize_symbol(symbol)
+        normalized_account_name = self._normalize_account_name(account_name)
         existing = self.get_asset_by_symbol(symbol, account_name)
         if existing:
             self.update_asset(
@@ -1788,7 +1797,7 @@ class AssetRepository:
                 note=note or existing.get("note"),
                 monitor_enabled=monitor_enabled if monitor_enabled is not None else existing.get("monitor_enabled", True),
                 origin_analysis_id=origin_analysis_id or existing.get("origin_analysis_id"),
-                account_name=DEFAULT_ACCOUNT_NAME,
+                account_name=normalized_account_name,
             )
             return int(existing["id"])
 
@@ -1803,7 +1812,7 @@ class AssetRepository:
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                DEFAULT_ACCOUNT_NAME,
+                normalized_account_name,
                 symbol,
                 name or symbol,
                 STATUS_RESEARCH,

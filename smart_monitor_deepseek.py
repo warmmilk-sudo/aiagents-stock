@@ -38,7 +38,7 @@ class SmartMonitorDeepSeek:
     MAX_SEMANTIC_LABELS = 8
     PROMPT_SIZE_WARNING_CHARS = 22000
     PROMPT_SIZE_SAFETY_MARGIN_CHARS = 0
-    PROMPT_BUILD_TARGET_CHARS = 6200
+    PROMPT_BUILD_TARGET_CHARS = 7600
     MAX_OPTIONAL_SECTION_REASONING_CHARS = 180
     MAX_OPTIONAL_SECTION_SUMMARY_CHARS = 120
     MAX_OPTIONAL_SECTION_DELTA_CHARS = 120
@@ -2730,6 +2730,11 @@ class SmartMonitorDeepSeek:
                 baseline_exit_style=_optional_value(strategy_context.get("baseline_exit_style")),
                 intraday_execution_preference=_optional_value(strategy_context.get("intraday_execution_preference")),
                 swing_type_reason=_optional_value(strategy_context.get("swing_type_reason")),
+                market_regime=_optional_value(strategy_context.get("market_regime")),
+                market_regime_reason=_optional_value(strategy_context.get("market_regime_reason")),
+                entry_execution_mode=_optional_value(strategy_context.get("entry_execution_mode")),
+                dynamic_entry_rule=_optional_value(strategy_context.get("dynamic_entry_rule")),
+                starter_position_pct=_optional_value(strategy_context.get("starter_position_pct")),
                 summary=_optional_value(summary_text),
                 thresholds_line=_join_non_empty(
                     (
@@ -2838,6 +2843,18 @@ class SmartMonitorDeepSeek:
             current_total = current_price * position_quantity if current_price is not None else None
             current_total_text = f"¥{current_total:,.2f}" if current_total is not None else "N/A"
             current_price_text = _fmt_money(current_price)
+            account_position = account_info.get("current_position") if isinstance(account_info.get("current_position"), dict) else {}
+            raw_position_pct = _to_float(account_position.get("position_pct") if account_position else None)
+            if raw_position_pct is not None:
+                display_position_pct = raw_position_pct * 100.0 if 0 <= raw_position_pct <= 1.5 else raw_position_pct
+                position_pct_text = f"{display_position_pct:.2f}%"
+            else:
+                position_pct_text = "N/A"
+            position_pct_basis = (
+                "按配置总资产计算"
+                if _to_float(account_info.get("configured_total_assets")) and _to_float(account_info.get("configured_total_assets")) > 0
+                else "未配置总资产，按当前持仓市值估算"
+            )
             resolved_position_date = position_date or ((account_info.get("current_position") or {}).get("position_date")) or "N/A"
             estimated_holding_days = self._estimate_holding_trading_days(
                 position_date=resolved_position_date,
@@ -2888,6 +2905,8 @@ class SmartMonitorDeepSeek:
                 position_cost=_optional_value(position_cost_text),
                 current_price=_optional_value(current_price_text),
                 current_total=_optional_value(current_total_text),
+                position_pct_text=_optional_value(position_pct_text),
+                position_pct_basis=_optional_value(position_pct_basis),
                 profit_loss_text=_optional_value(profit_loss_text),
                 stop_loss_pct=resolved_risk_profile["stop_loss_pct"],
                 atr14_text=_optional_value(_fmt_money(runtime_metrics.get("atr14"))),

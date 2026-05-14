@@ -104,6 +104,48 @@ class SmartMonitorDeepSeekTests(unittest.TestCase):
         self.assertEqual(decision["position_delta_pct"], 8.0)
         self.assertEqual(decision["trade_intent"], "add")
 
+    def test_build_prompt_includes_holding_position_ratio(self):
+        client = SmartMonitorDeepSeek(api_key="test-key")
+
+        prompt = client._build_a_stock_prompt(
+            "600519",
+            market_data={
+                "name": "贵州茅台",
+                "current_price": 12.0,
+                "volume": 120000,
+            },
+            account_info={
+                "available_cash": 88000,
+                "total_value": 100000,
+                "configured_total_assets": 100000,
+                "total_market_value": 12000,
+                "position_usage_pct": 0.12,
+                "positions_count": 1,
+                "current_position": {
+                    "quantity": 1000,
+                    "cost_price": 10.0,
+                    "current_price": 12.0,
+                    "market_value": 12000,
+                    "position_pct": 0.12,
+                },
+            },
+            has_position=True,
+            session_info={
+                "session": "上午盘",
+                "volatility": "high",
+                "recommendation": "交易活跃",
+                "can_trade": True,
+                "beijing_hour": 10,
+                "beijing_time": "10:30",
+            },
+            position_cost=10.0,
+            position_quantity=1000,
+            position_date="2026-05-10",
+        )
+
+        self.assertIn("持仓占总资产: 12.00%", prompt)
+        self.assertIn("仓位计算口径: 按配置总资产计算", prompt)
+
     def test_parse_decision_repairs_json_like_response(self):
         client = SmartMonitorDeepSeek(api_key="test-key")
         ai_response = """
@@ -753,7 +795,7 @@ class SmartMonitorDeepSeekTests(unittest.TestCase):
         self.assertIn("必须按这个顺序覆盖 5 类信息", messages[0]["content"])
         self.assertIn("不要输出带方括号的小标题", messages[0]["content"])
         self.assertIn("若未明确，必须承认“基线波段未明确”，不要自动补成标准波段", messages[0]["content"])
-        self.assertLess(len(messages[0]["content"]), 9000)
+        self.assertLess(len(messages[0]["content"]), 10000)
         self.assertIn("[TIMER] 当前交易时段", messages[1]["content"])
         self.assertIn("[REALTIME_FRESHNESS] 实时数据新鲜度校验", messages[1]["content"])
         self.assertIn("整体状态: 可直接用于盘中执行", messages[1]["content"])

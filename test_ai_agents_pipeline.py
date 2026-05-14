@@ -167,7 +167,25 @@ class StockAnalysisAgentsPipelineTests(unittest.TestCase):
 
         agent.conduct_team_discussion(
             {"technical": {"analysis": "技术分析正文"}},
-            {"symbol": "600519", "name": "贵州茅台", "has_position": True},
+            {
+                "symbol": "600519",
+                "name": "贵州茅台",
+                "has_position": True,
+                "position_context": {
+                    "account_name": "zfy",
+                    "quantity": 1000,
+                    "cost_price": 9.5,
+                    "current_price": 10.0,
+                    "market_value": 10000,
+                    "cost_value": 9500,
+                    "position_pct": 12.0,
+                    "position_weight_pct": 37.5,
+                    "total_position_pct": 32.0,
+                    "account_total_assets": 100000,
+                    "account_total_market_value": 32000,
+                    "total_assets_configured": True,
+                },
+            },
             strategy_context={
                 "swing_type": "标准波段",
                 "holding_period": "5-15个交易日",
@@ -179,6 +197,7 @@ class StockAnalysisAgentsPipelineTests(unittest.TestCase):
 
         self.assertIn("历史持仓波段基线已确认", captured["prompt"])
         self.assertIn("已确认波段类型：标准波段", captured["prompt"])
+        self.assertIn("单票占总资产：12.00%", captured["prompt"])
         self.assertIn("本轮默认沿用上述波段类型", captured["prompt"])
 
     def test_risk_management_agent_includes_pe_pb_context(self):
@@ -197,6 +216,21 @@ class StockAnalysisAgentsPipelineTests(unittest.TestCase):
                 "symbol": "600519",
                 "name": "贵州茅台",
                 "current_price": 1688.0,
+                "has_position": True,
+                "position_context": {
+                    "account_name": "zfy",
+                    "quantity": 100,
+                    "cost_price": 1600.0,
+                    "current_price": 1688.0,
+                    "market_value": 168800,
+                    "cost_value": 160000,
+                    "position_pct": 16.88,
+                    "position_weight_pct": 50.0,
+                    "total_position_pct": 33.76,
+                    "account_total_assets": 1000000,
+                    "account_total_market_value": 337600,
+                    "total_assets_configured": True,
+                },
                 "pe_ratio": 25.6,
                 "pb_ratio": 8.4,
                 "market_cap": 2100000000000,
@@ -213,6 +247,7 @@ class StockAnalysisAgentsPipelineTests(unittest.TestCase):
         self.assertIn("总市值：2100000000000", captured["prompt"])
         self.assertIn("所属行业：白酒", captured["prompt"])
         self.assertIn("所属板块：食品饮料", captured["prompt"])
+        self.assertIn("单票占总资产：16.88%", captured["prompt"])
         self.assertIn("【通用约束】", captured["system"])
         self.assertIn("【任务步骤】", captured["system"])
 

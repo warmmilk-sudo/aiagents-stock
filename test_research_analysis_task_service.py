@@ -154,6 +154,7 @@ class ResearchAnalysisTaskServiceTests(unittest.TestCase):
             return "task-staged"
 
         with patch.object(services.config, "has_api_credentials_for_models", return_value=True), \
+             patch.object(services, "_resolve_research_task_symbol_names", return_value={}), \
              patch.object(services.portfolio_analysis_task_manager, "get_active_task_any", return_value=None), \
              patch.object(services.portfolio_analysis_task_manager, "start_task", side_effect=fake_start_task):
             services.submit_research_analysis_task(
@@ -213,6 +214,7 @@ class ResearchAnalysisTaskServiceTests(unittest.TestCase):
             return "task-queued"
 
         with patch.object(services.config, "has_api_credentials_for_models", return_value=True), \
+             patch.object(services, "_resolve_research_task_symbol_names", return_value={"600519": "贵州茅台"}), \
              patch.object(services.portfolio_analysis_task_manager, "start_task", side_effect=fake_start_task):
             task_id = services.submit_research_analysis_task(
                 session_key="session-queue",
@@ -227,7 +229,8 @@ class ResearchAnalysisTaskServiceTests(unittest.TestCase):
 
         self.assertEqual(task_id, "task-queued")
         self.assertEqual(captured["session_key"], "session-queue")
-        self.assertEqual(captured["label"], "深度分析 600519")
+        self.assertEqual(captured["label"], "深度分析 贵州茅台（600519）")
+        self.assertEqual(captured["metadata"]["display_name"], "贵州茅台（600519）")
 
     def test_submit_research_analysis_task_rejects_parallel_batch_mode(self):
         with patch.object(services.config, "has_api_credentials_for_models", return_value=True), \
@@ -254,6 +257,7 @@ class ResearchAnalysisTaskServiceTests(unittest.TestCase):
             return "task-123"
 
         with patch.object(services.config, "has_api_credentials_for_models", return_value=True), \
+             patch.object(services, "_resolve_research_task_symbol_names", return_value={"600519": "贵州茅台", "000001": "平安银行"}), \
              patch.object(services.portfolio_analysis_task_manager, "start_task", side_effect=fake_start_task):
             task_id = services.submit_research_analysis_task(
                 session_key="session-a",
@@ -270,6 +274,8 @@ class ResearchAnalysisTaskServiceTests(unittest.TestCase):
         self.assertEqual(captured["metadata"]["max_workers"], 1)
         self.assertEqual(captured["metadata"]["batch_mode"], "顺序分析")
         self.assertEqual(captured["metadata"]["symbols"], ["600519", "000001"])
+        self.assertEqual(captured["metadata"]["display_names"]["600519"], "贵州茅台（600519）")
+        self.assertEqual(captured["label"], "批量深度分析 贵州茅台（600519） 等 2 只")
 
     def test_submit_research_analysis_task_rejects_duplicate_symbol_against_running_task(self):
         with patch.object(services.config, "has_api_credentials_for_models", return_value=True), \
@@ -335,6 +341,7 @@ class ResearchAnalysisTaskServiceTests(unittest.TestCase):
             return "task-dedup"
 
         with patch.object(services.config, "has_api_credentials_for_models", return_value=True), \
+             patch.object(services, "_resolve_research_task_symbol_names", return_value={}), \
              patch.object(services.portfolio_analysis_task_manager, "get_pending_tasks", return_value=[]), \
              patch.object(services.portfolio_analysis_task_manager, "start_task", side_effect=fake_start_task):
             task_id = services.submit_research_analysis_task(
@@ -350,7 +357,7 @@ class ResearchAnalysisTaskServiceTests(unittest.TestCase):
 
         self.assertEqual(task_id, "task-dedup")
         self.assertEqual(captured["metadata"]["symbols"], ["600519", "000001"])
-        self.assertEqual(captured["label"], "批量深度分析 2 只股票")
+        self.assertEqual(captured["label"], "批量深度分析 600519 等 2 只")
 
     def test_sequential_batch_runner_ignores_parallel_worker_setting(self):
         captured: dict = {}
@@ -360,6 +367,7 @@ class ResearchAnalysisTaskServiceTests(unittest.TestCase):
             return "task-789"
 
         with patch.object(services.config, "has_api_credentials_for_models", return_value=True), \
+             patch.object(services, "_resolve_research_task_symbol_names", return_value={}), \
              patch.object(services.portfolio_analysis_task_manager, "start_task", side_effect=fake_start_task):
             services.submit_research_analysis_task(
                 session_key="session-c",

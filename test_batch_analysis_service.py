@@ -34,6 +34,47 @@ import batch_analysis_service
 
 
 class BatchAnalysisServiceTests(unittest.TestCase):
+    @patch("batch_analysis_service.portfolio_db")
+    @patch("batch_analysis_service.asset_repository")
+    def test_resolve_position_context_uses_configured_total_assets(self, mock_asset_repository, mock_portfolio_db):
+        current_asset = {
+            "id": 7,
+            "account_name": "zfy",
+            "symbol": "600519",
+            "status": batch_analysis_service.STATUS_PORTFOLIO,
+            "cost_price": 10.0,
+            "quantity": 1000,
+        }
+        other_asset = {
+            "id": 8,
+            "account_name": "zfy",
+            "symbol": "000001",
+            "status": batch_analysis_service.STATUS_PORTFOLIO,
+            "cost_price": 20.0,
+            "quantity": 1000,
+        }
+        mock_asset_repository.get_asset.return_value = None
+        mock_asset_repository.get_asset_by_symbol.return_value = current_asset
+        mock_asset_repository.list_assets.return_value = [current_asset, other_asset]
+        mock_portfolio_db.get_account_total_assets.return_value = 100000
+
+        context = batch_analysis_service._resolve_position_context(
+            symbol="600519",
+            has_position=True,
+            account_name="zfy",
+            current_price=12.0,
+        )
+
+        self.assertEqual(context["asset_id"], 7)
+        self.assertEqual(context["quantity"], 1000)
+        self.assertEqual(context["market_value"], 12000)
+        self.assertEqual(context["account_total_assets"], 100000)
+        self.assertEqual(context["account_total_market_value"], 32000)
+        self.assertEqual(context["position_pct"], 12.0)
+        self.assertEqual(context["position_weight_pct"], 37.5)
+        self.assertEqual(context["total_position_pct"], 32.0)
+        self.assertTrue(context["total_assets_configured"])
+
     @patch("batch_analysis_service.StockDataFetcher")
     def test_get_stock_data_prefers_realtime_quote_price(self, mock_fetcher_cls):
         mock_fetcher = MagicMock()

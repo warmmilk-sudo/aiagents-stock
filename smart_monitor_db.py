@@ -1372,6 +1372,7 @@ class SmartMonitorDB:
                 account_name=account_name,
                 note="",
                 origin_analysis_id=task_data.get("origin_analysis_id"),
+                monitor_enabled=bool(task_data.get("enabled", 1)),
             )
         return self.monitoring_repository.create_item(
             {

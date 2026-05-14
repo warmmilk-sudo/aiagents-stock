@@ -329,11 +329,32 @@ class LLMClientTests(unittest.TestCase):
 
         result = client.final_decision(
             comprehensive_discussion="Position can be increased on confirmation.",
-            stock_info={"symbol": "000001", "name": "PingAn", "current_price": 10.0, "has_position": True},
+            stock_info={
+                "symbol": "000001",
+                "name": "PingAn",
+                "current_price": 10.0,
+                "has_position": True,
+                "position_context": {
+                    "account_name": "zfy",
+                    "quantity": 1000,
+                    "cost_price": 9.5,
+                    "current_price": 10.0,
+                    "market_value": 10000,
+                    "cost_value": 9500,
+                    "position_pct": 12.0,
+                    "position_weight_pct": 37.5,
+                    "total_position_pct": 32.0,
+                    "account_total_assets": 100000,
+                    "account_total_market_value": 32000,
+                    "total_assets_configured": True,
+                },
+            },
             indicators={"ma20": 9.8, "bb_upper": 10.8, "bb_lower": 9.2},
         )
 
         self.assertIn("当前状态：已持仓", captured["messages"][1]["content"])
+        self.assertIn("单票占总资产：12.00%", captured["messages"][1]["content"])
+        self.assertIn("账户总仓位利用率：32.00%", captured["messages"][1]["content"])
         self.assertIn("加仓 / 持有 / 减仓 / 卖出", captured["messages"][0]["content"])
         self.assertEqual(result["rating"], "加仓")
 

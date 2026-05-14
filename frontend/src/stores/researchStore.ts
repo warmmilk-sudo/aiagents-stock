@@ -84,6 +84,7 @@ function compactHubAssetForCache(value: unknown): Record<string, unknown> | null
     extra_tags_count: value.extra_tags_count,
     display_tag_summary: Array.isArray(value.display_tag_summary) ? value.display_tag_summary : undefined,
     manual_pin: value.manual_pin,
+    monitor_enabled: value.monitor_enabled,
     pool_reason: value.pool_reason,
     latest_analysis_time: value.latest_analysis_time,
     latest_analysis_rating: value.latest_analysis_rating,

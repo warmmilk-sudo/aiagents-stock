@@ -6,6 +6,8 @@
 成本价: $position_cost
 当前价: $current_price
 持仓市值: $current_total
+持仓占总资产: $position_pct_text
+仓位计算口径: $position_pct_basis
 浮动盈亏: $profit_loss_text
 ATR14: $atr14_text
 ATR波动率: $atr14_pct_text

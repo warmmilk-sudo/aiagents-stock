@@ -671,16 +671,18 @@ class SmartMonitorEngine:
             total_market_value += current_market_value
             total_profit_loss += current_market_value - fallback_position_value
             positions_count += 1
-            if configured_total_assets <= 0:
-                effective_total_value = max(effective_total_value, current_market_value)
-                available_cash = max(0.0, effective_total_value - total_market_value) if effective_total_value > 0 else 0.0
-                position_usage_pct = (total_market_value / effective_total_value) if effective_total_value > 0 else 0.0
+
+        if configured_total_assets <= 0:
+            effective_total_value = max(total_market_value, fallback_position_value)
+        available_cash = max(0.0, effective_total_value - total_market_value) if effective_total_value > 0 else 0.0
+        position_usage_pct = (total_market_value / effective_total_value) if effective_total_value > 0 else 0.0
 
         account_info = {
             "account_name": normalized_account_name,
             "available_cash": available_cash,
             "total_value": effective_total_value,
             "configured_total_assets": configured_total_assets,
+            "total_assets_configured": configured_total_assets > 0,
             "total_market_value": total_market_value,
             "position_usage_pct": position_usage_pct,
             "positions_count": positions_count,
@@ -920,6 +922,71 @@ class SmartMonitorEngine:
         text = str(rating or "").strip()
         return any(keyword in text for keyword in ("买入", "强烈买入", "加仓"))
 
+    @classmethod
+    def _dynamic_entry_allows_buy(
+        cls,
+        *,
+        strategy_context: Optional[Dict],
+        decision: Dict[str, object],
+        market_data: Dict,
+        current_price: Optional[float],
+        entry_min: Optional[float],
+        entry_max: Optional[float],
+    ) -> tuple[bool, str]:
+        if current_price is None or entry_min is None or entry_max is None:
+            return False, ""
+        if entry_min <= current_price <= entry_max:
+            return True, ""
+        if current_price < entry_min:
+            return False, ""
+
+        strategy_context = strategy_context if isinstance(strategy_context, dict) else {}
+        final_decision = strategy_context.get("final_decision") if isinstance(strategy_context.get("final_decision"), dict) else {}
+        mode = str(
+            decision.get("entry_execution_mode")
+            or strategy_context.get("entry_execution_mode")
+            or final_decision.get("entry_execution_mode")
+            or ""
+        ).strip().lower()
+        swing_mode = str(decision.get("swing_execution_mode") or "").strip().lower()
+        if mode not in {"shallow_pullback", "breakout_confirm"}:
+            if swing_mode in {"breakout_entry", "breakout_add"}:
+                mode = "breakout_confirm"
+            elif swing_mode in {"pullback_entry", "pullback_add"}:
+                mode = "shallow_pullback"
+        if mode not in {"shallow_pullback", "breakout_confirm"}:
+            return False, ""
+
+        atr14 = cls._float_or_none(
+            (market_data or {}).get("atr14")
+            or decision.get("atr14")
+            or strategy_context.get("atr14")
+            or final_decision.get("atr14")
+        )
+        take_profit = cls._float_or_none(
+            (decision.get("monitor_levels") if isinstance(decision.get("monitor_levels"), dict) else {}).get("take_profit")
+            if isinstance(decision.get("monitor_levels"), dict)
+            else None
+        )
+        if take_profit is None:
+            take_profit = cls._float_or_none(strategy_context.get("take_profit") or final_decision.get("take_profit"))
+        if take_profit is not None and current_price >= take_profit:
+            return False, ""
+
+        pct_cap = 0.015 if mode == "shallow_pullback" else 0.03
+        atr_multiplier = 0.5 if mode == "shallow_pullback" else 1.0
+        pct_deviation = entry_max * pct_cap
+        max_deviation = min(atr14 * atr_multiplier, pct_deviation) if atr14 and atr14 > 0 else pct_deviation
+        dynamic_entry_max = entry_max + max_deviation
+        if current_price > dynamic_entry_max:
+            return False, ""
+
+        mode_label = "浅回踩试仓" if mode == "shallow_pullback" else "突破确认入场"
+        return True, (
+            f"当前价格 {current_price:.3f} 高于原进场上沿 {entry_max:.3f}，但符合{mode_label}的动态容忍范围"
+            f"（上限 {dynamic_entry_max:.3f}），未按区间外买入硬阻断。"
+        )
+
     def _build_plan_signal(
         self,
         *,
@@ -1024,16 +1091,30 @@ class SmartMonitorEngine:
                     and entry_max is not None
                     and not (entry_min <= current_price <= entry_max)
                 ):
-                    decision["action"] = "HOLD"
-                    decision["action_detail"] = "观望" if not has_position else "持有"
-                    decision["action_ratio_pct"] = None
-                    decision["reasoning"] = self._reasoning_with_appendix(
-                        decision.get("reasoning"),
-                        (
-                            f"当前价格 {current_price:.3f} 不在深度分析交易计划进场区间 "
-                            f"{entry_min:.3f}-{entry_max:.3f} 内，已阻断追高/偏离计划买入。"
-                        ),
+                    dynamic_allowed, dynamic_reason = self._dynamic_entry_allows_buy(
+                        strategy_context=strategy_context,
+                        decision=decision,
+                        market_data=market_data,
+                        current_price=current_price,
+                        entry_min=entry_min,
+                        entry_max=entry_max,
                     )
+                    if dynamic_allowed:
+                        decision["reasoning"] = self._reasoning_with_appendix(
+                            decision.get("reasoning"),
+                            dynamic_reason,
+                        )
+                    else:
+                        decision["action"] = "HOLD"
+                        decision["action_detail"] = "观望" if not has_position else "持有"
+                        decision["action_ratio_pct"] = None
+                        decision["reasoning"] = self._reasoning_with_appendix(
+                            decision.get("reasoning"),
+                            (
+                                f"当前价格 {current_price:.3f} 不在深度分析交易计划进场区间 "
+                                f"{entry_min:.3f}-{entry_max:.3f} 内，已阻断追高/偏离计划买入。"
+                            ),
+                        )
 
         action = str(decision.get("action") or "").upper()
         if action == "BUY" and execution_conditions["entry_conditions"]:
@@ -1522,13 +1603,12 @@ class SmartMonitorEngine:
             not latest_action
             or latest_action != current_action
             or (current_action_detail and latest_action_detail != current_action_detail)
-            or (current_swing_mode and latest_swing_mode != current_swing_mode)
+            or (current_swing_mode and latest_swing_mode and latest_swing_mode != current_swing_mode)
             or (
                 current_action_ratio_pct is not None
                 and latest_action_ratio_pct is not None
                 and abs(current_action_ratio_pct - latest_action_ratio_pct) > 0.01
             )
-            or (current_action_ratio_pct is not None and latest_action_ratio_pct is None)
         )
 
         latest_levels = cls._normalize_monitor_levels_payload((latest_decision or {}).get("monitor_levels"))

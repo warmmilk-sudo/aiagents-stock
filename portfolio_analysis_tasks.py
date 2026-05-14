@@ -280,6 +280,26 @@ class PortfolioAnalysisTaskManager:
             tasks = self._list_tasks_locked(task_type=task_type)
             return tasks[0] if tasks else None
 
+    def cancel_queued_task(self, task_id: str, *, session_id: Optional[str] = None) -> tuple[bool, str, Optional[Dict[str, Any]]]:
+        with self._lock:
+            task = self._tasks.get(task_id)
+            if not task:
+                return False, "未找到任务", None
+            if session_id is not None and task.get("session_id") != session_id:
+                return False, "未找到任务", None
+            if task.get("status") != "queued":
+                return False, "只能取消排队中的任务", dict(task)
+            self._update_task_locked(
+                task_id,
+                status="cancelled",
+                message="任务已取消",
+                error="",
+                traceback="",
+                finished_at=time.time(),
+            )
+            self._task_runners.pop(task_id, None)
+            return True, "任务已取消", dict(self._tasks[task_id])
+
     def count_queued_tasks(
         self,
         session_id: str,

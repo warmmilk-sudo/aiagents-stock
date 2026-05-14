@@ -35,6 +35,7 @@ interface HubAsset {
   display_tag_summary?: string[];
   note?: string;
   manual_pin?: boolean;
+  monitor_enabled?: boolean;
   pool_reason?: string;
   latest_analysis_summary?: string;
   latest_analysis_time?: string;
@@ -143,6 +144,46 @@ function formatHoldingStatusLabel(item: HubAsset) {
   return item.status_label;
 }
 
+function decisionTone(rating?: string): "success" | "warning" | "danger" | "default" {
+  const normalized = String(rating || "").trim();
+  if (/强烈买入|买入|加仓/.test(normalized)) return "success";
+  if (/观望|持有/.test(normalized)) return "warning";
+  if (/减仓|卖出/.test(normalized)) return "danger";
+  return "default";
+}
+
+function latestDecisionLabel(item: HubAsset) {
+  const rating = String(item.latest_analysis_rating || "").trim();
+  const date = formatDateTime(item.latest_analysis_time, "").slice(0, 10);
+  if (!rating && !date) {
+    return "";
+  }
+  return `${rating || "未评级"}${date ? ` · ${date}` : ""}`;
+}
+
+function MonitorEyeIcon({ active }: { active: boolean }) {
+  return (
+    <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24">
+      <path
+        d="M2.9 12s3.3-5.3 9.1-5.3 9.1 5.3 9.1 5.3-3.3 5.3-9.1 5.3S2.9 12 2.9 12Z"
+        fill={active ? "currentColor" : "none"}
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.8"
+      />
+      <circle
+        cx="12"
+        cy="12"
+        fill={active ? "var(--bg-panel-strong)" : "none"}
+        r="2.35"
+        stroke="currentColor"
+        strokeWidth="1.8"
+      />
+    </svg>
+  );
+}
+
 const pools: Array<{ key: PoolKey; label: string }> = [
   { key: "holding", label: "持仓中" },
   { key: "focus", label: "备选关注" },
@@ -154,6 +195,12 @@ const hubSectionTabs: Array<{ key: HubSectionKey; label: string }> = [
   { key: "control", label: "投研档案" },
   { key: "holdings", label: "持仓列表" },
 ];
+const decisionToneClass: Record<ReturnType<typeof decisionTone>, string> = {
+  success: styles.researchHubDecisionBadgeSuccess,
+  warning: styles.researchHubDecisionBadgeWarning,
+  danger: styles.researchHubDecisionBadgeDanger,
+  default: styles.researchHubDecisionBadgeDefault,
+};
 const HUB_CACHE_TTL_MS = 60_000;
 const HUB_PAGE_CACHE_MAX_AGE_MS = 12 * 60 * 60 * 1000;
 
@@ -167,10 +214,12 @@ function PoolPanel({
   counts,
   activeId,
   pinUpdatingAssetId,
+  monitorUpdatingAssetId,
   deletingAssetId,
   onPoolChange,
   onSelect,
   onToggleManualPin,
+  onToggleMonitorEnabled,
   onDeleteResearchCard,
   renderAssetTags,
 }: {
@@ -179,10 +228,12 @@ function PoolPanel({
   counts: Record<string, number>;
   activeId: number | null;
   pinUpdatingAssetId: number | null;
+  monitorUpdatingAssetId: number | null;
   deletingAssetId: number | null;
   onPoolChange: (pool: PoolKey) => void;
   onSelect: (item: HubAsset) => void;
   onToggleManualPin: (item: HubAsset) => void;
+  onToggleMonitorEnabled: (item: HubAsset) => void;
   onDeleteResearchCard: (item: HubAsset) => void;
   renderAssetTags: (item: HubAsset) => ReactNode;
 }) {
@@ -207,6 +258,8 @@ function PoolPanel({
           const descriptor = item.primary_industry || item.display_tag_summary?.[0] || item.status_label;
           const holdingRating = String(item.latest_analysis_rating || "").trim() || "未评级";
           const holdingTime = formatDateTime(item.latest_analysis_time, "暂无时间").slice(0, 10);
+          const decisionLabel = activePool === "holding" ? "" : latestDecisionLabel(item);
+          const decisionClassName = `${styles.researchHubDecisionBadge} ${decisionToneClass[decisionTone(item.latest_analysis_rating)]}`;
           return (
             <div
               className={item.id === activeId ? styles.researchHubAssetButtonActive : styles.researchHubAssetButton}
@@ -223,7 +276,10 @@ function PoolPanel({
                   onClick={() => onSelect(item)}
                   type="button"
                 >
-                  <strong>{item.name}</strong>
+                  <div className={styles.researchHubAssetTitleRow}>
+                    <strong>{item.name}</strong>
+                    {decisionLabel ? <span className={decisionClassName}>{decisionLabel}</span> : null}
+                  </div>
                   <span>{item.symbol} | {descriptor}</span>
                   <div className={styles.researchHubTagList}>
                     {renderAssetTags(item)}
@@ -259,6 +315,22 @@ function PoolPanel({
                           />
                         </svg>
                       </button>
+                      {item.status === "focus" ? (
+                        <button
+                          aria-busy={monitorUpdatingAssetId === item.id}
+                          aria-label={item.monitor_enabled ? `取消盯盘 ${item.symbol}` : `加入盯盘 ${item.symbol}`}
+                          className={item.monitor_enabled ? styles.researchHubMonitorButtonActive : styles.researchHubMonitorButton}
+                          disabled={monitorUpdatingAssetId === item.id}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onToggleMonitorEnabled(item);
+                          }}
+                          title={item.monitor_enabled ? "取消盯盘" : "加入盯盘"}
+                          type="button"
+                        >
+                          <MonitorEyeIcon active={Boolean(item.monitor_enabled)} />
+                        </button>
+                      ) : null}
                       {activePool === "research" ? (
                         <button
                           aria-label={`删除研究池卡片 ${item.symbol}`}
@@ -284,7 +356,6 @@ function PoolPanel({
                   )}
                 </div>
               </div>
-              {item.status === "focus" && !item.manual_pin ? <small>已加入备选关注并自动同步到盯盘</small> : null}
             </div>
           );
         })}
@@ -333,6 +404,7 @@ export function ResearchHubPage() {
   const [searchTerm, setSearchTerm] = useState(() => initialCachedPage?.searchTerm ?? "");
   const [selectionTask, setSelectionTask] = useState<BackgroundTask | null>(null);
   const [pinUpdatingAssetId, setPinUpdatingAssetId] = useState<number | null>(null);
+  const [monitorUpdatingAssetId, setMonitorUpdatingAssetId] = useState<number | null>(null);
   const [deletingAssetId, setDeletingAssetId] = useState<number | null>(null);
   const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null);
   const [expandedTagAssetIds, setExpandedTagAssetIds] = useState<Record<number, boolean>>({});
@@ -525,12 +597,14 @@ export function ResearchHubPage() {
           status: "research",
           status_label: "研究池",
           manual_pin: false,
+          monitor_enabled: false,
           pool_reason: "手动移出备选关注，回到研究池",
         }
       : {
           status: "focus",
           status_label: "备选关注",
           manual_pin: true,
+          monitor_enabled: false,
           pool_reason: "手动加入备选关注",
         };
     updateLocalAssets((current) =>
@@ -544,11 +618,13 @@ export function ResearchHubPage() {
             ? {
                 target_status: "research",
                 manual_pin: false,
+                monitor_enabled: false,
                 pool_reason: "手动移出备选关注，回到研究池",
               }
             : {
                 target_status: "focus",
                 manual_pin: true,
+                monitor_enabled: false,
                 pool_reason: "手动加入备选关注",
               },
         ),
@@ -556,13 +632,41 @@ export function ResearchHubPage() {
       updateLocalAssets((current) =>
         current.map((asset) => (asset.id === item.id ? { ...asset, ...updatedItem } : asset)),
       );
-      showMessage(inFocus ? `${item.symbol} 已移出备选关注并回到研究池` : `${item.symbol} 已加入备选关注并自动加入盯盘`);
+      showMessage(inFocus ? `${item.symbol} 已移出备选关注并回到研究池` : `${item.symbol} 已加入备选关注`);
       await loadAssets({ background: true });
     } catch (requestError) {
       await loadAssets({ background: true }).catch(() => undefined);
       showError(requestError instanceof ApiRequestError ? requestError.message : "关注状态更新失败");
     } finally {
       setPinUpdatingAssetId(null);
+    }
+  };
+
+  const handleToggleMonitorEnabled = async (item: HubAsset) => {
+    if (monitorUpdatingAssetId === item.id) {
+      return;
+    }
+    clear();
+    setMonitorUpdatingAssetId(item.id);
+    const nextEnabled = !item.monitor_enabled;
+    updateLocalAssets((current) =>
+      current.map((asset) => (asset.id === item.id ? { ...asset, monitor_enabled: nextEnabled } : asset)),
+    );
+    try {
+      const updatedItem = await apiFetch<HubAsset>(`/api/watchlist-hub/assets/${item.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ monitor_enabled: nextEnabled }),
+      });
+      updateLocalAssets((current) =>
+        current.map((asset) => (asset.id === item.id ? { ...asset, ...updatedItem } : asset)),
+      );
+      showMessage(nextEnabled ? `${item.symbol} 已加入盯盘` : `${item.symbol} 已取消盯盘`);
+      void loadAssets({ background: true }).catch(() => undefined);
+    } catch (requestError) {
+      await loadAssets({ background: true }).catch(() => undefined);
+      showError(requestError instanceof ApiRequestError ? requestError.message : "盯盘状态更新失败");
+    } finally {
+      setMonitorUpdatingAssetId(null);
     }
   };
 
@@ -596,7 +700,7 @@ export function ResearchHubPage() {
         title: inFocus ? "确认移出备选关注" : "确认加入备选关注",
         description: inFocus
           ? `确定将 ${confirmAction.item.name}（${confirmAction.item.symbol}）移回研究池吗？`
-          : `确定将 ${confirmAction.item.name}（${confirmAction.item.symbol}）加入备选关注并同步到盯盘吗？`,
+          : `确定将 ${confirmAction.item.name}（${confirmAction.item.symbol}）加入备选关注吗？`,
         confirmLabel: inFocus ? "确认移出" : "确认加入",
         confirmTone: "primary" as const,
       };
@@ -755,10 +859,12 @@ export function ResearchHubPage() {
             counts={displayCounts}
             items={activePoolItems}
             pinUpdatingAssetId={pinUpdatingAssetId}
+            monitorUpdatingAssetId={monitorUpdatingAssetId}
             deletingAssetId={deletingAssetId}
             onPoolChange={setActivePool}
             onSelect={handleOpenStockProfile}
             onDeleteResearchCard={handleDeleteResearchCard}
+            onToggleMonitorEnabled={handleToggleMonitorEnabled}
             onToggleManualPin={handleToggleManualPin}
             renderAssetTags={renderAssetTags}
           />

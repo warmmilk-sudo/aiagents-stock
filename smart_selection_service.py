@@ -2839,7 +2839,7 @@ class SmartSelectionService:
                 name=item.get("name") or symbol,
                 note=item.get("reason") or "智能选股导入关注备选",
                 origin_analysis_id=None,
-                monitor_enabled=True,
+                monitor_enabled=False,
             )
             asset_repository.update_asset(
                 asset_id,
@@ -2858,6 +2858,10 @@ class SmartSelectionService:
                     "import_source": item.get("import_source"),
                 },
             )
+            try:
+                research_hub_service.asset_service.remove_managed_monitors(asset_id)
+            except Exception:
+                pass
             imported_symbols.append(symbol)
 
         return {

@@ -520,6 +520,7 @@ class LLMClient:
                 has_position=has_position,
                 strategy_context=strategy_context,
                 is_initial_holding_analysis=is_initial_holding_analysis,
+                position_context=stock_info.get("position_context"),
             ),
             ma20=indicators.get("ma20", "N/A"),
             bb_upper=indicators.get("bb_upper", "N/A"),
